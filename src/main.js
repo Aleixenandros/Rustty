@@ -272,6 +272,9 @@ const DEFAULT_PREFS = {
   copyOnSelect:    false,
   rightClickPaste: false,
   fontSize:        14,
+  // Tipografía fina del terminal
+  lineHeight:      1.0,       // 1.0 = normal; xterm.js admite >0
+  letterSpacing:   0,         // píxeles; positivo separa, negativo junta
   cursorStyle:     "block",   // "block" | "bar" | "underline"
   cursorBlink:     true,
   scrollback:      5000,
@@ -341,12 +344,14 @@ function applyTheme(theme) {
  * es necesario reinstalarlos aquí.
  */
 function applyPrefsToTerminal(terminal) {
-  terminal.options.fontSize    = prefs.fontSize;
-  terminal.options.cursorStyle = prefs.cursorStyle;
-  terminal.options.cursorBlink = prefs.cursorBlink;
-  terminal.options.scrollback  = prefs.scrollback;
-  terminal.options.bellStyle   = prefs.bell;
-  terminal.options.theme       = getTerminalTheme();
+  terminal.options.fontSize      = prefs.fontSize;
+  terminal.options.lineHeight    = prefs.lineHeight;
+  terminal.options.letterSpacing = prefs.letterSpacing;
+  terminal.options.cursorStyle   = prefs.cursorStyle;
+  terminal.options.cursorBlink   = prefs.cursorBlink;
+  terminal.options.scrollback    = prefs.scrollback;
+  terminal.options.bellStyle     = prefs.bell;
+  terminal.options.theme         = getTerminalTheme();
 }
 
 function applyPrefsToAllTerminals() {
@@ -371,11 +376,18 @@ function switchPrefsTab(tab) {
 }
 
 function openSettingsModal() {
-  // Snapshot del tema de terminal al abrir, para poder revertir al cancelar.
+  // Snapshot al abrir, para poder revertir cambios en vivo al cancelar.
   _terminalThemeSnapshot = prefs.terminalTheme;
+  _typographySnapshot = {
+    fontSize:      prefs.fontSize,
+    lineHeight:    prefs.lineHeight,
+    letterSpacing: prefs.letterSpacing,
+  };
   document.getElementById("pref-copy-on-select").checked   = prefs.copyOnSelect;
   document.getElementById("pref-right-click-paste").checked = prefs.rightClickPaste;
   document.getElementById("pref-font-size").value           = prefs.fontSize;
+  document.getElementById("pref-line-height").value         = prefs.lineHeight;
+  document.getElementById("pref-letter-spacing").value      = prefs.letterSpacing;
   document.getElementById("pref-cursor-style").value        = prefs.cursorStyle;
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
@@ -419,12 +431,20 @@ function openSettingsModal() {
   document.getElementById("modal-prefs-overlay").classList.remove("hidden");
 }
 
-let _terminalThemeSnapshot = null;
+let _terminalThemeSnapshot = undefined;
+let _typographySnapshot = null;
 
 function closeSettingsModal() {
-  // Si se canceló: revertir el preview del tema de UI *y* el del terminal
-  // (el preview del terminal muta prefs.terminalTheme directamente; aquí lo restauramos).
-  prefs.terminalTheme = _terminalThemeSnapshot;
+  // Si se canceló: revertir el preview del tema de UI, del terminal y de tipografía.
+  // `savePrefsFromModal` anula los snapshots antes de cerrar para saltarse este revert.
+  if (_terminalThemeSnapshot !== undefined) prefs.terminalTheme = _terminalThemeSnapshot;
+  if (_typographySnapshot) {
+    prefs.fontSize      = _typographySnapshot.fontSize;
+    prefs.lineHeight    = _typographySnapshot.lineHeight;
+    prefs.letterSpacing = _typographySnapshot.letterSpacing;
+  }
+  _terminalThemeSnapshot = undefined;
+  _typographySnapshot = null;
   applyTheme(prefs.theme);
   document.getElementById("modal-prefs-overlay").classList.add("hidden");
 }
@@ -454,6 +474,14 @@ function savePrefsFromModal() {
     copyOnSelect:    document.getElementById("pref-copy-on-select").checked,
     rightClickPaste: document.getElementById("pref-right-click-paste").checked,
     fontSize:        parseInt(document.getElementById("pref-font-size").value, 10) || DEFAULT_PREFS.fontSize,
+    lineHeight:      (() => {
+      const v = parseFloat(document.getElementById("pref-line-height").value);
+      return Number.isFinite(v) && v > 0 ? v : DEFAULT_PREFS.lineHeight;
+    })(),
+    letterSpacing:   (() => {
+      const v = parseFloat(document.getElementById("pref-letter-spacing").value);
+      return Number.isFinite(v) ? v : DEFAULT_PREFS.letterSpacing;
+    })(),
     cursorStyle:     document.getElementById("pref-cursor-style").value,
     cursorBlink:     document.getElementById("pref-cursor-blink").checked,
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
@@ -468,6 +496,9 @@ function savePrefsFromModal() {
     setLanguage(prefs.lang);
     applyTranslations();
   }
+  // Los snapshots ya no son relevantes: las prefs guardadas son la verdad.
+  _terminalThemeSnapshot = undefined;
+  _typographySnapshot = null;
   applyTheme(prefs.theme);
   applyPrefsToAllTerminals();
   closeSettingsModal();
@@ -2984,6 +3015,23 @@ function bindUIEvents() {
     });
   });
 
+  // Vista previa en vivo de tipografía: font-size, line-height, letter-spacing.
+  // El revert por cancelación lo hace closeSettingsModal con _typographySnapshot.
+  const wireTypographyPreview = (id, prop, parser, guard) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", () => {
+      const raw = parser(el.value);
+      if (!Number.isFinite(raw)) return;
+      const val = guard ? guard(raw) : raw;
+      prefs[prop] = val;
+      applyPrefsToAllTerminals();
+    });
+  };
+  wireTypographyPreview("pref-font-size",      "fontSize",      (v) => parseInt(v, 10), (v) => Math.max(8, Math.min(32, v)));
+  wireTypographyPreview("pref-line-height",    "lineHeight",    (v) => parseFloat(v),   (v) => Math.max(0.5, Math.min(3, v)));
+  wireTypographyPreview("pref-letter-spacing", "letterSpacing", (v) => parseFloat(v));
+
   // Cerrar modal de conexión
   document.getElementById("btn-modal-close").addEventListener("click", closeModal);
   document.getElementById("btn-modal-cancel").addEventListener("click", closeModal);
@@ -3150,6 +3198,31 @@ function handleGlobalShortcut(e) {
     openSettingsModal();
     return;
   }
+
+  // Ctrl+ +  / Ctrl+ -  / Ctrl+0 → zoom de fuente del terminal.
+  // Admitimos tanto la fila numérica (Equal/Minus/Digit0) como el numpad.
+  if (ctrl && !alt && !meta) {
+    const isZoomIn  = e.code === "Equal" || e.code === "NumpadAdd";
+    const isZoomOut = e.code === "Minus" || e.code === "NumpadSubtract";
+    const isZoomRst = e.code === "Digit0" || e.code === "Numpad0";
+    if (isZoomIn || isZoomOut || isZoomRst) {
+      e.preventDefault(); e.stopPropagation();
+      adjustTerminalFontSize(isZoomRst ? "reset" : (isZoomIn ? +1 : -1));
+      return;
+    }
+  }
+}
+
+/** Ajusta el tamaño de fuente global del terminal y persiste. */
+function adjustTerminalFontSize(delta) {
+  const MIN = 8, MAX = 32;
+  const next = delta === "reset"
+    ? DEFAULT_PREFS.fontSize
+    : Math.max(MIN, Math.min(MAX, prefs.fontSize + delta));
+  if (next === prefs.fontSize) return;
+  prefs.fontSize = next;
+  savePrefs();
+  applyPrefsToAllTerminals();
 }
 
 async function pasteIntoActiveTerminal() {
