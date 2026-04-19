@@ -1,0 +1,39 @@
+[package]
+name = "rustty"
+version = "0.1.0"
+description = "Rustty - Cliente SSH multiplataforma de escritorio"
+authors = ["Rustty"]
+edition = "2021"
+
+[lib]
+name = "rustty_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# russh + russh-sftp: cliente SSH/SFTP puro en Rust. Lo usan tanto el shell
+# interactivo (ssh_manager) como el explorador de ficheros (sftp_manager);
+# nos permite arrancar un sftp-server elevado con `sudo` sobre un canal exec.
+russh = "0.50"
+russh-sftp = "2"
+tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "fs", "macros", "time"] }
+async-trait = "0.1"
+# PTY multiplataforma para la shell local
+portable-pty = "0.8"
+# Almacenamiento seguro de credenciales en el keystore del SO
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+# Generación de UUIDs para IDs de sesión y perfil
+uuid = { version = "1", features = ["v4"] }
+# Directorios del sistema (app data dir)
+dirs = "5"
+# Manejo ergonómico de errores
+thiserror = "2"
+# Lectura de bases de datos KeePass (.kdbx)
+keepass = "0.10"

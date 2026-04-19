@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rustty</title>
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <script type="module" src="/src/main.js"></script>
+  </head>
+  <body>
+
+    <div id="app">
+
+      <!-- ── Barra lateral izquierda ── -->
+      <aside id="sidebar">
+        <div id="sidebar-header">
+          <span class="app-logo">Rustty</span>
+          <div class="sidebar-header-actions">
+            <button id="btn-settings" data-i18n-title="sidebar.prefs_title" title="Preferencias">⚙</button>
+            <button id="btn-local-shell" data-i18n-title="sidebar.local_shell_title" title="Consola local">$_</button>
+            <button id="btn-new-connection" data-i18n-title="sidebar.new_conn_title" title="Nueva conexión">+</button>
+          </div>
+        </div>
+
+        <div id="connection-list">
+          <div class="empty-state">
+            <p data-i18n="sidebar.empty_no_conns">Sin conexiones guardadas</p>
+            <button class="btn-link" id="btn-first-connection" data-i18n="sidebar.empty_add_first">Añadir la primera</button>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ── Área principal ── -->
+      <main id="main-area">
+        <div id="tab-bar">
+          <button id="btn-toggle-sidebar" data-i18n-title="sidebar.toggle_title" title="Ocultar / mostrar la barra lateral" aria-label="Toggle sidebar">
+            <span class="chevron" aria-hidden="true">‹</span>
+          </button>
+          <div id="tabs-container"></div>
+        </div>
+        <div id="terminals-container">
+          <div id="view-layout-bar" class="hidden">
+            <button data-layout="columns" data-i18n-title="view_layout.columns" title="Dividir en columnas">⫴</button>
+            <button data-layout="rows" data-i18n-title="view_layout.rows" title="Dividir en filas">☰</button>
+            <button data-layout="grid" data-i18n-title="view_layout.grid" title="Distribuir en rejilla">⊞</button>
+            <div class="view-layout-sep"></div>
+            <button data-action="broadcast" data-i18n-title="view_layout.broadcast" title="Replicar entrada en todas las panes (Broadcast Input)">⇶</button>
+          </div>
+          <div id="welcome-screen">
+            <div class="welcome-content">
+              <h1>Rustty</h1>
+              <p data-i18n="app.cliente_ssh">Cliente SSH multiplataforma escrito en Rust</p>
+              <div class="welcome-actions">
+                <button id="btn-welcome-new" class="btn-primary" data-i18n="welcome.new_conn">Nueva conexión</button>
+                <button id="btn-welcome-local" class="btn-secondary" data-i18n="welcome.local_shell">Consola local</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MENÚ CONTEXTUAL (clic derecho en el sidebar)
+    ══════════════════════════════════════════════════════ -->
+    <div id="context-menu" class="hidden">
+      <!-- Siempre visible -->
+      <button class="ctx-item" data-ctx="new-connection">
+        <span class="ctx-icon">⊕</span><span data-i18n="ctx.new_conn_here">Nueva conexión aquí</span>
+      </button>
+      <button class="ctx-item" data-ctx="new-folder">
+        <span class="ctx-icon">📁</span><span data-i18n="ctx.new_folder">Nueva carpeta</span>
+      </button>
+      <div class="ctx-sep ctx-sidebar-only"></div>
+      <button class="ctx-item ctx-sidebar-only" data-ctx="open-data-dir">
+        <span class="ctx-icon">💾</span><span data-i18n="ctx.open_data_dir">Abrir directorio de datos</span>
+      </button>
+
+      <!-- Solo cuando el clic fue sobre una carpeta -->
+      <div class="ctx-sep ctx-folder-only hidden"></div>
+      <button class="ctx-item ctx-folder-only hidden" data-ctx="rename-folder">
+        <span class="ctx-icon">✎</span><span data-i18n="ctx.rename_folder">Renombrar carpeta</span>
+      </button>
+      <button class="ctx-item danger ctx-folder-only hidden" data-ctx="delete-folder">
+        <span class="ctx-icon">✕</span><span data-i18n="ctx.delete_folder">Eliminar carpeta</span>
+      </button>
+
+      <!-- Solo cuando el clic fue sobre una conexión -->
+      <div class="ctx-sep ctx-conn-only hidden"></div>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="connect">
+        <span class="ctx-icon">▶</span><span data-i18n="ctx.connect">Conectar</span>
+      </button>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="edit-conn">
+        <span class="ctx-icon">✎</span><span data-i18n="ctx.edit">Editar</span>
+      </button>
+      <button class="ctx-item danger ctx-conn-only hidden" data-ctx="delete-conn">
+        <span class="ctx-icon">✕</span><span data-i18n="ctx.delete">Eliminar</span>
+      </button>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MENÚ CONTEXTUAL (clic derecho en una pestaña)
+    ══════════════════════════════════════════════════════ -->
+    <div id="tab-context-menu" class="ctx-menu hidden">
+      <button class="ctx-item" data-tabctx="duplicate">
+        <span class="ctx-icon">⎘</span><span data-i18n="tabctx.duplicate">Duplicar pestaña</span>
+      </button>
+
+      <!-- Acciones de división/vista (visibilidad calculada al abrir el menú) -->
+      <div class="ctx-sep tabctx-view-sep hidden"></div>
+      <button class="ctx-item tabctx-view-add hidden" data-tabctx="view-add">
+        <span class="ctx-icon">⇱</span><span data-i18n="tabctx.view_add">Añadir a la vista actual</span>
+      </button>
+      <button class="ctx-item tabctx-view-remove hidden" data-tabctx="view-remove">
+        <span class="ctx-icon">⇲</span><span data-i18n="tabctx.view_remove">Quitar de la vista</span>
+      </button>
+      <button class="ctx-item tabctx-view-solo hidden" data-tabctx="view-solo">
+        <span class="ctx-icon">◰</span><span data-i18n="tabctx.view_solo">Mostrar solo esta</span>
+      </button>
+
+      <!-- Cambios de layout (solo cuando hay ≥2 panes) -->
+      <div class="ctx-sep tabctx-layout-sep hidden"></div>
+      <button class="ctx-item tabctx-layout hidden" data-tabctx="layout-columns">
+        <span class="ctx-icon">⫴</span><span data-i18n="tabctx.layout_columns">Dividir en columnas</span>
+      </button>
+      <button class="ctx-item tabctx-layout hidden" data-tabctx="layout-rows">
+        <span class="ctx-icon">☰</span><span data-i18n="tabctx.layout_rows">Dividir en filas</span>
+      </button>
+      <button class="ctx-item tabctx-layout hidden" data-tabctx="layout-grid">
+        <span class="ctx-icon">⊞</span><span data-i18n="tabctx.layout_grid">Distribuir en rejilla</span>
+      </button>
+
+      <div class="ctx-sep"></div>
+      <button class="ctx-item" data-tabctx="close">
+        <span class="ctx-icon">✕</span><span data-i18n="tabctx.close">Cerrar</span>
+      </button>
+      <button class="ctx-item" data-tabctx="close-others">
+        <span class="ctx-icon">⊘</span><span data-i18n="tabctx.close_others">Cerrar las demás</span>
+      </button>
+      <button class="ctx-item" data-tabctx="close-right">
+        <span class="ctx-icon">→</span><span data-i18n="tabctx.close_right">Cerrar las de la derecha</span>
+      </button>
+      <div class="ctx-sep"></div>
+      <button class="ctx-item danger" data-tabctx="close-all">
+        <span class="ctx-icon">✕</span><span data-i18n="tabctx.close_all">Cerrar todas</span>
+      </button>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Añadir / Editar conexión
+    ══════════════════════════════════════════════════════ -->
+    <div id="modal-overlay" class="hidden">
+      <div id="modal-connection" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <h2 id="modal-title" data-i18n="modal_conn.title_new">Nueva conexión</h2>
+          <button class="btn-icon modal-close" id="btn-modal-close" data-i18n-aria-label="modal_conn.close" aria-label="Cerrar">✕</button>
+        </div>
+
+        <form id="form-connection" autocomplete="off">
+
+          <div class="form-row">
+            <label for="f-conn-type" data-i18n="modal_conn.conn_type">Tipo de conexión</label>
+            <select id="f-conn-type">
+              <option value="ssh" data-i18n="modal_conn.conn_type_ssh">SSH — Terminal remota</option>
+              <option value="rdp" data-i18n="modal_conn.conn_type_rdp">RDP — Escritorio remoto</option>
+            </select>
+          </div>
+
+          <div class="form-row">
+            <label for="f-name" data-i18n="modal_conn.name">Nombre</label>
+            <input id="f-name" type="text" data-i18n-placeholder="modal_conn.name_ph" placeholder="Mi servidor" required />
+          </div>
+
+          <div class="form-row form-row-split">
+            <div class="form-group">
+              <label for="f-host" data-i18n="modal_conn.host">Host / IP</label>
+              <input id="f-host" type="text" data-i18n-placeholder="modal_conn.host_ph" placeholder="192.168.1.1" required />
+            </div>
+            <div class="form-group form-group-sm">
+              <label for="f-port" data-i18n="modal_conn.port">Puerto</label>
+              <input id="f-port" type="number" value="22" min="1" max="65535" required />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label for="f-user" data-i18n="modal_conn.user">Usuario</label>
+            <input id="f-user" type="text" data-i18n-placeholder="modal_conn.user_ph" placeholder="Administrador" required />
+          </div>
+
+          <div class="form-row hidden" id="field-domain">
+            <label for="f-domain"><span data-i18n="modal_conn.domain">Dominio</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+            <input id="f-domain" type="text" data-i18n-placeholder="modal_conn.domain_ph" placeholder="WORKGROUP" />
+          </div>
+
+          <!-- Selector de carpeta (reemplaza al campo "Grupo") -->
+          <div class="form-row">
+            <label><span data-i18n="modal_conn.folder">Carpeta</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+            <div class="folder-picker-row">
+              <select id="f-folder-select">
+                <option value="" data-i18n="modal_conn.folder_none">Sin carpeta (raíz)</option>
+                <!-- Opciones generadas dinámicamente -->
+                <option value="__new__" data-i18n="modal_conn.folder_new">+ Nueva carpeta…</option>
+              </select>
+              <input id="f-folder-input" type="text" class="hidden"
+                     data-i18n-placeholder="modal_conn.folder_ph" placeholder="ej: Producción/Web" />
+            </div>
+          </div>
+
+          <div class="form-row" id="field-auth-type">
+            <label for="f-auth-type" data-i18n="modal_conn.auth">Autenticación</label>
+            <select id="f-auth-type">
+              <option value="password" data-i18n="modal_conn.auth_password">Contraseña</option>
+              <option value="public_key" data-i18n="modal_conn.auth_publickey">Clave pública / privada</option>
+              <option value="agent" data-i18n="modal_conn.auth_agent">Agente SSH</option>
+            </select>
+          </div>
+
+          <div class="form-row auth-field" id="field-keepass-toggle">
+            <label class="checkbox-label">
+              <input id="f-use-keepass" type="checkbox" />
+              <span data-i18n="modal_conn.use_keepass">Usar contraseña de KeePass</span>
+            </label>
+            <p class="form-hint" id="keepass-hint-locked" data-i18n="modal_conn.keepass_locked" style="display:none;">
+              La base KeePass está bloqueada. Desbloquéala en Preferencias.
+            </p>
+          </div>
+
+          <div class="form-row auth-field hidden" id="field-keepass-entry">
+            <label for="f-keepass-entry" data-i18n="modal_conn.keepass_entry">Entrada KeePass</label>
+            <select id="f-keepass-entry">
+              <option value="" data-i18n="modal_conn.keepass_entry_pick">— Selecciona una entrada —</option>
+            </select>
+          </div>
+
+          <div class="form-row auth-field" id="field-password">
+            <label for="f-password" data-i18n="modal_conn.password">Contraseña</label>
+            <input id="f-password" type="password" placeholder="••••••••" />
+          </div>
+          <div class="form-row auth-field" id="field-save-password">
+            <label class="checkbox-label">
+              <input id="f-save-password" type="checkbox" />
+              <span data-i18n="modal_conn.save_password">Recordar contraseña en el keyring del sistema</span>
+            </label>
+          </div>
+
+          <div class="form-row auth-field hidden" id="field-key-path">
+            <label for="f-key-path" data-i18n="modal_conn.key_path">Ruta de clave privada</label>
+            <input id="f-key-path" type="text" placeholder="~/.ssh/id_rsa" />
+          </div>
+
+          <div class="form-row auth-field hidden" id="field-passphrase">
+            <label for="f-passphrase"><span data-i18n="modal_conn.passphrase">Passphrase</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+            <input id="f-passphrase" type="password" placeholder="••••••••" />
+          </div>
+
+          <div class="form-row auth-field hidden" id="field-save-passphrase">
+            <label class="checkbox-label">
+              <input id="f-save-passphrase" type="checkbox" />
+              <span data-i18n="modal_conn.save_passphrase">Guardar passphrase en el keyring del sistema</span>
+            </label>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="btn-modal-cancel" data-i18n="modal_conn.cancel">Cancelar</button>
+            <button type="button" class="btn-secondary" id="btn-modal-save-only" data-i18n="modal_conn.save_only">Solo guardar</button>
+            <button type="submit" class="btn-primary" id="btn-modal-save-connect" data-i18n="modal_conn.save_connect">Guardar y conectar</button>
+          </div>
+
+        </form>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Preferencias
+    ══════════════════════════════════════════════════════ -->
+    <div id="modal-prefs-overlay" class="hidden">
+      <div id="modal-prefs" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <h2 data-i18n="modal_prefs.title">Preferencias</h2>
+          <button class="btn-icon" id="btn-prefs-close" data-i18n-aria-label="modal_prefs.close" aria-label="Cerrar">✕</button>
+        </div>
+
+        <div class="prefs-layout">
+
+          <nav class="prefs-nav" role="tablist" aria-label="Secciones de preferencias">
+            <button type="button" class="prefs-nav-item active" role="tab" data-prefs-tab="terminal">
+              <span class="prefs-nav-icon">⌨</span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_terminal">Terminal</span>
+            </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="appearance">
+              <span class="prefs-nav-icon">◐</span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_appearance">Apariencia</span>
+            </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="language">
+              <span class="prefs-nav-icon">A文</span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_language">Idioma</span>
+            </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="keepass">
+              <span class="prefs-nav-icon">⚿</span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_keepass">KeePass</span>
+            </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="data">
+              <span class="prefs-nav-icon">⇅</span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_data">Datos</span>
+            </button>
+          </nav>
+
+          <div class="prefs-content">
+
+            <!-- ── Terminal ── -->
+            <section class="prefs-panel active" role="tabpanel" data-prefs-panel="terminal">
+              <h3 class="prefs-panel-title" data-i18n="prefs_terminal.title">Terminal</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_terminal.hint">Comportamiento de las terminales SSH y la consola local.</p>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-copy-on-select" />
+                  <span data-i18n="prefs_terminal.copy_on_select">Copiar al seleccionar texto</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.copy_on_select_hint">El texto seleccionado se copia al portapapeles automáticamente</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-right-click-paste" />
+                  <span data-i18n="prefs_terminal.right_click_paste">Pegar con botón derecho</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.right_click_paste_hint">Clic derecho en el terminal pega el contenido del portapapeles</p>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-font-size" data-i18n="prefs_terminal.font_size">Tamaño de fuente</label>
+                <div class="settings-control">
+                  <input type="number" id="pref-font-size" min="8" max="32" step="1" />
+                  <span class="settings-unit" data-i18n="prefs_terminal.unit_px">px</span>
+                </div>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-cursor-style" data-i18n="prefs_terminal.cursor_style">Estilo de cursor</label>
+                <select id="pref-cursor-style">
+                  <option value="block" data-i18n="prefs_terminal.cursor_block">Bloque</option>
+                  <option value="bar" data-i18n="prefs_terminal.cursor_bar">Barra</option>
+                  <option value="underline" data-i18n="prefs_terminal.cursor_underline">Subrayado</option>
+                </select>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-cursor-blink" />
+                  <span data-i18n="prefs_terminal.cursor_blink">Cursor parpadeante</span>
+                </label>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-scrollback" data-i18n="prefs_terminal.scrollback">Historial de scroll</label>
+                <div class="settings-control">
+                  <input type="number" id="pref-scrollback" min="100" max="50000" step="100" />
+                  <span class="settings-unit" data-i18n="prefs_terminal.unit_lines">líneas</span>
+                </div>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-bell" data-i18n="prefs_terminal.bell">Campana</label>
+                <select id="pref-bell">
+                  <option value="none" data-i18n="prefs_terminal.bell_none">Ninguna</option>
+                  <option value="visual" data-i18n="prefs_terminal.bell_visual">Visual</option>
+                  <option value="sound" data-i18n="prefs_terminal.bell_sound">Sonido</option>
+                </select>
+              </div>
+            </section>
+
+            <!-- ── Apariencia ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="appearance">
+              <h3 class="prefs-panel-title" data-i18n="prefs_appearance.title">Apariencia</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_appearance.hint">Tema de la interfaz y de los terminales.</p>
+
+              <div class="settings-row">
+                <label data-i18n="prefs_appearance.theme">Tema</label>
+                <div class="theme-picker">
+                  <label class="theme-option" data-theme="dark">
+                    <input type="radio" name="pref-theme" value="dark" />
+                    <div class="theme-preview">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label" data-i18n="prefs_appearance.theme_dark">Oscuro</span>
+                  </label>
+                  <label class="theme-option" data-theme="light">
+                    <input type="radio" name="pref-theme" value="light" />
+                    <div class="theme-preview light">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label" data-i18n="prefs_appearance.theme_light">Claro</span>
+                  </label>
+                  <label class="theme-option" data-theme="system">
+                    <input type="radio" name="pref-theme" value="system" />
+                    <div class="theme-preview system">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label" data-i18n="prefs_appearance.theme_system">Sistema</span>
+                  </label>
+                  <label class="theme-option" data-theme="dracula">
+                    <input type="radio" name="pref-theme" value="dracula" />
+                    <div class="theme-preview dracula">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Dracula</span>
+                  </label>
+                  <label class="theme-option" data-theme="nord">
+                    <input type="radio" name="pref-theme" value="nord" />
+                    <div class="theme-preview nord">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Nord</span>
+                  </label>
+                  <label class="theme-option" data-theme="xterm">
+                    <input type="radio" name="pref-theme" value="xterm" />
+                    <div class="theme-preview xterm">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">xterm</span>
+                  </label>
+                  <label class="theme-option" data-theme="vscode-dark">
+                    <input type="radio" name="pref-theme" value="vscode-dark" />
+                    <div class="theme-preview vscode-dark">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">VS Code Dark+</span>
+                  </label>
+                  <label class="theme-option" data-theme="tango">
+                    <input type="radio" name="pref-theme" value="tango" />
+                    <div class="theme-preview tango">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Tango</span>
+                  </label>
+                  <label class="theme-option" data-theme="solarized-dark">
+                    <input type="radio" name="pref-theme" value="solarized-dark" />
+                    <div class="theme-preview solarized-dark">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Solarized Dark</span>
+                  </label>
+                  <label class="theme-option" data-theme="solarized-light">
+                    <input type="radio" name="pref-theme" value="solarized-light" />
+                    <div class="theme-preview solarized-light">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Solarized Light</span>
+                  </label>
+                  <label class="theme-option" data-theme="gruvbox-dark">
+                    <input type="radio" name="pref-theme" value="gruvbox-dark" />
+                    <div class="theme-preview gruvbox-dark">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Gruvbox Dark</span>
+                  </label>
+                  <label class="theme-option" data-theme="tokyo-night">
+                    <input type="radio" name="pref-theme" value="tokyo-night" />
+                    <div class="theme-preview tokyo-night">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Tokyo Night</span>
+                  </label>
+                  <label class="theme-option" data-theme="monokai">
+                    <input type="radio" name="pref-theme" value="monokai" />
+                    <div class="theme-preview monokai">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Monokai</span>
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <!-- ── Idioma ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="language">
+              <h3 class="prefs-panel-title" data-i18n="prefs_language.title">Idioma</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_language.hint">Selecciona el idioma de la interfaz.</p>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-language" data-i18n="prefs_language.language">Idioma</label>
+                <select id="pref-language">
+                  <option value="es" data-i18n="prefs_language.lang_es">Español</option>
+                  <option value="en" data-i18n="prefs_language.lang_en">Inglés (English)</option>
+                  <option value="fr" data-i18n="prefs_language.lang_fr">Francés (Français)</option>
+                  <option value="pt" data-i18n="prefs_language.lang_pt">Portugués (Português)</option>
+                </select>
+              </div>
+            </section>
+
+            <!-- ── KeePass ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="keepass">
+              <h3 class="prefs-panel-title" data-i18n="prefs_keepass.title">KeePass</h3>
+              <p class="prefs-panel-hint" data-i18n-html="prefs_keepass.hint_html">
+                Usa contraseñas de una base <code>.kdbx</code> en vez del keyring del sistema.
+                La base se descifra en memoria y se bloquea al cerrar la aplicación.
+              </p>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-keepass-path" data-i18n="prefs_keepass.db">Base de datos</label>
+                <div class="settings-control settings-file-row">
+                  <input type="text" id="pref-keepass-path" data-i18n-placeholder="prefs_keepass.db_ph" placeholder="/ruta/a/base.kdbx" />
+                  <button type="button" class="btn-secondary" id="btn-keepass-browse" data-i18n="prefs_keepass.browse">Examinar…</button>
+                </div>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-keepass-keyfile"><span data-i18n="prefs_keepass.keyfile">Keyfile</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+                <div class="settings-control settings-file-row">
+                  <input type="text" id="pref-keepass-keyfile" data-i18n-placeholder="prefs_keepass.keyfile_ph" placeholder="(sin keyfile)" />
+                  <button type="button" class="btn-secondary" id="btn-keepass-keyfile-browse" data-i18n="prefs_keepass.browse">Examinar…</button>
+                </div>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label data-i18n="prefs_keepass.status">Estado</label>
+                <div class="settings-control">
+                  <span id="keepass-status-label" class="keepass-status locked" data-i18n="prefs_keepass.locked">Bloqueada</span>
+                  <button type="button" class="btn-primary" id="btn-keepass-unlock" data-i18n="prefs_keepass.unlock">Desbloquear…</button>
+                  <button type="button" class="btn-secondary hidden" id="btn-keepass-lock" data-i18n="prefs_keepass.lock">Bloquear</button>
+                </div>
+              </div>
+            </section>
+
+            <!-- ── Datos ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="data">
+              <h3 class="prefs-panel-title" data-i18n="prefs_data.title">Datos</h3>
+              <p class="prefs-panel-hint" data-i18n-html="prefs_data.hint_html">
+                Exporta tus conexiones a un archivo JSON para hacer backups o moverlas a otro equipo.
+                Las contraseñas <strong>no</strong> se incluyen.
+              </p>
+
+              <div class="data-actions">
+                <button type="button" class="btn-secondary" id="btn-export-all" data-i18n="prefs_data.export_all">
+                  Exportar todo
+                </button>
+                <div class="data-export-folder">
+                  <select id="export-folder-select">
+                    <option value="" data-i18n="prefs_data.folder_pick">— Selecciona carpeta —</option>
+                  </select>
+                  <button type="button" class="btn-secondary" id="btn-export-folder" data-i18n="prefs_data.export_folder">
+                    Exportar carpeta
+                  </button>
+                </div>
+                <button type="button" class="btn-secondary" id="btn-import" data-i18n="prefs_data.import">
+                  Importar…
+                </button>
+              </div>
+            </section>
+
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" id="btn-prefs-cancel" data-i18n="modal_prefs.cancel">Cancelar</button>
+          <button type="button" class="btn-primary" id="btn-prefs-save" data-i18n="modal_prefs.save">Guardar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Desbloquear KeePass
+    ══════════════════════════════════════════════════════ -->
+    <div id="modal-keepass-overlay" class="hidden">
+      <div id="modal-keepass" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <h2 data-i18n="modal_kp.title">Desbloquear KeePass</h2>
+          <button class="btn-icon" id="btn-keepass-close" data-i18n-aria-label="modal_kp.close" aria-label="Cerrar">✕</button>
+        </div>
+        <form id="form-keepass-unlock" autocomplete="off">
+          <div class="form-row">
+            <label data-i18n="modal_kp.file">Archivo</label>
+            <input type="text" id="kp-modal-path" readonly />
+          </div>
+          <div class="form-row">
+            <label for="kp-modal-password" data-i18n="modal_kp.password">Contraseña maestra</label>
+            <input type="password" id="kp-modal-password" placeholder="••••••••" autofocus />
+          </div>
+          <div class="form-row" id="kp-modal-error-row" style="display:none;">
+            <p class="keepass-error" id="kp-modal-error"></p>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="btn-keepass-modal-cancel" data-i18n="modal_kp.cancel">Cancelar</button>
+            <button type="submit" class="btn-primary" id="btn-keepass-modal-ok" data-i18n="modal_kp.unlock">Desbloquear</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ── Toast de notificaciones ── -->
+    <div id="toast-container"></div>
+
+  </body>
+</html>

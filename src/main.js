@@ -1,0 +1,3437 @@
+/**
+ * Rustty – Frontend principal
+ * Stack: Vite + Vanilla JS + Xterm.js + Tauri 2 API
+ */
+
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import "@xterm/xterm/css/xterm.css";
+import "./styles.css";
+import {
+  SUPPORTED_LANGS,
+  t,
+  setLanguage,
+  getLanguage,
+  detectLanguage,
+  applyTranslations,
+} from "./i18n.js";
+
+// ═══════════════════════════════════════════════════════════════
+// ESTADO DE LA APLICACIÓN
+// ═══════════════════════════════════════════════════════════════
+
+/** Perfiles cargados del backend */
+let profiles = [];
+
+/**
+ * Carpetas creadas manualmente por el usuario (vacías o no).
+ * Se persisten en localStorage para sobrevivir reinicios de la app.
+ */
+let userFolders = new Set(
+  JSON.parse(localStorage.getItem("rustty-folders") || "[]")
+);
+
+/** Qué carpetas están expandidas en el árbol (en memoria) */
+const openFolders = new Set();
+
+/** Contexto del menú contextual activo */
+let ctxTarget = { type: null, id: null, folderPath: null };
+
+/**
+ * Sesiones SSH activas.
+ * @type {Map<string, {profileId, terminal, fitAddon, unlisteners, status}>}
+ */
+const sessions = new Map();
+
+/**
+ * Vista actual: lista ordenada de sessionIds que se muestran simultáneamente.
+ * - [] → pantalla de bienvenida
+ * - [X] → un solo panel
+ * - [X, Y, …] → panels lado a lado con divisores
+ * Se cambia con `selectSession(sid, additive)`.
+ */
+let viewSelection = [];
+// Proporciones persistentes para las vistas multi-pane (clave = selection.join("|"))
+const viewRatios = new Map();
+// Layout por vista: "columns" | "rows" | "grid" (clave = selection.join("|"))
+const viewLayouts = new Map();
+// Broadcast input: si está activo, lo que se escribe en una pane se replica en todas
+// las demás panes de la vista (excluye RDP). Clave = selection.join("|").
+const broadcastViews = new Map();
+
+let activeSessionId = null;
+let editingProfileId = null;
+
+// ═══════════════════════════════════════════════════════════════
+// TEMAS XTERM.JS
+//
+// Catálogo de paletas para el terminal. Las variables de UI viven en
+// styles.css bajo `html.theme-<id>`; aquí solo definimos lo que xterm.js
+// no puede leer de CSS. `dark` corresponde al valor por defecto en :root.
+// ═══════════════════════════════════════════════════════════════
+
+const TERMINAL_THEMES = {
+  // Catppuccin Mocha
+  dark: {
+    background:          "#1e1e2e",
+    foreground:          "#cdd6f4",
+    cursor:              "#f5e0dc",
+    cursorAccent:        "#1e1e2e",
+    selectionBackground: "rgba(137,180,250,0.3)",
+    black:   "#45475a", red:     "#f38ba8", green:   "#a6e3a1", yellow:  "#f9e2af",
+    blue:    "#89b4fa", magenta: "#cba6f7", cyan:    "#94e2d5", white:   "#bac2de",
+    brightBlack:   "#585b70", brightRed:   "#f38ba8",
+    brightGreen:   "#a6e3a1", brightYellow:"#f9e2af",
+    brightBlue:    "#89b4fa", brightMagenta:"#cba6f7",
+    brightCyan:    "#94e2d5", brightWhite: "#a6adc8",
+  },
+  // Catppuccin Latte
+  light: {
+    background:          "#eff1f5",
+    foreground:          "#4c4f69",
+    cursor:              "#dc8a78",
+    cursorAccent:        "#eff1f5",
+    selectionBackground: "rgba(30,102,245,0.2)",
+    black:   "#5c5f77", red:     "#d20f39", green:   "#40a02b", yellow:  "#df8e1d",
+    blue:    "#1e66f5", magenta: "#8839ef", cyan:    "#179299", white:   "#acb0be",
+    brightBlack:   "#6c6f85", brightRed:   "#d20f39",
+    brightGreen:   "#40a02b", brightYellow:"#df8e1d",
+    brightBlue:    "#1e66f5", brightMagenta:"#8839ef",
+    brightCyan:    "#179299", brightWhite: "#bcc0cc",
+  },
+  // Dracula (https://draculatheme.com)
+  dracula: {
+    background:          "#282a36",
+    foreground:          "#f8f8f2",
+    cursor:              "#f8f8f2",
+    cursorAccent:        "#282a36",
+    selectionBackground: "rgba(68,71,90,0.6)",
+    black:   "#21222c", red:     "#ff5555", green:   "#50fa7b", yellow:  "#f1fa8c",
+    blue:    "#bd93f9", magenta: "#ff79c6", cyan:    "#8be9fd", white:   "#f8f8f2",
+    brightBlack:   "#6272a4", brightRed:   "#ff6e6e",
+    brightGreen:   "#69ff94", brightYellow:"#ffffa5",
+    brightBlue:    "#d6acff", brightMagenta:"#ff92df",
+    brightCyan:    "#a4ffff", brightWhite: "#ffffff",
+  },
+  // Nord (https://www.nordtheme.com)
+  nord: {
+    background:          "#2e3440",
+    foreground:          "#d8dee9",
+    cursor:              "#d8dee9",
+    cursorAccent:        "#2e3440",
+    selectionBackground: "rgba(67,76,94,0.6)",
+    black:   "#3b4252", red:     "#bf616a", green:   "#a3be8c", yellow:  "#ebcb8b",
+    blue:    "#81a1c1", magenta: "#b48ead", cyan:    "#88c0d0", white:   "#e5e9f0",
+    brightBlack:   "#4c566a", brightRed:   "#bf616a",
+    brightGreen:   "#a3be8c", brightYellow:"#ebcb8b",
+    brightBlue:    "#81a1c1", brightMagenta:"#b48ead",
+    brightCyan:    "#8fbcbb", brightWhite: "#eceff4",
+  },
+  // xterm clásico (paleta por defecto histórica)
+  xterm: {
+    background:          "#000000",
+    foreground:          "#ffffff",
+    cursor:              "#ffffff",
+    cursorAccent:        "#000000",
+    selectionBackground: "rgba(255,255,255,0.3)",
+    black:   "#000000", red:     "#cd0000", green:   "#00cd00", yellow:  "#cdcd00",
+    blue:    "#0000ee", magenta: "#cd00cd", cyan:    "#00cdcd", white:   "#e5e5e5",
+    brightBlack:   "#7f7f7f", brightRed:   "#ff0000",
+    brightGreen:   "#00ff00", brightYellow:"#ffff00",
+    brightBlue:    "#5c5cff", brightMagenta:"#ff00ff",
+    brightCyan:    "#00ffff", brightWhite: "#ffffff",
+  },
+  // VS Code Dark+ (paleta oficial del integrated terminal)
+  "vscode-dark": {
+    background:          "#1e1e1e",
+    foreground:          "#cccccc",
+    cursor:              "#aeafad",
+    cursorAccent:        "#1e1e1e",
+    selectionBackground: "rgba(58,61,65,0.6)",
+    black:   "#000000", red:     "#cd3131", green:   "#0dbc79", yellow:  "#e5e510",
+    blue:    "#2472c8", magenta: "#bc3fbc", cyan:    "#11a8cd", white:   "#e5e5e5",
+    brightBlack:   "#666666", brightRed:   "#f14c4c",
+    brightGreen:   "#23d18b", brightYellow:"#f5f543",
+    brightBlue:    "#3b8eea", brightMagenta:"#d670d6",
+    brightCyan:    "#29b8db", brightWhite: "#e5e5e5",
+  },
+  // Tango (GNOME Terminal) – variante oscura
+  tango: {
+    background:          "#2e3436",
+    foreground:          "#eeeeec",
+    cursor:              "#eeeeec",
+    cursorAccent:        "#2e3436",
+    selectionBackground: "rgba(85,87,83,0.6)",
+    black:   "#2e3436", red:     "#cc0000", green:   "#4e9a06", yellow:  "#c4a000",
+    blue:    "#3465a4", magenta: "#75507b", cyan:    "#06989a", white:   "#d3d7cf",
+    brightBlack:   "#555753", brightRed:   "#ef2929",
+    brightGreen:   "#8ae234", brightYellow:"#fce94f",
+    brightBlue:    "#729fcf", brightMagenta:"#ad7fa8",
+    brightCyan:    "#34e2e2", brightWhite: "#eeeeec",
+  },
+  // Solarized Dark (https://ethanschoonover.com/solarized)
+  "solarized-dark": {
+    background:          "#002b36",
+    foreground:          "#839496",
+    cursor:              "#93a1a1",
+    cursorAccent:        "#002b36",
+    selectionBackground: "rgba(7,54,66,0.8)",
+    black:   "#073642", red:     "#dc322f", green:   "#859900", yellow:  "#b58900",
+    blue:    "#268bd2", magenta: "#d33682", cyan:    "#2aa198", white:   "#eee8d5",
+    brightBlack:   "#586e75", brightRed:   "#cb4b16",
+    brightGreen:   "#93a1a1", brightYellow:"#657b83",
+    brightBlue:    "#839496", brightMagenta:"#6c71c4",
+    brightCyan:    "#93a1a1", brightWhite: "#fdf6e3",
+  },
+  // Solarized Light (variante clara del mismo set)
+  "solarized-light": {
+    background:          "#fdf6e3",
+    foreground:          "#657b83",
+    cursor:              "#586e75",
+    cursorAccent:        "#fdf6e3",
+    selectionBackground: "rgba(238,232,213,0.8)",
+    black:   "#073642", red:     "#dc322f", green:   "#859900", yellow:  "#b58900",
+    blue:    "#268bd2", magenta: "#d33682", cyan:    "#2aa198", white:   "#eee8d5",
+    brightBlack:   "#002b36", brightRed:   "#cb4b16",
+    brightGreen:   "#586e75", brightYellow:"#657b83",
+    brightBlue:    "#839496", brightMagenta:"#6c71c4",
+    brightCyan:    "#93a1a1", brightWhite: "#fdf6e3",
+  },
+  // Gruvbox Dark (https://github.com/morhetz/gruvbox)
+  "gruvbox-dark": {
+    background:          "#282828",
+    foreground:          "#ebdbb2",
+    cursor:              "#ebdbb2",
+    cursorAccent:        "#282828",
+    selectionBackground: "rgba(80,73,69,0.7)",
+    black:   "#282828", red:     "#cc241d", green:   "#98971a", yellow:  "#d79921",
+    blue:    "#458588", magenta: "#b16286", cyan:    "#689d6a", white:   "#a89984",
+    brightBlack:   "#928374", brightRed:   "#fb4934",
+    brightGreen:   "#b8bb26", brightYellow:"#fabd2f",
+    brightBlue:    "#83a598", brightMagenta:"#d3869b",
+    brightCyan:    "#8ec07c", brightWhite: "#ebdbb2",
+  },
+  // Tokyo Night (https://github.com/enkia/tokyo-night-vscode-theme)
+  "tokyo-night": {
+    background:          "#1a1b26",
+    foreground:          "#c0caf5",
+    cursor:              "#c0caf5",
+    cursorAccent:        "#1a1b26",
+    selectionBackground: "rgba(41,46,66,0.7)",
+    black:   "#15161e", red:     "#f7768e", green:   "#9ece6a", yellow:  "#e0af68",
+    blue:    "#7aa2f7", magenta: "#bb9af7", cyan:    "#7dcfff", white:   "#a9b1d6",
+    brightBlack:   "#414868", brightRed:   "#f7768e",
+    brightGreen:   "#9ece6a", brightYellow:"#e0af68",
+    brightBlue:    "#7aa2f7", brightMagenta:"#bb9af7",
+    brightCyan:    "#7dcfff", brightWhite: "#c0caf5",
+  },
+  // Monokai clásico (Sublime Text / TextMate)
+  monokai: {
+    background:          "#272822",
+    foreground:          "#f8f8f2",
+    cursor:              "#f8f8f0",
+    cursorAccent:        "#272822",
+    selectionBackground: "rgba(73,72,62,0.7)",
+    black:   "#272822", red:     "#f92672", green:   "#a6e22e", yellow:  "#f4bf75",
+    blue:    "#66d9ef", magenta: "#ae81ff", cyan:    "#a1efe4", white:   "#f8f8f2",
+    brightBlack:   "#75715e", brightRed:   "#f92672",
+    brightGreen:   "#a6e22e", brightYellow:"#f4bf75",
+    brightBlue:    "#66d9ef", brightMagenta:"#ae81ff",
+    brightCyan:    "#a1efe4", brightWhite: "#f9f8f5",
+  },
+};
+
+/** IDs de tema que tienen una clase CSS distinta aplicada a <html>. */
+const THEME_CLASSES = [
+  "theme-light",
+  "theme-dracula",
+  "theme-nord",
+  "theme-xterm",
+  "theme-vscode-dark",
+  "theme-tango",
+  "theme-solarized-dark",
+  "theme-solarized-light",
+  "theme-gruvbox-dark",
+  "theme-tokyo-night",
+  "theme-monokai",
+];
+
+// ═══════════════════════════════════════════════════════════════
+// PREFERENCIAS
+// ═══════════════════════════════════════════════════════════════
+
+const DEFAULT_PREFS = {
+  theme:           "dark",    // "dark" | "light" | "system"
+  copyOnSelect:    false,
+  rightClickPaste: false,
+  fontSize:        14,
+  cursorStyle:     "block",   // "block" | "bar" | "underline"
+  cursorBlink:     true,
+  scrollback:      5000,
+  bell:            "none",    // "none" | "visual" | "sound"
+  // KeePass: rutas persistentes (sin contraseña maestra)
+  keepassPath:     "",
+  keepassKeyfile:  "",
+  // Idioma de la interfaz: "es" | "en" | "fr" | "pt"
+  lang:            null, // null → usar detectLanguage() en loadPrefs
+};
+
+let prefs = { ...DEFAULT_PREFS };
+
+function loadPrefs() {
+  try {
+    const stored = JSON.parse(localStorage.getItem("rustty-prefs") || "null");
+    if (stored) prefs = { ...DEFAULT_PREFS, ...stored };
+  } catch {}
+  if (!prefs.lang || !SUPPORTED_LANGS.includes(prefs.lang)) {
+    prefs.lang = detectLanguage();
+  }
+  setLanguage(prefs.lang);
+  applyTranslations();
+  applyTheme(prefs.theme);
+}
+
+function savePrefs() {
+  localStorage.setItem("rustty-prefs", JSON.stringify(prefs));
+}
+
+/** Resuelve un tema efectivo (`system` → `dark` | `light` según el SO). */
+function resolveEffectiveTheme(theme) {
+  if (theme === "system") {
+    return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  }
+  return theme;
+}
+
+/** Devuelve el tema xterm.js correcto según la preferencia activa. */
+function getTerminalTheme() {
+  const effective = resolveEffectiveTheme(prefs.theme);
+  return TERMINAL_THEMES[effective] || TERMINAL_THEMES.dark;
+}
+
+/**
+ * Aplica el tema al elemento <html> y actualiza los colores de todos
+ * los terminales abiertos. `dark` es el tema por defecto (sin clase).
+ */
+function applyTheme(theme) {
+  const effective = resolveEffectiveTheme(theme);
+  const root = document.documentElement;
+  THEME_CLASSES.forEach((cls) => root.classList.remove(cls));
+  if (effective !== "dark") {
+    root.classList.add(`theme-${effective}`);
+  }
+  applyPrefsToAllTerminals();
+}
+
+/**
+ * Aplica las preferencias actuales a un terminal ya abierto.
+ * Los handlers de copyOnSelect y rightClickPaste se instalan en
+ * createTerminalTab leyendo `prefs` dinámicamente, por lo que no
+ * es necesario reinstalarlos aquí.
+ */
+function applyPrefsToTerminal(terminal) {
+  terminal.options.fontSize    = prefs.fontSize;
+  terminal.options.cursorStyle = prefs.cursorStyle;
+  terminal.options.cursorBlink = prefs.cursorBlink;
+  terminal.options.scrollback  = prefs.scrollback;
+  terminal.options.bellStyle   = prefs.bell;
+  terminal.options.theme       = getTerminalTheme();
+}
+
+function applyPrefsToAllTerminals() {
+  for (const [sid, s] of sessions) {
+    if (!s.terminal) continue;
+    applyPrefsToTerminal(s.terminal);
+    s.fitAddon?.fit();
+    notifyResize(sid, s.terminal);
+  }
+}
+
+let prefsActiveTab = "terminal";
+
+function switchPrefsTab(tab) {
+  prefsActiveTab = tab;
+  document.querySelectorAll(".prefs-nav-item").forEach((el) =>
+    el.classList.toggle("active", el.dataset.prefsTab === tab)
+  );
+  document.querySelectorAll(".prefs-panel").forEach((el) =>
+    el.classList.toggle("active", el.dataset.prefsPanel === tab)
+  );
+}
+
+function openSettingsModal() {
+  document.getElementById("pref-copy-on-select").checked   = prefs.copyOnSelect;
+  document.getElementById("pref-right-click-paste").checked = prefs.rightClickPaste;
+  document.getElementById("pref-font-size").value           = prefs.fontSize;
+  document.getElementById("pref-cursor-style").value        = prefs.cursorStyle;
+  document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
+  document.getElementById("pref-scrollback").value          = prefs.scrollback;
+  document.getElementById("pref-bell").value                = prefs.bell;
+
+  // Marcar el radio + .selected correspondientes al tema actual
+  document.querySelectorAll('input[name="pref-theme"]').forEach((r) => {
+    r.checked = (r.value === prefs.theme);
+  });
+  document.querySelectorAll(".theme-option").forEach((opt) =>
+    opt.classList.toggle("selected", opt.dataset.theme === prefs.theme)
+  );
+
+  // Rellenar el selector de carpetas para exportar
+  const folderSel = document.getElementById("export-folder-select");
+  const allPaths = getAllFolderPaths();
+  folderSel.innerHTML = `<option value="">${escHtml(t("prefs_data.folder_pick"))}</option>`
+    + allPaths.map((p) => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join("");
+
+  // KeePass: rutas y estado
+  document.getElementById("pref-keepass-path").value    = prefs.keepassPath || "";
+  document.getElementById("pref-keepass-keyfile").value = prefs.keepassKeyfile || "";
+  refreshKeepassStatus();
+
+  // Idioma
+  const langSel = document.getElementById("pref-language");
+  if (langSel) langSel.value = prefs.lang || getLanguage();
+
+  // Mantener la última pestaña activa al reabrir
+  switchPrefsTab(prefsActiveTab);
+
+  document.getElementById("modal-prefs-overlay").classList.remove("hidden");
+}
+
+function closeSettingsModal() {
+  // Si se canceló, revertir el preview de tema al que estaba guardado
+  applyTheme(prefs.theme);
+  document.getElementById("modal-prefs-overlay").classList.add("hidden");
+}
+
+function savePrefsFromModal() {
+  // Tema: leer desde radio (fuente única de verdad) con fallback a prefs actuales
+  const selectedTheme =
+    document.querySelector('input[name="pref-theme"]:checked')?.value
+    ?? document.querySelector(".theme-option.selected")?.dataset.theme
+    ?? prefs.theme;
+
+  const newLang =
+    document.getElementById("pref-language")?.value ||
+    prefs.lang ||
+    getLanguage();
+
+  prefs = {
+    theme:           selectedTheme,
+    copyOnSelect:    document.getElementById("pref-copy-on-select").checked,
+    rightClickPaste: document.getElementById("pref-right-click-paste").checked,
+    fontSize:        parseInt(document.getElementById("pref-font-size").value, 10) || DEFAULT_PREFS.fontSize,
+    cursorStyle:     document.getElementById("pref-cursor-style").value,
+    cursorBlink:     document.getElementById("pref-cursor-blink").checked,
+    scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
+    bell:            document.getElementById("pref-bell").value,
+    keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
+    keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
+    lang:            SUPPORTED_LANGS.includes(newLang) ? newLang : "es",
+  };
+
+  savePrefs();
+  if (prefs.lang !== getLanguage()) {
+    setLanguage(prefs.lang);
+    applyTranslations();
+  }
+  applyTheme(prefs.theme);
+  applyPrefsToAllTerminals();
+  closeSettingsModal();
+  toast(t("toast.prefs_saved"), "success");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// KEEPASS
+// ═══════════════════════════════════════════════════════════════
+
+let keepassUnlocked = false;
+let keepassEntries = [];
+
+async function refreshKeepassStatus() {
+  try {
+    const st = await invoke("keepass_status");
+    keepassUnlocked = !!st.unlocked;
+  } catch {
+    keepassUnlocked = false;
+  }
+  const label = document.getElementById("keepass-status-label");
+  const btnUnlock = document.getElementById("btn-keepass-unlock");
+  const btnLock = document.getElementById("btn-keepass-lock");
+  if (!label) return;
+  if (keepassUnlocked) {
+    label.textContent = "Desbloqueada";
+    label.classList.remove("locked");
+    label.classList.add("unlocked");
+    btnUnlock.classList.add("hidden");
+    btnLock.classList.remove("hidden");
+    try { keepassEntries = await invoke("keepass_list_entries"); } catch { keepassEntries = []; }
+  } else {
+    label.textContent = "Bloqueada";
+    label.classList.remove("unlocked");
+    label.classList.add("locked");
+    btnUnlock.classList.remove("hidden");
+    btnLock.classList.add("hidden");
+    keepassEntries = [];
+  }
+}
+
+async function browseKeepassPath() {
+  const selected = await openDialog({
+    multiple: false,
+    filters: [{ name: "KeePass", extensions: ["kdbx"] }],
+  });
+  if (typeof selected === "string") {
+    document.getElementById("pref-keepass-path").value = selected;
+  }
+}
+
+async function browseKeepassKeyfile() {
+  const selected = await openDialog({ multiple: false });
+  if (typeof selected === "string") {
+    document.getElementById("pref-keepass-keyfile").value = selected;
+  }
+}
+
+function openKeepassUnlockModal() {
+  const path = document.getElementById("pref-keepass-path").value.trim();
+  if (!path) { toast("Selecciona primero una base .kdbx", "warning"); return; }
+  document.getElementById("kp-modal-path").value = path;
+  document.getElementById("kp-modal-password").value = "";
+  document.getElementById("kp-modal-error-row").style.display = "none";
+  document.getElementById("modal-keepass-overlay").classList.remove("hidden");
+  setTimeout(() => document.getElementById("kp-modal-password").focus(), 0);
+}
+
+function closeKeepassModal() {
+  document.getElementById("modal-keepass-overlay").classList.add("hidden");
+  document.getElementById("kp-modal-password").value = "";
+}
+
+async function submitKeepassUnlock() {
+  const path = document.getElementById("kp-modal-path").value;
+  const password = document.getElementById("kp-modal-password").value;
+  const keyfile = document.getElementById("pref-keepass-keyfile").value.trim() || null;
+  const errRow = document.getElementById("kp-modal-error-row");
+  const errEl  = document.getElementById("kp-modal-error");
+  try {
+    await invoke("keepass_unlock", { path, password, keyfilePath: keyfile });
+    closeKeepassModal();
+    // Persistir rutas si no estaban
+    prefs.keepassPath = path;
+    if (keyfile) prefs.keepassKeyfile = keyfile;
+    savePrefs();
+    await refreshKeepassStatus();
+    toast("KeePass desbloqueada", "success");
+  } catch (e) {
+    errEl.textContent = e?.toString() || "No se pudo desbloquear";
+    errRow.style.display = "";
+  }
+}
+
+async function lockKeepass() {
+  try {
+    await invoke("keepass_lock");
+    await refreshKeepassStatus();
+    toast("KeePass bloqueada", "success");
+  } catch (e) {
+    toast("Error al bloquear: " + e, "error");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INICIALIZACIÓN
+// ═══════════════════════════════════════════════════════════════
+
+async function init() {
+  loadPrefs();
+
+  try {
+    profiles = await invoke("get_profiles");
+  } catch {
+    profiles = [];
+  }
+
+  renderConnectionList();
+  bindUIEvents();
+  // Consultar estado KeePass al arranque (por si una sesión anterior dejó
+  // la DB abierta — no ocurre en MVP, queda como no-op).
+  refreshKeepassStatus();
+
+  // Actualizar tema cuando cambia la preferencia del SO (solo relevante en modo "system")
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (prefs.theme === "system") applyTheme("system");
+  });
+
+  window.addEventListener("resize", () => {
+    if (!activeSessionId) return;
+    const s = sessions.get(activeSessionId);
+    s?.fitAddon.fit();
+    notifyResize(activeSessionId, s?.terminal);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ÁRBOL DE CARPETAS – estructura de datos
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Construye un árbol de nodos a partir de los perfiles y carpetas de usuario.
+ * Las carpetas son rutas separadas por "/" (ej: "Producción/Web").
+ */
+function buildFolderTree() {
+  const root = { connections: [], folders: {} };
+
+  // Primero añadir las carpetas creadas manualmente (pueden estar vacías)
+  for (const folderPath of userFolders) {
+    ensureFolderPath(root, folderPath);
+  }
+
+  // Luego añadir los perfiles en sus carpetas correspondientes
+  for (const p of profiles) {
+    if (!p.group) {
+      root.connections.push(p);
+    } else {
+      const node = ensureFolderPath(root, p.group);
+      node.connections.push(p);
+    }
+  }
+
+  return root;
+}
+
+/**
+ * Crea (si no existe) toda la cadena de nodos para una ruta y devuelve el nodo hoja.
+ */
+function ensureFolderPath(root, folderPath) {
+  const parts = folderPath.split("/").filter(Boolean);
+  let node = root;
+  let currentPath = "";
+  for (const part of parts) {
+    currentPath = currentPath ? `${currentPath}/${part}` : part;
+    if (!node.folders[part]) {
+      node.folders[part] = { connections: [], folders: {}, path: currentPath };
+    }
+    node = node.folders[part];
+  }
+  return node;
+}
+
+function countConnections(node) {
+  let n = node.connections.length;
+  for (const child of Object.values(node.folders)) n += countConnections(child);
+  return n;
+}
+
+/** Devuelve todos los paths de carpeta existentes (de perfiles + userFolders) */
+function getAllFolderPaths() {
+  const paths = new Set(userFolders);
+  for (const p of profiles) {
+    if (!p.group) continue;
+    const parts = p.group.split("/").filter(Boolean);
+    let cur = "";
+    for (const part of parts) {
+      cur = cur ? `${cur}/${part}` : part;
+      paths.add(cur);
+    }
+  }
+  return [...paths].sort();
+}
+
+function saveUserFolders() {
+  localStorage.setItem("rustty-folders", JSON.stringify([...userFolders]));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RENDERIZADO DEL ÁRBOL
+// ═══════════════════════════════════════════════════════════════
+
+function renderConnectionList() {
+  const container = document.getElementById("connection-list");
+
+  if (profiles.length === 0 && userFolders.size === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <p>Sin conexiones guardadas</p>
+        <button class="btn-link" id="btn-first-connection">Añadir la primera</button>
+      </div>`;
+    container.querySelector("#btn-first-connection")
+      ?.addEventListener("click", () => openNewConnectionModal());
+    return;
+  }
+
+  const tree = buildFolderTree();
+  container.innerHTML = renderTreeNode(tree, 0);
+  bindTreeEvents(container);
+}
+
+function renderTreeNode(node, depth) {
+  let html = "";
+  for (const p of node.connections) html += renderConnectionItem(p, depth);
+  for (const [name, child] of Object.entries(node.folders)) {
+    html += renderFolderNode(name, child, depth);
+  }
+  return html;
+}
+
+function renderFolderNode(name, node, depth) {
+  const path = node.path;
+  const isOpen = openFolders.has(path);
+  const count = countConnections(node);
+  const indent = 14 + depth * 12;
+
+  return `
+    <div class="folder-item" data-folder-path="${escHtml(path)}">
+      <div class="folder-header" style="padding-left:${indent}px; padding-right:14px">
+        <span class="folder-arrow ${isOpen ? "open" : ""}">▶</span>
+        <span class="folder-icon">📁</span>
+        <span class="folder-name">${escHtml(name)}</span>
+        <span class="folder-count">${count}</span>
+      </div>
+      <div class="folder-children${isOpen ? "" : " hidden"}">
+        ${renderTreeNode(node, depth + 1)}
+      </div>
+    </div>`;
+}
+
+function renderConnectionItem(p, depth) {
+  const isConnected = [...sessions.values()].some(
+    (s) => s.profileId === p.id && s.status === "connected"
+  );
+  const isRdp = p.connection_type === "rdp";
+  const indent = 14 + depth * 12;
+  return `
+    <div class="conn-item${isConnected ? " active" : ""}"
+         data-id="${p.id}"
+         style="padding-left:${indent}px">
+      <div class="conn-item-icon${isConnected ? " connected" : ""}${isRdp ? " rdp" : ""}">
+        ${isRdp ? (isConnected ? "▣" : "□") : (isConnected ? "●" : "○")}
+      </div>
+      <div class="conn-item-info">
+        <div class="conn-item-name">
+          ${escHtml(p.name)}
+          ${isRdp ? '<span class="conn-badge-rdp">RDP</span>' : ""}
+        </div>
+        <div class="conn-item-host">${escHtml(p.username)}@${escHtml(p.host)}:${p.port}</div>
+      </div>
+      <div class="conn-item-actions">
+        <button class="btn-icon-sm" data-action="edit" data-id="${p.id}" title="Editar">✎</button>
+        <button class="btn-icon-sm danger" data-action="delete" data-id="${p.id}" title="Eliminar">✕</button>
+      </div>
+    </div>`;
+}
+
+function bindTreeEvents(container) {
+  // Clic = seleccionar; doble clic = conectar
+  container.querySelectorAll(".conn-item").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      if (e.target.closest("[data-action]")) return;
+      container.querySelectorAll(".conn-item.selected")
+        .forEach((it) => it.classList.remove("selected"));
+      el.classList.add("selected");
+    });
+    el.addEventListener("dblclick", (e) => {
+      if (e.target.closest("[data-action]")) return;
+      connectProfile(el.dataset.id);
+    });
+  });
+
+  // Clic en botones de acción
+  container.querySelectorAll("[data-action='edit']").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openEditConnectionModal(btn.dataset.id);
+    });
+  });
+  container.querySelectorAll("[data-action='delete']").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteProfile(btn.dataset.id);
+    });
+  });
+
+  // Clic en carpeta → colapsar/expandir
+  container.querySelectorAll(".folder-header").forEach((header) => {
+    header.addEventListener("click", () => {
+      const item = header.closest(".folder-item");
+      const path = item.dataset.folderPath;
+      const children = item.querySelector(".folder-children");
+      const arrow = header.querySelector(".folder-arrow");
+      if (openFolders.has(path)) {
+        openFolders.delete(path);
+        children.classList.add("hidden");
+        arrow.classList.remove("open");
+      } else {
+        openFolders.add(path);
+        children.classList.remove("hidden");
+        arrow.classList.add("open");
+      }
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MENÚ CONTEXTUAL
+// ═══════════════════════════════════════════════════════════════
+
+function showContextMenu(x, y, type, id = null, folderPath = null) {
+  ctxTarget = { type, id, folderPath };
+
+  const menu = document.getElementById("context-menu");
+
+  // Mostrar u ocultar secciones según el tipo de objetivo
+  menu.querySelectorAll(".ctx-folder-only").forEach((el) =>
+    el.classList.toggle("hidden", type !== "folder")
+  );
+  menu.querySelectorAll(".ctx-conn-only").forEach((el) =>
+    el.classList.toggle("hidden", type !== "connection")
+  );
+  // "Abrir directorio de datos" solo visible en el clic sobre la zona vacía
+  menu.querySelectorAll(".ctx-sidebar-only").forEach((el) =>
+    el.classList.toggle("hidden", type !== "sidebar")
+  );
+
+  // Posicionar fuera de pantalla para medir, luego ajustar
+  menu.style.left = "0px";
+  menu.style.top  = "0px";
+  menu.classList.remove("hidden");
+
+  const { width, height } = menu.getBoundingClientRect();
+  menu.style.left = Math.min(x, window.innerWidth  - width  - 6) + "px";
+  menu.style.top  = Math.min(y, window.innerHeight - height - 6) + "px";
+}
+
+function hideContextMenu() {
+  document.getElementById("context-menu").classList.add("hidden");
+  ctxTarget = { type: null, id: null, folderPath: null };
+}
+
+function handleContextMenuAction(action) {
+  const { id, folderPath } = ctxTarget;
+  hideContextMenu();
+
+  switch (action) {
+    case "new-connection":
+      // La carpeta contextual se pasa como prefijo
+      openNewConnectionModal(folderPath);
+      break;
+    case "new-folder":
+      startInlineFolderCreation(folderPath);
+      break;
+    case "rename-folder":
+      renameFolder(folderPath);
+      break;
+    case "delete-folder":
+      deleteFolderAndMoveConnections(folderPath);
+      break;
+    case "connect":
+      connectProfile(id);
+      break;
+    case "edit-conn":
+      openEditConnectionModal(id);
+      break;
+    case "delete-conn":
+      deleteProfile(id);
+      break;
+    case "open-data-dir":
+      openDataDirectory();
+      break;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// GESTIÓN DE CARPETAS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Inserta un input inline en el árbol para crear una nueva carpeta.
+ * @param {string|null} parentPath  Carpeta padre (null = raíz)
+ */
+function startInlineFolderCreation(parentPath = null) {
+  const container = document.getElementById("connection-list");
+
+  // Eliminar cualquier input inline previo
+  container.querySelector(".folder-inline-input")?.remove();
+
+  const prefix = parentPath ? `${parentPath}/` : "";
+  const indent = parentPath ? (parentPath.split("/").length * 12 + 14) : 14;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "folder-inline-input";
+  wrapper.style.paddingLeft = `${indent}px`;
+  wrapper.innerHTML = `
+    <span class="folder-icon">📁</span>
+    <input type="text" placeholder="Nombre de carpeta" data-prefix="${escHtml(prefix)}" />`;
+
+  // Si hay carpeta padre, abrir la carpeta padre e insertar al principio de sus hijos
+  if (parentPath) {
+    const folderEl = container.querySelector(
+      `.folder-item[data-folder-path="${CSS.escape(parentPath)}"]`
+    );
+    if (folderEl) {
+      openFolders.add(parentPath);
+      const children = folderEl.querySelector(".folder-children");
+      const arrow = folderEl.querySelector(".folder-arrow");
+      children.classList.remove("hidden");
+      arrow.classList.add("open");
+      children.prepend(wrapper);
+    } else {
+      container.prepend(wrapper);
+    }
+  } else {
+    container.prepend(wrapper);
+  }
+
+  const input = wrapper.querySelector("input");
+  input.focus();
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const name = input.value.trim();
+      wrapper.remove();
+      if (!name) return;
+      const fullPath = prefix + name;
+      userFolders.add(fullPath);
+      saveUserFolders();
+      openFolders.add(fullPath);
+      renderConnectionList();
+      toast(`Carpeta "${name}" creada`, "success");
+    } else if (e.key === "Escape") {
+      wrapper.remove();
+    }
+  });
+
+  // Cancelar si pierde el foco sin confirmar
+  input.addEventListener("blur", () => setTimeout(() => wrapper.remove(), 200));
+}
+
+async function renameFolder(folderPath) {
+  const parts = folderPath.split("/");
+  const currentName = parts.at(-1);
+  const newName = window.prompt("Nuevo nombre de carpeta:", currentName);
+  if (!newName || newName.trim() === currentName) return;
+
+  const newPath = [...parts.slice(0, -1), newName.trim()].join("/") || newName.trim();
+  const prefix    = folderPath + "/";
+  const newPrefix = newPath + "/";
+
+  // Actualizar perfiles que estén en esta carpeta o subcarpetas
+  for (const p of profiles) {
+    if (!p.group) continue;
+    let newGroup = null;
+    if (p.group === folderPath) {
+      newGroup = newPath;
+    } else if (p.group.startsWith(prefix)) {
+      newGroup = newPrefix + p.group.slice(prefix.length);
+    } else {
+      continue;
+    }
+    const updated = { ...p, group: newGroup };
+    await invoke("save_profile", { profile: updated }).catch(() => {});
+    profiles[profiles.findIndex((x) => x.id === p.id)] = updated;
+  }
+
+  // Actualizar userFolders
+  const toAdd = [];
+  for (const f of [...userFolders]) {
+    if (f === folderPath) { userFolders.delete(f); toAdd.push(newPath); }
+    else if (f.startsWith(prefix)) { userFolders.delete(f); toAdd.push(newPrefix + f.slice(prefix.length)); }
+  }
+  toAdd.forEach((f) => userFolders.add(f));
+  saveUserFolders();
+
+  // Actualizar estado de apertura
+  if (openFolders.has(folderPath)) { openFolders.delete(folderPath); openFolders.add(newPath); }
+
+  renderConnectionList();
+  toast(`Carpeta renombrada a "${newName.trim()}"`, "success");
+}
+
+async function deleteFolderAndMoveConnections(folderPath) {
+  const count = profiles.filter(
+    (p) => p.group === folderPath || p.group?.startsWith(folderPath + "/")
+  ).length;
+
+  const msg = count > 0
+    ? `¿Eliminar la carpeta "${folderPath}"?\n${count} conexión(es) se moverán a la raíz.`
+    : `¿Eliminar la carpeta vacía "${folderPath}"?`;
+
+  if (!window.confirm(msg)) return;
+
+  const prefix = folderPath + "/";
+  for (const p of profiles) {
+    if (p.group !== folderPath && !p.group?.startsWith(prefix)) continue;
+    const updated = { ...p, group: null };
+    await invoke("save_profile", { profile: updated }).catch(() => {});
+    profiles[profiles.findIndex((x) => x.id === p.id)] = updated;
+  }
+
+  // Eliminar la carpeta y todas sus subcarpetas de userFolders
+  for (const f of [...userFolders]) {
+    if (f === folderPath || f.startsWith(prefix)) userFolders.delete(f);
+  }
+  saveUserFolders();
+  openFolders.delete(folderPath);
+  renderConnectionList();
+  toast(`Carpeta "${folderPath}" eliminada`, "info");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MODAL DE CONEXIÓN
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Abre el modal para nueva conexión.
+ * @param {string|null} preselectedFolder  Carpeta a preseleccionar en el picker
+ */
+function openNewConnectionModal(preselectedFolder = null) {
+  editingProfileId = null;
+  document.getElementById("modal-title").textContent = "Nueva conexión";
+  document.getElementById("form-connection").reset();
+  document.getElementById("f-conn-type").value = "ssh";
+  refreshKeepassStatus().then(() => {
+    populateKeepassEntrySelect(null);
+    updateConnTypeFields("ssh");
+  });
+  populateFolderSelect(preselectedFolder);
+  document.getElementById("modal-overlay").classList.remove("hidden");
+  document.getElementById("f-name").focus();
+}
+
+function openEditConnectionModal(profileId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+
+  editingProfileId = profileId;
+  document.getElementById("modal-title").textContent = "Editar conexión";
+
+  document.getElementById("f-name").value  = profile.name;
+  document.getElementById("f-host").value  = profile.host;
+  document.getElementById("f-port").value  = profile.port;
+  document.getElementById("f-user").value  = profile.username;
+  const connType = profile.connection_type || "ssh";
+  document.getElementById("f-conn-type").value  = connType;
+  document.getElementById("f-domain").value     = profile.domain || "";
+  document.getElementById("f-auth-type").value  = profile.auth_type;
+  document.getElementById("f-key-path").value   = profile.key_path || "";
+
+  populateFolderSelect(profile.group || "");
+  refreshKeepassStatus().then(() => {
+    document.getElementById("f-use-keepass").checked = !!profile.keepass_entry_uuid;
+    populateKeepassEntrySelect(profile.keepass_entry_uuid || null);
+    updateConnTypeFields(connType);
+  });
+  document.getElementById("modal-overlay").classList.remove("hidden");
+}
+
+function populateKeepassEntrySelect(selectedUuid) {
+  const sel = document.getElementById("f-keepass-entry");
+  if (!sel) return;
+  let opts = `<option value="">— Selecciona una entrada —</option>`;
+  for (const e of keepassEntries) {
+    const label = e.group
+      ? `${e.group} / ${e.title || "(sin título)"}`
+      : (e.title || "(sin título)");
+    const suffix = e.username ? ` — ${e.username}` : "";
+    opts += `<option value="${escHtml(e.uuid)}"${e.uuid === selectedUuid ? " selected" : ""}>${escHtml(label + suffix)}</option>`;
+  }
+  sel.innerHTML = opts;
+}
+
+function closeModal() {
+  document.getElementById("modal-overlay").classList.add("hidden");
+  document.getElementById("form-connection").reset();
+  editingProfileId = null;
+}
+
+/** Rellena el <select> de carpetas con todos los paths existentes */
+function populateFolderSelect(selectedPath = null) {
+  const select = document.getElementById("f-folder-select");
+  const input  = document.getElementById("f-folder-input");
+  const paths  = getAllFolderPaths();
+
+  let opts = `<option value="">Sin carpeta (raíz)</option>`;
+  for (const p of paths) {
+    opts += `<option value="${escHtml(p)}"${p === selectedPath ? " selected" : ""}>${escHtml(p)}</option>`;
+  }
+  opts += `<option value="__new__">+ Nueva carpeta…</option>`;
+  select.innerHTML = opts;
+
+  // Si el path seleccionado no está en la lista, activar el input manual
+  const isKnown = !selectedPath || paths.includes(selectedPath);
+  if (!isKnown) {
+    select.value = "__new__";
+    input.value  = selectedPath || "";
+    input.classList.remove("hidden");
+  } else {
+    input.classList.add("hidden");
+  }
+}
+
+function updateAuthFields(authType) {
+  const isPwd = authType === "password";
+  document.getElementById("field-password").classList.toggle("hidden", !isPwd);
+  document.getElementById("field-save-password").classList.toggle("hidden", !isPwd);
+  document.getElementById("field-key-path").classList.toggle("hidden", authType !== "public_key");
+  document.getElementById("field-passphrase").classList.toggle("hidden", authType !== "public_key");
+  document.getElementById("field-save-passphrase").classList.toggle("hidden", authType !== "public_key");
+
+  // KeePass: sólo aplica a auth=password
+  const useKp = document.getElementById("f-use-keepass").checked;
+  document.getElementById("field-keepass-toggle").classList.toggle("hidden", !isPwd);
+  document.getElementById("field-keepass-entry").classList.toggle("hidden", !isPwd || !useKp);
+  // Si KeePass está activo, ocultar los campos de contraseña
+  if (isPwd && useKp) {
+    document.getElementById("field-password").classList.add("hidden");
+    document.getElementById("field-save-password").classList.add("hidden");
+  }
+  // Hint cuando DB no está desbloqueada
+  const hint = document.getElementById("keepass-hint-locked");
+  if (hint) hint.style.display = (isPwd && useKp && !keepassUnlocked) ? "" : "none";
+}
+
+/**
+ * Muestra/oculta campos según el tipo de conexión (ssh | rdp).
+ * Para RDP oculta los campos SSH-específicos y ajusta el puerto por defecto.
+ */
+function updateConnTypeFields(type, adjustPort = false) {
+  const isRdp = type === "rdp";
+  document.getElementById("field-domain").classList.toggle("hidden", !isRdp);
+  document.getElementById("field-auth-type").classList.toggle("hidden", isRdp);
+  document.getElementById("field-key-path").classList.add("hidden");
+  document.getElementById("field-passphrase").classList.add("hidden");
+  document.getElementById("field-save-passphrase").classList.add("hidden");
+
+  if (isRdp) {
+    // RDP siempre usa contraseña
+    document.getElementById("field-password").classList.remove("hidden");
+    document.getElementById("field-save-password").classList.remove("hidden");
+    if (adjustPort) {
+      const portEl = document.getElementById("f-port");
+      if (parseInt(portEl.value, 10) === 22) portEl.value = 3389;
+    }
+  } else {
+    updateAuthFields(document.getElementById("f-auth-type").value);
+    if (adjustPort) {
+      const portEl = document.getElementById("f-port");
+      if (parseInt(portEl.value, 10) === 3389) portEl.value = 22;
+    }
+  }
+}
+
+/** Lee el valor de carpeta del selector (select + input manual) */
+function readFolderValue() {
+  const select = document.getElementById("f-folder-select");
+  const input  = document.getElementById("f-folder-input");
+  if (select.value === "__new__") {
+    const v = input.value.trim();
+    return v || null;
+  }
+  return select.value || null;
+}
+
+/**
+ * Guarda el perfil y opcionalmente conecta.
+ * @param {boolean} shouldConnect
+ */
+async function saveAndClose(shouldConnect) {
+  const authType       = document.getElementById("f-auth-type").value;
+  const password       = document.getElementById("f-password").value || null;
+  const savePassword   = document.getElementById("f-save-password").checked;
+  const keyPath        = document.getElementById("f-key-path").value || null;
+  const passphrase     = document.getElementById("f-passphrase").value || null;
+  const savePassphrase = document.getElementById("f-save-passphrase").checked;
+  const group          = readFolderValue();
+
+  const connType = document.getElementById("f-conn-type").value;
+  const useKeepass = document.getElementById("f-use-keepass").checked
+    && authType === "password";
+  const keepassEntryUuid = useKeepass
+    ? (document.getElementById("f-keepass-entry").value || null)
+    : null;
+
+  const profile = {
+    id:                  editingProfileId || crypto.randomUUID(),
+    name:                document.getElementById("f-name").value.trim(),
+    host:                document.getElementById("f-host").value.trim(),
+    port:                parseInt(document.getElementById("f-port").value, 10),
+    username:            document.getElementById("f-user").value.trim(),
+    connection_type:     connType,
+    domain:              document.getElementById("f-domain").value.trim() || null,
+    auth_type:           authType,
+    key_path:            keyPath,
+    group,
+    keepass_entry_uuid:  keepassEntryUuid,
+    created_at: editingProfileId
+      ? (profiles.find((p) => p.id === editingProfileId)?.created_at ?? new Date().toISOString())
+      : new Date().toISOString(),
+  };
+
+  try {
+    await invoke("save_profile", { profile });
+
+    if (authType === "password" && password && savePassword && !keepassEntryUuid) {
+      await invoke("keyring_set", {
+        service: "rustty",
+        key: `password:${profile.id}`,
+        secret: password,
+      }).catch(() => {});
+    }
+    if (authType === "public_key" && passphrase && savePassphrase) {
+      await invoke("keyring_set", {
+        service: "rustty",
+        key: `passphrase:${profile.id}`,
+        secret: passphrase,
+      }).catch(() => {});
+    }
+
+    // Si se especificó una carpeta nueva, persiste en userFolders
+    if (group) { userFolders.add(group); saveUserFolders(); }
+
+    const idx = profiles.findIndex((p) => p.id === profile.id);
+    if (idx >= 0) profiles[idx] = profile;
+    else profiles.push(profile);
+
+    renderConnectionList();
+    closeModal();
+
+    if (shouldConnect) {
+      await connectProfileWithCredentials(profile.id, password, passphrase, savePassphrase);
+    } else {
+      toast("Perfil guardado", "success");
+    }
+  } catch (err) {
+    toast(`Error: ${err}`, "error");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CONEXIÓN SSH
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Resuelve las credenciales SSH del perfil (KeePass / keyring / prompt).
+ * Devuelve { password, passphrase } o null si el usuario canceló.
+ */
+async function resolveSshCredentials(profile) {
+  let password = null, passphrase = null;
+  if (profile.auth_type === "password") {
+    if (profile.keepass_entry_uuid) {
+      if (!keepassUnlocked) {
+        toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
+        return null;
+      }
+    } else {
+      password = await invoke("keyring_get", {
+        service: "rustty", key: `password:${profile.id}`,
+      }).catch(() => null);
+      if (!password) {
+        password = window.prompt(`Contraseña para ${profile.username}@${profile.host}:`);
+        if (password === null) return null;
+      }
+    }
+  } else if (profile.auth_type === "public_key") {
+    passphrase = await invoke("keyring_get", {
+      service: "rustty", key: `passphrase:${profile.id}`,
+    }).catch(() => null);
+    if (!passphrase && profile.key_path) {
+      passphrase = window.prompt("Passphrase de la clave privada (vacío si no tiene):") ?? null;
+    }
+  }
+  return { password, passphrase };
+}
+
+async function connectProfile(profileId, { force = false } = {}) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+
+  if (profile.connection_type === "rdp") {
+    return connectRdp(profileId);
+  }
+
+  if (!force) {
+    for (const [sid, s] of sessions) {
+      if (s.profileId === profileId && s.status !== "closed") { setActiveTab(sid); return; }
+    }
+  }
+
+  const creds = await resolveSshCredentials(profile);
+  if (!creds) return;
+  await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false);
+}
+
+async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+
+  const tempId = `connecting-${profileId}-${Date.now()}`;
+  createTerminalTab(tempId, profile, "connecting");
+
+  try {
+    const sessionId = await invoke("ssh_connect", {
+      profileId,
+      password:   password   || null,
+      passphrase: passphrase || null,
+    });
+
+    const session = sessions.get(tempId);
+    session.id = sessionId;          // actualiza la referencia que usan los closures
+    sessions.delete(tempId);
+    sessions.set(sessionId, session);
+
+    document.querySelectorAll(`[data-session="${tempId}"]`).forEach((el) => {
+      el.dataset.session = sessionId;
+    });
+    const vi = viewSelection.indexOf(tempId);
+    if (vi >= 0) viewSelection[vi] = sessionId;
+    if (activeSessionId === tempId) activeSessionId = sessionId;
+
+    session.unlisteners = await registerSshListeners(sessionId, session.terminal);
+    updateTabStatus(sessionId, "connecting");
+    setActiveTab(sessionId);
+  } catch (err) {
+    sessions.delete(tempId);
+    removeTab(tempId);
+    toast(`No se pudo conectar: ${err}`, "error");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CONEXIÓN RDP
+// ═══════════════════════════════════════════════════════════════
+
+async function connectRdp(profileId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+
+  // Si ya hay una sesión activa para este perfil, traerla al frente
+  for (const [sid, s] of sessions) {
+    if (s.profileId === profileId && s.type === "rdp" && s.status !== "closed") {
+      setActiveTab(sid);
+      return;
+    }
+  }
+
+  // Obtener contraseña: KeePass (si aplica), si no keyring, si no prompt
+  let password = null;
+  if (profile.keepass_entry_uuid) {
+    if (!keepassUnlocked) {
+      toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
+      return;
+    }
+  } else {
+    password = await invoke("keyring_get", {
+      service: "rustty",
+      key: `password:${profileId}`,
+    }).catch(() => null);
+    if (!password) {
+      password = window.prompt(
+        `Contraseña RDP para ${profile.username}@${profile.host}:`
+      );
+      if (password === null) return; // usuario canceló
+    }
+  }
+
+  const tempId = `rdp-${profileId}-${Date.now()}`;
+  const sessionObj = {
+    profileId,
+    id: tempId,
+    type: "rdp",
+    status: "connecting",
+    unlisteners: [],
+    // RDP no usa terminal ni fitAddon
+    terminal: null,
+    fitAddon: null,
+  };
+  sessions.set(tempId, sessionObj);
+  createRdpTab(tempId, profile, "connecting");
+
+  try {
+    const sessionId = await invoke("rdp_connect", {
+      profileId,
+      password: password || null,
+    });
+
+    // Migrar tempId → sessionId real
+    sessionObj.id = sessionId;
+    sessions.delete(tempId);
+    sessions.set(sessionId, sessionObj);
+
+    document.querySelectorAll(`[data-session="${tempId}"]`).forEach((el) => {
+      el.dataset.session = sessionId;
+    });
+    const vi = viewSelection.indexOf(tempId);
+    if (vi >= 0) viewSelection[vi] = sessionId;
+    if (activeSessionId === tempId) activeSessionId = sessionId;
+
+    sessionObj.status = "connected";
+    updateTabStatus(sessionId, "connected");
+
+    // Escuchar el cierre del proceso externo
+    const unlisten = await listen(`rdp-closed-${sessionId}`, () => {
+      sessionObj.status = "closed";
+      updateTabStatus(sessionId, "error");
+      renderConnectionList();
+      // Actualizar el texto del panel RDP
+      const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
+      if (pane) {
+        const label = pane.querySelector(".rdp-status-label");
+        if (label) label.textContent = "Sesión cerrada";
+        const btn = pane.querySelector(".rdp-disconnect-btn");
+        if (btn) btn.textContent = "Cerrar pestaña";
+      }
+      toast(`Sesión RDP "${profile.name}" cerrada`, "info");
+    });
+    sessionObj.unlisteners.push(unlisten);
+
+    renderConnectionList();
+    setActiveTab(sessionId);
+    toast(`Sesión RDP "${profile.name}" iniciada`, "success");
+  } catch (err) {
+    sessions.delete(tempId);
+    removeTab(tempId);
+    toast(`Error RDP: ${err}`, "error");
+  }
+}
+
+async function closeRdpSession(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  for (const ul of s.unlisteners) { try { ul(); } catch {} }
+  await invoke("rdp_disconnect", { sessionId }).catch(() => {});
+  sessions.delete(sessionId);
+  removeTab(sessionId);
+  renderConnectionList();
+}
+
+/**
+ * Crea el tab y el panel de estado para una sesión RDP.
+ * En lugar de un terminal, muestra tarjeta informativa con botón de desconexión.
+ */
+function createRdpTab(sessionId, profile, initialStatus) {
+  const pane = document.createElement("div");
+  pane.className = "terminal-pane rdp-pane";
+  pane.dataset.session = sessionId;
+
+  const hostLine = profile.domain
+    ? `${escHtml(profile.username)}@${escHtml(profile.domain)}\\${escHtml(profile.host)}:${profile.port}`
+    : `${escHtml(profile.username)}@${escHtml(profile.host)}:${profile.port}`;
+
+  pane.innerHTML = `
+    <div class="rdp-status-card">
+      <div class="rdp-status-icon">🖥️</div>
+      <div class="rdp-status-info">
+        <div class="rdp-status-name">${escHtml(profile.name)}</div>
+        <div class="rdp-status-host">${hostLine}</div>
+        <div class="rdp-status-label">Sesión RDP abierta en ventana externa</div>
+      </div>
+      <button class="btn-secondary rdp-disconnect-btn" data-session="${sessionId}">
+        Desconectar
+      </button>
+    </div>`;
+  pane.querySelector(".rdp-disconnect-btn").addEventListener("click", (e) =>
+    closeRdpSession(e.target.dataset.session)
+  );
+  document.getElementById("terminals-container").appendChild(pane);
+
+  const tab = createTab(sessionId, profile, initialStatus, { sftp: false });
+  tab.dataset.type = "rdp";
+
+  // Asociar pane al sessionObj ya creado en connectRdp
+  const s = sessions.get(sessionId);
+  if (s) s.pane = pane;
+  wirePaneFocusOnClick(pane, sessionId);
+
+  document.getElementById("welcome-screen").classList.add("hidden");
+  selectSession(sessionId, false);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// VISTA MÚLTIPLE (clic = seleccionar una pestaña; Ctrl+clic = añadir)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Crea el elemento de pestaña cableado para selección/multi-selección.
+ * El pane asociado debe existir en `sessions.get(sessionId).pane`.
+ */
+function createTab(sessionId, profile, initialStatus, { sftp = true } = {}) {
+  const tab = document.createElement("div");
+  tab.className = "tab";
+  tab.dataset.session = sessionId;
+  const sftpBtn = sftp ? `<button class="tab-sftp" title="Panel SFTP">⇅</button>` : "";
+  tab.innerHTML = `
+    <span class="tab-dot ${initialStatus}"></span>
+    <span class="tab-name">${escHtml(profile.name)}</span>
+    ${sftpBtn}
+    <button class="tab-close" title="Cerrar">✕</button>`;
+  tab.addEventListener("click", (e) => {
+    if (e.target.classList.contains("tab-close")) return;
+    if (e.target.classList.contains("tab-sftp")) return;
+    selectSession(tab.dataset.session, e.ctrlKey || e.metaKey);
+  });
+  tab.querySelector(".tab-close").addEventListener("click", () => closeSession(tab.dataset.session));
+  tab.querySelector(".tab-sftp")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleSftpPanel(tab.dataset.session);
+  });
+  document.getElementById("tabs-container").appendChild(tab);
+  return tab;
+}
+
+function viewKey(selection = viewSelection) {
+  return selection.join("|");
+}
+
+function getViewLayout() {
+  return viewLayouts.get(viewKey()) || "columns";
+}
+
+function setViewLayout(layout) {
+  if (!["columns", "rows", "grid"].includes(layout)) return;
+  viewLayouts.set(viewKey(), layout);
+  // Reset ratios when switching layout (axis may have changed)
+  viewRatios.delete(viewKey());
+  renderView();
+}
+
+function computeGridDims(n) {
+  const cols = Math.ceil(Math.sqrt(n));
+  const rows = Math.ceil(n / cols);
+  return { cols, rows };
+}
+
+function isBroadcastOn() {
+  return broadcastViews.get(viewKey()) === true;
+}
+
+function toggleBroadcast() {
+  if (viewSelection.length < 2) return;
+  broadcastViews.set(viewKey(), !isBroadcastOn());
+  updateLayoutBarActive();
+  updateBroadcastClasses();
+}
+
+function updateBroadcastClasses() {
+  const on = isBroadcastOn() && viewSelection.length > 1;
+  document.querySelectorAll(".terminal-pane").forEach((p) => {
+    const sid = p.dataset.session;
+    const s = sessions.get(sid);
+    const eligible = !!s && s.type !== "rdp" && viewSelection.includes(sid);
+    p.classList.toggle("pane-broadcasting", on && eligible);
+  });
+  const btn = document.querySelector('#view-layout-bar button[data-action="broadcast"]');
+  if (btn) btn.classList.toggle("active", on);
+}
+
+/**
+ * Envía input a una sesión terminal (SSH o shell local).
+ * Se usa tanto para la pane origen como para replicar en broadcast.
+ */
+function sendTerminalInput(sessionObj, data) {
+  if (!sessionObj || sessionObj.status === "closed" || sessionObj.type === "rdp") return;
+  const cmd = sessionObj._closeOverride ? "local_shell_send_input" : "ssh_send_input";
+  invoke(cmd, {
+    sessionId: sessionObj.id,
+    data: Array.from(new TextEncoder().encode(data)),
+  }).catch(() => {});
+}
+
+/**
+ * Inyecta un hook OSC 7 en el shell remoto (bash/zsh) para que emita el
+ * cwd después de cada prompt. Sin esto el panel SFTP no puede seguir al
+ * terminal. Se ejecuta una sola vez por sesión SSH tras conectar.
+ *
+ * Limitación conocida: cuando el usuario eleva privilegios con `sudo su -`
+ * o `sudo -i`, el nuevo shell no hereda PROMPT_COMMAND / precmd_functions
+ * y además la sesión SFTP sigue siendo la del usuario original (sin
+ * privilegios). Resultado: no se pueden seguir rutas como /root/.
+ * Esto requiere un enfoque más amplio (bind-mount SFTP del shell actual
+ * o exponer `sudo` al canal SFTP) que queda fuera de este arreglo.
+ */
+function injectOsc7Setup(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s || s.status !== "connected" || s._osc7Injected) return;
+  s._osc7Injected = true;
+  const cmd =
+    ` { [ -n "$BASH_VERSION" ] && export PROMPT_COMMAND='printf "\\033]7;file://%s%s\\033\\\\" "$HOSTNAME" "$PWD"'"\${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; ` +
+    `[ -n "$ZSH_VERSION" ] && { _osc7() { printf "\\033]7;file://%s%s\\033\\\\" "$HOST" "$PWD"; }; ` +
+    `typeset -ga precmd_functions; precmd_functions+=(_osc7); }; ` +
+    `printf "\\033]7;file://%s%s\\033\\\\" "\${HOSTNAME:-$HOST}" "$PWD"; } 2>/dev/null; clear\r`;
+  sendTerminalInput(s, cmd);
+}
+
+/**
+ * Maneja input de una terminal. Si broadcast está activo y la sesión forma parte
+ * de la vista actual, replica el input a todas las otras panes de la vista.
+ */
+/**
+ * Reabre una sesión cerrada reutilizando la pestaña y el xterm existentes.
+ * Para shell local: reusa el mismo sessionId.
+ * Para SSH: genera un nuevo sessionId en backend y renombra la sesión en UI.
+ * RDP no entra aquí (tiene su propio botón de reconexión).
+ */
+async function reconnectSession(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s || s.status !== "closed") return;
+  if (s._closeOverride) {
+    await reconnectLocalInPlace(s);
+  } else if (s.profileId) {
+    await reconnectSshInPlace(s);
+  }
+}
+
+async function reconnectLocalInPlace(s) {
+  const sessionId = s.id;
+  for (const ul of s.unlisteners) { try { ul(); } catch {} }
+  s.unlisteners = [];
+  s.status = "connecting";
+  updateTabStatus(sessionId, "connecting");
+
+  try {
+    await invoke("local_shell_open", {
+      sessionId,
+      cols: s.terminal.cols,
+      rows: s.terminal.rows,
+    });
+    s.status = "connected";
+    updateTabStatus(sessionId, "connected");
+
+    const decoder = new TextDecoder();
+    const ul = await listen(`shell-data-${sessionId}`, (e) => {
+      s.terminal.write(decoder.decode(new Uint8Array(e.payload)));
+    });
+    const ulClose = await listen(`shell-closed-${sessionId}`, () => {
+      s.status = "closed";
+      updateTabStatus(sessionId, "error");
+      s.terminal.writeln(`\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
+    });
+    s.unlisteners.push(ul, ulClose);
+  } catch (err) {
+    s.status = "error";
+    updateTabStatus(sessionId, "error");
+    toast(`Error al reabrir la consola: ${err}`, "error");
+  }
+}
+
+async function reconnectSshInPlace(s) {
+  const oldSessionId = s.id;
+  const profile = profiles.find((p) => p.id === s.profileId);
+  if (!profile) {
+    toast("Perfil no encontrado; no se puede reconectar", "error");
+    return;
+  }
+
+  const creds = await resolveSshCredentials(profile);
+  if (!creds) return;
+
+  for (const ul of s.unlisteners) { try { ul(); } catch {} }
+  s.unlisteners = [];
+  s.status = "connecting";
+  updateTabStatus(oldSessionId, "connecting");
+
+  try {
+    const newSessionId = await invoke("ssh_connect", {
+      profileId: profile.id,
+      password:   creds.password   || null,
+      passphrase: creds.passphrase || null,
+    });
+
+    // Renombrar la sesión en la UI
+    s.id = newSessionId;
+    sessions.delete(oldSessionId);
+    sessions.set(newSessionId, s);
+    document.querySelectorAll(`[data-session="${oldSessionId}"]`).forEach((el) => {
+      el.dataset.session = newSessionId;
+    });
+    const vi = viewSelection.indexOf(oldSessionId);
+    if (vi >= 0) viewSelection[vi] = newSessionId;
+    if (activeSessionId === oldSessionId) activeSessionId = newSessionId;
+
+    s.unlisteners = await registerSshListeners(newSessionId, s.terminal);
+    updateTabStatus(newSessionId, "connecting");
+  } catch (err) {
+    s.status = "error";
+    updateTabStatus(oldSessionId, "error");
+    toast(`No se pudo reconectar: ${err}`, "error");
+  }
+}
+
+function handleTerminalInput(sessionObj, data) {
+  if (!sessionObj) return;
+  if (isBroadcastOn() && viewSelection.includes(sessionObj.id) && viewSelection.length > 1) {
+    viewSelection.forEach((sid) => {
+      sendTerminalInput(sessions.get(sid), data);
+    });
+  } else {
+    sendTerminalInput(sessionObj, data);
+  }
+}
+
+/**
+ * Cambia o amplía la selección de vista.
+ * - additive=false: reemplaza la selección por [sid]
+ * - additive=true:  toggle de sid dentro de la selección (mínimo 1)
+ */
+function selectSession(sid, additive = false) {
+  if (!sessions.has(sid)) return;
+  if (additive) {
+    const idx = viewSelection.indexOf(sid);
+    if (idx >= 0) {
+      if (viewSelection.length > 1) viewSelection.splice(idx, 1);
+      // si era la única, la dejamos
+    } else {
+      viewSelection.push(sid);
+    }
+  } else {
+    viewSelection = [sid];
+  }
+  activeSessionId = sid;
+  renderView();
+}
+
+function renderView() {
+  const container = document.getElementById("terminals-container");
+  const welcome   = document.getElementById("welcome-screen");
+  const layoutBar = document.getElementById("view-layout-bar");
+
+  // Desatar todas las panes (se conservan en memoria para no destruir xterm)
+  sessions.forEach((s) => {
+    if (s.pane && s.pane.parentElement) s.pane.parentElement.removeChild(s.pane);
+  });
+  // Eliminar cualquier wrapper de split previo
+  container.querySelector(".view-split")?.remove();
+
+  if (viewSelection.length === 0) {
+    welcome.classList.remove("hidden");
+    layoutBar?.classList.add("hidden");
+    updateTabSelectionClasses();
+    return;
+  }
+  welcome.classList.add("hidden");
+
+  if (viewSelection.length === 1) {
+    const s = sessions.get(viewSelection[0]);
+    if (s?.pane) container.appendChild(s.pane);
+    layoutBar?.classList.add("hidden");
+  } else {
+    const layout = getViewLayout();
+    const split = document.createElement("div");
+    split.className = `view-split split-${layout}`;
+
+    if (layout === "grid") {
+      const { cols, rows } = computeGridDims(viewSelection.length);
+      split.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      split.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+      viewSelection.forEach((sid) => {
+        const part = document.createElement("div");
+        part.className = "view-part";
+        const s = sessions.get(sid);
+        if (s?.pane) part.appendChild(s.pane);
+        split.appendChild(part);
+      });
+    } else {
+      const axis = layout === "rows" ? "vertical" : "horizontal";
+      const ratios = viewRatios.get(viewKey()) || viewSelection.map(() => 1);
+      viewSelection.forEach((sid, i) => {
+        if (i > 0) {
+          const resizer = document.createElement("div");
+          resizer.className = `view-resizer resizer-${axis}`;
+          resizer.addEventListener("mousedown", (e) => startViewResize(e, split, i - 1, axis));
+          split.appendChild(resizer);
+        }
+        const part = document.createElement("div");
+        part.className = "view-part";
+        part.style.flex = `${ratios[i] ?? 1} 1 0`;
+        const s = sessions.get(sid);
+        if (s?.pane) part.appendChild(s.pane);
+        split.appendChild(part);
+      });
+    }
+    container.appendChild(split);
+    layoutBar?.classList.remove("hidden");
+    updateLayoutBarActive();
+  }
+
+  updateTabSelectionClasses();
+  updateBroadcastClasses();
+
+  // Fit de todas las panes visibles (tras el siguiente paint)
+  requestAnimationFrame(() => {
+    viewSelection.forEach((sid) => {
+      const s = sessions.get(sid);
+      if (s?.fitAddon) {
+        try { s.fitAddon.fit(); notifyResize(sid, s.terminal); } catch {}
+      }
+    });
+    sessions.get(activeSessionId)?.terminal?.focus();
+  });
+}
+
+function updateLayoutBarActive() {
+  const current = getViewLayout();
+  document.querySelectorAll("#view-layout-bar button[data-layout]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.layout === current);
+  });
+  const bcast = document.querySelector('#view-layout-bar button[data-action="broadcast"]');
+  if (bcast) bcast.classList.toggle("active", isBroadcastOn());
+}
+
+function updateTabSelectionClasses() {
+  document.querySelectorAll(".tab").forEach((t) => {
+    const sid = t.dataset.session;
+    t.classList.toggle("in-view",  viewSelection.includes(sid));
+    t.classList.toggle("active",   sid === activeSessionId);
+  });
+  document.querySelectorAll(".terminal-pane").forEach((p) => {
+    p.classList.toggle("pane-focused",
+      viewSelection.length > 1 && p.dataset.session === activeSessionId);
+  });
+}
+
+/**
+ * Resizer entre las panes i e i+1 de la vista actual. Escribe en viewRatios
+ * cuando termina el drag.
+ */
+function startViewResize(e, splitEl, index, axis = "horizontal") {
+  e.preventDefault();
+  const parts = [...splitEl.querySelectorAll(".view-part")];
+  if (parts.length < 2) return;
+  const a = parts[index], b = parts[index + 1];
+  const rectA = a.getBoundingClientRect();
+  const rectB = b.getBoundingClientRect();
+  const isH = axis === "horizontal";
+  const total = isH ? rectA.width + rectB.width : rectA.height + rectB.height;
+  const start = isH ? e.clientX : e.clientY;
+  const startFlexA = parseFloat(a.style.flex) || 1;
+  const startFlexB = parseFloat(b.style.flex) || 1;
+  const sizeA = isH ? rectA.width : rectA.height;
+  document.body.style.cursor = isH ? "col-resize" : "row-resize";
+  document.body.style.userSelect = "none";
+
+  const onMove = (ev) => {
+    const delta = (isH ? ev.clientX : ev.clientY) - start;
+    const newA = Math.max(0.1, (sizeA + delta) / total * (startFlexA + startFlexB));
+    const newB = Math.max(0.1, (startFlexA + startFlexB) - newA);
+    a.style.flex = `${newA} 1 0`;
+    b.style.flex = `${newB} 1 0`;
+  };
+  const onUp = () => {
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup",   onUp);
+    // Guardar proporciones para esta vista
+    const ratios = parts.map((p) => parseFloat(p.style.flex) || 1);
+    viewRatios.set(viewKey(), ratios);
+    // Re-fit
+    parts.forEach((p) => {
+      const s = sessions.get(p.querySelector(".terminal-pane")?.dataset.session);
+      if (s?.fitAddon) { try { s.fitAddon.fit(); notifyResize(s.id, s.terminal); } catch {} }
+    });
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup",   onUp);
+}
+
+/**
+ * Marca el click del usuario dentro de una pane como "sesión focada" cuando
+ * la vista tiene más de una. Útil para saber dónde va el foco del teclado.
+ */
+function wirePaneFocusOnClick(pane, sessionId) {
+  pane.addEventListener("mousedown", () => {
+    if (viewSelection.length <= 1) return;
+    if (activeSessionId === sessionId) return;
+    activeSessionId = sessionId;
+    updateTabSelectionClasses();
+  }, true);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TERMINAL
+// ═══════════════════════════════════════════════════════════════
+
+function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
+  const { sftp = true } = opts;
+
+  // Construir pane y meterlo en #terminals-container para que xterm pueda medir.
+  // renderView() lo reubicará según la selección actual.
+  const pane = document.createElement("div");
+  pane.className = "terminal-pane";
+  pane.dataset.session = sessionId;
+  const termArea = document.createElement("div");
+  termArea.className = "term-area";
+  const xtermDiv = document.createElement("div");
+  xtermDiv.className = "xterm-container";
+  termArea.appendChild(xtermDiv);
+  pane.appendChild(termArea);
+  document.getElementById("terminals-container").appendChild(pane);
+
+  // Crear pestaña
+  createTab(sessionId, profile, initialStatus, { sftp });
+
+  const terminal = new Terminal({
+    cursorBlink: prefs.cursorBlink,
+    cursorStyle: prefs.cursorStyle,
+    fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
+    fontSize: prefs.fontSize,
+    lineHeight: 1.2,
+    scrollback: prefs.scrollback,
+    bellStyle: prefs.bell,
+    theme: getTerminalTheme(),
+    allowProposedApi: true,
+  });
+  const fitAddon = new FitAddon();
+  terminal.loadAddon(fitAddon);
+  terminal.loadAddon(new WebLinksAddon());
+  terminal.open(xtermDiv);
+  fitAddon.fit();
+
+  const sessionObj = {
+    profileId: profile.id,
+    id: sessionId,
+    terminal,
+    fitAddon,
+    pane,
+    unlisteners: [],
+    status: initialStatus,
+    remoteCwd: null,
+  };
+  sessions.set(sessionId, sessionObj);
+  wirePaneFocusOnClick(pane, sessionId);
+
+  // OSC 7: el shell remoto emite `\e]7;file://host/path\e\\` al cambiar de cwd.
+  // Muchos bash/zsh/fish modernos lo soportan (bash requiere hook en PROMPT_COMMAND).
+  terminal.parser.registerOscHandler(7, (data) => {
+    const m = /^file:\/\/[^/]*(\/.*)$/.exec(data);
+    if (!m) return false;
+    try {
+      sessionObj.remoteCwd = decodeURIComponent(m[1]);
+    } catch { sessionObj.remoteCwd = m[1]; }
+    // Si el panel SFTP sigue al terminal, navegar al nuevo cwd
+    if (sessionObj.sftp?.follow && sessionObj.sftp.cwd !== sessionObj.remoteCwd) {
+      navigateSftp(sessionObj.id, sessionObj.remoteCwd);
+    }
+    return true;
+  });
+
+  // Copiar al portapapeles al seleccionar (se activa/desactiva según prefs en tiempo real)
+  terminal.onSelectionChange(() => {
+    if (!prefs.copyOnSelect) return;
+    const sel = terminal.getSelection();
+    if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+  });
+
+  // Pegar con clic derecho (se activa/desactiva según prefs en tiempo real).
+  // Si está desactivado, el evento sube al pane y abre el menú contextual de paneles.
+  xtermDiv.addEventListener("contextmenu", (e) => {
+    if (!prefs.rightClickPaste) return;
+    e.preventDefault();
+    e.stopPropagation();
+    navigator.clipboard.readText().then((text) => {
+      if (!text || sessionObj.status === "closed") return;
+      sendTerminalInput(sessionObj, text);
+    }).catch(() => {});
+  });
+
+  terminal.onData((data) => {
+    if (sessionObj.status === "closed") {
+      if (data === "\r" || data === "\n") reconnectSession(sessionObj.id);
+      return;
+    }
+    handleTerminalInput(sessionObj, data);
+  });
+
+  terminal.onResize(({ cols, rows }) => {
+    invoke("ssh_resize", { sessionId: sessionObj.id, cols, rows }).catch(() => {});
+  });
+
+  document.getElementById("welcome-screen").classList.add("hidden");
+  selectSession(sessionId, false);
+}
+
+async function registerSshListeners(sessionId, terminal) {
+  const decoder = new TextDecoder();
+  const ul = [];
+
+  ul.push(await listen(`ssh-data-${sessionId}`, (e) => {
+    terminal.write(decoder.decode(new Uint8Array(e.payload)));
+  }));
+
+  ul.push(await listen(`ssh-connected-${sessionId}`, () => {
+    const s = sessions.get(sessionId);
+    if (s) s.status = "connected";
+    updateTabStatus(sessionId, "connected");
+    renderConnectionList();
+    s?.fitAddon.fit();
+    notifyResize(sessionId, terminal);
+    // Inyecta el hook OSC 7 para que bash/zsh emitan el cwd tras cada prompt.
+    // Sin esto el panel SFTP no puede seguir al terminal.
+    // Se envía tras un pequeño retardo para asegurar que el prompt ya está listo.
+    // El espacio inicial evita que quede en el history (HISTCONTROL=ignorespace),
+    // y `clear` limpia la salida visible.
+    setTimeout(() => injectOsc7Setup(sessionId), 400);
+  }));
+
+  ul.push(await listen(`ssh-error-${sessionId}`, (e) => {
+    const s = sessions.get(sessionId);
+    if (s) s.status = "error";
+    updateTabStatus(sessionId, "error");
+    terminal.writeln(`\r\n\x1b[31m✗ Error: ${e.payload}\x1b[0m\r\n`);
+    toast(`Error SSH: ${e.payload}`, "error");
+  }));
+
+  ul.push(await listen(`ssh-closed-${sessionId}`, () => {
+    const s = sessions.get(sessionId);
+    if (s) s.status = "closed";
+    updateTabStatus(sessionId, "error");
+    terminal.writeln(`\r\n\x1b[33m• ${t("terminal.closed")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
+    renderConnectionList();
+  }));
+
+  return ul;
+}
+
+function setActiveTab(sessionId) {
+  selectSession(sessionId, false);
+}
+
+function updateTabStatus(sessionId, status) {
+  document.querySelector(`.tab[data-session="${sessionId}"] .tab-dot`)
+    ?.setAttribute("class", `tab-dot ${status}`);
+}
+
+async function closeSession(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+
+  // Si hay un panel SFTP abierto, desconectarlo primero
+  if (s.sftp?.sftpSessionId) {
+    invoke("sftp_disconnect", { sessionId: s.sftp.sftpSessionId }).catch(() => {});
+  }
+
+  // Shell local: usa su propio manejador de cierre
+  if (s._closeOverride) {
+    await s._closeOverride();
+    removeTab(sessionId);
+    renderConnectionList();
+    return;
+  }
+
+  // RDP
+  if (s.type === "rdp") {
+    return closeRdpSession(sessionId);
+  }
+
+  // SSH
+  for (const ul of s.unlisteners) { try { ul(); } catch {} }
+  await invoke("ssh_disconnect", { sessionId }).catch(() => {});
+  s.terminal.dispose();
+  sessions.delete(sessionId);
+  removeTab(sessionId);
+  renderConnectionList();
+}
+
+function removeTab(sessionId) {
+  document.querySelector(`.tab[data-session="${sessionId}"]`)?.remove();
+  document.querySelector(`.terminal-pane[data-session="${sessionId}"]`)?.remove();
+
+  // Quitar de la vista
+  const idx = viewSelection.indexOf(sessionId);
+  if (idx >= 0) viewSelection.splice(idx, 1);
+
+  // Si era la sesión activa, promover otra
+  if (activeSessionId === sessionId) {
+    activeSessionId = viewSelection[0] ?? null;
+    if (!activeSessionId) {
+      // Ninguna pane visible: coger la última pestaña restante
+      const lastTab = document.querySelector("#tabs-container .tab:last-child");
+      if (lastTab) {
+        activeSessionId = lastTab.dataset.session;
+        viewSelection = [activeSessionId];
+      }
+    }
+  }
+  renderView();
+}
+
+function notifyResize(sessionId, terminal) {
+  if (!terminal) return;
+  invoke("ssh_resize", { sessionId, cols: terminal.cols, rows: terminal.rows }).catch(() => {});
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PERFILES
+// ═══════════════════════════════════════════════════════════════
+
+async function deleteProfile(profileId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+  if (!window.confirm(`¿Eliminar "${profile.name}"?\nEsta acción no se puede deshacer.`)) return;
+  try {
+    await invoke("delete_profile", { id: profileId });
+    profiles = profiles.filter((p) => p.id !== profileId);
+    renderConnectionList();
+    toast("Conexión eliminada", "success");
+  } catch (err) {
+    toast(`Error al eliminar: ${err}`, "error");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DIRECTORIO DE DATOS / BACKUP
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Abre el directorio donde se guarda profiles.json usando el gestor
+ * de archivos nativo del sistema (xdg-open en Linux, Finder en macOS…).
+ * Los perfiles se guardan en:
+ *   Linux:   ~/.local/share/rustty/profiles.json
+ *   macOS:   ~/Library/Application Support/com.rustty.app/profiles.json
+ *   Windows: %APPDATA%\com.rustty.app\profiles.json
+ */
+async function openDataDirectory() {
+  const dataDir = await invoke("get_data_dir").catch(() => null);
+  if (!dataDir) { toast("No se pudo obtener el directorio de datos", "error"); return; }
+
+  // El plugin opener ya está inicializado en Rust (tauri_plugin_opener::init)
+  // y la capability autoriza `opener:allow-open-path`.
+  try {
+    await invoke("plugin:opener|open_path", { path: dataDir });
+  } catch (err) {
+    toast(`No se pudo abrir el directorio: ${err}. Ruta: ${dataDir}`, "error", 8000);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SHELL LOCAL
+// ═══════════════════════════════════════════════════════════════
+
+let localShellCounter = 0;
+
+async function openLocalShell() {
+  localShellCounter++;
+  const sessionId = `local-${crypto.randomUUID()}`;
+  const shellName = (await getShellName()) || "Consola";
+  const fakeProfile = { id: sessionId, name: `${shellName} #${localShellCounter}`, host: "local", port: 0, username: "" };
+
+  createTerminalTab(sessionId, fakeProfile, "connecting", { sftp: false });
+
+  const s = sessions.get(sessionId);
+  try {
+    await invoke("local_shell_open", {
+      sessionId,
+      cols: s.terminal.cols,
+      rows: s.terminal.rows,
+    });
+    s.status = "connected";
+    updateTabStatus(sessionId, "connected");
+
+    const decoder = new TextDecoder();
+    const ul = await listen(`shell-data-${sessionId}`, (e) => {
+      s.terminal.write(decoder.decode(new Uint8Array(e.payload)));
+    });
+    const ulClose = await listen(`shell-closed-${sessionId}`, () => {
+      s.status = "closed";
+      updateTabStatus(sessionId, "error");
+      s.terminal.writeln(`\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
+    });
+    s.unlisteners.push(ul, ulClose);
+
+    // Nota: el input ya lo enruta `handleTerminalInput` (registrado en createTerminalTab)
+    // detectando el tipo de sesión por `_closeOverride`. Solo hace falta el resize aquí.
+    s.terminal.onResize(({ cols, rows }) => {
+      invoke("local_shell_resize", { sessionId, cols, rows }).catch(() => {});
+    });
+
+    // Sobreescribir el cierre de sesión para usar el comando de shell.
+    // closeSession llama a removeTab() tras ejecutar este override.
+    s._closeOverride = async () => {
+      for (const ul of s.unlisteners) { try { ul(); } catch {} }
+      await invoke("local_shell_close", { sessionId }).catch(() => {});
+      s.terminal.dispose();
+      sessions.delete(sessionId);
+    };
+  } catch (err) {
+    sessions.delete(sessionId);
+    removeTab(sessionId);
+    toast(`Error al abrir la consola: ${err}`, "error");
+  }
+}
+
+async function getShellName() {
+  // Leer $SHELL del entorno no es posible desde JS; usamos un nombre genérico
+  return "Terminal";
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PANEL SFTP
+// ═══════════════════════════════════════════════════════════════
+
+async function toggleSftpPanel(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s || s.status !== "connected") {
+    toast("La sesión SSH debe estar conectada", "warning");
+    return;
+  }
+  if (s.sftp?.panel) {
+    const panel = s.sftp.panel;
+    if (panel.classList.contains("hidden")) {
+      panel.classList.remove("hidden");
+      s.fitAddon?.fit();
+    } else {
+      panel.classList.add("hidden");
+      s.fitAddon?.fit();
+    }
+    return;
+  }
+  await openSftpPanel(sessionId);
+}
+
+async function openSftpPanel(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  const profile = profiles.find((p) => p.id === s.profileId);
+  if (!profile) return;
+
+  // Resolver credenciales: KeePass > keyring > prompt
+  let password = null, passphrase = null;
+  if (profile.auth_type === "password") {
+    if (profile.keepass_entry_uuid) {
+      if (!keepassUnlocked) {
+        toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
+        return;
+      }
+    } else {
+      password = await invoke("keyring_get", {
+        service: "rustty", key: `password:${profile.id}`,
+      }).catch(() => null);
+      if (!password) {
+        password = window.prompt(`Contraseña SFTP para ${profile.username}@${profile.host}:`);
+        if (password === null) return;
+      }
+    }
+  } else if (profile.auth_type === "public_key") {
+    passphrase = await invoke("keyring_get", {
+      service: "rustty", key: `passphrase:${profile.id}`,
+    }).catch(() => null);
+  }
+
+  // Construir panel primero con estado "conectando"
+  const panel = buildSftpPanel(sessionId);
+  const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
+  pane.appendChild(panel);
+
+  s.sftp = {
+    sftpSessionId: null,
+    cwd: "/",
+    panel,
+    unlisteners: [],
+    transfers: new Map(),
+    follow: true,  // Seguir al terminal por defecto si emite OSC 7
+    elevated: false,
+  };
+
+  setSftpStatus(panel, "Conectando SFTP…");
+
+  try {
+    const sftpSessionId = await invoke("sftp_connect", {
+      profileId: profile.id,
+      password: password || null,
+      passphrase: passphrase || null,
+      elevated: s.sftp.elevated,
+    });
+    s.sftp.sftpSessionId = sftpSessionId;
+
+    // Si el terminal ya tiene un cwd conocido (por OSC 7) lo usamos,
+    // si no, pedimos el home al servidor.
+    const initial = s.remoteCwd
+      || await invoke("sftp_home_dir", { sessionId: sftpSessionId }).catch(() => "/");
+    await navigateSftp(sessionId, initial);
+  } catch (err) {
+    toast(`SFTP falló: ${err}`, "error");
+    panel.remove();
+    s.sftp = null;
+  }
+
+  s.fitAddon?.fit();
+}
+
+/**
+ * Reconecta la sesión SFTP invirtiendo el flag `elevated`. El backend lanza
+ * `sudo -n sftp-server` por exec en lugar del subsistema SFTP estándar, lo
+ * que da permisos de root sobre rutas como /root/. Requiere NOPASSWD en el
+ * sudoers del usuario conectado para `sftp-server`.
+ */
+async function toggleSftpElevated(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const profile = profiles.find((p) => p.id === s.profileId);
+  if (!profile) return;
+  const panel = s.sftp.panel;
+  const btn = panel.querySelector('[data-sftp-nav="sudo"]');
+
+  // Resolver credenciales igual que en openSftpPanel (pueden no estar ya cacheadas)
+  let password = null, passphrase = null;
+  if (profile.auth_type === "password") {
+    if (!profile.keepass_entry_uuid) {
+      password = await invoke("keyring_get", {
+        service: "rustty", key: `password:${profile.id}`,
+      }).catch(() => null);
+      if (!password) {
+        password = window.prompt(`Contraseña SFTP para ${profile.username}@${profile.host}:`);
+        if (password === null) return;
+      }
+    }
+  } else if (profile.auth_type === "public_key") {
+    passphrase = await invoke("keyring_get", {
+      service: "rustty", key: `passphrase:${profile.id}`,
+    }).catch(() => null);
+  }
+
+  const wasElevated = s.sftp.elevated;
+  const targetElevated = !wasElevated;
+  const prevCwd = s.sftp.cwd;
+
+  setSftpStatus(panel, targetElevated ? "Reconectando con sudo…" : "Reconectando SFTP…");
+  if (btn) btn.disabled = true;
+
+  if (s.sftp.sftpSessionId) {
+    await invoke("sftp_disconnect", { sessionId: s.sftp.sftpSessionId }).catch(() => {});
+    s.sftp.sftpSessionId = null;
+  }
+
+  try {
+    const sftpSessionId = await invoke("sftp_connect", {
+      profileId: profile.id,
+      password: password || null,
+      passphrase: passphrase || null,
+      elevated: targetElevated,
+    });
+    s.sftp.sftpSessionId = sftpSessionId;
+    s.sftp.elevated = targetElevated;
+    btn?.classList.toggle("active", targetElevated);
+    await navigateSftp(sessionId, prevCwd || "/");
+    toast(targetElevated ? "SFTP elevado activo" : "SFTP sin privilegios extra",
+          targetElevated ? "success" : "info");
+  } catch (err) {
+    toast(`No se pudo reconectar: ${err}`, "error");
+    // Intentar volver al modo previo para no dejar el panel sin sesión
+    try {
+      const sftpSessionId = await invoke("sftp_connect", {
+        profileId: profile.id,
+        password: password || null,
+        passphrase: passphrase || null,
+        elevated: wasElevated,
+      });
+      s.sftp.sftpSessionId = sftpSessionId;
+      s.sftp.elevated = wasElevated;
+      btn?.classList.toggle("active", wasElevated);
+      await navigateSftp(sessionId, prevCwd || "/");
+    } catch (err2) {
+      toast(`SFTP caído: ${err2}`, "error");
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function buildSftpPanel(sessionId) {
+  const panel = document.createElement("div");
+  panel.className = "sftp-panel";
+  panel.innerHTML = `
+    <div class="sftp-toolbar">
+      <button class="sftp-nav-btn" data-sftp-nav="up" title="Directorio padre">↑</button>
+      <button class="sftp-nav-btn" data-sftp-nav="home" title="Inicio">⌂</button>
+      <button class="sftp-nav-btn" data-sftp-nav="refresh" title="Refrescar">⟳</button>
+      <button class="sftp-nav-btn sftp-follow-btn active" data-sftp-nav="follow"
+              title="Seguir el cwd del terminal (OSC 7)">CWD</button>
+      <button class="sftp-nav-btn sftp-sudo-btn" data-sftp-nav="sudo"
+              title="Reconectar SFTP elevado (sudo -n sftp-server). Requiere NOPASSWD en /etc/sudoers">sudo</button>
+      <input class="sftp-path" type="text" spellcheck="false" />
+      <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="upload" title="Subir">⬆</button>
+      <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" title="Nueva carpeta">＋</button>
+      <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="close" title="Cerrar panel">✕</button>
+      <input type="file" class="sftp-file-input hidden" multiple />
+    </div>
+    <div class="sftp-files" tabindex="0">
+      <div class="sftp-empty">Cargando…</div>
+    </div>
+    <div class="sftp-transfers-wrap hidden">
+      <div class="sftp-transfers-header">
+        <span>Transferencias</span>
+        <button class="sftp-transfers-clear" title="Limpiar completadas">Limpiar</button>
+      </div>
+      <div class="sftp-transfers"></div>
+    </div>
+  `;
+
+  // Toolbar events
+  panel.querySelectorAll("[data-sftp-nav]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const nav = btn.dataset.sftpNav;
+      const s = sessions.get(sessionId);
+      if (!s?.sftp) return;
+      if (nav === "up") {
+        const parent = parentPath(s.sftp.cwd);
+        if (parent !== s.sftp.cwd) navigateSftp(sessionId, parent);
+      } else if (nav === "home") {
+        invoke("sftp_home_dir", { sessionId: s.sftp.sftpSessionId })
+          .then((home) => navigateSftp(sessionId, home))
+          .catch((e) => toast(`Error: ${e}`, "error"));
+      } else if (nav === "refresh") {
+        navigateSftp(sessionId, s.sftp.cwd);
+      } else if (nav === "follow") {
+        s.sftp.follow = !s.sftp.follow;
+        btn.classList.toggle("active", s.sftp.follow);
+        // Si al activar hay un cwd conocido del terminal, saltar ahí ya
+        if (s.sftp.follow && s.remoteCwd && s.remoteCwd !== s.sftp.cwd) {
+          navigateSftp(sessionId, s.remoteCwd);
+        }
+      } else if (nav === "sudo") {
+        toggleSftpElevated(sessionId);
+      }
+    });
+  });
+
+  panel.querySelector(".sftp-transfers-clear").addEventListener("click", () => {
+    panel.querySelectorAll(".sftp-transfer.done").forEach((el) => el.remove());
+    updateTransfersVisibility(panel);
+  });
+
+  panel.querySelectorAll("[data-sftp-act]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const act = btn.dataset.sftpAct;
+      if (act === "upload") {
+        panel.querySelector(".sftp-file-input").click();
+      } else if (act === "mkdir") {
+        promptMkdir(sessionId);
+      } else if (act === "close") {
+        closeSftpPanel(sessionId);
+      }
+    });
+  });
+
+  panel.querySelector(".sftp-path").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      navigateSftp(sessionId, e.target.value.trim() || "/");
+    }
+  });
+
+  panel.querySelector(".sftp-file-input").addEventListener("change", (e) => {
+    const files = Array.from(e.target.files || []);
+    for (const f of files) uploadFile(sessionId, f);
+    e.target.value = ""; // permitir re-subir el mismo fichero
+  });
+
+  // Drag & drop: soltar ficheros sobre la lista para subirlos
+  const filesDiv = panel.querySelector(".sftp-files");
+  filesDiv.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    filesDiv.classList.add("sftp-dragover");
+  });
+  filesDiv.addEventListener("dragleave", () => {
+    filesDiv.classList.remove("sftp-dragover");
+  });
+  filesDiv.addEventListener("drop", (e) => {
+    e.preventDefault();
+    filesDiv.classList.remove("sftp-dragover");
+    const files = Array.from(e.dataTransfer?.files || []);
+    for (const f of files) uploadFile(sessionId, f);
+  });
+
+  return panel;
+}
+
+async function navigateSftp(sessionId, path) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp?.sftpSessionId) return;
+  const panel = s.sftp.panel;
+  const filesDiv = panel.querySelector(".sftp-files");
+
+  setSftpStatus(panel, `Cargando ${path}…`);
+
+  try {
+    const entries = await invoke("sftp_list_dir", {
+      sessionId: s.sftp.sftpSessionId,
+      path,
+    });
+    s.sftp.cwd = path;
+    panel.querySelector(".sftp-path").value = path;
+    renderSftpFiles(sessionId, entries);
+    clearSftpStatus(panel);
+  } catch (err) {
+    const msg = String(err);
+    const isPerm = /permission|denied|13/i.test(msg);
+    // Cuando el shell hace sudo su -, el cwd puede apuntar a /root u otra
+    // ruta inaccesible para el usuario SFTP original. Avisamos para que el
+    // usuario sepa que no es un bug sino un límite del subsistema SFTP.
+    if (isPerm) {
+      toast(
+        `SFTP sin permisos sobre ${path}. El subsistema SFTP conserva el usuario original; no puede seguir a un shell elevado (sudo su -).`,
+        "warning",
+        8000,
+      );
+    } else {
+      toast(`No se pudo listar: ${err}`, "error");
+    }
+    filesDiv.innerHTML = `<div class="sftp-empty error">Error: ${escHtml(msg)}</div>`;
+  }
+}
+
+function renderSftpFiles(sessionId, entries) {
+  const s = sessions.get(sessionId);
+  const filesDiv = s.sftp.panel.querySelector(".sftp-files");
+  if (entries.length === 0) {
+    filesDiv.innerHTML = `<div class="sftp-empty">Carpeta vacía</div>`;
+    return;
+  }
+  filesDiv.innerHTML = entries.map((e) => `
+    <div class="sftp-row ${e.is_dir ? "is-dir" : "is-file"}"
+         data-path="${escHtml(e.path)}"
+         data-name="${escHtml(e.name)}"
+         data-is-dir="${e.is_dir}">
+      <span class="sftp-icon">${e.is_dir ? "📁" : (e.is_symlink ? "🔗" : "📄")}</span>
+      <span class="sftp-name">${escHtml(e.name)}</span>
+      <span class="sftp-size">${e.is_dir ? "" : formatSize(e.size)}</span>
+      <span class="sftp-modified">${formatTime(e.modified)}</span>
+      <span class="sftp-row-actions">
+        ${e.is_dir ? "" : `<button class="sftp-row-btn" data-op="download" title="Descargar">⬇</button>`}
+        <button class="sftp-row-btn" data-op="rename" title="Renombrar">✎</button>
+        <button class="sftp-row-btn danger" data-op="delete" title="Eliminar">✕</button>
+      </span>
+    </div>
+  `).join("");
+
+  // Doble clic: entrar en carpeta / descargar fichero
+  filesDiv.querySelectorAll(".sftp-row").forEach((row) => {
+    row.addEventListener("dblclick", () => {
+      if (row.dataset.isDir === "true") {
+        navigateSftp(sessionId, row.dataset.path);
+      } else {
+        downloadFile(sessionId, row.dataset.path, row.dataset.name);
+      }
+    });
+    row.querySelectorAll(".sftp-row-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const op = btn.dataset.op;
+        if (op === "download") {
+          downloadFile(sessionId, row.dataset.path, row.dataset.name);
+        } else if (op === "rename") {
+          promptRename(sessionId, row.dataset.path, row.dataset.name);
+        } else if (op === "delete") {
+          confirmDelete(sessionId, row.dataset.path, row.dataset.name, row.dataset.isDir === "true");
+        }
+      });
+    });
+  });
+}
+
+async function downloadFile(sessionId, remotePath, name) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp?.sftpSessionId) return;
+
+  const downloadDir = await invoke("get_download_dir").catch(() => null);
+  if (!downloadDir) { toast("No se pudo localizar Descargas", "error"); return; }
+
+  const localPath = await invoke("join_path", { base: downloadDir, name });
+  const transferId = crypto.randomUUID();
+
+  const transferEl = addTransfer(s.sftp.panel, `⬇ ${name}`, transferId, localPath);
+  const ul = await listen(`sftp-progress-${transferId}`, (ev) => {
+    updateTransfer(transferEl, ev.payload);
+  });
+
+  try {
+    await invoke("sftp_download", {
+      sessionId: s.sftp.sftpSessionId,
+      remotePath,
+      localPath,
+      transferId,
+    });
+    markTransferSuccess(transferEl, `✓ Guardado en ${localPath}`);
+    toast(`Descargado: ${localPath}`, "success");
+  } catch (err) {
+    markTransferError(transferEl, String(err));
+    toast(`Fallo descarga: ${err}`, "error");
+  } finally {
+    try { ul(); } catch {}
+  }
+}
+
+async function uploadFile(sessionId, file) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp?.sftpSessionId) return;
+
+  const transferId = crypto.randomUUID();
+  const transferEl = addTransfer(s.sftp.panel, `⬆ ${file.name}`, transferId);
+  const ul = await listen(`sftp-progress-${transferId}`, (ev) => {
+    updateTransfer(transferEl, ev.payload);
+  });
+
+  let tempPath = null;
+  try {
+    const buf = await file.arrayBuffer();
+    tempPath = await invoke("write_temp_file", {
+      name: file.name,
+      data: Array.from(new Uint8Array(buf)),
+    });
+    const remotePath = joinRemote(s.sftp.cwd, file.name);
+    await invoke("sftp_upload", {
+      sessionId: s.sftp.sftpSessionId,
+      localPath: tempPath,
+      remotePath,
+      transferId,
+    });
+    markTransferSuccess(transferEl, `✓ Subido a ${remotePath}`);
+    toast(`Subido: ${file.name}`, "success");
+    navigateSftp(sessionId, s.sftp.cwd);
+  } catch (err) {
+    markTransferError(transferEl, String(err));
+    toast(`Fallo subida: ${err}`, "error");
+  } finally {
+    if (tempPath) { invoke("remove_file", { path: tempPath }).catch(() => {}); }
+    try { ul(); } catch {}
+  }
+}
+
+async function promptMkdir(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp?.sftpSessionId) return;
+  const name = window.prompt("Nombre de la nueva carpeta:");
+  if (!name) return;
+  const path = joinRemote(s.sftp.cwd, name);
+  try {
+    await invoke("sftp_mkdir", { sessionId: s.sftp.sftpSessionId, path });
+    navigateSftp(sessionId, s.sftp.cwd);
+  } catch (err) { toast(`Error: ${err}`, "error"); }
+}
+
+async function promptRename(sessionId, oldPath, oldName) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp?.sftpSessionId) return;
+  const newName = window.prompt("Nuevo nombre:", oldName);
+  if (!newName || newName === oldName) return;
+  const newPath = joinRemote(parentPath(oldPath), newName);
+  try {
+    await invoke("sftp_rename", {
+      sessionId: s.sftp.sftpSessionId,
+      from: oldPath,
+      to: newPath,
+    });
+    navigateSftp(sessionId, s.sftp.cwd);
+  } catch (err) { toast(`Error: ${err}`, "error"); }
+}
+
+async function confirmDelete(sessionId, path, name, isDir) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp?.sftpSessionId) return;
+  const kind = isDir ? "la carpeta" : "el fichero";
+  if (!window.confirm(`¿Eliminar ${kind} "${name}"?`)) return;
+  try {
+    await invoke("sftp_remove", {
+      sessionId: s.sftp.sftpSessionId,
+      path,
+      isDir,
+    });
+    navigateSftp(sessionId, s.sftp.cwd);
+  } catch (err) { toast(`Error: ${err}`, "error"); }
+}
+
+async function closeSftpPanel(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  if (s.sftp.sftpSessionId) {
+    invoke("sftp_disconnect", { sessionId: s.sftp.sftpSessionId }).catch(() => {});
+  }
+  s.sftp.panel.remove();
+  s.sftp = null;
+  s.fitAddon?.fit();
+}
+
+function addTransfer(panel, label, transferId, detail = "") {
+  const wrap = panel.querySelector(".sftp-transfers-wrap");
+  wrap.classList.remove("hidden");
+  const el = document.createElement("div");
+  el.className = "sftp-transfer";
+  el.dataset.transfer = transferId;
+  el.innerHTML = `
+    <div class="sftp-transfer-label">${escHtml(label)}</div>
+    <div class="sftp-transfer-text">0 B / ?</div>
+    <div class="sftp-transfer-bar"><div class="sftp-transfer-fill" style="width:0%"></div></div>
+    <div class="sftp-transfer-detail">${escHtml(detail)}</div>
+    <button class="sftp-transfer-close" title="Descartar">✕</button>
+  `;
+  el.querySelector(".sftp-transfer-close").addEventListener("click", () => {
+    el.remove();
+    updateTransfersVisibility(panel);
+  });
+  panel.querySelector(".sftp-transfers").appendChild(el);
+  return el;
+}
+
+function updateTransfer(el, { transferred, total, done }) {
+  const pct = total > 0 ? Math.min(100, Math.round((transferred / total) * 100)) : 0;
+  el.querySelector(".sftp-transfer-fill").style.width = pct + "%";
+  el.querySelector(".sftp-transfer-text").textContent =
+    `${formatSize(transferred)} / ${total > 0 ? formatSize(total) : "?"}${done ? " ✓" : ""}`;
+  if (done) el.classList.add("done");
+}
+
+function markTransferSuccess(el, detail) {
+  el.classList.add("done");
+  el.querySelector(".sftp-transfer-fill").style.width = "100%";
+  el.querySelector(".sftp-transfer-detail").textContent = detail;
+}
+
+function markTransferError(el, detail) {
+  el.classList.add("done", "error");
+  el.querySelector(".sftp-transfer-detail").textContent = `✗ ${detail}`;
+}
+
+function updateTransfersVisibility(panel) {
+  const list = panel.querySelector(".sftp-transfers");
+  const wrap = panel.querySelector(".sftp-transfers-wrap");
+  wrap.classList.toggle("hidden", list.children.length === 0);
+}
+
+function setSftpStatus(panel, msg) {
+  const filesDiv = panel.querySelector(".sftp-files");
+  filesDiv.innerHTML = `<div class="sftp-empty">${escHtml(msg)}</div>`;
+}
+
+function clearSftpStatus(_panel) { /* replaced by renderSftpFiles */ }
+
+function parentPath(p) {
+  if (!p || p === "/") return "/";
+  const trimmed = p.replace(/\/+$/, "");
+  const idx = trimmed.lastIndexOf("/");
+  if (idx <= 0) return "/";
+  return trimmed.slice(0, idx);
+}
+
+function joinRemote(base, name) {
+  if (base.endsWith("/")) return base + name;
+  return base + "/" + name;
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = bytes / 1024, u = 0;
+  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
+  return v.toFixed(v >= 100 ? 0 : 1) + " " + units[u];
+}
+
+function formatTime(secs) {
+  if (!secs) return "";
+  const d = new Date(secs * 1000);
+  const yr = d.getFullYear();
+  const now = new Date();
+  if (yr === now.getFullYear()) {
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleDateString();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXPORTAR / IMPORTAR CONEXIONES
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Exporta perfiles a un archivo JSON descargable.
+ * @param {string|null} folderFilter  Si se indica, exporta solo esa carpeta (y subcarpetas).
+ */
+async function exportConnections(folderFilter) {
+  let profilesToExport = profiles;
+  let foldersToExport = [...userFolders];
+
+  if (folderFilter) {
+    const prefix = folderFilter + "/";
+    profilesToExport = profiles.filter(
+      (p) => p.group === folderFilter || p.group?.startsWith(prefix)
+    );
+    foldersToExport = foldersToExport.filter(
+      (f) => f === folderFilter || f.startsWith(prefix)
+    );
+  }
+
+  const data = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    source: "Rustty",
+    profiles: profilesToExport,
+    folders: foldersToExport,
+  };
+
+  const suffix = folderFilter ? `-${folderFilter.replace(/\//g, "_")}` : "";
+  const defaultName = `rustty-connections${suffix}-${new Date().toISOString().slice(0, 10)}.json`;
+
+  let path;
+  try {
+    path = await saveDialog({
+      title: "Exportar conexiones",
+      defaultPath: defaultName,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+  } catch (err) {
+    toast(`Error al abrir diálogo: ${err}`, "error");
+    return;
+  }
+  if (!path) return; // usuario canceló
+
+  try {
+    await invoke("write_text_file", {
+      path,
+      contents: JSON.stringify(data, null, 2),
+    });
+    toast(
+      `${profilesToExport.length} conexiones exportadas${folderFilter ? ` (${folderFilter})` : ""}`,
+      "success"
+    );
+  } catch (err) {
+    toast(`Error al escribir fichero: ${err}`, "error");
+  }
+}
+
+/**
+ * Importa perfiles desde un archivo JSON exportado por Rustty.
+ * Hace merge: actualiza si el id existe, añade si no.
+ */
+async function importConnections() {
+  let path;
+  try {
+    path = await openDialog({
+      title: "Importar conexiones",
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+  } catch (err) {
+    toast(`Error al abrir diálogo: ${err}`, "error");
+    return;
+  }
+  if (!path) return; // usuario canceló
+
+  try {
+    const text = await invoke("read_text_file", { path });
+    const data = JSON.parse(text);
+
+    if (!data.profiles || !Array.isArray(data.profiles)) {
+      throw new Error("Formato de archivo no válido");
+    }
+
+    let added = 0, updated = 0;
+    for (const profile of data.profiles) {
+      await invoke("save_profile", { profile });
+      const idx = profiles.findIndex((p) => p.id === profile.id);
+      if (idx >= 0) { profiles[idx] = profile; updated++; }
+      else { profiles.push(profile); added++; }
+    }
+
+    if (Array.isArray(data.folders)) {
+      for (const f of data.folders) userFolders.add(f);
+      saveUserFolders();
+    }
+
+    renderConnectionList();
+    toast(`Importadas: ${added} nuevas, ${updated} actualizadas`, "success");
+  } catch (err) {
+    toast(`Error al importar: ${err}`, "error");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ENLACE DE EVENTOS DE LA UI
+// ═══════════════════════════════════════════════════════════════
+
+function bindUIEvents() {
+  // Bloquear el menú contextual nativo del WebView (Atrás, Recargar, Inspeccionar…).
+  // Los menús de la app llaman a showContextMenu() y no dependen del default.
+  window.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // Reemplazar todos los <select> nativos por el dropdown personalizado
+  document.querySelectorAll("select").forEach(enhanceSelect);
+
+  // Botones de nueva conexión
+  document.getElementById("btn-new-connection")
+    .addEventListener("click", () => openNewConnectionModal());
+  document.getElementById("btn-welcome-new")
+    ?.addEventListener("click", () => openNewConnectionModal());
+  document.getElementById("btn-welcome-local")
+    ?.addEventListener("click", () => openLocalShell());
+
+  // Barra de layouts para la vista múltiple
+  document.querySelectorAll("#view-layout-bar button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.action === "broadcast") toggleBroadcast();
+      else if (btn.dataset.layout) setViewLayout(btn.dataset.layout);
+    });
+  });
+
+  // Botón de preferencias (⚙)
+  document.getElementById("btn-settings")
+    .addEventListener("click", openSettingsModal);
+
+  // Botón de shell local ($_ )
+  document.getElementById("btn-local-shell")
+    .addEventListener("click", openLocalShell);
+
+  // Toggle de la barra lateral (persistido en localStorage)
+  initSidebarToggle();
+
+  // ── Modal de preferencias ────────────────────────────────────
+  document.getElementById("btn-prefs-close")
+    .addEventListener("click", closeSettingsModal);
+  document.getElementById("btn-prefs-cancel")
+    .addEventListener("click", closeSettingsModal);
+  document.getElementById("modal-prefs-overlay")
+    .addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) closeSettingsModal();
+    });
+  document.getElementById("btn-prefs-save")
+    .addEventListener("click", savePrefsFromModal);
+
+  // Navegación entre secciones de Preferencias
+  document.querySelectorAll(".prefs-nav-item").forEach((btn) => {
+    btn.addEventListener("click", () => switchPrefsTab(btn.dataset.prefsTab));
+  });
+
+  // KeePass
+  document.getElementById("btn-keepass-browse")
+    .addEventListener("click", () => browseKeepassPath());
+  document.getElementById("btn-keepass-keyfile-browse")
+    .addEventListener("click", () => browseKeepassKeyfile());
+  document.getElementById("btn-keepass-unlock")
+    .addEventListener("click", () => openKeepassUnlockModal());
+  document.getElementById("btn-keepass-lock")
+    .addEventListener("click", () => lockKeepass());
+  document.getElementById("btn-keepass-close")
+    .addEventListener("click", () => closeKeepassModal());
+  document.getElementById("btn-keepass-modal-cancel")
+    .addEventListener("click", () => closeKeepassModal());
+  document.getElementById("form-keepass-unlock")
+    .addEventListener("submit", (e) => { e.preventDefault(); submitKeepassUnlock(); });
+
+  // Exportar / Importar
+  document.getElementById("btn-export-all")
+    .addEventListener("click", () => exportConnections(null));
+  document.getElementById("btn-export-folder")
+    .addEventListener("click", () => {
+      const sel = document.getElementById("export-folder-select").value;
+      if (!sel) { toast("Selecciona una carpeta primero", "warning"); return; }
+      exportConnections(sel);
+    });
+  document.getElementById("btn-import")
+    .addEventListener("click", () => importConnections());
+
+  // Selector de tema: sincronizar .selected con el radio + preview en vivo
+  document.querySelectorAll('input[name="pref-theme"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      const theme = radio.value;
+      document.querySelectorAll(".theme-option").forEach((o) =>
+        o.classList.toggle("selected", o.dataset.theme === theme)
+      );
+      // Preview inmediato del tema al seleccionar (se confirma al guardar)
+      applyTheme(theme);
+    });
+  });
+
+  // Cerrar modal de conexión
+  document.getElementById("btn-modal-close").addEventListener("click", closeModal);
+  document.getElementById("btn-modal-cancel").addEventListener("click", closeModal);
+  document.getElementById("modal-overlay").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+
+  // Tipo de conexión → ajustar campos y puerto
+  document.getElementById("f-conn-type").addEventListener("change", (e) =>
+    updateConnTypeFields(e.target.value, true)
+  );
+
+  // Tipo de auth → actualizar campos (solo relevante en SSH)
+  document.getElementById("f-auth-type").addEventListener("change", (e) =>
+    updateAuthFields(e.target.value)
+  );
+
+  document.getElementById("f-use-keepass").addEventListener("change", () =>
+    updateAuthFields(document.getElementById("f-auth-type").value)
+  );
+
+  // Selector de carpeta → mostrar/ocultar input manual
+  document.getElementById("f-folder-select").addEventListener("change", (e) => {
+    const input = document.getElementById("f-folder-input");
+    input.classList.toggle("hidden", e.target.value !== "__new__");
+    if (e.target.value === "__new__") input.focus();
+  });
+
+  // Botones del modal
+  document.getElementById("btn-modal-save-only").addEventListener("click", () => {
+    if (!document.getElementById("form-connection").checkValidity()) {
+      document.getElementById("form-connection").reportValidity();
+      return;
+    }
+    saveAndClose(false);
+  });
+  document.getElementById("form-connection").addEventListener("submit", (e) => {
+    e.preventDefault();
+    saveAndClose(true);
+  });
+
+  // ── Menú contextual ──────────────────────────────────────
+
+  // Clic derecho en el sidebar (delegación de eventos)
+  document.getElementById("connection-list").addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    const connItem   = e.target.closest(".conn-item");
+    const folderHeader = e.target.closest(".folder-header");
+
+    if (connItem) {
+      const profile = profiles.find((p) => p.id === connItem.dataset.id);
+      showContextMenu(e.clientX, e.clientY, "connection", connItem.dataset.id, profile?.group ?? null);
+    } else if (folderHeader) {
+      const folderItem = folderHeader.closest(".folder-item");
+      showContextMenu(e.clientX, e.clientY, "folder", null, folderItem.dataset.folderPath);
+    } else {
+      showContextMenu(e.clientX, e.clientY, "sidebar");
+    }
+  });
+
+  // Clic derecho en la cabecera del sidebar (zona logo + botón)
+  document.getElementById("sidebar-header").addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    showContextMenu(e.clientX, e.clientY, "sidebar");
+  });
+
+  // Acciones del menú contextual
+  document.getElementById("context-menu").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-ctx]");
+    if (btn) handleContextMenuAction(btn.dataset.ctx);
+  });
+
+  // Clic derecho en una pestaña
+  document.getElementById("tabs-container").addEventListener("contextmenu", (e) => {
+    const tab = e.target.closest(".tab");
+    if (!tab) return;
+    e.preventDefault();
+    // Usa la sesión primaria del workspace (guardada en dataset.session)
+    showTabContextMenu(e.clientX, e.clientY, tab.dataset.session);
+  });
+
+  document.getElementById("tab-context-menu").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-tabctx]");
+    if (btn) handleTabContextAction(btn.dataset.tabctx);
+  });
+
+  // Cerrar los menús contextuales al hacer clic fuera de ellos
+  document.addEventListener("click", (e) => {
+    const menu = document.getElementById("context-menu");
+    if (!menu.classList.contains("hidden") && !menu.contains(e.target)) {
+      hideContextMenu();
+    }
+    const tabMenu = document.getElementById("tab-context-menu");
+    if (!tabMenu.classList.contains("hidden") && !tabMenu.contains(e.target)) {
+      hideTabContextMenu();
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeModal();
+      closeSettingsModal();
+      hideContextMenu();
+      hideTabContextMenu();
+    }
+  });
+
+  // Atajos de teclado globales (capture phase para preempt a xterm)
+  document.addEventListener("keydown", handleGlobalShortcut, { capture: true });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ATAJOS DE TECLADO (Fase 1: fijos, no configurables)
+// ═══════════════════════════════════════════════════════════════
+
+function handleGlobalShortcut(e) {
+  const ctrl = e.ctrlKey, shift = e.shiftKey, alt = e.altKey, meta = e.metaKey;
+
+  // Ctrl+Alt+V → pegar en terminal activo
+  if (ctrl && alt && !shift && !meta && e.code === "KeyV") {
+    e.preventDefault(); e.stopPropagation();
+    pasteIntoActiveTerminal();
+    return;
+  }
+  // Ctrl+Alt+C → copiar selección del terminal activo
+  if (ctrl && alt && !shift && !meta && e.code === "KeyC") {
+    e.preventDefault(); e.stopPropagation();
+    copyActiveSelection();
+    return;
+  }
+  // Ctrl+Alt+P → pegar en el terminal activo la contraseña del perfil
+  if (ctrl && alt && !shift && !meta && e.code === "KeyP") {
+    e.preventDefault(); e.stopPropagation();
+    pasteSessionPasswordIntoActiveTerminal();
+    return;
+  }
+  // Ctrl+Shift+T → nueva shell local
+  if (ctrl && shift && !alt && !meta && e.code === "KeyT") {
+    e.preventDefault(); e.stopPropagation();
+    openLocalShell();
+    return;
+  }
+  // Ctrl+Shift+N → nueva conexión
+  if (ctrl && shift && !alt && !meta && e.code === "KeyN") {
+    e.preventDefault(); e.stopPropagation();
+    openNewConnectionModal();
+    return;
+  }
+  // Ctrl+Shift+W → cerrar pestaña activa
+  if (ctrl && shift && !alt && !meta && e.code === "KeyW") {
+    e.preventDefault(); e.stopPropagation();
+    if (activeSessionId) closeSession(activeSessionId);
+    return;
+  }
+  // Ctrl+Tab / Ctrl+Shift+Tab → pestaña siguiente / anterior
+  if (ctrl && !alt && !meta && e.code === "Tab") {
+    e.preventDefault(); e.stopPropagation();
+    switchTab(shift ? -1 : 1);
+    return;
+  }
+  // Ctrl+, → abrir preferencias
+  if (ctrl && !shift && !alt && !meta && e.code === "Comma") {
+    e.preventDefault(); e.stopPropagation();
+    openSettingsModal();
+    return;
+  }
+}
+
+async function pasteIntoActiveTerminal() {
+  if (!activeSessionId) return;
+  const s = sessions.get(activeSessionId);
+  if (!s || s.status === "closed" || s.type === "rdp") return;
+  const text = await navigator.clipboard.readText().catch(() => null);
+  if (!text) return;
+  const data = Array.from(new TextEncoder().encode(text));
+  const cmd = s._closeOverride ? "local_shell_send_input" : "ssh_send_input";
+  invoke(cmd, { sessionId: activeSessionId, data }).catch(() => {});
+}
+
+/**
+ * Pega en el terminal SSH activo la contraseña guardada del perfil
+ * (KeePass o keyring). Solo aplica a sesiones SSH: en la shell local
+ * no hay perfil asociado.
+ */
+async function pasteSessionPasswordIntoActiveTerminal() {
+  if (!activeSessionId) return;
+  const s = sessions.get(activeSessionId);
+  if (!s || s.status === "closed") return;
+  if (s._closeOverride || s.type === "rdp" || !s.profileId) {
+    toast("Ctrl+Alt+P solo funciona en sesiones SSH con perfil", "warning");
+    return;
+  }
+  let password;
+  try {
+    password = await invoke("get_profile_password", { profileId: s.profileId });
+  } catch (err) {
+    toast(`No se pudo leer la contraseña: ${err}`, "error");
+    return;
+  }
+  if (!password) {
+    toast("El perfil no tiene una contraseña guardada", "warning");
+    return;
+  }
+  const data = Array.from(new TextEncoder().encode(password));
+  invoke("ssh_send_input", { sessionId: activeSessionId, data }).catch(() => {});
+}
+
+function copyActiveSelection() {
+  if (!activeSessionId) return;
+  const s = sessions.get(activeSessionId);
+  if (!s?.terminal) return;
+  const sel = s.terminal.getSelection();
+  if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+}
+
+/**
+ * Alterna la visibilidad de la barra lateral y persiste el estado.
+ * Después del cambio hace `fit` de los terminales visibles porque el
+ * área principal cambia de anchura.
+ */
+function initSidebarToggle() {
+  const btn = document.getElementById("btn-toggle-sidebar");
+  if (!btn) return;
+
+  const saved = localStorage.getItem("rustty-sidebar-collapsed") === "1";
+  if (saved) document.body.classList.add("sidebar-collapsed");
+
+  btn.addEventListener("click", () => {
+    const collapsed = document.body.classList.toggle("sidebar-collapsed");
+    localStorage.setItem("rustty-sidebar-collapsed", collapsed ? "1" : "0");
+    // Los xterms necesitan re-fit cuando cambia la anchura del contenedor
+    requestAnimationFrame(() => {
+      for (const sid of viewSelection) {
+        const s = sessions.get(sid);
+        if (s?.fitAddon) { try { s.fitAddon.fit(); notifyResize(sid, s.terminal); } catch {} }
+      }
+    });
+  });
+}
+
+function switchTab(delta) {
+  const order = [...document.querySelectorAll("#tabs-container .tab")]
+    .map((el) => el.dataset.session);
+  if (!order.length) return;
+  const idx = order.indexOf(activeSessionId);
+  const next = ((idx < 0 ? 0 : idx) + delta + order.length) % order.length;
+  setActiveTab(order[next]);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DROPDOWN PERSONALIZADO
+// Sustituye los <select> nativos (que en WebKitGTK ignoran el tema
+// de la app) por un control con los colores del tema Catppuccin.
+// ═══════════════════════════════════════════════════════════════
+
+function enhanceSelect(selectEl) {
+  if (selectEl.dataset.enhanced === "1") return;
+  selectEl.dataset.enhanced = "1";
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "custom-select";
+  selectEl.parentNode.insertBefore(wrapper, selectEl);
+  wrapper.appendChild(selectEl);
+
+  const display = document.createElement("button");
+  display.type = "button";
+  display.className = "custom-select-display";
+  wrapper.appendChild(display);
+
+  const list = document.createElement("div");
+  list.className = "custom-select-list hidden";
+  document.body.appendChild(list);
+
+  function refresh() {
+    const opt = selectEl.options[selectEl.selectedIndex];
+    display.textContent = opt ? opt.textContent : "";
+    list.innerHTML = "";
+    [...selectEl.options].forEach((o, i) => {
+      const item = document.createElement("div");
+      item.className = "custom-select-item";
+      if (i === selectEl.selectedIndex) item.classList.add("active");
+      item.textContent = o.textContent;
+      item.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        if (selectEl.value !== o.value) {
+          selectEl.value = o.value;
+          selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        close();
+      });
+      list.appendChild(item);
+    });
+  }
+
+  function position() {
+    const r = display.getBoundingClientRect();
+    list.style.left     = r.left + "px";
+    list.style.minWidth = r.width + "px";
+    list.style.maxWidth = Math.max(r.width, 320) + "px";
+
+    const spaceBelow = window.innerHeight - r.bottom;
+    const spaceAbove = r.top;
+    const maxH = 240;
+    if (spaceBelow < 140 && spaceAbove > spaceBelow) {
+      list.style.top      = "auto";
+      list.style.bottom   = (window.innerHeight - r.top + 4) + "px";
+      list.style.maxHeight = Math.min(maxH, spaceAbove - 12) + "px";
+    } else {
+      list.style.top      = (r.bottom + 4) + "px";
+      list.style.bottom   = "auto";
+      list.style.maxHeight = Math.min(maxH, spaceBelow - 12) + "px";
+    }
+  }
+
+  function open() {
+    refresh();
+    wrapper.classList.add("open");
+    list.classList.remove("hidden");
+    position();
+  }
+
+  function close() {
+    wrapper.classList.remove("open");
+    list.classList.add("hidden");
+  }
+
+  function toggle() {
+    list.classList.contains("hidden") ? open() : close();
+  }
+
+  display.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggle();
+  });
+
+  document.addEventListener("mousedown", (e) => {
+    if (list.classList.contains("hidden")) return;
+    if (wrapper.contains(e.target) || list.contains(e.target)) return;
+    close();
+  });
+
+  window.addEventListener("resize", () => {
+    if (!list.classList.contains("hidden")) position();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !list.classList.contains("hidden")) close();
+  });
+
+  // Observar cambios en las options (innerHTML = …, appendChild, etc.)
+  new MutationObserver(refresh).observe(selectEl, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["selected", "disabled", "value"],
+  });
+
+  // Interceptar asignaciones `selectEl.value = X` para actualizar el display
+  const proto = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+  Object.defineProperty(selectEl, "value", {
+    configurable: true,
+    get() { return proto.get.call(selectEl); },
+    set(v) { proto.set.call(selectEl, v); refresh(); },
+  });
+
+  refresh();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MENÚ CONTEXTUAL DE PESTAÑAS
+// ═══════════════════════════════════════════════════════════════
+
+let tabCtxTargetId = null;
+
+function showTabContextMenu(x, y, sessionId) {
+  tabCtxTargetId = sessionId;
+  const menu = document.getElementById("tab-context-menu");
+
+  const inView     = viewSelection.includes(sessionId);
+  const viewSize   = viewSelection.length;
+  const canAdd     = !inView && viewSize >= 1;
+  const canRemove  = inView && viewSize > 1;
+  const canSolo    = !(viewSize === 1 && inView);
+  const showLayout = viewSize > 1;
+
+  menu.querySelector(".tabctx-view-add"   ).classList.toggle("hidden", !canAdd);
+  menu.querySelector(".tabctx-view-remove").classList.toggle("hidden", !canRemove);
+  menu.querySelector(".tabctx-view-solo"  ).classList.toggle("hidden", !canSolo);
+  menu.querySelector(".tabctx-view-sep"   ).classList.toggle("hidden",
+    !(canAdd || canRemove || canSolo));
+
+  menu.querySelectorAll(".tabctx-layout").forEach((el) => {
+    el.classList.toggle("hidden", !showLayout);
+    const layout = el.dataset.tabctx.replace("layout-", "");
+    el.classList.toggle("active", showLayout && getViewLayout() === layout);
+  });
+  menu.querySelector(".tabctx-layout-sep").classList.toggle("hidden", !showLayout);
+
+  menu.style.left = "0px";
+  menu.style.top  = "0px";
+  menu.classList.remove("hidden");
+  const { width, height } = menu.getBoundingClientRect();
+  menu.style.left = Math.min(x, window.innerWidth  - width  - 6) + "px";
+  menu.style.top  = Math.min(y, window.innerHeight - height - 6) + "px";
+}
+
+function hideTabContextMenu() {
+  document.getElementById("tab-context-menu").classList.add("hidden");
+  tabCtxTargetId = null;
+}
+
+async function handleTabContextAction(action) {
+  const targetId = tabCtxTargetId;
+  hideTabContextMenu();
+  if (!targetId) return;
+
+  if (action === "close") {
+    await closeSession(targetId);
+    return;
+  }
+  if (action === "close-all") {
+    for (const sid of [...sessions.keys()]) await closeSession(sid);
+    return;
+  }
+  if (action === "close-others") {
+    for (const sid of [...sessions.keys()]) {
+      if (sid !== targetId) await closeSession(sid);
+    }
+    return;
+  }
+  if (action === "close-right") {
+    const order = [...document.querySelectorAll("#tabs-container .tab")]
+      .map((el) => el.dataset.session);
+    const idx = order.indexOf(targetId);
+    if (idx < 0) return;
+    for (const sid of order.slice(idx + 1)) await closeSession(sid);
+    return;
+  }
+  if (action === "duplicate") {
+    const s = sessions.get(targetId);
+    if (!s) return;
+    if (s._closeOverride) { openLocalShell(); return; }
+    if (s.type === "rdp") { connectRdp(s.profileId); return; }
+    if (s.profileId) { connectProfile(s.profileId, { force: true }); return; }
+    return;
+  }
+  if (action === "view-add") {
+    if (!viewSelection.includes(targetId)) {
+      selectSession(targetId, true);
+    }
+    return;
+  }
+  if (action === "view-remove") {
+    const idx = viewSelection.indexOf(targetId);
+    if (idx >= 0 && viewSelection.length > 1) {
+      viewSelection.splice(idx, 1);
+      if (activeSessionId === targetId) activeSessionId = viewSelection[0];
+      renderView();
+    }
+    return;
+  }
+  if (action === "view-solo") {
+    selectSession(targetId, false);
+    return;
+  }
+  if (action.startsWith("layout-")) {
+    setViewLayout(action.slice("layout-".length));
+    return;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UTILIDADES
+// ═══════════════════════════════════════════════════════════════
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function toast(message, type = "info", ms = 3500) {
+  const el = document.createElement("div");
+  el.className = `toast ${type}`;
+  el.textContent = message;
+  document.getElementById("toast-container").appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ARRANQUE
+// ═══════════════════════════════════════════════════════════════
+
+init();

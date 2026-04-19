@@ -1,0 +1,84 @@
+name: Build Rustty
+
+on:
+  push:
+    tags:
+      - "v*"          # Lanzar al hacer: git tag v0.1.0 && git push --tags
+  workflow_dispatch:  # También se puede lanzar manualmente desde GitHub
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target:   x86_64-unknown-linux-gnu
+            label:    Linux
+          - platform: windows-latest
+            target:   x86_64-pc-windows-msvc
+            label:    Windows
+          - platform: macos-latest
+            target:   aarch64-apple-darwin
+            label:    macOS (Apple Silicon)
+
+    runs-on: ${{ matrix.platform }}
+    name: Build · ${{ matrix.label }}
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────
+      - uses: actions/checkout@v4
+
+      # ── Node.js ───────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # ── Rust ──────────────────────────────────────────────────
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # ── Dependencias del sistema (solo Linux) ─────────────────
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            pkg-config \
+            libssh2-1-dev
+
+      # ── Dependencias del sistema (solo macOS) ─────────────────
+      - name: Install macOS dependencies
+        if: matrix.platform == 'macos-latest'
+        run: brew install libssh2 openssl pkg-config
+
+      # ── Dependencias JS ───────────────────────────────────────
+      - name: Install JS dependencies
+        run: npm ci
+
+      # ── Build Tauri ───────────────────────────────────────────
+      - name: Build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName:       ${{ github.ref_name }}
+          releaseName:   "Rustty ${{ github.ref_name }}"
+          releaseBody:   "Ver CHANGELOG para detalles."
+          releaseDraft:  true
+          prerelease:    false
+          args:          --target ${{ matrix.target }}
