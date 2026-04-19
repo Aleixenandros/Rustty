@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "0.1.0"
+version = "0.1.1"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Rustty"]
 edition = "2021"

@@ -37,6 +37,19 @@
             <span class="chevron" aria-hidden="true">‹</span>
           </button>
           <div id="tabs-container"></div>
+          <div id="tab-bar-drag" data-tauri-drag-region></div>
+          <div id="window-controls" aria-hidden="false">
+            <button id="btn-win-min" class="win-ctrl" data-i18n-title="window.minimize" title="Minimizar" aria-label="Minimizar">
+              <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 5 H10" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+            </button>
+            <button id="btn-win-max" class="win-ctrl" data-i18n-title="window.maximize" title="Maximizar" aria-label="Maximizar">
+              <svg class="ico-max" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+              <svg class="ico-restore" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="0.5" y="2.5" width="7" height="7" stroke="currentColor" stroke-width="1" fill="none"/><path d="M2.5 2.5 V0.5 H9.5 V7.5 H7.5" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+            </button>
+            <button id="btn-win-close" class="win-ctrl win-ctrl-close" data-i18n-title="window.close" title="Cerrar" aria-label="Cerrar">
+              <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 0 L10 10 M10 0 L0 10" stroke="currentColor" stroke-width="1" fill="none"/></svg>
+            </button>
+          </div>
         </div>
         <div id="terminals-container">
           <div id="view-layout-bar" class="hidden">

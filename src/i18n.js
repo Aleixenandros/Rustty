@@ -28,6 +28,11 @@ const DICTIONARIES = {
       new_conn: "Nueva conexión",
       local_shell: "Consola local",
     },
+    window: {
+      minimize: "Minimizar",
+      maximize: "Maximizar / restaurar",
+      close: "Cerrar",
+    },
     view_layout: {
       columns: "Dividir en columnas",
       rows: "Dividir en filas",
@@ -212,6 +217,11 @@ const DICTIONARIES = {
     welcome: {
       new_conn: "New connection",
       local_shell: "Local console",
+    },
+    window: {
+      minimize: "Minimize",
+      maximize: "Maximize / restore",
+      close: "Close",
     },
     view_layout: {
       columns: "Split in columns",
@@ -398,6 +408,11 @@ const DICTIONARIES = {
       new_conn: "Nouvelle connexion",
       local_shell: "Console locale",
     },
+    window: {
+      minimize: "Réduire",
+      maximize: "Agrandir / restaurer",
+      close: "Fermer",
+    },
     view_layout: {
       columns: "Diviser en colonnes",
       rows: "Diviser en lignes",
@@ -582,6 +597,11 @@ const DICTIONARIES = {
     welcome: {
       new_conn: "Nova conexão",
       local_shell: "Console local",
+    },
+    window: {
+      minimize: "Minimizar",
+      maximize: "Maximizar / restaurar",
+      close: "Fechar",
     },
     view_layout: {
       columns: "Dividir em colunas",

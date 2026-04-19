@@ -382,6 +382,7 @@ async fn connect_and_open_sftp(
 
 /// Autenticación vía agente SSH. Probamos cada identidad hasta que una
 /// funcione o se acaben.
+#[cfg(unix)]
 async fn authenticate_with_agent(
     handle: &mut client::Handle<Client>,
     username: &str,
@@ -415,6 +416,14 @@ async fn authenticate_with_agent(
     Ok(last_failure.unwrap_or(AuthResult::Failure {
         remaining_methods: russh::MethodSet::empty(),
     }))
+}
+
+#[cfg(not(unix))]
+async fn authenticate_with_agent(
+    _handle: &mut client::Handle<Client>,
+    _username: &str,
+) -> Result<AuthResult, String> {
+    Err("Autenticación vía agente SSH no soportada en esta plataforma".into())
 }
 
 // ─── Operaciones ────────────────────────────────────────────────────────────

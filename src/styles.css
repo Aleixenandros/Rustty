@@ -360,6 +360,54 @@ body.sidebar-collapsed #btn-toggle-sidebar .chevron { transform: rotate(180deg);
   align-items: stretch;
 }
 
+/* ─── Topbar integrada (CSD) ─────────────────────────────────── */
+#tab-bar-drag {
+  flex: 1 1 auto;
+  min-width: 8px;
+  align-self: stretch;
+  -webkit-app-region: drag;
+}
+
+#window-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  -webkit-app-region: no-drag;
+}
+
+/* En macOS los traffic lights nativos están a la izquierda:
+   ocultamos nuestros controles y dejamos un hueco a la izquierda
+   del tab-bar para que no se solapen con ellos. */
+body.platform-macos #window-controls { display: none; }
+body.platform-macos #tab-bar { padding-left: 76px; }
+
+.win-ctrl {
+  flex: 0 0 auto;
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--subtext0);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.win-ctrl:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+.win-ctrl-close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+.win-ctrl svg { display: block; }
+
+.win-ctrl .ico-restore { display: none; }
+body.window-maximized .win-ctrl .ico-max { display: none; }
+body.window-maximized .win-ctrl .ico-restore { display: block; }
+
 .tab {
   display: flex;
   align-items: center;

@@ -6,6 +6,9 @@ on:
       - "v*"          # Lanzar al hacer: git tag v0.1.0 && git push --tags
   workflow_dispatch:  # También se puede lanzar manualmente desde GitHub
 
+permissions:
+  contents: write     # Necesario para que tauri-action pueda crear el release
+
 jobs:
   build:
     strategy:

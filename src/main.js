@@ -2944,6 +2944,9 @@ function bindUIEvents() {
   // Toggle de la barra lateral (persistido en localStorage)
   initSidebarToggle();
 
+  // Controles de ventana (CSD): min / max / close + detección de plataforma
+  initWindowControls();
+
   // ── Modal de preferencias ────────────────────────────────────
   document.getElementById("btn-prefs-close")
     .addEventListener("click", closeSettingsModal);
@@ -3295,6 +3298,51 @@ function initSidebarToggle() {
       }
     });
   });
+}
+
+/**
+ * Controles de ventana integrados (CSD: decorations:false).
+ * En macOS dejamos los traffic lights nativos (titleBarStyle Overlay),
+ * así que ocultamos nuestros botones y añadimos un padding a la izquierda
+ * del tab-bar vía la clase `platform-macos`.
+ */
+async function initWindowControls() {
+  // Detección de plataforma a partir del UA de la webview.
+  const ua = navigator.userAgent || "";
+  const cls = /Mac OS X|Macintosh/.test(ua) ? "platform-macos"
+            : /Windows/.test(ua)            ? "platform-windows"
+            :                                 "platform-linux";
+  document.body.classList.add(cls);
+
+  let win;
+  try {
+    const mod = await import("@tauri-apps/api/window");
+    win = mod.getCurrentWindow();
+  } catch {
+    return; // fuera de Tauri (p. ej. vite dev puro): no hay ventana
+  }
+
+  const btnMin   = document.getElementById("btn-win-min");
+  const btnMax   = document.getElementById("btn-win-max");
+  const btnClose = document.getElementById("btn-win-close");
+
+  btnMin  ?.addEventListener("click", () => win.minimize());
+  btnMax  ?.addEventListener("click", () => win.toggleMaximize());
+  btnClose?.addEventListener("click", () => win.close());
+
+  // Doble clic en la zona arrastrable maximiza/restaura.
+  document.getElementById("tab-bar-drag")
+    ?.addEventListener("dblclick", () => win.toggleMaximize());
+
+  // Mantener el icono maximizar/restaurar sincronizado con el estado.
+  const syncMaximized = async () => {
+    try {
+      const isMax = await win.isMaximized();
+      document.body.classList.toggle("window-maximized", !!isMax);
+    } catch {}
+  };
+  syncMaximized();
+  try { win.onResized(syncMaximized); } catch {}
 }
 
 function switchTab(delta) {
