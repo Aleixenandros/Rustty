@@ -134,6 +134,9 @@ const DICTIONARIES = {
       theme_dark: "Oscuro",
       theme_light: "Claro",
       theme_system: "Sistema",
+      theme_inherit: "Igual que la interfaz",
+      terminal_theme: "Tema del terminal",
+      terminal_theme_hint: "Si se deja en \"Igual que la interfaz\", el terminal hereda el tema de arriba.",
     },
     prefs_keepass: {
       title: "KeePass",
@@ -314,6 +317,9 @@ const DICTIONARIES = {
       theme_dark: "Dark",
       theme_light: "Light",
       theme_system: "System",
+      theme_inherit: "Same as UI",
+      terminal_theme: "Terminal theme",
+      terminal_theme_hint: "If left on \"Same as UI\", the terminal inherits the theme above.",
     },
     prefs_keepass: {
       title: "KeePass",
@@ -494,6 +500,9 @@ const DICTIONARIES = {
       theme_dark: "Sombre",
       theme_light: "Clair",
       theme_system: "Système",
+      theme_inherit: "Identique à l'interface",
+      terminal_theme: "Thème du terminal",
+      terminal_theme_hint: "Si l'option \"Identique à l'interface\" est sélectionnée, le terminal hérite du thème ci-dessus.",
     },
     prefs_keepass: {
       title: "KeePass",
@@ -674,6 +683,9 @@ const DICTIONARIES = {
       theme_dark: "Escuro",
       theme_light: "Claro",
       theme_system: "Sistema",
+      theme_inherit: "Igual à interface",
+      terminal_theme: "Tema do terminal",
+      terminal_theme_hint: "Se for deixado em \"Igual à interface\", o terminal herda o tema acima.",
     },
     prefs_keepass: {
       title: "KeePass",

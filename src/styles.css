@@ -1500,6 +1500,13 @@ input[type="checkbox"] {
 .theme-preview.monokai .theme-preview-sidebar { background: #1f201a; }
 .theme-preview.monokai .theme-preview-main    { background: #272822; }
 
+.theme-preview.inherit .theme-preview-sidebar {
+  background: repeating-linear-gradient(45deg, var(--mantle) 0 4px, var(--surface0) 4px 8px);
+}
+.theme-preview.inherit .theme-preview-main {
+  background: repeating-linear-gradient(45deg, var(--base) 0 4px, var(--surface0) 4px 8px);
+}
+
 .theme-label {
   font-size: 11px;
   color: var(--subtext0);

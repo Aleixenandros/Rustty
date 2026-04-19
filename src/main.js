@@ -266,6 +266,9 @@ const THEME_CLASSES = [
 
 const DEFAULT_PREFS = {
   theme:           "dark",    // "dark" | "light" | "system"
+  // Tema del terminal independiente del de UI.
+  // null / "inherit" = seguir a `theme`; cualquier otro id válido = tema fijo para el terminal.
+  terminalTheme:   null,
   copyOnSelect:    false,
   rightClickPaste: false,
   fontSize:        14,
@@ -307,9 +310,13 @@ function resolveEffectiveTheme(theme) {
   return theme;
 }
 
-/** Devuelve el tema xterm.js correcto según la preferencia activa. */
+/** Devuelve el tema xterm.js correcto según la preferencia activa.
+ *  Si `prefs.terminalTheme` está definido y no es "inherit", se usa ese;
+ *  en caso contrario el terminal hereda el tema de UI. */
 function getTerminalTheme() {
-  const effective = resolveEffectiveTheme(prefs.theme);
+  const override = prefs.terminalTheme;
+  const base = (override && override !== "inherit") ? override : prefs.theme;
+  const effective = resolveEffectiveTheme(base);
   return TERMINAL_THEMES[effective] || TERMINAL_THEMES.dark;
 }
 
@@ -364,6 +371,8 @@ function switchPrefsTab(tab) {
 }
 
 function openSettingsModal() {
+  // Snapshot del tema de terminal al abrir, para poder revertir al cancelar.
+  _terminalThemeSnapshot = prefs.terminalTheme;
   document.getElementById("pref-copy-on-select").checked   = prefs.copyOnSelect;
   document.getElementById("pref-right-click-paste").checked = prefs.rightClickPaste;
   document.getElementById("pref-font-size").value           = prefs.fontSize;
@@ -372,12 +381,21 @@ function openSettingsModal() {
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
   document.getElementById("pref-bell").value                = prefs.bell;
 
-  // Marcar el radio + .selected correspondientes al tema actual
+  // Marcar el radio + .selected correspondientes al tema de UI actual
   document.querySelectorAll('input[name="pref-theme"]').forEach((r) => {
     r.checked = (r.value === prefs.theme);
   });
-  document.querySelectorAll(".theme-option").forEach((opt) =>
+  document.querySelectorAll('.theme-picker[data-for="ui"] .theme-option').forEach((opt) =>
     opt.classList.toggle("selected", opt.dataset.theme === prefs.theme)
+  );
+
+  // Tema del terminal: si no hay override se marca "inherit"
+  const termVal = prefs.terminalTheme || "inherit";
+  document.querySelectorAll('input[name="pref-terminal-theme"]').forEach((r) => {
+    r.checked = (r.value === termVal);
+  });
+  document.querySelectorAll('.theme-picker[data-for="terminal"] .theme-option').forEach((opt) =>
+    opt.classList.toggle("selected", opt.dataset.theme === termVal)
   );
 
   // Rellenar el selector de carpetas para exportar
@@ -401,8 +419,12 @@ function openSettingsModal() {
   document.getElementById("modal-prefs-overlay").classList.remove("hidden");
 }
 
+let _terminalThemeSnapshot = null;
+
 function closeSettingsModal() {
-  // Si se canceló, revertir el preview de tema al que estaba guardado
+  // Si se canceló: revertir el preview del tema de UI *y* el del terminal
+  // (el preview del terminal muta prefs.terminalTheme directamente; aquí lo restauramos).
+  prefs.terminalTheme = _terminalThemeSnapshot;
   applyTheme(prefs.theme);
   document.getElementById("modal-prefs-overlay").classList.add("hidden");
 }
@@ -411,8 +433,15 @@ function savePrefsFromModal() {
   // Tema: leer desde radio (fuente única de verdad) con fallback a prefs actuales
   const selectedTheme =
     document.querySelector('input[name="pref-theme"]:checked')?.value
-    ?? document.querySelector(".theme-option.selected")?.dataset.theme
+    ?? document.querySelector('.theme-picker[data-for="ui"] .theme-option.selected')?.dataset.theme
     ?? prefs.theme;
+
+  // Tema del terminal: "inherit" se normaliza a null en persistencia.
+  const rawTerminalTheme =
+    document.querySelector('input[name="pref-terminal-theme"]:checked')?.value
+    ?? document.querySelector('.theme-picker[data-for="terminal"] .theme-option.selected')?.dataset.theme
+    ?? "inherit";
+  const selectedTerminalTheme = (rawTerminalTheme === "inherit") ? null : rawTerminalTheme;
 
   const newLang =
     document.getElementById("pref-language")?.value ||
@@ -421,6 +450,7 @@ function savePrefsFromModal() {
 
   prefs = {
     theme:           selectedTheme,
+    terminalTheme:   selectedTerminalTheme,
     copyOnSelect:    document.getElementById("pref-copy-on-select").checked,
     rightClickPaste: document.getElementById("pref-right-click-paste").checked,
     fontSize:        parseInt(document.getElementById("pref-font-size").value, 10) || DEFAULT_PREFS.fontSize,
@@ -2928,15 +2958,29 @@ function bindUIEvents() {
   document.getElementById("btn-import")
     .addEventListener("click", () => importConnections());
 
-  // Selector de tema: sincronizar .selected con el radio + preview en vivo
+  // Selector de tema de UI: sincronizar .selected con el radio + preview en vivo
   document.querySelectorAll('input[name="pref-theme"]').forEach((radio) => {
     radio.addEventListener("change", () => {
       const theme = radio.value;
-      document.querySelectorAll(".theme-option").forEach((o) =>
+      document.querySelectorAll('.theme-picker[data-for="ui"] .theme-option').forEach((o) =>
         o.classList.toggle("selected", o.dataset.theme === theme)
       );
       // Preview inmediato del tema al seleccionar (se confirma al guardar)
       applyTheme(theme);
+    });
+  });
+
+  // Selector de tema del terminal: preview aplica sólo a los terminales
+  document.querySelectorAll('input[name="pref-terminal-theme"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      const val = radio.value;
+      document.querySelectorAll('.theme-picker[data-for="terminal"] .theme-option').forEach((o) =>
+        o.classList.toggle("selected", o.dataset.theme === val)
+      );
+      // Preview no destructivo: sobreescribimos prefs.terminalTheme temporalmente
+      // para que getTerminalTheme() use el nuevo valor; se confirma en save.
+      prefs.terminalTheme = (val === "inherit") ? null : val;
+      applyPrefsToAllTerminals();
     });
   });
 

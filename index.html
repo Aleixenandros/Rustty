@@ -378,7 +378,7 @@
 
               <div class="settings-row">
                 <label data-i18n="prefs_appearance.theme">Tema</label>
-                <div class="theme-picker">
+                <div class="theme-picker" data-for="ui">
                   <label class="theme-option" data-theme="dark">
                     <input type="radio" name="pref-theme" value="dark" />
                     <div class="theme-preview">
@@ -477,6 +477,117 @@
                   </label>
                   <label class="theme-option" data-theme="monokai">
                     <input type="radio" name="pref-theme" value="monokai" />
+                    <div class="theme-preview monokai">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Monokai</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <label data-i18n="prefs_appearance.terminal_theme">Tema del terminal</label>
+                <p class="settings-hint" data-i18n="prefs_appearance.terminal_theme_hint">Si se deja en "Igual que la interfaz", el terminal hereda el tema de arriba.</p>
+                <div class="theme-picker" data-for="terminal">
+                  <label class="theme-option" data-theme="inherit">
+                    <input type="radio" name="pref-terminal-theme" value="inherit" />
+                    <div class="theme-preview inherit">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label" data-i18n="prefs_appearance.theme_inherit">Igual que la interfaz</span>
+                  </label>
+                  <label class="theme-option" data-theme="dark">
+                    <input type="radio" name="pref-terminal-theme" value="dark" />
+                    <div class="theme-preview">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label" data-i18n="prefs_appearance.theme_dark">Oscuro</span>
+                  </label>
+                  <label class="theme-option" data-theme="light">
+                    <input type="radio" name="pref-terminal-theme" value="light" />
+                    <div class="theme-preview light">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label" data-i18n="prefs_appearance.theme_light">Claro</span>
+                  </label>
+                  <label class="theme-option" data-theme="dracula">
+                    <input type="radio" name="pref-terminal-theme" value="dracula" />
+                    <div class="theme-preview dracula">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Dracula</span>
+                  </label>
+                  <label class="theme-option" data-theme="nord">
+                    <input type="radio" name="pref-terminal-theme" value="nord" />
+                    <div class="theme-preview nord">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Nord</span>
+                  </label>
+                  <label class="theme-option" data-theme="xterm">
+                    <input type="radio" name="pref-terminal-theme" value="xterm" />
+                    <div class="theme-preview xterm">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">xterm</span>
+                  </label>
+                  <label class="theme-option" data-theme="vscode-dark">
+                    <input type="radio" name="pref-terminal-theme" value="vscode-dark" />
+                    <div class="theme-preview vscode-dark">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">VS Code Dark+</span>
+                  </label>
+                  <label class="theme-option" data-theme="tango">
+                    <input type="radio" name="pref-terminal-theme" value="tango" />
+                    <div class="theme-preview tango">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Tango</span>
+                  </label>
+                  <label class="theme-option" data-theme="solarized-dark">
+                    <input type="radio" name="pref-terminal-theme" value="solarized-dark" />
+                    <div class="theme-preview solarized-dark">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Solarized Dark</span>
+                  </label>
+                  <label class="theme-option" data-theme="solarized-light">
+                    <input type="radio" name="pref-terminal-theme" value="solarized-light" />
+                    <div class="theme-preview solarized-light">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Solarized Light</span>
+                  </label>
+                  <label class="theme-option" data-theme="gruvbox-dark">
+                    <input type="radio" name="pref-terminal-theme" value="gruvbox-dark" />
+                    <div class="theme-preview gruvbox-dark">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Gruvbox Dark</span>
+                  </label>
+                  <label class="theme-option" data-theme="tokyo-night">
+                    <input type="radio" name="pref-terminal-theme" value="tokyo-night" />
+                    <div class="theme-preview tokyo-night">
+                      <div class="theme-preview-sidebar"></div>
+                      <div class="theme-preview-main"></div>
+                    </div>
+                    <span class="theme-label">Tokyo Night</span>
+                  </label>
+                  <label class="theme-option" data-theme="monokai">
+                    <input type="radio" name="pref-terminal-theme" value="monokai" />
                     <div class="theme-preview monokai">
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
