@@ -29,8 +29,9 @@ Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
 
 1.  **Rust**: [Instalar Rust](https://www.rust-lang.org/tools/install)
 2.  **Node.js**: v18 o superior.
-3.  **Dependencias de sistema** (solo Linux):
+3.  **Dependencias de sistema**:
 
+    #### Linux
     **Ubuntu / Debian**:
     ```bash
     sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev pkg-config libssh2-1-dev
@@ -45,6 +46,20 @@ Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
     ```bash
     sudo pacman -S webkit2gtk-4.1 libayatana-appindicator librsvg openssl libssh2
     ```
+
+    **openSUSE**:
+    ```bash
+    sudo zypper install webkit2gtk3-devel libayatana-appindicator3-devel librsvg-devel libopenssl-devel libssh2-devel
+    ```
+
+    #### macOS
+    Es necesario tener instaladas las **Xcode Command Line Tools** y [Homebrew](https://brew.sh/).
+    ```bash
+    brew install openssl libssh2 pkg-config
+    ```
+
+    #### Windows
+    Es necesario instalar las [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) y tener instalado el **WebView2 Runtime** (incluido por defecto en Windows 10 y 11).
 
 ### Pasos para ejecutar en desarrollo
 
