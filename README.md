@@ -30,8 +30,20 @@ Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
 1.  **Rust**: [Instalar Rust](https://www.rust-lang.org/tools/install)
 2.  **Node.js**: v18 o superior.
 3.  **Dependencias de sistema** (solo Linux):
+
+    **Ubuntu / Debian**:
     ```bash
     sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev pkg-config libssh2-1-dev
+    ```
+
+    **Fedora**:
+    ```bash
+    sudo dnf install webkit2gtk4.1-devel libayatana-appindicator-devel librsvg2-devel openssl-devel libssh2-devel
+    ```
+
+    **Arch Linux**:
+    ```bash
+    sudo pacman -S webkit2gtk-4.1 libayatana-appindicator librsvg openssl libssh2
     ```
 
 ### Pasos para ejecutar en desarrollo
