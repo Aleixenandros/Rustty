@@ -59,7 +59,8 @@ jobs:
             patchelf \
             libssl-dev \
             pkg-config \
-            libssh2-1-dev
+            libssh2-1-dev \
+            rpm
 
       # ── Dependencias del sistema (solo macOS) ─────────────────
       - name: Install macOS dependencies
