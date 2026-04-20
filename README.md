@@ -43,6 +43,14 @@ Preferencias → **Idioma**: interfaz disponible en español, inglés, francés 
 
 ![Selector de idioma](docs/img/Captura3.png)
 
+## Atajos de teclado
+
+| Atajo          | Acción                                              |
+|----------------|-----------------------------------------------------|
+| `Ctrl+Alt+P`   | Pegar la contraseña del perfil activo en el shell   |
+| `Ctrl+Shift+C` | Copiar selección del terminal                       |
+| `Ctrl+Shift+V` | Pegar en el terminal                                |
+
 ## Instalación
 
 En cada release de GitHub encontrarás binarios precompilados para Linux, Windows y macOS. Descárgalos desde la página de [Releases](https://github.com/Aleixenandros/Rustty/releases).
@@ -204,14 +212,6 @@ git push --tags
 
 Los artefactos quedan en un release de GitHub en modo borrador.
 
-## Atajos de teclado
-
-| Atajo          | Acción                                              |
-|----------------|-----------------------------------------------------|
-| `Ctrl+Alt+P`   | Pegar la contraseña del perfil activo en el shell   |
-| `Ctrl+Shift+C` | Copiar selección del terminal                       |
-| `Ctrl+Shift+V` | Pegar en el terminal                                |
-
 ## Rutas de datos
 
 - **Linux**: `~/.local/share/rustty/` (perfiles, configuración)
@@ -224,6 +224,18 @@ Las contraseñas no se guardan en estos ficheros: viven en el keyring del sistem
 
 ## 📄 Licencia
 
-Pendiente de definir. Se publicará bajo una licencia permisiva (MIT o Apache-2.0) antes del primer release estable.
+Rustty se distribuye bajo la licencia [Apache License, Version 2.0](LICENSE).
+
+```text
+Copyright 2026 Alejandro Soriano
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+```
+
+Ver el fichero [NOTICE](NOTICE) para las atribuciones requeridas al redistribuir.
 
 ---
