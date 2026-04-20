@@ -86,3 +86,30 @@ jobs:
           releaseDraft:  true
           prerelease:    false
           args:          --target ${{ matrix.target }}
+
+      # ── Extras de Windows: MSI sin sufijo _en-US + .exe portable ──
+      - name: Rename MSI and publish portable exe (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $base = "src-tauri/target/${{ matrix.target }}/release"
+
+          # --- MSI: eliminar el sufijo _en-US del nombre -------------
+          $msi = Get-ChildItem "$base/bundle/msi" -Filter "*_en-US.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($msi) {
+            $newName = $msi.Name -replace '_en-US\.msi$', '.msi'
+            Rename-Item -LiteralPath $msi.FullName -NewName $newName
+            $sig = "$($msi.FullName).sig"
+            if (Test-Path $sig) { Rename-Item -LiteralPath $sig -NewName "$newName.sig" }
+            # Sustituye el asset en el release draft
+            gh release delete-asset "${{ github.ref_name }}" $msi.Name --yes 2>$null
+            gh release upload "${{ github.ref_name }}" "$base/bundle/msi/$newName" --clobber
+          }
+
+          # --- Portable: sube el rustty.exe sin instalar ------------
+          $version  = "${{ github.ref_name }}".TrimStart('v')
+          $portable = "Rustty_${version}_x64-portable.exe"
+          Copy-Item "$base/rustty.exe" "$base/$portable"
+          gh release upload "${{ github.ref_name }}" "$base/$portable" --clobber
