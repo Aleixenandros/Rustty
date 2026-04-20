@@ -40,7 +40,7 @@ Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
 2. **Node.js**: v18 o superior.
 3. **Dependencias de sistema**:
 
-    #### Linux
+   #### Linux
 
     **Ubuntu / Debian**:
 
@@ -66,7 +66,7 @@ Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
     sudo zypper install webkit2gtk3-devel libayatana-appindicator3-devel librsvg-devel libopenssl-devel
     ```
 
-    #### macOS
+   #### macOS
 
     Es necesario tener instaladas las **Xcode Command Line Tools** y [Homebrew](https://brew.sh/).
 
@@ -74,7 +74,7 @@ Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
     brew install openssl pkg-config
     ```
 
-    #### Windows
+   #### Windows
 
     Es necesario instalar las [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) y tener instalado el **WebView2 Runtime** (incluido por defecto en Windows 10 y 11).
 
@@ -143,4 +143,3 @@ Las contraseñas no se guardan en estos ficheros: viven en el keyring del sistem
 Pendiente de definir. Se publicará bajo una licencia permisiva (MIT o Apache-2.0) antes del primer release estable.
 
 ---
-Desarrollado con ❤️ usando Rust y Tauri, con asistencia de IA.
