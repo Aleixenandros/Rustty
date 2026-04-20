@@ -21,6 +21,68 @@
 - **Personalización**: 11 temas base integrados (Catppuccin Mocha / Latte, Dracula, Nord, xterm, VS Code Dark+, Tango, Solarized Dark / Light, Gruvbox Dark, Tokyo Night, Monokai) y ajustes de cursor, scrollback y *bell*.
 - **Internacionalización**: interfaz traducida a español, inglés, francés y portugués.
 
+## Instalación
+
+En cada release de GitHub encontrarás binarios precompilados para Linux, Windows y macOS. Descárgalos desde la página de [Releases](https://github.com/Aleixenandros/Rustty/releases).
+
+### Linux
+
+Rustty necesita **WebKitGTK 4.1** y **libayatana-appindicator** en tiempo de ejecución (en la mayoría de distribuciones ya están instalados o se resuelven como dependencia al instalar el paquete).
+
+- **AppImage (`Rustty_<version>_amd64.AppImage`)** — portable, no requiere instalación:
+
+  ```bash
+  chmod +x Rustty_*_amd64.AppImage
+  ./Rustty_*_amd64.AppImage
+  ```
+
+- **.deb (Debian / Ubuntu / Mint / ...)**:
+
+  ```bash
+  sudo apt install ./Rustty_*_amd64.deb
+  ```
+
+- **.rpm (Fedora / openSUSE / RHEL / ...)**:
+
+  ```bash
+  sudo dnf install ./Rustty-*-1.x86_64.rpm        # Fedora
+  sudo zypper install ./Rustty-*-1.x86_64.rpm     # openSUSE
+  ```
+
+  Si tu distribución no incluye WebKitGTK 4.1 por defecto, instálalo primero (ver "Requisitos previos" más abajo).
+
+### Windows
+
+- **MSI (`Rustty_<version>_x64.msi`)** — instalador tradicional. Doble clic y seguir el asistente.
+- **NSIS (`Rustty_<version>_x64-setup.exe`)** — instalador alternativo, más ligero.
+- **Portable (`Rustty_<version>_x64-portable.exe`)** — ejecutable único sin instalar, ideal para memorias USB o instalaciones bloqueadas.
+
+En todos los casos se requiere **Microsoft Edge WebView2 Runtime** (ya incluido en Windows 10 22H2 y Windows 11). Si tu sistema no lo tiene, el instalador MSI/NSIS lo descargará automáticamente; para el portable, instálalo a mano desde [aquí](https://developer.microsoft.com/microsoft-edge/webview2/).
+
+### macOS (Apple Silicon)
+
+- **DMG (`Rustty_<version>_aarch64.dmg`)**: abrir el `.dmg` y arrastrar `Rustty.app` a `Aplicaciones`.
+- **App bundle (`Rustty_aarch64.app.tar.gz`)**: descomprimir y ejecutar `Rustty.app`.
+
+Los binarios aún **no están firmados ni notarizados** por Apple, así que Gatekeeper mostrará un aviso la primera vez. Para abrirlo:
+
+```bash
+xattr -d com.apple.quarantine /Applications/Rustty.app
+```
+
+O bien: clic derecho → *Abrir* → *Abrir* en el diálogo de confirmación.
+
+> Las builds sólo se generan para **aarch64** (Apple Silicon). Para Intel Mac habría que compilar desde fuente.
+
+### Verificación de integridad
+
+Junto a cada artefacto se publica su `.sig` (firma del updater de Tauri) y la página del release incluye el `sha256` de cada fichero. Para verificar:
+
+```bash
+sha256sum Rustty_*_amd64.deb
+# comparar con el hash indicado en la release
+```
+
 ## Tecnologías utilizadas
 
 - **Backend**: [Rust](https://www.rust-lang.org/) — 100% puro para SSH y SFTP (sin dependencia de `libssh2`).
@@ -40,7 +102,7 @@ Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
 2. **Node.js**: v18 o superior.
 3. **Dependencias de sistema**:
 
-   #### Linux
+   #### Linux (compilación)
 
     **Ubuntu / Debian**:
 
@@ -66,7 +128,7 @@ Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
     sudo zypper install webkit2gtk3-devel libayatana-appindicator3-devel librsvg-devel libopenssl-devel
     ```
 
-   #### macOS
+   #### macOS (compilación)
 
     Es necesario tener instaladas las **Xcode Command Line Tools** y [Homebrew](https://brew.sh/).
 
@@ -74,7 +136,7 @@ Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
     brew install openssl pkg-config
     ```
 
-   #### Windows
+   #### Windows (compilación)
 
     Es necesario instalar las [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) y tener instalado el **WebView2 Runtime** (incluido por defecto en Windows 10 y 11).
 
