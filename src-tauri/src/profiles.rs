@@ -20,6 +20,10 @@ fn default_conn_type() -> String {
     "ssh".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Perfil de conexión guardado por el usuario.
 /// Soporta SSH y RDP. No almacena contraseñas en texto plano; usa keyring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +53,10 @@ pub struct ConnectionProfile {
     /// Solo aplica cuando `auth_type == Password` y la DB está desbloqueada.
     #[serde(default)]
     pub keepass_entry_uuid: Option<String>,
+    /// Si true, inyecta el hook OSC 7 tras conectar para que el panel SFTP
+    /// pueda seguir el cwd del terminal. Solo aplica a conexiones SSH.
+    #[serde(default = "default_true")]
+    pub follow_cwd: bool,
     /// Timestamp ISO 8601 de creación
     pub created_at: String,
 }

@@ -75,10 +75,19 @@ jobs:
         run: npm ci
 
       # ── Build Tauri ───────────────────────────────────────────
+      # Los secretos de firma macOS (APPLE_*) se pasan siempre: si no están
+      # definidos en el repo, las env vars quedan vacías y tauri-action
+      # compila sin firmar, igual que antes. Solo tienen efecto en macOS.
       - name: Build
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN:              ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName:       ${{ github.ref_name }}
           releaseName:   "Rustty ${{ github.ref_name }}"

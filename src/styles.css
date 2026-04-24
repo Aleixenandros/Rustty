@@ -1613,6 +1613,168 @@ input[type="checkbox"] {
   font-size: 12px;
 }
 
+.theme-io-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ─── Atajos de teclado ─────────────────────────────────────── */
+.shortcuts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.shortcut-row {
+  display: grid;
+  grid-template-columns: 1fr max-content max-content;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.shortcut-row:hover {
+  background: var(--mantle);
+}
+
+.shortcut-row.capturing {
+  border-color: var(--blue);
+  background: var(--mantle);
+}
+
+.shortcut-label {
+  color: var(--text);
+}
+
+.shortcut-combo {
+  display: inline-block;
+  min-width: 120px;
+  padding: 4px 8px;
+  border: 1px solid var(--surface0);
+  border-radius: 4px;
+  background: var(--base);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.shortcut-combo em {
+  color: var(--subtext0);
+  font-style: italic;
+}
+
+.shortcut-row-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.shortcut-row-actions .btn-secondary {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.shortcut-row-actions .btn-secondary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── Acerca de ─────────────────────────────────────────────── */
+.about-block {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 4px;
+}
+
+.about-version {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.about-name {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.about-ver {
+  font-size: 13px;
+  color: var(--subtext0);
+  font-variant-numeric: tabular-nums;
+}
+
+.about-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 16px;
+  row-gap: 4px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.about-meta dt {
+  color: var(--subtext0);
+}
+
+.about-meta dd {
+  margin: 0;
+  color: var(--text);
+}
+
+.about-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.about-link {
+  display: grid;
+  grid-template-columns: 24px 1fr max-content;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--text);
+  font-size: 12px;
+  background: var(--mantle);
+  transition: border-color .12s ease, background .12s ease;
+}
+
+.about-link:hover {
+  border-color: var(--blue);
+  background: var(--surface0);
+}
+
+.about-link-icon {
+  font-size: 14px;
+  color: var(--blue);
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.about-link-icon svg {
+  display: block;
+}
+
+.about-link-url {
+  color: var(--subtext0);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Panel de estado RDP (ocupa el lugar del terminal) */
 .rdp-pane {
   align-items: center;

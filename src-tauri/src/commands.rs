@@ -508,3 +508,23 @@ pub fn read_text_file(path: String) -> Result<String, String> {
 pub fn join_path(base: String, name: String) -> Result<String, String> {
     Ok(std::path::Path::new(&base).join(&name).to_string_lossy().into_owned())
 }
+
+/// Lista las familias de fuentes monoespaciadas instaladas en el sistema.
+/// Se usa en Preferencias → Terminal para elegir la familia del xterm.js.
+/// Devuelve nombres únicos, ordenados alfabéticamente.
+#[tauri::command]
+pub fn list_monospace_fonts() -> Result<Vec<String>, String> {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+
+    let mut families: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for face in db.faces() {
+        if !face.monospaced {
+            continue;
+        }
+        if let Some((family, _)) = face.families.first() {
+            families.insert(family.clone());
+        }
+    }
+    Ok(families.into_iter().collect())
+}

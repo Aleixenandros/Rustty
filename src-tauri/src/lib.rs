@@ -21,7 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
-            // Directorio de datos de la app (~/.local/share/rustty/ en Linux)
+            // Directorio de datos de la app (identifier = com.rustty.app)
             let data_dir = app
                 .path()
                 .app_data_dir()
@@ -86,6 +86,7 @@ pub fn run() {
             commands::write_text_file,
             commands::read_text_file,
             commands::join_path,
+            commands::list_monospace_fonts,
         ])
         .run(tauri::generate_context!())
         .expect("Error al iniciar la aplicación Rustty");

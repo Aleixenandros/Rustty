@@ -1,6 +1,6 @@
 # Rustty - Cliente SSH Multiplataforma🦀⚡
 
-> ⚠️ **Aviso**: este repositorio contiene código y documentación generados en prte con agentes de IA.
+> ⚠️ **Aviso**: este repositorio contiene código y documentación generados en parte con agentes de IA.
 > Las contribuciones y/o críticas son bienvenidas.
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
@@ -18,8 +18,8 @@
   - Soporte para bases de datos **KeePass** (`.kdbx`) como fuente de contraseñas.
   - Atajo `Ctrl+Alt+P` para pegar la contraseña del perfil activo sin exponerla en pantalla.
 - **Organización**: agrupa perfiles en carpetas y gestiona conexiones desde la barra lateral colapsable.
-- **Personalización**: 11 temas base integrados (Catppuccin Mocha / Latte, Dracula, Nord, xterm, VS Code Dark+, Tango, Solarized Dark / Light, Gruvbox Dark, Tokyo Night, Monokai) y ajustes de cursor, scrollback y *bell*.
-- **Internacionalización**: interfaz traducida a español, inglés, francés y portugués.
+- **Personalización**: 11 temas base integrados (Catppuccin Mocha / Latte, Dracula, Nord, xterm, VS Code Dark+, Tango, Solarized Dark / Light, Gruvbox Dark, Tokyo Night, Monokai) y ajustes de cursor, scrollback y *bell*. Posibilidad de importar temas personalizados.
+- **Internacionalización**: interfaz traducida a español, inglés, francés y portugués. (Traducciones realizadas con IA)
 
 ## Capturas
 
@@ -214,7 +214,7 @@ Los artefactos quedan en un release de GitHub en modo borrador.
 
 ## Rutas de datos
 
-- **Linux**: `~/.local/share/rustty/` (perfiles, configuración)
+- **Linux**: `~/.local/share/com.rustty.app/` (perfiles, configuración)
 - **macOS**: `~/Library/Application Support/com.rustty.app/`
 - **Windows**: `%APPDATA%\com.rustty.app\`
 

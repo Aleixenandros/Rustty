@@ -274,6 +274,16 @@
             </label>
           </div>
 
+          <div class="form-row" id="field-follow-cwd">
+            <label class="checkbox-label">
+              <input id="f-follow-cwd" type="checkbox" checked />
+              <span data-i18n="modal_conn.follow_cwd">Seguir CWD del terminal en el panel SFTP</span>
+            </label>
+            <p class="form-hint" data-i18n="modal_conn.follow_cwd_hint">
+              Al conectar inyecta un hook en el shell (bash/zsh) para reportar el directorio actual. Desactívalo si prefieres no modificar PROMPT_COMMAND.
+            </p>
+          </div>
+
           <div class="modal-actions">
             <button type="button" class="btn-secondary" id="btn-modal-cancel" data-i18n="modal_conn.cancel">Cancelar</button>
             <button type="button" class="btn-secondary" id="btn-modal-save-only" data-i18n="modal_conn.save_only">Solo guardar</button>
@@ -313,9 +323,17 @@
               <span class="prefs-nav-icon">⚿</span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_keepass">KeePass</span>
             </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="shortcuts">
+              <span class="prefs-nav-icon">⌘</span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_shortcuts">Atajos</span>
+            </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="data">
               <span class="prefs-nav-icon">⇅</span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_data">Datos</span>
+            </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="about">
+              <span class="prefs-nav-icon">ⓘ</span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_about">Acerca de</span>
             </button>
           </nav>
 
@@ -340,6 +358,15 @@
                   <span data-i18n="prefs_terminal.right_click_paste">Pegar con botón derecho</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_terminal.right_click_paste_hint">Clic derecho en el terminal pega el contenido del portapapeles</p>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-font-family" data-i18n="prefs_terminal.font_family">Familia de fuente</label>
+                <div class="settings-control settings-control-wide">
+                  <select id="pref-font-family">
+                    <option value="" data-i18n="prefs_terminal.font_family_default">Predeterminada (monoespaciada del sistema)</option>
+                  </select>
+                </div>
               </div>
 
               <div class="settings-row settings-row-inline">
@@ -624,6 +651,15 @@
                   </label>
                 </div>
               </div>
+
+              <div class="settings-row">
+                <label data-i18n="prefs_appearance.theme_io">Exportar / importar tema</label>
+                <div class="theme-io-actions">
+                  <button type="button" class="btn-secondary" id="btn-export-theme" data-i18n="prefs_appearance.export_theme">Exportar tema actual</button>
+                  <button type="button" class="btn-secondary" id="btn-import-theme" data-i18n="prefs_appearance.import_theme">Importar tema…</button>
+                </div>
+                <p class="settings-hint" data-i18n="prefs_appearance.theme_io_hint">Se exporta la paleta xterm.js y los tokens de UI del tema activo. Los temas importados aparecen al final del selector.</p>
+              </div>
             </section>
 
             <!-- ── Idioma ── -->
@@ -676,6 +712,14 @@
               </div>
             </section>
 
+            <!-- ── Atajos de teclado ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="shortcuts">
+              <h3 class="prefs-panel-title" data-i18n="prefs_shortcuts.title">Atajos de teclado</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_shortcuts.hint">Pulsa "Editar" y la nueva combinación de teclas. Escape cancela la captura.</p>
+
+              <div class="shortcuts-list" id="shortcuts-list"></div>
+            </section>
+
             <!-- ── Datos ── -->
             <section class="prefs-panel" role="tabpanel" data-prefs-panel="data">
               <h3 class="prefs-panel-title" data-i18n="prefs_data.title">Datos</h3>
@@ -699,6 +743,54 @@
                 <button type="button" class="btn-secondary" id="btn-import" data-i18n="prefs_data.import">
                   Importar…
                 </button>
+              </div>
+            </section>
+
+            <!-- ── Acerca de ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="about">
+              <h3 class="prefs-panel-title" data-i18n="prefs_about.title">Acerca de Rustty</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_about.hint">Cliente de terminal y gestor de conexiones multiplataforma.</p>
+
+              <div class="about-block">
+                <div class="about-version">
+                  <span class="about-name">Rustty</span>
+                  <span class="about-ver" id="about-version">—</span>
+                </div>
+
+                <dl class="about-meta">
+                  <dt data-i18n="prefs_about.license">Licencia</dt>
+                  <dd>Apache-2.0</dd>
+                  <dt data-i18n="prefs_about.copyright">Copyright</dt>
+                  <dd>© 2026 Alejandro Soriano</dd>
+                  <dt data-i18n="prefs_about.stack">Stack</dt>
+                  <dd>Rust · Tauri 2 · xterm.js · russh · russh-sftp</dd>
+                </dl>
+
+                <div class="about-links">
+                  <a href="#" id="about-link-site" class="about-link" data-url="https://rustty.es">
+                    <span class="about-link-icon">🌐</span>
+                    <span data-i18n="prefs_about.website">Página del proyecto</span>
+                    <span class="about-link-url">rustty.es</span>
+                  </a>
+                  <a href="#" id="about-link-repo" class="about-link" data-url="https://github.com/Aleixenandros/Rustty">
+                    <span class="about-link-icon" aria-hidden="true">
+                      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                        <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+                      </svg>
+                    </span>
+                    <span data-i18n="prefs_about.repo">Repositorio</span>
+                    <span class="about-link-url">github.com/Aleixenandros/Rustty</span>
+                  </a>
+                  <a href="#" id="about-link-issues" class="about-link" data-url="https://github.com/Aleixenandros/Rustty/issues">
+                    <span class="about-link-icon" aria-hidden="true">
+                      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                        <path fill-rule="evenodd" d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM0 8a8 8 0 1116 0A8 8 0 010 8zm9 3a1 1 0 11-2 0 1 1 0 012 0zm-.25-6.25a.75.75 0 00-1.5 0v3.5a.75.75 0 001.5 0v-3.5z"/>
+                      </svg>
+                    </span>
+                    <span data-i18n="prefs_about.issues">Reportar un problema</span>
+                    <span class="about-link-url">github.com/.../issues</span>
+                  </a>
+                </div>
               </div>
             </section>
 

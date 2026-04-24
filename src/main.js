@@ -273,6 +273,7 @@ const DEFAULT_PREFS = {
   rightClickPaste: false,
   fontSize:        14,
   // Tipografía fina del terminal
+  fontFamily:      "",        // "" = usar cadena por defecto con fallback monospace
   lineHeight:      1.0,       // 1.0 = normal; xterm.js admite >0
   letterSpacing:   0,         // píxeles; positivo separa, negativo junta
   cursorStyle:     "block",   // "block" | "bar" | "underline"
@@ -284,6 +285,9 @@ const DEFAULT_PREFS = {
   keepassKeyfile:  "",
   // Idioma de la interfaz: "es" | "en" | "fr" | "pt"
   lang:            null, // null → usar detectLanguage() en loadPrefs
+  // Overrides de atajos: { [actionId]: accelerator | null }
+  // Solo se almacenan los atajos que el usuario ha modificado respecto al default.
+  shortcuts:       {},
 };
 
 let prefs = { ...DEFAULT_PREFS };
@@ -298,6 +302,7 @@ function loadPrefs() {
   }
   setLanguage(prefs.lang);
   applyTranslations();
+  registerAllCustomThemes();
   applyTheme(prefs.theme);
 }
 
@@ -337,13 +342,210 @@ function applyTheme(theme) {
   applyPrefsToAllTerminals();
 }
 
+// ─── Export / Import de temas ─────────────────────────────────
+//
+// Formato:
+//   {
+//     formatVersion: 1,
+//     id: "tokyo-night-fork",
+//     name: "Tokyo Night (fork)",
+//     terminal: { background, foreground, cursor, ..., 16 colores ANSI },
+//     ui: { "--base": "#...", "--text": "#...", ... }
+//   }
+
+const UI_THEME_VARS = [
+  "--base", "--mantle", "--crust",
+  "--surface0", "--surface1", "--surface2",
+  "--overlay0", "--overlay1",
+  "--text", "--subtext0", "--subtext1",
+  "--blue", "--red", "--green", "--yellow",
+  "--mauve", "--peach", "--teal", "--sky", "--lavender",
+];
+
+function slugifyThemeId(name) {
+  const slug = (name || "custom").toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "custom";
+  // Garantiza unicidad frente a temas base y otros custom
+  const existing = new Set([
+    ...Object.keys(TERMINAL_THEMES),
+    ...(prefs.customThemes || []).map((t) => t.id),
+  ]);
+  if (!existing.has(slug)) return slug;
+  let i = 2;
+  while (existing.has(`${slug}-${i}`)) i++;
+  return `${slug}-${i}`;
+}
+
+function gatherActiveUiVars() {
+  const cs = getComputedStyle(document.documentElement);
+  return Object.fromEntries(
+    UI_THEME_VARS.map((v) => [v, cs.getPropertyValue(v).trim()])
+      .filter(([, val]) => val !== "")
+  );
+}
+
+/** Registra un tema custom en runtime: extiende TERMINAL_THEMES, inyecta
+ *  CSS vars bajo `html.theme-<id>` y añade un swatch a los pickers. */
+function registerCustomTheme(theme) {
+  TERMINAL_THEMES[theme.id] = theme.terminal;
+  const cssClass = `theme-${theme.id}`;
+  if (!THEME_CLASSES.includes(cssClass)) THEME_CLASSES.push(cssClass);
+
+  let styleEl = document.getElementById("rustty-custom-themes-style");
+  if (!styleEl) {
+    styleEl = document.createElement("style");
+    styleEl.id = "rustty-custom-themes-style";
+    document.head.appendChild(styleEl);
+  }
+  const decl = UI_THEME_VARS
+    .map((v) => theme.ui[v] ? `${v}: ${theme.ui[v]};` : "")
+    .filter(Boolean).join(" ");
+  styleEl.appendChild(
+    document.createTextNode(`\nhtml.${cssClass} { ${decl} }\n`)
+  );
+
+  // Swatches en ambos pickers (UI + terminal)
+  appendCustomSwatch("ui", theme);
+  appendCustomSwatch("terminal", theme);
+}
+
+function appendCustomSwatch(picker, theme) {
+  const root = document.querySelector(`.theme-picker[data-for="${picker}"]`);
+  if (!root) return;
+  // Evitar duplicados si se re-registra
+  if (root.querySelector(`.theme-option[data-theme="${CSS.escape(theme.id)}"]`)) return;
+  const label = document.createElement("label");
+  label.className = "theme-option";
+  label.dataset.theme = theme.id;
+  const inputName = picker === "ui" ? "pref-theme" : "pref-terminal-theme";
+  label.innerHTML = `
+    <input type="radio" name="${inputName}" value="${escHtml(theme.id)}" />
+    <div class="theme-preview" style="background:${escHtml(theme.ui["--base"] || "#222")}">
+      <div class="theme-preview-sidebar" style="background:${escHtml(theme.ui["--mantle"] || "#1a1a1a")}"></div>
+      <div class="theme-preview-main" style="background:${escHtml(theme.ui["--base"] || "#222")}"></div>
+    </div>
+    <span class="theme-label">${escHtml(theme.name)}</span>`;
+  root.appendChild(label);
+}
+
+/** Registra todos los temas custom al arranque (tras loadPrefs). */
+function registerAllCustomThemes() {
+  for (const t of (prefs.customThemes || [])) {
+    registerCustomTheme(t);
+  }
+}
+
+async function exportCurrentTheme() {
+  // Resolvemos el tema de UI activo (si es "system", lo traducimos a dark/light).
+  const uiId = resolveEffectiveTheme(prefs.theme);
+  const termId = (prefs.terminalTheme && prefs.terminalTheme !== "inherit")
+    ? prefs.terminalTheme : uiId;
+  const palette = TERMINAL_THEMES[termId] || TERMINAL_THEMES.dark;
+  const ui = gatherActiveUiVars();
+  const baseName = (() => {
+    const custom = (prefs.customThemes || []).find((t) => t.id === uiId);
+    return custom?.name || uiId;
+  })();
+
+  const exported = {
+    formatVersion: 1,
+    id: uiId,
+    name: baseName,
+    terminal: palette,
+    ui,
+  };
+
+  const defaultName = `rustty-theme-${uiId}.json`;
+  let path;
+  try {
+    path = await saveDialog({
+      title: t("toast.export_theme_title"),
+      defaultPath: defaultName,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+  } catch (err) { toast(`${err}`, "error"); return; }
+  if (!path) return;
+
+  try {
+    await invoke("write_text_file", {
+      path,
+      contents: JSON.stringify(exported, null, 2),
+    });
+    toast(t("toast.theme_exported").replace("{name}", baseName), "success");
+  } catch (err) { toast(`${err}`, "error"); }
+}
+
+async function importTheme() {
+  let path;
+  try {
+    path = await openDialog({
+      title: t("toast.import_theme_title"),
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+  } catch (err) { toast(`${err}`, "error"); return; }
+  if (!path) return;
+
+  let data;
+  try {
+    const text = await invoke("read_text_file", { path });
+    data = JSON.parse(text);
+  } catch (err) { toast(t("toast.theme_import_invalid"), "error"); return; }
+
+  // Validación mínima
+  if (!data || !data.terminal || !data.ui || !data.name) {
+    toast(t("toast.theme_import_invalid"), "error");
+    return;
+  }
+  const required = ["background", "foreground"];
+  if (!required.every((k) => typeof data.terminal[k] === "string")) {
+    toast(t("toast.theme_import_invalid"), "error");
+    return;
+  }
+
+  const theme = {
+    id: slugifyThemeId(data.id || data.name),
+    name: String(data.name).slice(0, 60),
+    terminal: data.terminal,
+    ui: data.ui,
+  };
+
+  prefs.customThemes = prefs.customThemes || [];
+  prefs.customThemes.push(theme);
+  savePrefs();
+  registerCustomTheme(theme);
+
+  // Seleccionarlo como tema activo de UI
+  prefs.theme = theme.id;
+  applyTheme(theme.id);
+  // Sincronizar el picker abierto
+  document.querySelectorAll('input[name="pref-theme"]').forEach((r) => {
+    r.checked = (r.value === theme.id);
+  });
+  document.querySelectorAll('.theme-picker[data-for="ui"] .theme-option').forEach((opt) =>
+    opt.classList.toggle("selected", opt.dataset.theme === theme.id)
+  );
+  toast(t("toast.theme_imported").replace("{name}", theme.name), "success");
+}
+
 /**
  * Aplica las preferencias actuales a un terminal ya abierto.
  * Los handlers de copyOnSelect y rightClickPaste se instalan en
  * createTerminalTab leyendo `prefs` dinámicamente, por lo que no
  * es necesario reinstalarlos aquí.
  */
+const DEFAULT_FONT_STACK =
+  '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace';
+
+function resolveFontFamily() {
+  const f = (prefs.fontFamily || "").trim();
+  return f ? `"${f.replace(/"/g, "\\\"")}", ${DEFAULT_FONT_STACK}` : DEFAULT_FONT_STACK;
+}
+
 function applyPrefsToTerminal(terminal) {
+  terminal.options.fontFamily    = resolveFontFamily();
   terminal.options.fontSize      = prefs.fontSize;
   terminal.options.lineHeight    = prefs.lineHeight;
   terminal.options.letterSpacing = prefs.letterSpacing;
@@ -367,6 +569,7 @@ let prefsActiveTab = "terminal";
 
 function switchPrefsTab(tab) {
   prefsActiveTab = tab;
+  cancelShortcutCapture();
   document.querySelectorAll(".prefs-nav-item").forEach((el) =>
     el.classList.toggle("active", el.dataset.prefsTab === tab)
   );
@@ -379,12 +582,14 @@ function openSettingsModal() {
   // Snapshot al abrir, para poder revertir cambios en vivo al cancelar.
   _terminalThemeSnapshot = prefs.terminalTheme;
   _typographySnapshot = {
+    fontFamily:    prefs.fontFamily,
     fontSize:      prefs.fontSize,
     lineHeight:    prefs.lineHeight,
     letterSpacing: prefs.letterSpacing,
   };
   document.getElementById("pref-copy-on-select").checked   = prefs.copyOnSelect;
   document.getElementById("pref-right-click-paste").checked = prefs.rightClickPaste;
+  populateFontFamilySelect(prefs.fontFamily || "");
   document.getElementById("pref-font-size").value           = prefs.fontSize;
   document.getElementById("pref-line-height").value         = prefs.lineHeight;
   document.getElementById("pref-letter-spacing").value      = prefs.letterSpacing;
@@ -428,7 +633,47 @@ function openSettingsModal() {
   // Mantener la última pestaña activa al reabrir
   switchPrefsTab(prefsActiveTab);
 
+  // Acerca de: versión (la resuelve una vez por sesión y cachea)
+  populateAboutVersion();
+
+  // Atajos: (re)render con los valores actuales
+  renderShortcutsList();
+
   document.getElementById("modal-prefs-overlay").classList.remove("hidden");
+}
+
+let _cachedSystemFonts = null;
+async function populateFontFamilySelect(selected) {
+  const sel = document.getElementById("pref-font-family");
+  if (!sel) return;
+  if (!_cachedSystemFonts) {
+    try { _cachedSystemFonts = await invoke("list_monospace_fonts"); }
+    catch { _cachedSystemFonts = []; }
+  }
+  const defaultLabel = t("prefs_terminal.font_family_default");
+  let opts = `<option value="">${escHtml(defaultLabel)}</option>`;
+  for (const f of _cachedSystemFonts) {
+    opts += `<option value="${escHtml(f)}"${f === selected ? " selected" : ""}>${escHtml(f)}</option>`;
+  }
+  // Si la familia guardada no la detectó fontdb (ej. borrada), la mantenemos como opción "extranjera".
+  if (selected && !_cachedSystemFonts.includes(selected)) {
+    opts += `<option value="${escHtml(selected)}" selected>${escHtml(selected)} (?)</option>`;
+  }
+  sel.innerHTML = opts;
+}
+
+let _cachedAppVersion = null;
+async function populateAboutVersion() {
+  const el = document.getElementById("about-version");
+  if (!el) return;
+  if (_cachedAppVersion) { el.textContent = `v${_cachedAppVersion}`; return; }
+  try {
+    const { getVersion } = await import("@tauri-apps/api/app");
+    _cachedAppVersion = await getVersion();
+    el.textContent = `v${_cachedAppVersion}`;
+  } catch {
+    el.textContent = "";
+  }
 }
 
 let _terminalThemeSnapshot = undefined;
@@ -439,6 +684,7 @@ function closeSettingsModal() {
   // `savePrefsFromModal` anula los snapshots antes de cerrar para saltarse este revert.
   if (_terminalThemeSnapshot !== undefined) prefs.terminalTheme = _terminalThemeSnapshot;
   if (_typographySnapshot) {
+    prefs.fontFamily    = _typographySnapshot.fontFamily;
     prefs.fontSize      = _typographySnapshot.fontSize;
     prefs.lineHeight    = _typographySnapshot.lineHeight;
     prefs.letterSpacing = _typographySnapshot.letterSpacing;
@@ -446,6 +692,7 @@ function closeSettingsModal() {
   _terminalThemeSnapshot = undefined;
   _typographySnapshot = null;
   applyTheme(prefs.theme);
+  cancelShortcutCapture();
   document.getElementById("modal-prefs-overlay").classList.add("hidden");
 }
 
@@ -473,6 +720,7 @@ function savePrefsFromModal() {
     terminalTheme:   selectedTerminalTheme,
     copyOnSelect:    document.getElementById("pref-copy-on-select").checked,
     rightClickPaste: document.getElementById("pref-right-click-paste").checked,
+    fontFamily:      (document.getElementById("pref-font-family")?.value || "").trim(),
     fontSize:        parseInt(document.getElementById("pref-font-size").value, 10) || DEFAULT_PREFS.fontSize,
     lineHeight:      (() => {
       const v = parseFloat(document.getElementById("pref-line-height").value);
@@ -489,6 +737,11 @@ function savePrefsFromModal() {
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
     lang:            SUPPORTED_LANGS.includes(newLang) ? newLang : "es",
+    // Los atajos se editan en vivo (setShortcut/resetShortcut ya guardan), así
+    // que aquí solo arrastramos lo que haya en memoria para no sobrescribirlos.
+    shortcuts:       prefs.shortcuts || {},
+    // Temas importados persistidos aparte; evitar que se borren al guardar prefs.
+    customThemes:    prefs.customThemes || [],
   };
 
   savePrefs();
@@ -1080,6 +1333,7 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-key-path").value   = profile.key_path || "";
 
   populateFolderSelect(profile.group || "");
+  document.getElementById("f-follow-cwd").checked = profile.follow_cwd !== false;
   refreshKeepassStatus().then(() => {
     document.getElementById("f-use-keepass").checked = !!profile.keepass_entry_uuid;
     populateKeepassEntrySelect(profile.keepass_entry_uuid || null);
@@ -1165,6 +1419,7 @@ function updateConnTypeFields(type, adjustPort = false) {
   document.getElementById("field-key-path").classList.add("hidden");
   document.getElementById("field-passphrase").classList.add("hidden");
   document.getElementById("field-save-passphrase").classList.add("hidden");
+  document.getElementById("field-follow-cwd").classList.toggle("hidden", isRdp);
 
   if (isRdp) {
     // RDP siempre usa contraseña
@@ -1226,6 +1481,7 @@ async function saveAndClose(shouldConnect) {
     key_path:            keyPath,
     group,
     keepass_entry_uuid:  keepassEntryUuid,
+    follow_cwd:          document.getElementById("f-follow-cwd").checked,
     created_at: editingProfileId
       ? (profiles.find((p) => p.id === editingProfileId)?.created_at ?? new Date().toISOString())
       : new Date().toISOString(),
@@ -1620,7 +1876,7 @@ function injectOsc7Setup(sessionId) {
     ` { [ -n "$BASH_VERSION" ] && export PROMPT_COMMAND='printf "\\033]7;file://%s%s\\033\\\\" "$HOSTNAME" "$PWD"'"\${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; ` +
     `[ -n "$ZSH_VERSION" ] && { _osc7() { printf "\\033]7;file://%s%s\\033\\\\" "$HOST" "$PWD"; }; ` +
     `typeset -ga precmd_functions; precmd_functions+=(_osc7); }; ` +
-    `printf "\\033]7;file://%s%s\\033\\\\" "\${HOSTNAME:-$HOST}" "$PWD"; } 2>/dev/null; clear\r`;
+    `printf "\\033]7;file://%s%s\\033\\\\" "\${HOSTNAME:-$HOST}" "$PWD"; } 2>/dev/null\r`;
   sendTerminalInput(s, cmd);
 }
 
@@ -1936,9 +2192,10 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   const terminal = new Terminal({
     cursorBlink: prefs.cursorBlink,
     cursorStyle: prefs.cursorStyle,
-    fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
+    fontFamily: resolveFontFamily(),
     fontSize: prefs.fontSize,
-    lineHeight: 1.2,
+    lineHeight: prefs.lineHeight,
+    letterSpacing: prefs.letterSpacing,
     scrollback: prefs.scrollback,
     bellStyle: prefs.bell,
     theme: getTerminalTheme(),
@@ -2028,12 +2285,10 @@ async function registerSshListeners(sessionId, terminal) {
     renderConnectionList();
     s?.fitAddon.fit();
     notifyResize(sessionId, terminal);
-    // Inyecta el hook OSC 7 para que bash/zsh emitan el cwd tras cada prompt.
-    // Sin esto el panel SFTP no puede seguir al terminal.
-    // Se envía tras un pequeño retardo para asegurar que el prompt ya está listo.
-    // El espacio inicial evita que quede en el history (HISTCONTROL=ignorespace),
-    // y `clear` limpia la salida visible.
-    setTimeout(() => injectOsc7Setup(sessionId), 400);
+    const prof = s?.profileId ? profiles.find((p) => p.id === s.profileId) : null;
+    if (!prof || prof.follow_cwd !== false) {
+      setTimeout(() => injectOsc7Setup(sessionId), 400);
+    }
   }));
 
   ul.push(await listen(`ssh-error-${sessionId}`, (e) => {
@@ -2964,6 +3219,37 @@ function bindUIEvents() {
     btn.addEventListener("click", () => switchPrefsTab(btn.dataset.prefsTab));
   });
 
+  // Atajos de teclado: delegación sobre la lista
+  const shortcutsList = document.getElementById("shortcuts-list");
+  if (shortcutsList) {
+    shortcutsList.addEventListener("click", (e) => {
+      const row = e.target.closest(".shortcut-row");
+      if (!row) return;
+      const id = row.dataset.shortcutId;
+      if (e.target.classList.contains("btn-shortcut-edit"))  startShortcutCapture(id, row);
+      if (e.target.classList.contains("btn-shortcut-clear")) setShortcut(id, null);
+      if (e.target.classList.contains("btn-shortcut-reset")) resetShortcut(id);
+    });
+  }
+
+  // Acerca de: enlaces externos (pasan por el opener del sistema)
+  document.querySelectorAll(".about-link").forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      const url = a.dataset.url;
+      if (!url) return;
+      invoke("plugin:opener|open_url", { url }).catch((err) =>
+        toast(`No se pudo abrir ${url}: ${err}`, "error", 6000)
+      );
+    });
+  });
+
+  // Export / Import de tema actual
+  document.getElementById("btn-export-theme")
+    ?.addEventListener("click", () => exportCurrentTheme());
+  document.getElementById("btn-import-theme")
+    ?.addEventListener("click", () => importTheme());
+
   // KeePass
   document.getElementById("btn-keepass-browse")
     .addEventListener("click", () => browseKeepassPath());
@@ -3034,6 +3320,14 @@ function bindUIEvents() {
   wireTypographyPreview("pref-font-size",      "fontSize",      (v) => parseInt(v, 10), (v) => Math.max(8, Math.min(32, v)));
   wireTypographyPreview("pref-line-height",    "lineHeight",    (v) => parseFloat(v),   (v) => Math.max(0.5, Math.min(3, v)));
   wireTypographyPreview("pref-letter-spacing", "letterSpacing", (v) => parseFloat(v));
+
+  const fontFamilySel = document.getElementById("pref-font-family");
+  if (fontFamilySel) {
+    fontFamilySel.addEventListener("change", () => {
+      prefs.fontFamily = fontFamilySel.value || "";
+      applyPrefsToAllTerminals();
+    });
+  }
 
   // Cerrar modal de conexión
   document.getElementById("btn-modal-close").addEventListener("click", closeModal);
@@ -3147,73 +3441,175 @@ function bindUIEvents() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ATAJOS DE TECLADO (Fase 1: fijos, no configurables)
+// ATAJOS DE TECLADO
 // ═══════════════════════════════════════════════════════════════
+//
+// Registro central de acciones con atajo. Los defaults se fusionan con
+// prefs.shortcuts[id] (null = desactivado, string = accelerator tipo
+// "Ctrl+Shift+N"). Las teclas se codifican con keyLabelFromCode() para
+// evitar la ambigüedad de e.key por layout/locale.
+
+const SHORTCUT_ACTIONS = {
+  paste_terminal:    { default: "Ctrl+Alt+V",     run: () => pasteIntoActiveTerminal() },
+  copy_terminal:     { default: "Ctrl+Alt+C",     run: () => copyActiveSelection() },
+  paste_password:    { default: "Ctrl+Alt+P",     run: () => pasteSessionPasswordIntoActiveTerminal() },
+  new_local_shell:   { default: "Ctrl+Shift+T",   run: () => openLocalShell() },
+  new_connection:    { default: "Ctrl+Shift+N",   run: () => openNewConnectionModal() },
+  close_tab:         { default: "Ctrl+Shift+W",   run: () => { if (activeSessionId) closeSession(activeSessionId); } },
+  next_tab:          { default: "Ctrl+Tab",       run: () => switchTab(1) },
+  prev_tab:          { default: "Ctrl+Shift+Tab", run: () => switchTab(-1) },
+  open_preferences:  { default: "Ctrl+,",         run: () => openSettingsModal() },
+  zoom_in:           { default: "Ctrl+=",         run: () => adjustTerminalFontSize(+1) },
+  zoom_out:          { default: "Ctrl+-",         run: () => adjustTerminalFontSize(-1) },
+  zoom_reset:        { default: "Ctrl+0",         run: () => adjustTerminalFontSize("reset") },
+};
+
+const SHORTCUT_IDS = Object.keys(SHORTCUT_ACTIONS);
+
+// Mapa de códigos "extraños" a etiqueta legible. Las teclas KeyA → A,
+// DigitN → N se tratan fuera del map. NumpadAdd/-Subtract/-0 se
+// normalizan a =/-/0 para que Ctrl+= también dispare con el numpad.
+const CODE_LABEL_MAP = {
+  Comma: ",", Period: ".", Semicolon: ";", Quote: "'",
+  Minus: "-", Equal: "=", Slash: "/", Backslash: "\\",
+  BracketLeft: "[", BracketRight: "]", Backquote: "`",
+  NumpadAdd: "=", NumpadSubtract: "-", NumpadMultiply: "*", NumpadDivide: "/",
+  NumpadDecimal: ".", NumpadEnter: "Enter", Numpad0: "0", Numpad1: "1",
+  Numpad2: "2", Numpad3: "3", Numpad4: "4", Numpad5: "5", Numpad6: "6",
+  Numpad7: "7", Numpad8: "8", Numpad9: "9",
+};
+
+function keyLabelFromCode(code) {
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  if (CODE_LABEL_MAP[code]) return CODE_LABEL_MAP[code];
+  return code; // "Tab", "Escape", "F1", "ArrowLeft", "Space", ...
+}
+
+const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta", "OS"]);
+
+/** Devuelve el accelerator canónico del evento, o null si es solo modificador. */
+function comboFromEvent(e) {
+  if (MODIFIER_KEYS.has(e.key)) return null;
+  const parts = [];
+  if (e.ctrlKey)  parts.push("Ctrl");
+  if (e.altKey)   parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  if (e.metaKey)  parts.push("Meta");
+  parts.push(keyLabelFromCode(e.code));
+  return parts.join("+");
+}
+
+function getShortcut(id) {
+  const override = prefs.shortcuts?.[id];
+  if (override === null) return null;           // explícitamente desactivado
+  if (typeof override === "string") return override;
+  return SHORTCUT_ACTIONS[id]?.default ?? null;
+}
 
 function handleGlobalShortcut(e) {
-  const ctrl = e.ctrlKey, shift = e.shiftKey, alt = e.altKey, meta = e.metaKey;
-
-  // Ctrl+Alt+V → pegar en terminal activo
-  if (ctrl && alt && !shift && !meta && e.code === "KeyV") {
-    e.preventDefault(); e.stopPropagation();
-    pasteIntoActiveTerminal();
-    return;
-  }
-  // Ctrl+Alt+C → copiar selección del terminal activo
-  if (ctrl && alt && !shift && !meta && e.code === "KeyC") {
-    e.preventDefault(); e.stopPropagation();
-    copyActiveSelection();
-    return;
-  }
-  // Ctrl+Alt+P → pegar en el terminal activo la contraseña del perfil
-  if (ctrl && alt && !shift && !meta && e.code === "KeyP") {
-    e.preventDefault(); e.stopPropagation();
-    pasteSessionPasswordIntoActiveTerminal();
-    return;
-  }
-  // Ctrl+Shift+T → nueva shell local
-  if (ctrl && shift && !alt && !meta && e.code === "KeyT") {
-    e.preventDefault(); e.stopPropagation();
-    openLocalShell();
-    return;
-  }
-  // Ctrl+Shift+N → nueva conexión
-  if (ctrl && shift && !alt && !meta && e.code === "KeyN") {
-    e.preventDefault(); e.stopPropagation();
-    openNewConnectionModal();
-    return;
-  }
-  // Ctrl+Shift+W → cerrar pestaña activa
-  if (ctrl && shift && !alt && !meta && e.code === "KeyW") {
-    e.preventDefault(); e.stopPropagation();
-    if (activeSessionId) closeSession(activeSessionId);
-    return;
-  }
-  // Ctrl+Tab / Ctrl+Shift+Tab → pestaña siguiente / anterior
-  if (ctrl && !alt && !meta && e.code === "Tab") {
-    e.preventDefault(); e.stopPropagation();
-    switchTab(shift ? -1 : 1);
-    return;
-  }
-  // Ctrl+, → abrir preferencias
-  if (ctrl && !shift && !alt && !meta && e.code === "Comma") {
-    e.preventDefault(); e.stopPropagation();
-    openSettingsModal();
-    return;
-  }
-
-  // Ctrl+ +  / Ctrl+ -  / Ctrl+0 → zoom de fuente del terminal.
-  // Admitimos tanto la fila numérica (Equal/Minus/Digit0) como el numpad.
-  if (ctrl && !alt && !meta) {
-    const isZoomIn  = e.code === "Equal" || e.code === "NumpadAdd";
-    const isZoomOut = e.code === "Minus" || e.code === "NumpadSubtract";
-    const isZoomRst = e.code === "Digit0" || e.code === "Numpad0";
-    if (isZoomIn || isZoomOut || isZoomRst) {
-      e.preventDefault(); e.stopPropagation();
-      adjustTerminalFontSize(isZoomRst ? "reset" : (isZoomIn ? +1 : -1));
+  const combo = comboFromEvent(e);
+  if (!combo) return;
+  for (const id of SHORTCUT_IDS) {
+    if (getShortcut(id) === combo) {
+      e.preventDefault();
+      e.stopPropagation();
+      SHORTCUT_ACTIONS[id].run();
       return;
     }
   }
+}
+
+// ─── Editor de atajos ─────────────────────────────────────────
+
+/** Formatea un accelerator para visualización (mostrar "Cmd" en macOS). */
+function formatAccelerator(accel) {
+  if (!accel) return "";
+  const mac = /mac/i.test(navigator.platform);
+  return mac ? accel.replace(/\bCtrl\b/g, "Cmd") : accel;
+}
+
+function renderShortcutsList() {
+  const root = document.getElementById("shortcuts-list");
+  if (!root) return;
+  const overrides = prefs.shortcuts || {};
+  let html = "";
+  for (const id of SHORTCUT_IDS) {
+    const current = getShortcut(id);
+    const isOverridden = Object.prototype.hasOwnProperty.call(overrides, id);
+    const label = t(`prefs_shortcuts.action_${id}`);
+    const placeholder = t("prefs_shortcuts.disabled");
+    html += `
+      <div class="shortcut-row" data-shortcut-id="${id}">
+        <div class="shortcut-label">${escHtml(label)}</div>
+        <kbd class="shortcut-combo">${current ? escHtml(formatAccelerator(current)) : `<em>${escHtml(placeholder)}</em>`}</kbd>
+        <div class="shortcut-row-actions">
+          <button type="button" class="btn-secondary btn-shortcut-edit" data-i18n="prefs_shortcuts.edit">Editar</button>
+          <button type="button" class="btn-secondary btn-shortcut-clear" data-i18n="prefs_shortcuts.disable">Desactivar</button>
+          <button type="button" class="btn-secondary btn-shortcut-reset" ${isOverridden ? "" : "disabled"} data-i18n="prefs_shortcuts.reset">Restablecer</button>
+        </div>
+      </div>`;
+  }
+  root.innerHTML = html;
+  applyTranslations(root);
+}
+
+let _captureState = null; // { id, row, comboEl }
+
+function startShortcutCapture(id, rowEl) {
+  cancelShortcutCapture();
+  const comboEl = rowEl.querySelector(".shortcut-combo");
+  comboEl.innerHTML = `<em>${escHtml(t("prefs_shortcuts.press_keys"))}</em>`;
+  rowEl.classList.add("capturing");
+  _captureState = { id, row: rowEl, comboEl };
+  document.addEventListener("keydown", onCaptureKeydown, { capture: true });
+}
+
+function cancelShortcutCapture() {
+  if (!_captureState) return;
+  document.removeEventListener("keydown", onCaptureKeydown, { capture: true });
+  _captureState.row.classList.remove("capturing");
+  _captureState = null;
+  renderShortcutsList();
+}
+
+function onCaptureKeydown(e) {
+  if (!_captureState) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.key === "Escape") { cancelShortcutCapture(); return; }
+  const combo = comboFromEvent(e);
+  if (!combo) return; // solo modificadores: esperar a la tecla final
+  // Conflicto: si el combo ya está en uso por otra acción, aviso pero aplico (el usuario elige)
+  const conflict = SHORTCUT_IDS.find((other) => other !== _captureState.id && getShortcut(other) === combo);
+  setShortcut(_captureState.id, combo);
+  if (conflict) {
+    toast(
+      t("prefs_shortcuts.conflict_warn").replace("{action}", t(`prefs_shortcuts.action_${conflict}`)),
+      "warning",
+      4000,
+    );
+  }
+  cancelShortcutCapture();
+}
+
+function setShortcut(id, accel) {
+  const def = SHORTCUT_ACTIONS[id]?.default ?? null;
+  prefs.shortcuts = prefs.shortcuts || {};
+  if (accel === def) {
+    delete prefs.shortcuts[id]; // vuelve al default, no guardamos override
+  } else {
+    prefs.shortcuts[id] = accel;
+  }
+  savePrefs();
+  renderShortcutsList();
+}
+
+function resetShortcut(id) {
+  if (!prefs.shortcuts) return;
+  delete prefs.shortcuts[id];
+  savePrefs();
+  renderShortcutsList();
 }
 
 /** Ajusta el tamaño de fuente global del terminal y persiste. */
