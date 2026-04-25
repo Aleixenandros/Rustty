@@ -144,7 +144,10 @@ jobs:
           tar --zstd -cf "$OUT" .PKGINFO $FILES
 
           ls -la "$OUT"
-          gh release upload "${{ github.ref_name }}" "$OUT" --clobber
+          # `gh` necesita contexto de repo; tras empaquetar seguimos dentro
+          # del rootfs temporal del .deb, que no contiene .git.
+          cd "$GITHUB_WORKSPACE"
+          gh release upload "${{ github.ref_name }}" "$OUT" --clobber --repo "$GITHUB_REPOSITORY"
 
       # ── Extras de Windows: MSI sin sufijo _en-US + .exe portable ──
       - name: Rename MSI and publish portable exe (Windows)
