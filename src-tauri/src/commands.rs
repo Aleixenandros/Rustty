@@ -442,17 +442,18 @@ pub fn keepass_list_entries() -> Result<Vec<keepass_manager::EntrySummary>, Stri
 // ─── Directorio de datos ──────────────────────────────────────────────────────
 
 /// Devuelve la ruta al directorio de datos de la app donde se guardan los perfiles.
+/// Devuelve el directorio de datos **efectivo** de la app (el que realmente
+/// se usa para `profiles.json` y demás). Coincide con `app_data_dir()` salvo
+/// en la build portable de Windows, donde apunta a `.conf/com.rustty.app/`
+/// junto al `.exe`.
+///
 /// Útil para que el usuario sepa dónde hacer backups.
-///   Linux:   ~/.local/share/rustty/
+///   Linux:   ~/.local/share/com.rustty.app/
 ///   macOS:   ~/Library/Application Support/com.rustty.app/
-///   Windows: %APPDATA%\com.rustty.app\
+///   Windows: %APPDATA%\com.rustty.app\  (o `<dir-del-exe>\.conf\com.rustty.app\` en portable)
 #[tauri::command]
-pub fn get_data_dir(app_handle: AppHandle) -> Result<String, String> {
-    app_handle
-        .path()
-        .app_data_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .map_err(|e| e.to_string())
+pub fn get_data_dir(state: State<crate::DataDir>) -> Result<String, String> {
+    Ok(state.0.to_string_lossy().into_owned())
 }
 
 /// Devuelve el directorio de descargas del usuario (p.ej. ~/Downloads).

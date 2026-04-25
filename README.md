@@ -62,17 +62,38 @@ Rustty incluye un **editor de atajos** en Preferencias → *Atajos* que permite 
 
 ## Instalación
 
-En cada release de GitHub encontrarás binarios precompilados para Linux, Windows y macOS. Descárgalos desde la página de [Releases](https://github.com/Aleixenandros/Rustty/releases).
+En cada release de GitHub encontrarás binarios precompilados para Linux, Windows y macOS. Puedes descargarlos desde la página de [Releases](https://github.com/Aleixenandros/Rustty/releases) o desde la web del proyecto: [rustty.es/descargas](https://rustty.es/descargas).
 
-### Instalador automático (Linux y macOS)
+### Instalación rápida con script
 
-Para Linux y macOS hay un script que detecta tu sistema y descarga el paquete correcto del último release:
+En Linux y macOS puedes instalar Rustty con el script oficial:
 
 ```bash
 curl -sSf https://rustty.es/install.sh | sh
 ```
 
-Soporta Arch / Manjaro, Debian / Ubuntu / Mint, Fedora / RHEL, openSUSE y Apple Silicon (macOS). En distribuciones desconocidas instala una AppImage en `~/.local/bin`. Internamente el script invoca `sudo` solo donde lo necesita el gestor de paquetes; **no** ejecutes `sudo sh` por todo el script.
+El script consulta la última release publicada, detecta tu sistema y descarga el artefacto adecuado. Internamente invoca `sudo` solo cuando lo necesita el gestor de paquetes; **no** ejecutes `sudo sh` sobre todo el script.
+
+Si prefieres revisarlo antes:
+
+```bash
+curl -sSf https://rustty.es/install.sh -o install.sh
+less install.sh
+sh install.sh
+```
+
+| Sistema detectado | Artefacto usado | Instalación |
+| --- | --- | --- |
+| Arch / Manjaro / EndeavourOS | `.pkg.tar.zst` | `sudo pacman -U` |
+| Debian / Ubuntu / Mint | `.deb` | `sudo apt-get install` |
+| Fedora / RHEL / CentOS / Rocky / AlmaLinux | `.rpm` | `sudo dnf install` |
+| openSUSE / SUSE | `.rpm` | `sudo zypper install` |
+| Otras distribuciones Linux | `AppImage` | copia en `~/.local/bin/rustty` |
+| macOS Apple Silicon | `.app.tar.gz` | extrae en `~/Applications/Rustty.app` |
+
+Para actualizar a una nueva versión, vuelve a ejecutar el mismo comando. En Linux reemplazará el paquete mediante el gestor correspondiente; en macOS reemplazará `~/Applications/Rustty.app`.
+
+> El instalador automático no está disponible para Windows. Usa el MSI, NSIS o portable de la release.
 
 ### Linux
 
@@ -110,9 +131,19 @@ Rustty necesita **WebKitGTK 4.1** y **libayatana-appindicator** en tiempo de eje
 
 - **MSI (`Rustty_<version>_x64.msi`)** — instalador tradicional. Doble clic y seguir el asistente.
 - **NSIS (`Rustty_<version>_x64-setup.exe`)** — instalador alternativo, más ligero.
-- **Portable (`Rustty_<version>_x64-portable.exe`)** — ejecutable único sin instalar, ideal para memorias USB o instalaciones bloqueadas.
+- **Portable (`Rustty_<version>_x64-portable.exe`)** — ejecutable único sin instalar, ideal para memorias USB o equipos bloqueados.
 
 En todos los casos se requiere **Microsoft Edge WebView2 Runtime** (ya incluido en Windows 10 22H2 y Windows 11). Si tu sistema no lo tiene, el instalador MSI/NSIS lo descargará automáticamente; para el portable, instálalo a mano desde [aquí](https://developer.microsoft.com/microsoft-edge/webview2/).
+
+#### Modo portable real
+
+Cuando Rustty se ejecuta como `Rustty_<version>_x64-portable.exe` (filename con sufijo `-portable.exe`), **no usa `%APPDATA%`**. Almacena toda la configuración en una carpeta `.conf\com.rustty.app\` creada automáticamente **junto al propio ejecutable**. Esto incluye `profiles.json` y otros datos de la app, así que el USB queda *self-contained*: cópialo a otro equipo y la configuración viaja con él.
+
+Salvedades:
+
+- El **keyring de Windows** (Credential Manager) sigue siendo del usuario que ejecuta el binario, no del USB. Las contraseñas guardadas con la opción "Recordar contraseña en el keyring" no viajan con el portable. Para tener todas las credenciales en el USB usa una base **KeePass `.kdbx`** y referénciala desde Preferencias → KeePass.
+- El estado de la ventana (tamaño, posición) sí se guarda en el perfil de usuario (plugin `tauri-plugin-window-state`); la sesión visual del USB no es 100% portable.
+- Si renombras el `.exe` y le quitas el sufijo `-portable.exe`, vuelve al modo normal y leerá `%APPDATA%\com.rustty.app\`.
 
 ### macOS (Apple Silicon)
 

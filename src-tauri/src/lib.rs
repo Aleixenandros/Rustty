@@ -7,12 +7,44 @@ mod rdp_manager;
 mod sftp_manager;
 mod ssh_manager;
 
+use std::path::PathBuf;
+
 use local_shell_manager::LocalShellManager;
 use profiles::ProfileManager;
 use rdp_manager::RdpManager;
 use sftp_manager::SftpManager;
 use ssh_manager::SshManager;
 use tauri::Manager;
+
+/// Directorio de datos efectivo de la aplicación.
+///
+/// Habitualmente coincide con `app.path().app_data_dir()` (en Linux:
+/// `~/.local/share/com.rustty.app/`). Cuando el binario es la build portable
+/// de Windows (`Rustty_<ver>_x64-portable.exe`), apunta a `.conf/com.rustty.app/`
+/// junto al propio ejecutable, para que la configuración viaje con el USB.
+///
+/// Se inyecta como `State<DataDir>` en los comandos que necesitan la ruta
+/// (p. ej. `get_data_dir`).
+pub struct DataDir(pub PathBuf);
+
+/// Devuelve `Some(path)` cuando el ejecutable actual es la versión portable
+/// de Windows (filename termina en `-portable.exe`). En ese caso el data dir
+/// vive en `<dir del exe>/.conf/com.rustty.app/`.
+#[cfg(windows)]
+fn portable_data_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let name = exe.file_name()?.to_str()?.to_ascii_lowercase();
+    if !name.ends_with("-portable.exe") {
+        return None;
+    }
+    let parent = exe.parent()?;
+    Some(parent.join(".conf").join("com.rustty.app"))
+}
+
+#[cfg(not(windows))]
+fn portable_data_dir() -> Option<PathBuf> {
+    None
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -21,11 +53,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
-            // Directorio de datos de la app (identifier = com.rustty.app)
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .expect("No se pudo obtener el directorio de datos de la app");
+            // Si es la build portable de Windows, los datos viajan junto al
+            // .exe en `.conf/com.rustty.app/`. Si no, ruta estándar (identifier).
+            let data_dir = portable_data_dir().unwrap_or_else(|| {
+                app.path()
+                    .app_data_dir()
+                    .expect("No se pudo obtener el directorio de datos de la app")
+            });
 
             std::fs::create_dir_all(&data_dir)
                 .expect("No se pudo crear el directorio de datos");
@@ -35,7 +69,8 @@ pub fn run() {
             app.manage(RdpManager::new());
             app.manage(LocalShellManager::new());
             app.manage(SftpManager::new());
-            app.manage(ProfileManager::new(data_dir));
+            app.manage(ProfileManager::new(data_dir.clone()));
+            app.manage(DataDir(data_dir));
 
             Ok(())
         })
