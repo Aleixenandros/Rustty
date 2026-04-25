@@ -45,15 +45,34 @@ Preferencias → **Idioma**: interfaz disponible en español, inglés, francés 
 
 ## Atajos de teclado
 
-| Atajo          | Acción                                              |
-|----------------|-----------------------------------------------------|
-| `Ctrl+Alt+P`   | Pegar la contraseña del perfil activo en el shell   |
-| `Ctrl+Shift+C` | Copiar selección del terminal                       |
-| `Ctrl+Shift+V` | Pegar en el terminal                                |
+Rustty incluye un **editor de atajos** en Preferencias → *Atajos* que permite reasignar cualquier acción con captura en vivo (pulsa "Editar" y la nueva combinación). Los atajos por defecto son:
+
+| Atajo                          | Acción                                                 |
+|--------------------------------|--------------------------------------------------------|
+| `Ctrl+Shift+N`                 | Nueva conexión                                         |
+| `Ctrl+Shift+T`                 | Nueva consola local                                    |
+| `Ctrl+Shift+W`                 | Cerrar pestaña activa                                  |
+| `Ctrl+Tab`                     | Pestaña siguiente                                      |
+| `Ctrl+Shift+Tab`               | Pestaña anterior                                       |
+| `Ctrl+,`                       | Abrir preferencias                                     |
+| `Ctrl+Alt+C`                   | Copiar selección del terminal                          |
+| `Ctrl+Alt+V`                   | Pegar en el terminal                                   |
+| `Ctrl+Alt+P`                   | Pegar la contraseña del perfil activo en el shell      |
+| `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Aumentar / disminuir / restablecer el tamaño de fuente |
 
 ## Instalación
 
 En cada release de GitHub encontrarás binarios precompilados para Linux, Windows y macOS. Descárgalos desde la página de [Releases](https://github.com/Aleixenandros/Rustty/releases).
+
+### Instalador automático (Linux y macOS)
+
+Para Linux y macOS hay un script que detecta tu sistema y descarga el paquete correcto del último release:
+
+```bash
+curl -sSf https://rustty.es/install.sh | sh
+```
+
+Soporta Arch / Manjaro, Debian / Ubuntu / Mint, Fedora / RHEL, openSUSE y Apple Silicon (macOS). En distribuciones desconocidas instala una AppImage en `~/.local/bin`. Internamente el script invoca `sudo` solo donde lo necesita el gestor de paquetes; **no** ejecutes `sudo sh` por todo el script.
 
 ### Linux
 
@@ -79,6 +98,12 @@ Rustty necesita **WebKitGTK 4.1** y **libayatana-appindicator** en tiempo de eje
   sudo zypper install ./Rustty-*-1.x86_64.rpm     # openSUSE
   ```
 
+- **.pkg.tar.zst (Arch / Manjaro / EndeavourOS / ...)**:
+
+  ```bash
+  sudo pacman -U Rustty-*-1-x86_64.pkg.tar.zst
+  ```
+
   Si tu distribución no incluye WebKitGTK 4.1 por defecto, instálalo primero (ver "Requisitos previos" más abajo).
 
 ### Windows
@@ -91,16 +116,10 @@ En todos los casos se requiere **Microsoft Edge WebView2 Runtime** (ya incluido 
 
 ### macOS (Apple Silicon)
 
+Las builds se firman con **Developer ID Application** y se notarizan con el servicio de Apple, así que Gatekeeper no muestra avisos en una instalación limpia.
+
 - **DMG (`Rustty_<version>_aarch64.dmg`)**: abrir el `.dmg` y arrastrar `Rustty.app` a `Aplicaciones`.
 - **App bundle (`Rustty_aarch64.app.tar.gz`)**: descomprimir y ejecutar `Rustty.app`.
-
-Los binarios aún **no están firmados ni notarizados** por Apple, así que Gatekeeper mostrará un aviso la primera vez. Para abrirlo:
-
-```bash
-xattr -d com.apple.quarantine /Applications/Rustty.app
-```
-
-O bien: clic derecho → *Abrir* → *Abrir* en el diálogo de confirmación.
 
 > Las builds sólo se generan para **aarch64** (Apple Silicon). Para Intel Mac habría que compilar desde fuente.
 

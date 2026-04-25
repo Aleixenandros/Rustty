@@ -51,6 +51,7 @@ jobs:
           workspaces: src-tauri
 
       # ── Dependencias del sistema (solo Linux) ─────────────────
+      # `rpm` para el bundle .rpm; `zstd` para el bundle .pkg.tar.zst (Arch).
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -63,7 +64,8 @@ jobs:
             libssl-dev \
             pkg-config \
             libssh2-1-dev \
-            rpm
+            rpm \
+            zstd
 
       # ── Dependencias del sistema (solo macOS) ─────────────────
       - name: Install macOS dependencies
@@ -95,6 +97,52 @@ jobs:
           releaseDraft:  true
           prerelease:    false
           args:          --target ${{ matrix.target }}
+
+      # ── Extras de Linux: empaquetar .pkg.tar.zst para Arch ────
+      # Tauri no tiene target pacman; reusamos el .deb (mismo árbol)
+      # extrayéndolo y empaquetándolo de nuevo como paquete Arch.
+      - name: Build Arch Linux package (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          BUNDLE_DIR="src-tauri/target/${{ matrix.target }}/release/bundle"
+          DEB=$(ls "$BUNDLE_DIR/deb"/*.deb | head -n1)
+          WORK=$(mktemp -d)
+
+          # Desempaqueta el .deb (rootfs) en $WORK/root
+          mkdir -p "$WORK/root"
+          dpkg-deb -x "$DEB" "$WORK/root"
+          cd "$WORK/root"
+
+          INSTALLED_SIZE=$(du -sb . | cut -f1)
+          BUILDDATE=$(date +%s)
+
+          # Metadatos del paquete pacman
+          cat > .PKGINFO <<EOF
+          pkgname = rustty
+          pkgver = ${VERSION}-1
+          pkgdesc = Cliente SSH/SFTP/RDP multiplataforma escrito en Rust
+          url = https://rustty.es
+          builddate = ${BUILDDATE}
+          packager = Alejandro Soriano <noreply@rustty.es>
+          size = ${INSTALLED_SIZE}
+          arch = x86_64
+          license = Apache
+          depend = webkit2gtk-4.1
+          depend = libayatana-appindicator
+          EOF
+
+          # Construye .pkg.tar.zst con bsdtar (que respeta el orden de pacman)
+          OUT="$BUNDLE_DIR/Rustty-${VERSION}-1-x86_64.pkg.tar.zst"
+          # Lista de ficheros a incluir (PKGINFO primero por convención)
+          FILES=$(find . -type f -o -type l | sed 's|^\./||' | sort | sed '/^\.PKGINFO$/d')
+          tar --zstd -cf "$OUT" .PKGINFO $FILES
+
+          ls -la "$OUT"
+          gh release upload "${{ github.ref_name }}" "$OUT" --clobber
 
       # ── Extras de Windows: MSI sin sufijo _en-US + .exe portable ──
       - name: Rename MSI and publish portable exe (Windows)
