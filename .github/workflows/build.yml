@@ -108,7 +108,9 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          BUNDLE_DIR="src-tauri/target/${{ matrix.target }}/release/bundle"
+          # Ruta absoluta — luego hacemos `cd $WORK/root` y la relativa dejaría
+          # de resolver al escribir el .pkg.tar.zst.
+          BUNDLE_DIR="$(realpath src-tauri/target/${{ matrix.target }}/release/bundle)"
           DEB=$(ls "$BUNDLE_DIR/deb"/*.deb | head -n1)
           WORK=$(mktemp -d)
 

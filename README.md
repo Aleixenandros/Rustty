@@ -5,7 +5,7 @@
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
 
-> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. La API interna, el formato de perfiles y las rutas de datos pueden cambiar sin previo aviso.
+> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable.
 
 ## Características principales
 
