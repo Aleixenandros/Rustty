@@ -1147,6 +1147,9 @@ function handleContextMenuAction(action) {
     case "edit-conn":
       openEditConnectionModal(id);
       break;
+    case "duplicate-conn":
+      duplicateProfile(id);
+      break;
     case "delete-conn":
       deleteProfile(id);
       break;
@@ -2393,6 +2396,34 @@ async function deleteProfile(profileId) {
     toast("Conexión eliminada", "success");
   } catch (err) {
     toast(`Error al eliminar: ${err}`, "error");
+  }
+}
+
+/**
+ * Duplica un perfil de conexión: clona el original con nuevo UUID, sufija
+ * el nombre con " (copia)" y deja el modal de edición abierto sobre la
+ * copia para que el usuario pueda ajustarla antes de cerrarlo. Las
+ * referencias a credenciales (keepass_entry_uuid, key_path) se copian tal
+ * cual; las contraseñas guardadas en el keyring NO se duplican (cada perfil
+ * tiene su propia clave `password:<id>`).
+ */
+async function duplicateProfile(profileId) {
+  const original = profiles.find((p) => p.id === profileId);
+  if (!original) return;
+  const copy = {
+    ...original,
+    id: crypto.randomUUID(),
+    name: `${original.name} (copia)`,
+    created_at: new Date().toISOString(),
+  };
+  try {
+    await invoke("save_profile", { profile: copy });
+    profiles = await invoke("get_profiles");
+    renderConnectionList();
+    openEditConnectionModal(copy.id);
+    toast(`Duplicado como "${copy.name}"`, "success");
+  } catch (err) {
+    toast(`Error al duplicar: ${err}`, "error");
   }
 }
 

@@ -47,6 +47,7 @@ const DICTIONARIES = {
       delete_folder: "Eliminar carpeta",
       connect: "Conectar",
       edit: "Editar",
+      duplicate: "Duplicar",
       delete: "Eliminar",
     },
     tabctx: {
@@ -284,6 +285,7 @@ const DICTIONARIES = {
       delete_folder: "Delete folder",
       connect: "Connect",
       edit: "Edit",
+      duplicate: "Duplicate",
       delete: "Delete",
     },
     tabctx: {
@@ -521,6 +523,7 @@ const DICTIONARIES = {
       delete_folder: "Supprimer le dossier",
       connect: "Connecter",
       edit: "Modifier",
+      duplicate: "Dupliquer",
       delete: "Supprimer",
     },
     tabctx: {
@@ -758,6 +761,7 @@ const DICTIONARIES = {
       delete_folder: "Eliminar pasta",
       connect: "Conectar",
       edit: "Editar",
+      duplicate: "Duplicar",
       delete: "Eliminar",
     },
     tabctx: {
