@@ -17,9 +17,13 @@ npm run tauri build
 Development builds must set the same environment variables before launching
 `npm run tauri dev`.
 
+These credentials are intentionally not exposed as settings in the app UI.
+Users only see "Connect Google Drive"; Rustty opens the browser, receives the
+OAuth callback locally and stores the resulting refresh token in the OS keyring.
+
 ## Redirect URI
 
-Register this exact redirect URI for every provider that asks for one:
+Register this exact redirect URI for the Google OAuth client:
 
 ```text
 http://127.0.0.1:53682/oauth/callback

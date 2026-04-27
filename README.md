@@ -17,6 +17,7 @@
   - Integración nativa con el keyring del sistema (KWallet, GNOME Keyring, macOS Keychain, Windows Credential Store).
   - Soporte para bases de datos **KeePass** (`.kdbx`) como fuente de contraseñas.
   - Atajo `Ctrl+Alt+P` para pegar la contraseña del perfil activo sin exponerla en pantalla.
+- **Copias de seguridad y sincronización E2E**: perfiles, preferencias, temas y atajos pueden sincronizarse con Google Drive, iCloud Drive, carpeta local / NAS o WebDAV. El blob remoto se cifra localmente con `age` y una passphrase maestra.
 - **Organización**: agrupa perfiles en carpetas y gestiona conexiones desde la barra lateral colapsable.
 - **Personalización**: 11 temas base integrados (Catppuccin Mocha / Latte, Dracula, Nord, xterm, VS Code Dark+, Tango, Solarized Dark / Light, Gruvbox Dark, Tokyo Night, Monokai) y ajustes de cursor, scrollback y *bell*. Posibilidad de importar temas personalizados.
 - **Internacionalización**: interfaz traducida a español, inglés, francés y portugués. (Traducciones realizadas con IA)
@@ -172,6 +173,23 @@ sha256sum Rustty_*_amd64.deb
 - **Protocolos**: [russh](https://github.com/warp-tech/russh) (SSH), [russh-sftp](https://github.com/warp-tech/russh-sftp) (SFTP)
 - **Seguridad**: [keyring-rs](https://github.com/hwchen/keyring-rs), [keepass-rs](https://github.com/sseemayer/keepass-rs)
 
+## Copias de seguridad y sincronización
+
+Rustty incluye una pestaña **Preferencias → Copias de seguridad** con tres flujos:
+
+- **Sincronización en la nube**: Google Drive, iCloud Drive, Carpeta local / NAS o WebDAV.
+- **Backup cifrado**: exporta/importa un `.rustty-sync.bin` cifrado con tu passphrase, independiente de cualquier backend.
+- **Datos locales**: export/import JSON de perfiles para interoperabilidad y copias simples.
+
+La sincronización es opt-in y cifra el estado antes de subirlo. Se sincronizan perfiles, preferencias, temas personalizados y atajos. Nunca se sincronizan el keyring del sistema, la base KeePass desbloqueada ni rutas locales como `keepassPath` o `keepassKeyfile`.
+
+Backends:
+
+- **Google Drive**: OAuth en navegador con callback local; Rustty usa el espacio `appDataFolder` y guarda el refresh token en el keyring.
+- **iCloud Drive**: escribe en la carpeta local de iCloud Drive en macOS y deja que el sistema sincronice.
+- **Carpeta local / NAS**: útil para Syncthing, carpetas compartidas o clientes cloud externos.
+- **WebDAV**: compatible con Nextcloud, ownCloud y servidores WebDAV genéricos.
+
 ## Desarrollo y Construcción
 
 Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
@@ -179,7 +197,7 @@ Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
 ### Requisitos previos
 
 1. **Rust**: [Instalar Rust](https://www.rust-lang.org/tools/install)
-2. **Node.js**: v18 o superior.
+2. **Node.js**: v24 recomendado para igualar el workflow de CI.
 3. **Dependencias de sistema**:
 
    #### Linux (compilación)
@@ -262,6 +280,13 @@ git push --tags
 
 Los artefactos quedan en un release de GitHub en modo borrador.
 
+Para que las builds oficiales incluyan Google Drive, define estos secretos en GitHub Actions:
+
+```text
+RUSTTY_GOOGLE_DRIVE_CLIENT_ID
+RUSTTY_GOOGLE_DRIVE_CLIENT_SECRET
+```
+
 ## Rutas de datos
 
 - **Linux**: `~/.local/share/com.rustty.app/` (perfiles, configuración)
@@ -269,6 +294,8 @@ Los artefactos quedan en un release de GitHub en modo borrador.
 - **Windows**: `%APPDATA%\com.rustty.app\`
 
 Las contraseñas no se guardan en estos ficheros: viven en el keyring del sistema con el servicio `rustty`, o se resuelven desde una base KeePass referenciada por UUID.
+
+La configuración de sincronización vive en `sync_config.json` y el último snapshot local en `sync_state.json`. Los secretos de sync (passphrase maestra, contraseña WebDAV y token OAuth de Google Drive) se guardan en el keyring del sistema.
 
 ---
 
