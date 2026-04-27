@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "0.1.4"
+version = "0.1.6"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -30,13 +30,13 @@ russh-sftp = "2"
 tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "fs", "macros", "time"] }
 async-trait = "0.1"
 # PTY multiplataforma para la shell local
-portable-pty = "0.8"
+portable-pty = "0.9"
 # Almacenamiento seguro de credenciales en el keystore del SO
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 # Generación de UUIDs para IDs de sesión y perfil
 uuid = { version = "1", features = ["v4"] }
 # Directorios del sistema (app data dir)
-dirs = "5"
+dirs = "6"
 # Manejo ergonómico de errores
 thiserror = "2"
 # Lectura de bases de datos KeePass (.kdbx)
@@ -50,7 +50,7 @@ fontdb = "0.23"
 # para escapar rutas/queries y `sha2`/`base64` para PKCE OAuth.
 age = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "query", "form"] }
 urlencoding = "2"
-sha2 = "0.10"
+sha2 = "0.11"
 base64 = "0.22"
