@@ -5,7 +5,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { ask, save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import * as sync from "./sync.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -66,6 +66,11 @@ const broadcastViews = new Map();
 
 let activeSessionId = null;
 let editingProfileId = null;
+
+const KEYRING_SERVICE = "rustty";
+const WINDOW_SIZE_STORAGE_KEY = "rustty-window-size";
+const RELEASES_API_URL = "https://api.github.com/repos/Aleixenandros/Rustty/releases/latest";
+const RELEASES_PAGE_URL = "https://github.com/Aleixenandros/Rustty/releases/latest";
 
 // ═══════════════════════════════════════════════════════════════
 // TEMAS XTERM.JS
@@ -653,6 +658,9 @@ let _syncDeviceIdCache = null;
 let _syncConfigCache = null;
 let _syncSidebarState = "idle";
 let _syncSidebarTextKey = "prefs_sync.status_idle";
+let _syncAutoTimer = null;
+let _syncInFlight = false;
+let _syncPending = false;
 async function populateSyncTab() {
   const config = await sync.getConfig().catch(() => ({
     enabled: false, backend: "none",
@@ -759,7 +767,9 @@ function updateSidebarSyncStatus() {
   dot.classList.add(state);
   label.textContent = enabled ? t(_syncSidebarTextKey) : t("prefs_sync.status_disabled");
   const backend = syncBackendLabel(_syncConfigCache?.backend || "none");
-  const last = prefs._lastSyncAt ? new Date(prefs._lastSyncAt).toLocaleString() : "—";
+  const last = prefs._lastSyncAt
+    ? new Date(prefs._lastSyncAt).toLocaleString()
+    : t("prefs_sync.last_never");
   meta.textContent = enabled ? `${backend} · ${last}` : backend;
 }
 
@@ -849,9 +859,39 @@ async function syncOAuthDisconnectNow() {
 }
 
 async function syncRunNow() {
+  await runSyncWithCurrentState({ persistConfig: true, announce: true });
+}
+
+function shouldAutoSyncProfiles() {
+  return !!_syncConfigCache?.enabled
+    && _syncConfigCache.backend !== "none"
+    && (_syncConfigCache.selective?.profiles ?? true);
+}
+
+function scheduleProfileAutoSync() {
+  if (!shouldAutoSyncProfiles()) return;
+  clearTimeout(_syncAutoTimer);
+  _syncAutoTimer = setTimeout(() => {
+    runSyncWithCurrentState({ persistConfig: false, announce: false })
+      .catch((err) => console.error("[sync] auto", err));
+  }, 1200);
+}
+
+async function runSyncWithCurrentState({ persistConfig = false, announce = false } = {}) {
+  if (_syncInFlight) {
+    _syncPending = true;
+    return null;
+  }
+
+  _syncInFlight = true;
   setSyncStatus("busy", "prefs_sync.status_busy");
   try {
-    await persistSyncConfig();
+    if (persistConfig) {
+      await persistSyncConfig();
+    }
+    if (!_syncDeviceIdCache) {
+      _syncDeviceIdCache = await sync.getDeviceId().catch(() => "—");
+    }
     const summary = await sync.runSync({
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
@@ -869,13 +909,23 @@ async function syncRunNow() {
     const total = summary.addedProfiles + summary.deletedProfiles
       + summary.themesChanged + summary.shortcutsChanged
       + (summary.prefsChanged ? 1 : 0);
-    toast(t("prefs_sync.done_sync").replace("{n}", total), "success");
+    if (announce) {
+      toast(t("prefs_sync.done_sync").replace("{n}", total), "success");
+    }
+    return summary;
   } catch (err) {
     setSyncStatus("error", "prefs_sync.status_error");
     if (String(err).includes("no_passphrase")) {
       toast(t("prefs_sync.no_passphrase"), "warning", 6000);
-    } else {
+    } else if (announce) {
       toast(`Sync: ${err}`, "error", 6000);
+    }
+    throw err;
+  } finally {
+    _syncInFlight = false;
+    if (_syncPending) {
+      _syncPending = false;
+      scheduleProfileAutoSync();
     }
   }
 }
@@ -964,6 +1014,71 @@ async function populateAboutVersion() {
     el.textContent = `v${_cachedAppVersion}`;
   } catch {
     el.textContent = "";
+  }
+}
+
+function normalizeVersion(version) {
+  return String(version || "").trim().replace(/^v/i, "");
+}
+
+function compareVersions(a, b) {
+  const pa = normalizeVersion(a).split(/[.-]/).map((part) => parseInt(part, 10) || 0);
+  const pb = normalizeVersion(b).split(/[.-]/).map((part) => parseInt(part, 10) || 0);
+  const len = Math.max(pa.length, pb.length, 3);
+  for (let i = 0; i < len; i++) {
+    const va = pa[i] || 0;
+    const vb = pb[i] || 0;
+    if (va !== vb) return va > vb ? 1 : -1;
+  }
+  return 0;
+}
+
+function setAboutUpdateStatus(text, type = "") {
+  const el = document.getElementById("about-update-status");
+  if (!el) return;
+  el.classList.remove("success", "warning", "error");
+  if (type) el.classList.add(type);
+  el.textContent = text;
+}
+
+async function checkForUpdates() {
+  const btn = document.getElementById("btn-about-check-updates");
+  if (btn) btn.disabled = true;
+  setAboutUpdateStatus(t("prefs_about.checking_updates"));
+
+  try {
+    await populateAboutVersion();
+    const current = _cachedAppVersion || "0.0.0";
+    const res = await fetch(RELEASES_API_URL, {
+      headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const release = await res.json();
+    const latest = normalizeVersion(release.tag_name || release.name);
+    if (!latest) throw new Error("missing release version");
+
+    if (compareVersions(latest, current) > 0) {
+      setAboutUpdateStatus(
+        t("prefs_about.update_available", { version: `v${latest}` }),
+        "warning"
+      );
+      const openRelease = await ask(
+        t("prefs_about.open_release", { version: `v${latest}` }),
+        { title: t("prefs_about.check_updates"), kind: "info" }
+      );
+      if (openRelease) {
+        invoke("plugin:opener|open_url", { url: release.html_url || RELEASES_PAGE_URL })
+          .catch((err) => toast(`No se pudo abrir ${RELEASES_PAGE_URL}: ${err}`, "error", 6000));
+      }
+    } else {
+      setAboutUpdateStatus(t("prefs_about.update_current"), "success");
+    }
+  } catch (err) {
+    console.warn("[updates] check failed", err);
+    setAboutUpdateStatus(t("prefs_about.update_error"), "error");
+    toast(`${t("prefs_about.update_error")}: ${err}`, "error", 6000);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1562,6 +1677,7 @@ async function renameFolder(folderPath) {
   if (openFolders.has(folderPath)) { openFolders.delete(folderPath); openFolders.add(newPath); }
 
   renderConnectionList();
+  scheduleProfileAutoSync();
   toast(`Carpeta renombrada a "${newName.trim()}"`, "success");
 }
 
@@ -1591,6 +1707,7 @@ async function deleteFolderAndMoveConnections(folderPath) {
   saveUserFolders();
   openFolders.delete(folderPath);
   renderConnectionList();
+  scheduleProfileAutoSync();
   toast(`Carpeta "${folderPath}" eliminada`, "info");
 }
 
@@ -1607,6 +1724,8 @@ function openNewConnectionModal(preselectedFolder = null) {
   document.getElementById("modal-title").textContent = "Nueva conexión";
   document.getElementById("form-connection").reset();
   document.getElementById("f-conn-type").value = "ssh";
+  document.getElementById("f-save-password").checked = true;
+  document.getElementById("f-save-passphrase").checked = true;
   refreshKeepassStatus().then(() => {
     populateKeepassEntrySelect(null);
     updateConnTypeFields("ssh");
@@ -1632,6 +1751,11 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-domain").value     = profile.domain || "";
   document.getElementById("f-auth-type").value  = profile.auth_type;
   document.getElementById("f-key-path").value   = profile.key_path || "";
+  document.getElementById("f-password").value = "";
+  document.getElementById("f-passphrase").value = "";
+  document.getElementById("f-save-password").checked = false;
+  document.getElementById("f-save-passphrase").checked = false;
+  refreshStoredCredentialCheckboxes(profile);
 
   populateFolderSelect(profile.group || "");
   document.getElementById("f-follow-cwd").checked = profile.follow_cwd !== false;
@@ -1739,6 +1863,64 @@ function updateConnTypeFields(type, adjustPort = false) {
   }
 }
 
+function passwordKey(profileId) {
+  return `password:${profileId}`;
+}
+
+function passphraseKey(profileId) {
+  return `passphrase:${profileId}`;
+}
+
+async function getStoredSecret(key) {
+  return invoke("keyring_get", {
+    service: KEYRING_SERVICE,
+    key,
+  }).catch((err) => {
+    console.warn("[keyring] get failed", key, err);
+    return null;
+  });
+}
+
+async function saveStoredSecret(key, secret, label = "credencial") {
+  if (!secret) return false;
+  try {
+    await invoke("keyring_set", {
+      service: KEYRING_SERVICE,
+      key,
+      secret,
+    });
+    return true;
+  } catch (err) {
+    console.warn("[keyring] set failed", key, err);
+    toast(`No se pudo guardar la ${label} en el keyring: ${err}`, "warning", 8000);
+    return false;
+  }
+}
+
+async function maybeRememberPromptedSecret(profile, key, secret, label) {
+  if (!secret) return;
+  const shouldSave = window.confirm(
+    `¿Guardar la ${label} de ${profile.username}@${profile.host} en el keyring del sistema?`
+  );
+  if (shouldSave) await saveStoredSecret(key, secret, label);
+}
+
+async function refreshStoredCredentialCheckboxes(profile) {
+  const passwordCb = document.getElementById("f-save-password");
+  const passphraseCb = document.getElementById("f-save-passphrase");
+  const profileId = profile.id;
+
+  if (!profile.keepass_entry_uuid) {
+    const storedPassword = await getStoredSecret(passwordKey(profileId));
+    if (editingProfileId === profileId) passwordCb.checked = !!storedPassword;
+  }
+
+  if (profile.auth_type === "public_key") {
+    const storedPassphrase = await getStoredSecret(passphraseKey(profileId));
+    if (editingProfileId === profileId) passphraseCb.checked = !!storedPassphrase;
+  }
+}
+
 /** Lee el valor de carpeta del selector (select + input manual) */
 function readFolderValue() {
   const select = document.getElementById("f-folder-select");
@@ -1793,18 +1975,10 @@ async function saveAndClose(shouldConnect) {
     await invoke("save_profile", { profile });
 
     if (authType === "password" && password && savePassword && !keepassEntryUuid) {
-      await invoke("keyring_set", {
-        service: "rustty",
-        key: `password:${profile.id}`,
-        secret: password,
-      }).catch(() => {});
+      await saveStoredSecret(passwordKey(profile.id), password, "contraseña");
     }
     if (authType === "public_key" && passphrase && savePassphrase) {
-      await invoke("keyring_set", {
-        service: "rustty",
-        key: `passphrase:${profile.id}`,
-        secret: passphrase,
-      }).catch(() => {});
+      await saveStoredSecret(passphraseKey(profile.id), passphrase, "passphrase");
     }
 
     // Si se especificó una carpeta nueva, persiste en userFolders
@@ -1815,6 +1989,7 @@ async function saveAndClose(shouldConnect) {
     else profiles.push(profile);
 
     renderConnectionList();
+    scheduleProfileAutoSync();
     closeModal();
 
     if (shouldConnect) {
@@ -1844,20 +2019,30 @@ async function resolveSshCredentials(profile) {
         return null;
       }
     } else {
-      password = await invoke("keyring_get", {
-        service: "rustty", key: `password:${profile.id}`,
-      }).catch(() => null);
+      password = await getStoredSecret(passwordKey(profile.id));
       if (!password) {
         password = window.prompt(`Contraseña para ${profile.username}@${profile.host}:`);
         if (password === null) return null;
+        await maybeRememberPromptedSecret(
+          profile,
+          passwordKey(profile.id),
+          password,
+          "contraseña"
+        );
       }
     }
   } else if (profile.auth_type === "public_key") {
-    passphrase = await invoke("keyring_get", {
-      service: "rustty", key: `passphrase:${profile.id}`,
-    }).catch(() => null);
+    passphrase = await getStoredSecret(passphraseKey(profile.id));
     if (!passphrase && profile.key_path) {
       passphrase = window.prompt("Passphrase de la clave privada (vacío si no tiene):") ?? null;
+      if (passphrase) {
+        await maybeRememberPromptedSecret(
+          profile,
+          passphraseKey(profile.id),
+          passphrase,
+          "passphrase"
+        );
+      }
     }
   }
   return { password, passphrase };
@@ -1942,15 +2127,18 @@ async function connectRdp(profileId) {
       return;
     }
   } else {
-    password = await invoke("keyring_get", {
-      service: "rustty",
-      key: `password:${profileId}`,
-    }).catch(() => null);
+    password = await getStoredSecret(passwordKey(profileId));
     if (!password) {
       password = window.prompt(
         `Contraseña RDP para ${profile.username}@${profile.host}:`
       );
       if (password === null) return; // usuario canceló
+      await maybeRememberPromptedSecret(
+        profile,
+        passwordKey(profileId),
+        password,
+        "contraseña"
+      );
     }
   }
 
@@ -2158,6 +2346,52 @@ function sendTerminalInput(sessionObj, data) {
   }).catch(() => {});
 }
 
+function queueTerminalEchoSuppression(sessionObj, needle) {
+  if (!sessionObj || !needle) return;
+  sessionObj._outputSuppression = {
+    needle,
+    buffer: "",
+    expiresAt: Date.now() + 5000,
+  };
+}
+
+function filterSuppressedTerminalOutput(sessionObj, text) {
+  const suppression = sessionObj?._outputSuppression;
+  if (!suppression || !text) return text;
+
+  suppression.buffer += text;
+  const idx = suppression.buffer.indexOf(suppression.needle);
+  if (idx >= 0) {
+    const before = suppression.buffer.slice(0, idx);
+    const after = suppression.buffer
+      .slice(idx + suppression.needle.length)
+      .replace(/^\r?\n/, "");
+    delete sessionObj._outputSuppression;
+    return before + after;
+  }
+
+  if (Date.now() > suppression.expiresAt) {
+    const buffered = suppression.buffer;
+    delete sessionObj._outputSuppression;
+    return buffered;
+  }
+
+  let keepLen = 0;
+  const maxKeep = Math.min(suppression.needle.length - 1, suppression.buffer.length);
+  for (let len = 1; len <= maxKeep; len++) {
+    if (suppression.needle.startsWith(suppression.buffer.slice(-len))) {
+      keepLen = len;
+    }
+  }
+
+  const flushLen = suppression.buffer.length - keepLen;
+  if (flushLen <= 0) return "";
+
+  const output = suppression.buffer.slice(0, flushLen);
+  suppression.buffer = suppression.buffer.slice(flushLen);
+  return output;
+}
+
 /**
  * Inyecta un hook OSC 7 en el shell remoto (bash/zsh) para que emita el
  * cwd después de cada prompt. Sin esto el panel SFTP no puede seguir al
@@ -2174,12 +2408,13 @@ function injectOsc7Setup(sessionId) {
   const s = sessions.get(sessionId);
   if (!s || s.status !== "connected" || s._osc7Injected) return;
   s._osc7Injected = true;
-  const cmd =
+  const setup =
     ` { [ -n "$BASH_VERSION" ] && export PROMPT_COMMAND='printf "\\033]7;file://%s%s\\033\\\\" "$HOSTNAME" "$PWD"'"\${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; ` +
     `[ -n "$ZSH_VERSION" ] && { _osc7() { printf "\\033]7;file://%s%s\\033\\\\" "$HOST" "$PWD"; }; ` +
     `typeset -ga precmd_functions; precmd_functions+=(_osc7); }; ` +
-    `printf "\\033]7;file://%s%s\\033\\\\" "\${HOSTNAME:-$HOST}" "$PWD"; } 2>/dev/null\r`;
-  sendTerminalInput(s, cmd);
+    `printf "\\033]7;file://%s%s\\033\\\\" "\${HOSTNAME:-$HOST}" "$PWD"; } 2>/dev/null`;
+  queueTerminalEchoSuppression(s, setup.trimStart());
+  sendTerminalInput(s, `${setup}\r`);
 }
 
 /**
@@ -2577,7 +2812,10 @@ async function registerSshListeners(sessionId, terminal) {
   const ul = [];
 
   ul.push(await listen(`ssh-data-${sessionId}`, (e) => {
-    terminal.write(decoder.decode(new Uint8Array(e.payload)));
+    const s = sessions.get(sessionId);
+    const text = decoder.decode(new Uint8Array(e.payload));
+    const filtered = filterSuppressedTerminalOutput(s, text);
+    if (filtered) terminal.write(filtered);
   }));
 
   ul.push(await listen(`ssh-connected-${sessionId}`, () => {
@@ -2687,13 +2925,18 @@ function notifyResize(sessionId, terminal) {
 async function deleteProfile(profileId) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
-  if (!window.confirm(`¿Eliminar "${profile.name}"?\nEsta acción no se puede deshacer.`)) return;
+  const confirmed = await ask(
+    `¿Eliminar "${profile.name}"?\n\nEsta acción no se puede deshacer.`,
+    { title: "Eliminar conexión", kind: "warning" }
+  );
+  if (!confirmed) return;
   try {
     await invoke("delete_profile", { id: profileId });
     profiles = profiles.filter((p) => p.id !== profileId);
     sync.recordTombstone(prefs, "profiles", profileId);
     savePrefs();
     renderConnectionList();
+    scheduleProfileAutoSync();
     toast("Conexión eliminada", "success");
   } catch (err) {
     toast(`Error al eliminar: ${err}`, "error");
@@ -2722,6 +2965,7 @@ async function duplicateProfile(profileId) {
     await invoke("save_profile", { profile: copy });
     profiles = await invoke("get_profiles");
     renderConnectionList();
+    scheduleProfileAutoSync();
     openEditConnectionModal(copy.id);
     toast(`Duplicado como "${copy.name}"`, "success");
   } catch (err) {
@@ -2854,18 +3098,20 @@ async function openSftpPanel(sessionId) {
         return;
       }
     } else {
-      password = await invoke("keyring_get", {
-        service: "rustty", key: `password:${profile.id}`,
-      }).catch(() => null);
+      password = await getStoredSecret(passwordKey(profile.id));
       if (!password) {
         password = window.prompt(`Contraseña SFTP para ${profile.username}@${profile.host}:`);
         if (password === null) return;
+        await maybeRememberPromptedSecret(
+          profile,
+          passwordKey(profile.id),
+          password,
+          "contraseña"
+        );
       }
     }
   } else if (profile.auth_type === "public_key") {
-    passphrase = await invoke("keyring_get", {
-      service: "rustty", key: `passphrase:${profile.id}`,
-    }).catch(() => null);
+    passphrase = await getStoredSecret(passphraseKey(profile.id));
   }
 
   // Construir panel primero con estado "conectando"
@@ -2926,18 +3172,20 @@ async function toggleSftpElevated(sessionId) {
   let password = null, passphrase = null;
   if (profile.auth_type === "password") {
     if (!profile.keepass_entry_uuid) {
-      password = await invoke("keyring_get", {
-        service: "rustty", key: `password:${profile.id}`,
-      }).catch(() => null);
+      password = await getStoredSecret(passwordKey(profile.id));
       if (!password) {
         password = window.prompt(`Contraseña SFTP para ${profile.username}@${profile.host}:`);
         if (password === null) return;
+        await maybeRememberPromptedSecret(
+          profile,
+          passwordKey(profile.id),
+          password,
+          "contraseña"
+        );
       }
     }
   } else if (profile.auth_type === "public_key") {
-    passphrase = await invoke("keyring_get", {
-      service: "rustty", key: `passphrase:${profile.id}`,
-    }).catch(() => null);
+    passphrase = await getStoredSecret(passphraseKey(profile.id));
   }
 
   const wasElevated = s.sftp.elevated;
@@ -3487,6 +3735,7 @@ async function importConnections() {
     }
 
     renderConnectionList();
+    scheduleProfileAutoSync();
     toast(`Importadas: ${added} nuevas, ${updated} actualizadas`, "success");
   } catch (err) {
     toast(`Error al importar: ${err}`, "error");
@@ -3581,6 +3830,8 @@ function bindUIEvents() {
       );
     });
   });
+  document.getElementById("btn-about-check-updates")
+    ?.addEventListener("click", () => checkForUpdates());
 
   // Export / Import de tema actual
   document.getElementById("btn-export-theme")
@@ -4070,6 +4321,7 @@ async function initWindowControls() {
   try {
     const mod = await import("@tauri-apps/api/window");
     win = mod.getCurrentWindow();
+    await restoreSavedWindowSize(win, mod);
   } catch {
     return; // fuera de Tauri (p. ej. vite dev puro): no hay ventana
   }
@@ -4080,7 +4332,10 @@ async function initWindowControls() {
 
   btnMin  ?.addEventListener("click", () => win.minimize());
   btnMax  ?.addEventListener("click", () => win.toggleMaximize());
-  btnClose?.addEventListener("click", () => win.close());
+  btnClose?.addEventListener("click", async () => {
+    await persistWindowSize(win);
+    win.close();
+  });
 
   // Doble clic en la zona arrastrable maximiza/restaura.
   document.getElementById("tab-bar-drag")
@@ -4094,7 +4349,57 @@ async function initWindowControls() {
     } catch {}
   };
   syncMaximized();
-  try { win.onResized(syncMaximized); } catch {}
+  try {
+    let saveTimer = null;
+    win.onResized(() => {
+      syncMaximized();
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => persistWindowSize(win), 250);
+    });
+  } catch {}
+  try { win.onCloseRequested(() => { persistWindowSize(win); }); } catch {}
+}
+
+async function restoreSavedWindowSize(win, windowApi) {
+  const raw = localStorage.getItem(WINDOW_SIZE_STORAGE_KEY);
+  if (!raw) return;
+
+  let saved;
+  try {
+    saved = JSON.parse(raw);
+  } catch {
+    localStorage.removeItem(WINDOW_SIZE_STORAGE_KEY);
+    return;
+  }
+
+  const width = Number(saved?.width);
+  const height = Number(saved?.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+
+  const scaleFactor = await win.scaleFactor().catch(() => 1);
+  const minWidth = Math.round(800 * scaleFactor);
+  const minHeight = Math.round(500 * scaleFactor);
+  const monitor = await windowApi.currentMonitor().catch(() => null);
+  const workArea = monitor?.workArea?.size || monitor?.size || null;
+  const maxWidth = workArea?.width ? Math.max(minWidth, workArea.width - 24) : Math.max(width, minWidth);
+  const maxHeight = workArea?.height ? Math.max(minHeight, workArea.height - 24) : Math.max(height, minHeight);
+
+  const nextWidth = Math.round(Math.min(Math.max(width, minWidth), maxWidth));
+  const nextHeight = Math.round(Math.min(Math.max(height, minHeight), maxHeight));
+  await win.setSize(new windowApi.PhysicalSize(nextWidth, nextHeight)).catch(() => {});
+}
+
+async function persistWindowSize(win) {
+  try {
+    if (await win.isMaximized()) return;
+    if (await win.isMinimized()) return;
+    const size = await win.innerSize();
+    if (!size?.width || !size?.height) return;
+    localStorage.setItem(WINDOW_SIZE_STORAGE_KEY, JSON.stringify({
+      width: size.width,
+      height: size.height,
+    }));
+  } catch {}
 }
 
 function switchTab(delta) {

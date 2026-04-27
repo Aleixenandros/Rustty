@@ -1841,6 +1841,28 @@ input[type="checkbox"] {
   font-variant-numeric: tabular-nums;
 }
 
+.about-update {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.about-update .btn-secondary {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.about-update-status {
+  min-height: 18px;
+  font-size: 12px;
+  color: var(--subtext0);
+}
+
+.about-update-status.success { color: var(--green); }
+.about-update-status.warning { color: var(--yellow); }
+.about-update-status.error { color: var(--red); }
+
 .about-meta {
   display: grid;
   grid-template-columns: max-content 1fr;
