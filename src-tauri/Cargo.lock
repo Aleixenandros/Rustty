@@ -4861,7 +4861,7 @@ dependencies = [
 
 [[package]]
 name = "rustty"
-version = "0.1.6"
+version = "0.1.9"
 dependencies = [
  "age",
  "async-trait",

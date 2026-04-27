@@ -33,6 +33,10 @@ const DICTIONARIES = {
       maximize: "Maximizar / restaurar",
       close: "Cerrar",
     },
+    number_stepper: {
+      increase: "Aumentar",
+      decrease: "Disminuir",
+    },
     view_layout: {
       columns: "Dividir en columnas",
       rows: "Dividir en filas",
@@ -124,7 +128,7 @@ const DICTIONARIES = {
       right_click_paste: "Pegar con botón derecho",
       right_click_paste_hint: "Clic derecho en el terminal pega el contenido del portapapeles",
       font_family: "Familia de fuente",
-      font_family_default: "Predeterminada (monoespaciada del sistema)",
+      font_family_default: "Predeterminada del sistema",
       font_size: "Tamaño de fuente",
       line_height: "Altura de línea",
       letter_spacing: "Espaciado entre letras",
@@ -334,6 +338,10 @@ const DICTIONARIES = {
       maximize: "Maximize / restore",
       close: "Close",
     },
+    number_stepper: {
+      increase: "Increase",
+      decrease: "Decrease",
+    },
     view_layout: {
       columns: "Split in columns",
       rows: "Split in rows",
@@ -425,7 +433,7 @@ const DICTIONARIES = {
       right_click_paste: "Right click to paste",
       right_click_paste_hint: "Right click on the terminal pastes the clipboard",
       font_family: "Font family",
-      font_family_default: "Default (system monospace)",
+      font_family_default: "System default",
       font_size: "Font size",
       line_height: "Line height",
       letter_spacing: "Letter spacing",
@@ -635,6 +643,10 @@ const DICTIONARIES = {
       maximize: "Agrandir / restaurer",
       close: "Fermer",
     },
+    number_stepper: {
+      increase: "Augmenter",
+      decrease: "Diminuer",
+    },
     view_layout: {
       columns: "Diviser en colonnes",
       rows: "Diviser en lignes",
@@ -726,7 +738,7 @@ const DICTIONARIES = {
       right_click_paste: "Coller avec clic droit",
       right_click_paste_hint: "Le clic droit sur le terminal colle le presse-papiers",
       font_family: "Famille de police",
-      font_family_default: "Par défaut (monospace système)",
+      font_family_default: "Par défaut du système",
       font_size: "Taille de police",
       line_height: "Hauteur de ligne",
       letter_spacing: "Espacement des lettres",
@@ -879,6 +891,10 @@ const DICTIONARIES = {
       maximize: "Maximizar / restaurar",
       close: "Fechar",
     },
+    number_stepper: {
+      increase: "Aumentar",
+      decrease: "Diminuir",
+    },
     view_layout: {
       columns: "Dividir em colunas",
       rows: "Dividir em linhas",
@@ -970,7 +986,7 @@ const DICTIONARIES = {
       right_click_paste: "Colar com clique direito",
       right_click_paste_hint: "Clique direito no terminal cola a área de transferência",
       font_family: "Família da fonte",
-      font_family_default: "Predefinida (monoespaçada do sistema)",
+      font_family_default: "Predefinida do sistema",
       font_size: "Tamanho da fonte",
       line_height: "Altura da linha",
       letter_spacing: "Espaçamento entre letras",

@@ -527,24 +527,34 @@ pub fn join_path(base: String, name: String) -> Result<String, String> {
         .into_owned())
 }
 
-/// Lista las familias de fuentes monoespaciadas instaladas en el sistema.
+/// Lista las familias de fuentes instaladas en el sistema.
 /// Se usa en Preferencias → Terminal para elegir la familia del xterm.js.
-/// Devuelve nombres únicos, ordenados alfabéticamente.
+/// Devuelve primero las monoespaciadas y después el resto, ambas en orden
+/// alfabético, para mantener visibles las opciones recomendadas para terminal.
 #[tauri::command]
 pub fn list_monospace_fonts() -> Result<Vec<String>, String> {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
 
-    let mut families: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut monospace: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut proportional: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for face in db.faces() {
-        if !face.monospaced {
-            continue;
-        }
         if let Some((family, _)) = face.families.first() {
-            families.insert(family.clone());
+            if face.monospaced {
+                monospace.insert(family.clone());
+            } else {
+                proportional.insert(family.clone());
+            }
         }
     }
-    Ok(families.into_iter().collect())
+
+    let mut families: Vec<String> = monospace.iter().cloned().collect();
+    families.extend(
+        proportional
+            .into_iter()
+            .filter(|family| !monospace.contains(family)),
+    );
+    Ok(families)
 }
 
 // ═══════════════════════════════════════════════════════════════════

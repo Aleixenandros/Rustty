@@ -72,6 +72,8 @@ const WINDOW_SIZE_STORAGE_KEY = "rustty-window-size";
 const RELEASES_API_URL = "https://api.github.com/repos/Aleixenandros/Rustty/releases/latest";
 const RELEASES_PAGE_URL = "https://github.com/Aleixenandros/Rustty/releases/latest";
 
+let bellAudioContext = null;
+
 // ═══════════════════════════════════════════════════════════════
 // TEMAS XTERM.JS
 //
@@ -569,6 +571,57 @@ function applyPrefsToAllTerminals() {
     s.fitAddon?.fit();
     notifyResize(sid, s.terminal);
   }
+}
+
+function previewBellStyle(style) {
+  const target = document.getElementById("modal-prefs") || document.body;
+  triggerTerminalBell(style, target);
+}
+
+function triggerTerminalBell(style = prefs.bell, targetEl = null) {
+  if (style === "visual") {
+    flashBellTarget(targetEl || document.querySelector(`.terminal-pane[data-session="${activeSessionId}"]`) || document.body);
+  } else if (style === "sound") {
+    playBellSound();
+  }
+}
+
+function flashBellTarget(targetEl) {
+  if (!targetEl) return;
+  targetEl.classList.remove("terminal-bell-visual");
+  // Forzar reinicio de la animación si se selecciona repetidamente.
+  void targetEl.offsetWidth;
+  targetEl.classList.add("terminal-bell-visual");
+  window.setTimeout(() => targetEl.classList.remove("terminal-bell-visual"), 260);
+}
+
+function getBellAudioContext() {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return null;
+  if (!bellAudioContext) bellAudioContext = new AudioCtx();
+  return bellAudioContext;
+}
+
+function playBellSound() {
+  const ctx = getBellAudioContext();
+  if (!ctx) return;
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(880, now);
+  osc.frequency.exponentialRampToValueAtTime(660, now + 0.12);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.05, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + 0.17);
 }
 
 let prefsActiveTab = "terminal";
@@ -2756,6 +2809,7 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   };
   sessions.set(sessionId, sessionObj);
   wirePaneFocusOnClick(pane, sessionId);
+  terminal.onBell(() => triggerTerminalBell(prefs.bell, pane));
 
   // OSC 7: el shell remoto emite `\e]7;file://host/path\e\\` al cambiar de cwd.
   // Muchos bash/zsh/fish modernos lo soportan (bash requiere hook en PROMPT_COMMAND).
@@ -3753,6 +3807,7 @@ function bindUIEvents() {
 
   // Reemplazar todos los <select> nativos por el dropdown personalizado
   document.querySelectorAll("select").forEach(enhanceSelect);
+  enhanceNumberSteppers();
 
   // Botones de nueva conexión
   document.getElementById("btn-new-connection")
@@ -3934,6 +3989,11 @@ function bindUIEvents() {
       prefs.fontFamily = fontFamilySel.value || "";
       applyPrefsToAllTerminals();
     });
+  }
+
+  const bellSel = document.getElementById("pref-bell");
+  if (bellSel) {
+    bellSel.addEventListener("change", () => previewBellStyle(bellSel.value));
   }
 
   // Cerrar modal de conexión
@@ -4322,6 +4382,7 @@ async function initWindowControls() {
     const mod = await import("@tauri-apps/api/window");
     win = mod.getCurrentWindow();
     await restoreSavedWindowSize(win, mod);
+    initWindowResizeHandles(win);
   } catch {
     return; // fuera de Tauri (p. ej. vite dev puro): no hay ventana
   }
@@ -4358,6 +4419,20 @@ async function initWindowControls() {
     });
   } catch {}
   try { win.onCloseRequested(() => { persistWindowSize(win); }); } catch {}
+}
+
+function initWindowResizeHandles(win) {
+  document.querySelectorAll("[data-resize-dir]").forEach((handle) => {
+    handle.addEventListener("pointerdown", async (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        if (await win.isMaximized()) return;
+        await win.startResizeDragging(handle.dataset.resizeDir);
+      } catch {}
+    });
+  });
 }
 
 async function restoreSavedWindowSize(win, windowApi) {
@@ -4409,6 +4484,81 @@ function switchTab(delta) {
   const idx = order.indexOf(activeSessionId);
   const next = ((idx < 0 ? 0 : idx) + delta + order.length) % order.length;
   setActiveTab(order[next]);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STEPPERS NUMÉRICOS
+// ═══════════════════════════════════════════════════════════════
+
+function enhanceNumberSteppers(root = document) {
+  root.querySelectorAll('.settings-control input[type="number"]').forEach((input) => {
+    if (input.dataset.stepperEnhanced === "1") return;
+    input.dataset.stepperEnhanced = "1";
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "number-stepper";
+    input.parentNode.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+
+    const buttons = document.createElement("div");
+    buttons.className = "number-stepper-buttons";
+    buttons.innerHTML = `
+      <button type="button" class="number-stepper-btn" data-step-dir="up" data-i18n-aria-label="number_stepper.increase" data-i18n-title="number_stepper.increase">▲</button>
+      <button type="button" class="number-stepper-btn" data-step-dir="down" data-i18n-aria-label="number_stepper.decrease" data-i18n-title="number_stepper.decrease">▼</button>
+    `;
+    wrapper.appendChild(buttons);
+    applyTranslations(wrapper);
+
+    buttons.addEventListener("mousedown", (e) => e.preventDefault());
+    buttons.addEventListener("click", (e) => {
+      const btn = e.target.closest(".number-stepper-btn");
+      if (!btn || input.disabled || input.readOnly) return;
+      input.focus();
+      stepNumberInput(input, btn.dataset.stepDir === "up" ? 1 : -1);
+    });
+  });
+}
+
+function stepNumberInput(input, direction) {
+  const previous = input.value;
+
+  if (input.value === "") {
+    const min = Number.parseFloat(input.min);
+    input.value = Number.isFinite(min) ? String(min) : "0";
+  }
+
+  try {
+    if (direction > 0) input.stepUp();
+    else input.stepDown();
+  } catch {
+    const current = Number.parseFloat(input.value);
+    const step = Number.parseFloat(input.step);
+    const min = Number.parseFloat(input.min);
+    const max = Number.parseFloat(input.max);
+    const precision = getStepPrecision(input.step);
+    let next = (Number.isFinite(current) ? current : 0) + direction * (Number.isFinite(step) ? step : 1);
+
+    if (Number.isFinite(min)) next = Math.max(min, next);
+    if (Number.isFinite(max)) next = Math.min(max, next);
+    input.value = formatSteppedNumber(next, precision);
+  }
+
+  if (input.value !== previous) {
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+}
+
+function getStepPrecision(stepValue) {
+  if (!stepValue || stepValue === "any") return 0;
+  const decimal = String(stepValue).split(".")[1];
+  return decimal ? decimal.length : 0;
+}
+
+function formatSteppedNumber(value, precision) {
+  return precision > 0
+    ? value.toFixed(precision).replace(/\.?0+$/, "")
+    : String(Math.round(value));
 }
 
 // ═══════════════════════════════════════════════════════════════

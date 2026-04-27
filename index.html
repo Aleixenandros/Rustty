@@ -10,6 +10,16 @@
   <body>
 
     <div id="app">
+      <div id="window-resize-handles" aria-hidden="true">
+        <div class="window-resize-handle resize-n" data-resize-dir="North"></div>
+        <div class="window-resize-handle resize-e" data-resize-dir="East"></div>
+        <div class="window-resize-handle resize-s" data-resize-dir="South"></div>
+        <div class="window-resize-handle resize-w" data-resize-dir="West"></div>
+        <div class="window-resize-handle resize-ne" data-resize-dir="NorthEast"></div>
+        <div class="window-resize-handle resize-nw" data-resize-dir="NorthWest"></div>
+        <div class="window-resize-handle resize-se" data-resize-dir="SouthEast"></div>
+        <div class="window-resize-handle resize-sw" data-resize-dir="SouthWest"></div>
+      </div>
 
       <!-- ── Barra lateral izquierda ── -->
       <aside id="sidebar">
@@ -68,6 +78,7 @@
           </div>
           <div id="welcome-screen">
             <div class="welcome-content">
+              <div class="welcome-logo" aria-hidden="true">🦀</div>
               <h1>Rustty</h1>
               <p data-i18n="app.cliente_ssh">Cliente SSH multiplataforma escrito en Rust</p>
               <div class="welcome-actions">
@@ -374,7 +385,7 @@
                 <label for="pref-font-family" data-i18n="prefs_terminal.font_family">Familia de fuente</label>
                 <div class="settings-control settings-control-wide">
                   <select id="pref-font-family">
-                    <option value="" data-i18n="prefs_terminal.font_family_default">Predeterminada (monoespaciada del sistema)</option>
+                    <option value="" data-i18n="prefs_terminal.font_family_default">Predeterminada del sistema</option>
                   </select>
                 </div>
               </div>
