@@ -65,10 +65,9 @@ pub fn get_or_create_device_id(data_dir: &Path) -> String {
 pub enum SyncBackendKind {
     None,
     Local,
+    Icloud,
     Webdav,
     GoogleDrive,
-    OneDrive,
-    Dropbox,
 }
 
 impl Default for SyncBackendKind {
@@ -80,6 +79,16 @@ impl Default for SyncBackendKind {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct LocalConfig {
     pub folder: String,
+}
+
+fn default_icloud_folder() -> Result<PathBuf, AppError> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| AppError::Sync("No se pudo resolver el directorio home".into()))?;
+    Ok(home
+        .join("Library")
+        .join("Mobile Documents")
+        .join("com~apple~CloudDocs")
+        .join("Rustty"))
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -96,31 +105,6 @@ pub struct GoogleDriveConfig {
     /// un binario distribuido, pero algunos proyectos antiguos aún lo exigen.
     #[serde(default)]
     pub client_secret: String,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct OneDriveConfig {
-    pub client_id: String,
-    #[serde(default = "default_microsoft_tenant")]
-    pub tenant: String,
-}
-
-impl Default for OneDriveConfig {
-    fn default() -> Self {
-        Self {
-            client_id: String::new(),
-            tenant: default_microsoft_tenant(),
-        }
-    }
-}
-
-fn default_microsoft_tenant() -> String {
-    "common".to_string()
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct DropboxConfig {
-    pub client_id: String,
 }
 
 fn configured_google_client_id(config: &SyncConfig) -> Option<String> {
@@ -141,37 +125,6 @@ fn configured_google_client_secret(config: &SyncConfig) -> Option<String> {
         .to_string()
         .into_nonempty()
         .or_else(|| option_env!("RUSTTY_GOOGLE_DRIVE_CLIENT_SECRET").map(str::to_string))
-}
-
-fn configured_onedrive_client_id(config: &SyncConfig) -> Option<String> {
-    config
-        .one_drive
-        .client_id
-        .trim()
-        .to_string()
-        .into_nonempty()
-        .or_else(|| option_env!("RUSTTY_ONEDRIVE_CLIENT_ID").map(str::to_string))
-}
-
-fn configured_onedrive_tenant(config: &SyncConfig) -> String {
-    config
-        .one_drive
-        .tenant
-        .trim()
-        .to_string()
-        .into_nonempty()
-        .or_else(|| option_env!("RUSTTY_ONEDRIVE_TENANT").map(str::to_string))
-        .unwrap_or_else(default_microsoft_tenant)
-}
-
-fn configured_dropbox_client_id(config: &SyncConfig) -> Option<String> {
-    config
-        .dropbox
-        .client_id
-        .trim()
-        .to_string()
-        .into_nonempty()
-        .or_else(|| option_env!("RUSTTY_DROPBOX_CLIENT_ID").map(str::to_string))
 }
 
 trait NonEmptyString {
@@ -220,10 +173,6 @@ pub struct SyncConfig {
     pub webdav: WebDavConfig,
     #[serde(default)]
     pub google_drive: GoogleDriveConfig,
-    #[serde(default)]
-    pub one_drive: OneDriveConfig,
-    #[serde(default)]
-    pub dropbox: DropboxConfig,
     #[serde(default)]
     pub selective: SyncSelective,
     /// 0 = solo manual; >0 = auto cada N segundos (sin implementar todavía).
@@ -344,16 +293,12 @@ const OAUTH_CALLBACK_PATH: &str = "/oauth/callback";
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum OAuthProvider {
     GoogleDrive,
-    OneDrive,
-    Dropbox,
 }
 
 impl OAuthProvider {
     pub fn parse(value: &str) -> Result<Self, AppError> {
         match value {
             "google_drive" | "googledrive" | "google" => Ok(Self::GoogleDrive),
-            "one_drive" | "onedrive" | "microsoft" => Ok(Self::OneDrive),
-            "dropbox" => Ok(Self::Dropbox),
             other => Err(AppError::Sync(format!(
                 "Proveedor OAuth no soportado: {other}"
             ))),
@@ -363,8 +308,6 @@ impl OAuthProvider {
     fn key_part(self) -> &'static str {
         match self {
             Self::GoogleDrive => "google_drive",
-            Self::OneDrive => "one_drive",
-            Self::Dropbox => "dropbox",
         }
     }
 }
@@ -669,22 +612,6 @@ async fn refresh_oauth_access_token(
             }
             "https://oauth2.googleapis.com/token".to_string()
         }
-        OAuthProvider::OneDrive => {
-            let client_id = configured_onedrive_client_id(config)
-                .ok_or_else(|| AppError::Sync("Client ID de OneDrive no configurado".into()))?;
-            params.push(("client_id".to_string(), client_id));
-            let tenant = configured_onedrive_tenant(config);
-            format!(
-                "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-                tenant.trim_matches('/')
-            )
-        }
-        OAuthProvider::Dropbox => {
-            let client_id = configured_dropbox_client_id(config)
-                .ok_or_else(|| AppError::Sync("Client ID de Dropbox no configurado".into()))?;
-            params.push(("client_id".to_string(), client_id));
-            "https://api.dropboxapi.com/oauth2/token".to_string()
-        }
     };
     let token: TokenResponse = client
         .post(token_url)
@@ -843,140 +770,6 @@ impl SyncBackend for GoogleDriveBackend {
     }
 }
 
-pub struct OneDriveBackend {
-    pub config: SyncConfig,
-}
-
-impl OneDriveBackend {
-    async fn access_token(&self) -> Result<String, AppError> {
-        refresh_oauth_access_token(OAuthProvider::OneDrive, &self.config).await
-    }
-
-    fn content_url() -> &'static str {
-        "https://graph.microsoft.com/v1.0/me/drive/special/approot:/rustty-sync.bin:/content"
-    }
-}
-
-#[async_trait]
-impl SyncBackend for OneDriveBackend {
-    async fn read(&self) -> Result<Option<Vec<u8>>, AppError> {
-        let client = http_client(30)?;
-        let token = self.access_token().await?;
-        let resp = client
-            .get(Self::content_url())
-            .bearer_auth(&token)
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("onedrive download: {e}")))?;
-        if resp.status() == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if !resp.status().is_success() {
-            return Err(AppError::Sync(format!(
-                "onedrive download status: {}",
-                resp.status()
-            )));
-        }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| AppError::Sync(format!("onedrive body: {e}")))?;
-        Ok(Some(bytes.to_vec()))
-    }
-
-    async fn write(&self, data: &[u8]) -> Result<(), AppError> {
-        let client = http_client(30)?;
-        let token = self.access_token().await?;
-        let resp = client
-            .put(Self::content_url())
-            .bearer_auth(&token)
-            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-            .body(data.to_vec())
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("onedrive upload: {e}")))?;
-        if !resp.status().is_success() {
-            return Err(AppError::Sync(format!(
-                "onedrive upload status: {}",
-                resp.status()
-            )));
-        }
-        Ok(())
-    }
-}
-
-pub struct DropboxBackend {
-    pub config: SyncConfig,
-}
-
-impl DropboxBackend {
-    async fn access_token(&self) -> Result<String, AppError> {
-        refresh_oauth_access_token(OAuthProvider::Dropbox, &self.config).await
-    }
-}
-
-#[async_trait]
-impl SyncBackend for DropboxBackend {
-    async fn read(&self) -> Result<Option<Vec<u8>>, AppError> {
-        let client = http_client(30)?;
-        let token = self.access_token().await?;
-        let resp = client
-            .post("https://content.dropboxapi.com/2/files/download")
-            .bearer_auth(&token)
-            .header(
-                "Dropbox-API-Arg",
-                serde_json::json!({ "path": format!("/{}", STATE_FILENAME) }).to_string(),
-            )
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("dropbox download: {e}")))?;
-        if resp.status() == StatusCode::CONFLICT || resp.status() == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if !resp.status().is_success() {
-            return Err(AppError::Sync(format!(
-                "dropbox download status: {}",
-                resp.status()
-            )));
-        }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| AppError::Sync(format!("dropbox body: {e}")))?;
-        Ok(Some(bytes.to_vec()))
-    }
-
-    async fn write(&self, data: &[u8]) -> Result<(), AppError> {
-        let client = http_client(30)?;
-        let token = self.access_token().await?;
-        let resp = client
-            .post("https://content.dropboxapi.com/2/files/upload")
-            .bearer_auth(&token)
-            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-            .header(
-                "Dropbox-API-Arg",
-                serde_json::json!({
-                    "path": format!("/{}", STATE_FILENAME),
-                    "mode": "overwrite",
-                    "autorename": false,
-                    "mute": true
-                })
-                .to_string(),
-            )
-            .body(data.to_vec())
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("dropbox upload: {e}")))?;
-        if !resp.status().is_success() {
-            return Err(AppError::Sync(format!(
-                "dropbox upload status: {}",
-                resp.status()
-            )));
-        }
-        Ok(())
-    }
-}
-
 // ─── Manager ─────────────────────────────────────────────────────────
 
 pub struct SyncManager {
@@ -1044,8 +837,6 @@ impl SyncManager {
         let config = self.load_config();
         let client_id = match provider {
             OAuthProvider::GoogleDrive => configured_google_client_id(&config),
-            OAuthProvider::OneDrive => configured_onedrive_client_id(&config),
-            OAuthProvider::Dropbox => configured_dropbox_client_id(&config),
         }
         .ok_or_else(|| AppError::Sync("Client ID OAuth no configurado".into()))?;
 
@@ -1061,11 +852,6 @@ impl SyncManager {
             OAuthProvider::GoogleDrive => {
                 "https://accounts.google.com/o/oauth2/v2/auth".to_string()
             }
-            OAuthProvider::OneDrive => format!(
-                "https://login.microsoftonline.com/{}/oauth2/v2.0/authorize",
-                configured_onedrive_tenant(&config).trim_matches('/')
-            ),
-            OAuthProvider::Dropbox => "https://www.dropbox.com/oauth2/authorize".to_string(),
         };
         append_param(&mut auth_url, "response_type", "code");
         append_param(&mut auth_url, "client_id", &client_id);
@@ -1082,17 +868,6 @@ impl SyncManager {
                 );
                 append_param(&mut auth_url, "access_type", "offline");
                 append_param(&mut auth_url, "prompt", "consent");
-            }
-            OAuthProvider::OneDrive => {
-                append_param(
-                    &mut auth_url,
-                    "scope",
-                    "offline_access Files.ReadWrite.AppFolder",
-                );
-                append_param(&mut auth_url, "prompt", "select_account");
-            }
-            OAuthProvider::Dropbox => {
-                append_param(&mut auth_url, "token_access_type", "offline");
             }
         }
 
@@ -1141,22 +916,6 @@ impl SyncManager {
                 }
                 "https://oauth2.googleapis.com/token".to_string()
             }
-            OAuthProvider::OneDrive => {
-                let client_id = configured_onedrive_client_id(&config)
-                    .ok_or_else(|| AppError::Sync("Client ID de OneDrive no configurado".into()))?;
-                params.push(("client_id".to_string(), client_id));
-                let tenant = configured_onedrive_tenant(&config);
-                format!(
-                    "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-                    tenant.trim_matches('/')
-                )
-            }
-            OAuthProvider::Dropbox => {
-                let client_id = configured_dropbox_client_id(&config)
-                    .ok_or_else(|| AppError::Sync("Client ID de Dropbox no configurado".into()))?;
-                params.push(("client_id".to_string(), client_id));
-                "https://api.dropboxapi.com/oauth2/token".to_string()
-            }
         };
         let token: TokenResponse = client
             .post(token_url)
@@ -1196,6 +955,12 @@ impl SyncManager {
                     path: folder.join(STATE_FILENAME),
                 }))
             }
+            SyncBackendKind::Icloud => {
+                let folder = default_icloud_folder()?;
+                Ok(Box::new(LocalBackend {
+                    path: folder.join(STATE_FILENAME),
+                }))
+            }
             SyncBackendKind::Webdav => {
                 if config.webdav.url.is_empty() {
                     return Err(AppError::Sync("URL WebDAV no configurada".into()));
@@ -1209,12 +974,6 @@ impl SyncManager {
                 }))
             }
             SyncBackendKind::GoogleDrive => Ok(Box::new(GoogleDriveBackend {
-                config: config.clone(),
-            })),
-            SyncBackendKind::OneDrive => Ok(Box::new(OneDriveBackend {
-                config: config.clone(),
-            })),
-            SyncBackendKind::Dropbox => Ok(Box::new(DropboxBackend {
                 config: config.clone(),
             })),
             SyncBackendKind::None => Err(AppError::Sync("No hay backend seleccionado".into())),

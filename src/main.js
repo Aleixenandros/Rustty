@@ -658,24 +658,18 @@ async function populateSyncTab() {
     enabled: false, backend: "none",
     local: { folder: "" },
     webdav: { url: "", username: "" },
-    google_drive: { client_id: "", client_secret: "" },
-    one_drive: { client_id: "", tenant: "common" },
-    dropbox: { client_id: "" },
     selective: { profiles: true, prefs: true, themes: true, shortcuts: true, snippets: true },
     auto_interval_seconds: 0,
   }));
   _syncConfigCache = config;
 
+  const allowedBackends = ["none", "local", "icloud", "webdav", "google_drive"];
+  const backend = allowedBackends.includes(config.backend) ? config.backend : "none";
   document.getElementById("sync-enabled").checked = !!config.enabled;
-  document.getElementById("sync-backend").value = config.backend || "none";
+  document.getElementById("sync-backend").value = backend;
   document.getElementById("sync-local-folder").value = config.local?.folder || "";
   document.getElementById("sync-webdav-url").value  = config.webdav?.url || "";
   document.getElementById("sync-webdav-user").value = config.webdav?.username || "";
-  document.getElementById("sync-google-client-id").value = config.google_drive?.client_id || "";
-  document.getElementById("sync-google-client-secret").value = config.google_drive?.client_secret || "";
-  document.getElementById("sync-onedrive-client-id").value = config.one_drive?.client_id || "";
-  document.getElementById("sync-onedrive-tenant").value = config.one_drive?.tenant || "common";
-  document.getElementById("sync-dropbox-client-id").value = config.dropbox?.client_id || "";
   document.getElementById("sync-sel-profiles").checked  = config.selective?.profiles ?? true;
   document.getElementById("sync-sel-prefs").checked     = config.selective?.prefs ?? true;
   document.getElementById("sync-sel-themes").checked    = config.selective?.themes ?? true;
@@ -715,17 +709,14 @@ function syncUpdateBackendVisibility() {
   document.querySelectorAll(".sync-local-only").forEach((el) =>
     el.classList.toggle("hidden", v !== "local")
   );
+  document.querySelectorAll(".sync-icloud-only").forEach((el) =>
+    el.classList.toggle("hidden", v !== "icloud")
+  );
   document.querySelectorAll(".sync-webdav-only").forEach((el) =>
     el.classList.toggle("hidden", v !== "webdav")
   );
   document.querySelectorAll(".sync-google-drive-only").forEach((el) =>
     el.classList.toggle("hidden", v !== "google_drive")
-  );
-  document.querySelectorAll(".sync-one-drive-only").forEach((el) =>
-    el.classList.toggle("hidden", v !== "one_drive")
-  );
-  document.querySelectorAll(".sync-dropbox-only").forEach((el) =>
-    el.classList.toggle("hidden", v !== "dropbox")
   );
   document.querySelectorAll(".sync-oauth-only").forEach((el) =>
     el.classList.toggle("hidden", !currentOAuthProvider())
@@ -750,10 +741,9 @@ function syncBackendLabel(backend) {
   const map = {
     none: "prefs_sync.backend_none",
     local: "prefs_sync.backend_local",
+    icloud: "prefs_sync.backend_icloud",
     webdav: "prefs_sync.backend_webdav",
     google_drive: "prefs_sync.backend_google_drive",
-    one_drive: "prefs_sync.backend_one_drive",
-    dropbox: "prefs_sync.backend_dropbox",
   };
   return t(map[backend] || map.none);
 }
@@ -776,7 +766,7 @@ function updateSidebarSyncStatus() {
 function currentOAuthProvider() {
   const el = document.getElementById("sync-backend");
   const value = el?.value || _syncConfigCache?.backend;
-  return ["google_drive", "one_drive", "dropbox"].includes(value) ? value : null;
+  return value === "google_drive" ? value : null;
 }
 
 function setOAuthStatus(connected) {
@@ -805,17 +795,6 @@ async function persistSyncConfig() {
     webdav: {
       url: document.getElementById("sync-webdav-url").value.trim(),
       username: document.getElementById("sync-webdav-user").value.trim(),
-    },
-    google_drive: {
-      client_id: document.getElementById("sync-google-client-id").value.trim(),
-      client_secret: document.getElementById("sync-google-client-secret").value.trim(),
-    },
-    one_drive: {
-      client_id: document.getElementById("sync-onedrive-client-id").value.trim(),
-      tenant: document.getElementById("sync-onedrive-tenant").value.trim() || "common",
-    },
-    dropbox: {
-      client_id: document.getElementById("sync-dropbox-client-id").value.trim(),
     },
     selective: {
       profiles:  document.getElementById("sync-sel-profiles").checked,
@@ -855,8 +834,6 @@ async function syncOAuthConnectNow() {
     dot?.classList.add("error");
     if (txt) txt.textContent = t("prefs_sync.status_error");
     if (String(err).includes("Client ID OAuth") || String(err).includes("Client ID de")) {
-      const advanced = document.querySelector(".sync-oauth-advanced");
-      if (advanced) advanced.open = true;
       toast(t("prefs_sync.oauth_missing_app_credentials"), "warning", 8000);
       return;
     }

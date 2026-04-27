@@ -750,10 +750,9 @@
                   <select id="sync-backend">
                     <option value="none" data-i18n="prefs_sync.backend_none">Ninguno</option>
                     <option value="local" data-i18n="prefs_sync.backend_local">Carpeta local / NAS</option>
+                    <option value="icloud" data-i18n="prefs_sync.backend_icloud">iCloud Drive</option>
                     <option value="webdav" data-i18n="prefs_sync.backend_webdav">WebDAV (Nextcloud, ownCloud…)</option>
                     <option value="google_drive" data-i18n="prefs_sync.backend_google_drive">Google Drive</option>
-                    <option value="one_drive" data-i18n="prefs_sync.backend_one_drive">OneDrive</option>
-                    <option value="dropbox" data-i18n="prefs_sync.backend_dropbox">Dropbox</option>
                   </select>
                 </div>
               </div>
@@ -764,7 +763,16 @@
                 <div class="settings-control settings-file-row">
                   <input type="text" id="sync-local-folder" data-i18n-placeholder="prefs_sync.local_folder_ph" placeholder="/ruta/a/carpeta/sincronizada" />
                   <button type="button" class="btn-secondary" id="btn-sync-local-browse" data-i18n="prefs_sync.browse">Examinar…</button>
-                  <p class="form-hint" data-i18n="prefs_sync.local_cloud_hint">Puedes apuntar aquí a una carpeta sincronizada por iCloud Drive, Google Drive Desktop, OneDrive o Dropbox.</p>
+                  <p class="form-hint" data-i18n="prefs_sync.local_cloud_hint">Puedes apuntar aquí a una carpeta local, NAS o carpeta sincronizada por el sistema.</p>
+                </div>
+              </div>
+
+              <!-- Backend: iCloud Drive -->
+              <div class="settings-row settings-row-inline sync-icloud-only hidden">
+                <label data-i18n="prefs_sync.icloud_folder">Carpeta iCloud</label>
+                <div class="settings-control settings-control-wide">
+                  <code class="sync-path-code">~/Library/Mobile Documents/com~apple~CloudDocs/Rustty/</code>
+                  <p class="form-hint" data-i18n="prefs_sync.icloud_hint">Usa iCloud Drive como carpeta local sincronizada. Disponible en macOS con iCloud Drive activo.</p>
                 </div>
               </div>
 
@@ -788,52 +796,6 @@
                   <p class="form-hint" data-i18n="prefs_sync.webdav_pass_hint">Se guarda en el keyring del SO con servicio <code>rustty</code>, clave <code>sync:webdav_password</code>.</p>
                 </div>
               </div>
-
-              <details class="sync-oauth-advanced sync-oauth-only hidden">
-                <summary data-i18n="prefs_sync.oauth_app_credentials_title">Credenciales de aplicación</summary>
-                <p class="form-hint" data-i18n="prefs_sync.oauth_app_credentials_hint">
-                  Solo son necesarias en builds de desarrollo o autoalojadas. En una build distribuida por Rustty deberían venir integradas.
-                </p>
-
-                <!-- Backend: Google Drive -->
-                <div class="settings-row settings-row-inline sync-google-drive-only hidden">
-                  <label for="sync-google-client-id" data-i18n="prefs_sync.oauth_client_id">Client ID</label>
-                  <div class="settings-control settings-control-wide">
-                    <input type="text" id="sync-google-client-id" placeholder="xxxxx.apps.googleusercontent.com" />
-                  </div>
-                </div>
-                <div class="settings-row settings-row-inline sync-google-drive-only hidden">
-                  <label for="sync-google-client-secret" data-i18n="prefs_sync.google_client_secret">Client secret</label>
-                  <div class="settings-control settings-control-wide">
-                    <input type="password" id="sync-google-client-secret" placeholder="Opcional" />
-                    <p class="form-hint" data-i18n="prefs_sync.google_hint">Usa Drive appDataFolder: Rustty solo ve su fichero cifrado de sincronización.</p>
-                  </div>
-                </div>
-
-                <!-- Backend: OneDrive -->
-                <div class="settings-row settings-row-inline sync-one-drive-only hidden">
-                  <label for="sync-onedrive-client-id" data-i18n="prefs_sync.oauth_client_id">Client ID</label>
-                  <div class="settings-control settings-control-wide">
-                    <input type="text" id="sync-onedrive-client-id" placeholder="Application (client) ID" />
-                    <p class="form-hint" data-i18n="prefs_sync.onedrive_hint">Usa Files.ReadWrite.AppFolder para limitar el acceso a la carpeta de la app.</p>
-                  </div>
-                </div>
-                <div class="settings-row settings-row-inline sync-one-drive-only hidden">
-                  <label for="sync-onedrive-tenant" data-i18n="prefs_sync.onedrive_tenant">Tenant</label>
-                  <div class="settings-control settings-control-wide">
-                    <input type="text" id="sync-onedrive-tenant" placeholder="common" />
-                  </div>
-                </div>
-
-                <!-- Backend: Dropbox -->
-                <div class="settings-row settings-row-inline sync-dropbox-only hidden">
-                  <label for="sync-dropbox-client-id" data-i18n="prefs_sync.oauth_client_id">Client ID</label>
-                  <div class="settings-control settings-control-wide">
-                    <input type="text" id="sync-dropbox-client-id" placeholder="Dropbox app key" />
-                    <p class="form-hint" data-i18n="prefs_sync.dropbox_hint">Configura la app de Dropbox como App folder y redirect URI http://127.0.0.1:53682/oauth/callback.</p>
-                  </div>
-                </div>
-              </details>
 
               <div class="settings-row sync-oauth-actions sync-oauth-only hidden">
                 <div class="sync-status">

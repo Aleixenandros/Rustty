@@ -90,6 +90,8 @@ jobs:
           APPLE_ID:                   ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+          RUSTTY_GOOGLE_DRIVE_CLIENT_ID:     ${{ secrets.RUSTTY_GOOGLE_DRIVE_CLIENT_ID }}
+          RUSTTY_GOOGLE_DRIVE_CLIENT_SECRET: ${{ secrets.RUSTTY_GOOGLE_DRIVE_CLIENT_SECRET }}
         with:
           tagName:       ${{ github.ref_name }}
           releaseName:   "Rustty ${{ github.ref_name }}"

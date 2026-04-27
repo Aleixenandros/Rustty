@@ -1,6 +1,6 @@
 # OAuth apps for cloud sync
 
-Rustty supports direct encrypted sync through Google Drive, OneDrive and Dropbox.
+Rustty supports direct encrypted sync through Google Drive.
 The sync payload is still encrypted locally with the user's master passphrase
 before any cloud API sees it.
 
@@ -11,15 +11,11 @@ Official/distributed builds should embed the app credentials at build time:
 ```bash
 export RUSTTY_GOOGLE_DRIVE_CLIENT_ID="..."
 export RUSTTY_GOOGLE_DRIVE_CLIENT_SECRET="..." # optional for installed apps
-export RUSTTY_ONEDRIVE_CLIENT_ID="..."
-export RUSTTY_ONEDRIVE_TENANT="common"
-export RUSTTY_DROPBOX_CLIENT_ID="..."
 npm run tauri build
 ```
 
-Development or self-hosted builds can also enter these values in:
-
-Preferences -> Backups -> Cloud sync -> Application credentials
+Development builds must set the same environment variables before launching
+`npm run tauri dev`.
 
 ## Redirect URI
 
@@ -49,40 +45,9 @@ https://www.googleapis.com/auth/drive.appdata
 Rustty stores `rustty-sync.bin` in Drive `appDataFolder`, so the app does not
 need broad access to the user's visible Drive files.
 
-## OneDrive
-
-Create an app registration in Microsoft Entra / Azure Portal.
-
-1. Register a public/native client app.
-2. Add a localhost/native redirect URI for Rustty.
-3. Enable public client flows if the portal requires it for native apps.
-4. Use the Application (client) ID as `RUSTTY_ONEDRIVE_CLIENT_ID`.
-5. Leave `RUSTTY_ONEDRIVE_TENANT=common` unless the build is organization-only.
-
-Rustty requests these scopes:
-
-```text
-offline_access Files.ReadWrite.AppFolder
-```
-
-Rustty uploads `rustty-sync.bin` into the app folder via Microsoft Graph.
-
-## Dropbox
-
-Create a Dropbox Platform app.
-
-1. Choose Scoped access.
-2. Choose App folder access.
-3. Add the redirect URI above.
-4. Allow public clients / PKCE if the console exposes that switch.
-5. Use the App key as `RUSTTY_DROPBOX_CLIENT_ID`.
-
-Rustty uses OAuth code flow with PKCE and `token_access_type=offline`, then
-uploads `/rustty-sync.bin` into the app folder.
-
 ## Release checklist
 
-- Verify each provider with a fresh user account.
+- Verify Google Drive with a fresh user account.
 - Remove local per-user overrides from `sync_config.json` before release tests.
 - Confirm refresh-token reuse after app restart.
 - Confirm "Disconnect" deletes the provider refresh token from the OS keyring.

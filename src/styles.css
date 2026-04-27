@@ -1461,29 +1461,17 @@ input[type="checkbox"] {
   margin: 0;
 }
 
-.sync-oauth-advanced {
-  margin-top: 8px;
-  padding: 10px 12px;
+.sync-path-code {
+  display: block;
+  padding: 7px 8px;
   border: 1px solid var(--surface0);
   border-radius: var(--border-radius);
-  background: color-mix(in srgb, var(--surface0) 30%, transparent);
-}
-
-.sync-oauth-advanced summary {
-  cursor: pointer;
+  background: var(--crust);
   color: var(--subtext1);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.sync-oauth-advanced > .form-hint {
-  margin: 8px 0 4px;
-  color: var(--subtext0);
   font-size: 11px;
-}
-
-.sync-oauth-advanced .settings-row {
-  margin-top: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ─── Sincronización en la nube ──────────────────────────────── */
