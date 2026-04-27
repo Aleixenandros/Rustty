@@ -70,7 +70,19 @@ jobs:
       # ── Dependencias del sistema (solo macOS) ─────────────────
       - name: Install macOS dependencies
         if: matrix.platform == 'macos-latest'
-        run: brew install libssh2 openssl pkg-config
+        run: |
+          missing=()
+          for formula in libssh2 openssl@3 pkgconf; do
+            if ! brew list --formula "$formula" >/dev/null 2>&1; then
+              missing+=("$formula")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            brew install "${missing[@]}"
+          else
+            echo "macOS dependencies already installed."
+          fi
 
       # ── Dependencias JS ───────────────────────────────────────
       - name: Install JS dependencies
