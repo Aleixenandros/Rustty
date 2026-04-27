@@ -28,6 +28,13 @@
             <button class="btn-link" id="btn-first-connection" data-i18n="sidebar.empty_add_first">Añadir la primera</button>
           </div>
         </div>
+        <button id="sidebar-sync-status" class="sidebar-sync-status" type="button" data-i18n-title="prefs_sync.title" title="Sincronización">
+          <span class="sync-dot idle" id="sidebar-sync-dot"></span>
+          <span class="sidebar-sync-copy">
+            <span id="sidebar-sync-label" data-i18n="prefs_sync.status_disabled">Sync desactivado</span>
+            <span id="sidebar-sync-meta">—</span>
+          </span>
+        </button>
       </aside>
 
       <!-- ── Área principal ── -->
@@ -332,7 +339,7 @@
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="data">
               <span class="prefs-nav-icon">⇅</span>
-              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_data">Datos</span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_data">Copias de seguridad</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="about">
               <span class="prefs-nav-icon">ⓘ</span>
@@ -723,9 +730,186 @@
               <div class="shortcuts-list" id="shortcuts-list"></div>
             </section>
 
-            <!-- ── Datos ── -->
+            <!-- ── Copias de seguridad ── -->
             <section class="prefs-panel" role="tabpanel" data-prefs-panel="data">
-              <h3 class="prefs-panel-title" data-i18n="prefs_data.title">Datos</h3>
+              <h3 class="prefs-panel-title" data-i18n="prefs_sync.title">Sincronización en la nube</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_sync.hint">
+                Sincroniza perfiles, preferencias, temas y atajos entre equipos. Cifrado de extremo a extremo (E2E) con tu passphrase. El servidor solo ve datos opacos.
+              </p>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="sync-enabled" />
+                  <span data-i18n="prefs_sync.enabled">Habilitar sincronización</span>
+                </label>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="sync-backend" data-i18n="prefs_sync.backend">Backend</label>
+                <div class="settings-control settings-control-wide">
+                  <select id="sync-backend">
+                    <option value="none" data-i18n="prefs_sync.backend_none">Ninguno</option>
+                    <option value="local" data-i18n="prefs_sync.backend_local">Carpeta local / NAS</option>
+                    <option value="webdav" data-i18n="prefs_sync.backend_webdav">WebDAV (Nextcloud, ownCloud…)</option>
+                    <option value="google_drive" data-i18n="prefs_sync.backend_google_drive">Google Drive</option>
+                    <option value="one_drive" data-i18n="prefs_sync.backend_one_drive">OneDrive</option>
+                    <option value="dropbox" data-i18n="prefs_sync.backend_dropbox">Dropbox</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Backend: Local -->
+              <div class="settings-row settings-row-inline sync-local-only hidden" id="sync-local-row">
+                <label for="sync-local-folder" data-i18n="prefs_sync.local_folder">Carpeta local</label>
+                <div class="settings-control settings-file-row">
+                  <input type="text" id="sync-local-folder" data-i18n-placeholder="prefs_sync.local_folder_ph" placeholder="/ruta/a/carpeta/sincronizada" />
+                  <button type="button" class="btn-secondary" id="btn-sync-local-browse" data-i18n="prefs_sync.browse">Examinar…</button>
+                  <p class="form-hint" data-i18n="prefs_sync.local_cloud_hint">Puedes apuntar aquí a una carpeta sincronizada por iCloud Drive, Google Drive Desktop, OneDrive o Dropbox.</p>
+                </div>
+              </div>
+
+              <!-- Backend: WebDAV -->
+              <div class="settings-row settings-row-inline sync-webdav-only hidden">
+                <label for="sync-webdav-url" data-i18n="prefs_sync.webdav_url">URL WebDAV</label>
+                <div class="settings-control settings-control-wide">
+                  <input type="text" id="sync-webdav-url" placeholder="https://nube.example.com/remote.php/dav/files/usuario/Rustty/" />
+                </div>
+              </div>
+              <div class="settings-row settings-row-inline sync-webdav-only hidden">
+                <label for="sync-webdav-user" data-i18n="prefs_sync.webdav_user">Usuario</label>
+                <div class="settings-control settings-control-wide">
+                  <input type="text" id="sync-webdav-user" />
+                </div>
+              </div>
+              <div class="settings-row settings-row-inline sync-webdav-only hidden">
+                <label for="sync-webdav-pass" data-i18n="prefs_sync.webdav_pass">Contraseña</label>
+                <div class="settings-control settings-control-wide">
+                  <input type="password" id="sync-webdav-pass" placeholder="••••••••" />
+                  <p class="form-hint" data-i18n="prefs_sync.webdav_pass_hint">Se guarda en el keyring del SO con servicio <code>rustty</code>, clave <code>sync:webdav_password</code>.</p>
+                </div>
+              </div>
+
+              <details class="sync-oauth-advanced sync-oauth-only hidden">
+                <summary data-i18n="prefs_sync.oauth_app_credentials_title">Credenciales de aplicación</summary>
+                <p class="form-hint" data-i18n="prefs_sync.oauth_app_credentials_hint">
+                  Solo son necesarias en builds de desarrollo o autoalojadas. En una build distribuida por Rustty deberían venir integradas.
+                </p>
+
+                <!-- Backend: Google Drive -->
+                <div class="settings-row settings-row-inline sync-google-drive-only hidden">
+                  <label for="sync-google-client-id" data-i18n="prefs_sync.oauth_client_id">Client ID</label>
+                  <div class="settings-control settings-control-wide">
+                    <input type="text" id="sync-google-client-id" placeholder="xxxxx.apps.googleusercontent.com" />
+                  </div>
+                </div>
+                <div class="settings-row settings-row-inline sync-google-drive-only hidden">
+                  <label for="sync-google-client-secret" data-i18n="prefs_sync.google_client_secret">Client secret</label>
+                  <div class="settings-control settings-control-wide">
+                    <input type="password" id="sync-google-client-secret" placeholder="Opcional" />
+                    <p class="form-hint" data-i18n="prefs_sync.google_hint">Usa Drive appDataFolder: Rustty solo ve su fichero cifrado de sincronización.</p>
+                  </div>
+                </div>
+
+                <!-- Backend: OneDrive -->
+                <div class="settings-row settings-row-inline sync-one-drive-only hidden">
+                  <label for="sync-onedrive-client-id" data-i18n="prefs_sync.oauth_client_id">Client ID</label>
+                  <div class="settings-control settings-control-wide">
+                    <input type="text" id="sync-onedrive-client-id" placeholder="Application (client) ID" />
+                    <p class="form-hint" data-i18n="prefs_sync.onedrive_hint">Usa Files.ReadWrite.AppFolder para limitar el acceso a la carpeta de la app.</p>
+                  </div>
+                </div>
+                <div class="settings-row settings-row-inline sync-one-drive-only hidden">
+                  <label for="sync-onedrive-tenant" data-i18n="prefs_sync.onedrive_tenant">Tenant</label>
+                  <div class="settings-control settings-control-wide">
+                    <input type="text" id="sync-onedrive-tenant" placeholder="common" />
+                  </div>
+                </div>
+
+                <!-- Backend: Dropbox -->
+                <div class="settings-row settings-row-inline sync-dropbox-only hidden">
+                  <label for="sync-dropbox-client-id" data-i18n="prefs_sync.oauth_client_id">Client ID</label>
+                  <div class="settings-control settings-control-wide">
+                    <input type="text" id="sync-dropbox-client-id" placeholder="Dropbox app key" />
+                    <p class="form-hint" data-i18n="prefs_sync.dropbox_hint">Configura la app de Dropbox como App folder y redirect URI http://127.0.0.1:53682/oauth/callback.</p>
+                  </div>
+                </div>
+              </details>
+
+              <div class="settings-row sync-oauth-actions sync-oauth-only hidden">
+                <div class="sync-status">
+                  <span class="sync-dot" id="sync-oauth-dot"></span>
+                  <span id="sync-oauth-text" data-i18n="prefs_sync.oauth_disconnected">No conectado</span>
+                </div>
+                <div class="sync-buttons">
+                  <button type="button" class="btn-secondary" id="btn-sync-oauth-connect" data-i18n="prefs_sync.oauth_connect">Conectar cuenta</button>
+                  <button type="button" class="btn-secondary" id="btn-sync-oauth-disconnect" data-i18n="prefs_sync.oauth_disconnect">Desconectar</button>
+                </div>
+              </div>
+
+              <!-- Passphrase maestro -->
+              <div class="settings-row settings-row-inline" id="sync-passphrase-row">
+                <label for="sync-passphrase" data-i18n="prefs_sync.passphrase">Passphrase maestra</label>
+                <div class="settings-control settings-control-wide">
+                  <input type="password" id="sync-passphrase" placeholder="••••••••" autocomplete="new-password" />
+                  <p class="form-hint" data-i18n="prefs_sync.passphrase_hint">
+                    Cifra los datos antes de subirlos. Sin esta passphrase nadie (ni siquiera el administrador del servidor) puede leer tus perfiles. Si la pierdes, pierdes acceso a la sincronización. Se guarda en el keyring del SO.
+                  </p>
+                </div>
+              </div>
+
+              <!-- Selectivo: qué sincronizar -->
+              <div class="settings-row" id="sync-selective-row">
+                <label data-i18n="prefs_sync.selective">Sincronizar</label>
+                <div class="settings-control sync-selective-grid">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="sync-sel-profiles" checked />
+                    <span data-i18n="prefs_sync.sel_profiles">Perfiles de conexión</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="sync-sel-prefs" checked />
+                    <span data-i18n="prefs_sync.sel_prefs">Preferencias (tema, fuente, idioma…)</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="sync-sel-themes" checked />
+                    <span data-i18n="prefs_sync.sel_themes">Temas personalizados</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="sync-sel-shortcuts" checked />
+                    <span data-i18n="prefs_sync.sel_shortcuts">Atajos de teclado</span>
+                  </label>
+                </div>
+                <p class="settings-hint" data-i18n="prefs_sync.never_synced">
+                  Nunca se sincroniza el keyring del SO ni la base KeePass desbloqueada.
+                </p>
+              </div>
+
+              <!-- Estado y acciones -->
+              <div class="settings-row sync-actions" id="sync-actions-row">
+                <div class="sync-status">
+                  <span class="sync-dot" id="sync-status-dot"></span>
+                  <span id="sync-status-text" data-i18n="prefs_sync.status_idle">Listo</span>
+                </div>
+                <div class="sync-buttons">
+                  <button type="button" class="btn-secondary" id="btn-sync-test" data-i18n="prefs_sync.test">Probar conexión</button>
+                  <button type="button" class="btn-primary" id="btn-sync-now" data-i18n="prefs_sync.run_now">Sincronizar ahora</button>
+                </div>
+                <p class="settings-hint" id="sync-meta">
+                  <span data-i18n="prefs_sync.device_id">Dispositivo</span>: <code id="sync-device-id">…</code>
+                  · <span data-i18n="prefs_sync.last_sync">Última sincronización</span>: <span id="sync-last-time">—</span>
+                </p>
+              </div>
+
+              <!-- Backup cifrado -->
+              <h3 class="prefs-panel-title" style="margin-top: 1.5rem;" data-i18n="prefs_sync.backup_title">Backup cifrado</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_sync.backup_hint">
+                Exporta el estado completo a un fichero <code>.rustty-sync.bin</code> cifrado con tu passphrase. Útil como copia de seguridad o para mover Rustty entre equipos sin servidor.
+              </p>
+              <div class="data-actions">
+                <button type="button" class="btn-secondary" id="btn-sync-export" data-i18n="prefs_sync.export_file">Exportar a fichero…</button>
+                <button type="button" class="btn-secondary" id="btn-sync-import" data-i18n="prefs_sync.import_file">Importar fichero…</button>
+              </div>
+
+              <h3 class="prefs-panel-title" style="margin-top: 1.5rem;" data-i18n="prefs_data.title">Datos locales</h3>
               <p class="prefs-panel-hint" data-i18n-html="prefs_data.hint_html">
                 Exporta tus conexiones a un archivo JSON para hacer backups o moverlas a otro equipo.
                 Las contraseñas <strong>no</strong> se incluyen.

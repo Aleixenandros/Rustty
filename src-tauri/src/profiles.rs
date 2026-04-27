@@ -59,6 +59,10 @@ pub struct ConnectionProfile {
     pub follow_cwd: bool,
     /// Timestamp ISO 8601 de creación
     pub created_at: String,
+    /// Timestamp ISO 8601 de la última modificación. Usado por la
+    /// sincronización en la nube para resolver conflictos last-write-wins.
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 /// Gestor de perfiles de conexión.

@@ -6,6 +6,7 @@ mod profiles;
 mod rdp_manager;
 mod sftp_manager;
 mod ssh_manager;
+mod sync;
 
 use std::path::PathBuf;
 
@@ -14,6 +15,7 @@ use profiles::ProfileManager;
 use rdp_manager::RdpManager;
 use sftp_manager::SftpManager;
 use ssh_manager::SshManager;
+use sync::SyncManager;
 use tauri::Manager;
 
 /// Directorio de datos efectivo de la aplicación.
@@ -61,8 +63,7 @@ pub fn run() {
                     .expect("No se pudo obtener el directorio de datos de la app")
             });
 
-            std::fs::create_dir_all(&data_dir)
-                .expect("No se pudo crear el directorio de datos");
+            std::fs::create_dir_all(&data_dir).expect("No se pudo crear el directorio de datos");
 
             // Estado global gestionado por Tauri (inyectado en los comandos vía State<T>)
             app.manage(SshManager::new());
@@ -70,6 +71,7 @@ pub fn run() {
             app.manage(LocalShellManager::new());
             app.manage(SftpManager::new());
             app.manage(ProfileManager::new(data_dir.clone()));
+            app.manage(SyncManager::new(data_dir.clone()));
             app.manage(DataDir(data_dir));
 
             Ok(())
@@ -122,6 +124,18 @@ pub fn run() {
             commands::read_text_file,
             commands::join_path,
             commands::list_monospace_fonts,
+            // ── Sincronización en la nube
+            commands::sync_get_config,
+            commands::sync_save_config,
+            commands::sync_get_device_id,
+            commands::sync_run,
+            commands::sync_test_backend,
+            commands::sync_oauth_begin,
+            commands::sync_oauth_complete,
+            commands::sync_oauth_status,
+            commands::sync_oauth_disconnect,
+            commands::sync_export_file,
+            commands::sync_import_file,
         ])
         .run(tauri::generate_context!())
         .expect("Error al iniciar la aplicación Rustty");

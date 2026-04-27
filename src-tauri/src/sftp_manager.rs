@@ -46,12 +46,31 @@ pub struct FileEntry {
 type Reply<T> = mpsc::SyncSender<Result<T, String>>;
 
 enum SftpCommand {
-    ListDir { path: String, reply: Reply<Vec<FileEntry>> },
-    Stat { path: String, reply: Reply<FileEntry> },
-    HomeDir { reply: Reply<String> },
-    Mkdir { path: String, reply: Reply<()> },
-    Remove { path: String, is_dir: bool, reply: Reply<()> },
-    Rename { from: String, to: String, reply: Reply<()> },
+    ListDir {
+        path: String,
+        reply: Reply<Vec<FileEntry>>,
+    },
+    Stat {
+        path: String,
+        reply: Reply<FileEntry>,
+    },
+    HomeDir {
+        reply: Reply<String>,
+    },
+    Mkdir {
+        path: String,
+        reply: Reply<()>,
+    },
+    Remove {
+        path: String,
+        is_dir: bool,
+        reply: Reply<()>,
+    },
+    Rename {
+        from: String,
+        to: String,
+        reply: Reply<()>,
+    },
     Download {
         remote: String,
         local: PathBuf,
@@ -77,7 +96,9 @@ pub struct SftpManager {
 
 impl SftpManager {
     pub fn new() -> Self {
-        Self { sessions: Mutex::new(HashMap::new()) }
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Abre una sesión SFTP.
@@ -118,7 +139,10 @@ impl SftpManager {
         // Esperar a que la autenticación + apertura SFTP terminen
         match ready_rx.recv() {
             Ok(Ok(())) => {
-                self.sessions.lock().unwrap().insert(session_id, SftpHandle { tx });
+                self.sessions
+                    .lock()
+                    .unwrap()
+                    .insert(session_id, SftpHandle { tx });
                 Ok(())
             }
             Ok(Err(e)) => Err(e),
@@ -126,11 +150,16 @@ impl SftpManager {
         }
     }
 
-    fn send<T>(&self, session_id: &str, build: impl FnOnce(Reply<T>) -> SftpCommand) -> Result<T, String> {
+    fn send<T>(
+        &self,
+        session_id: &str,
+        build: impl FnOnce(Reply<T>) -> SftpCommand,
+    ) -> Result<T, String> {
         let (reply_tx, reply_rx) = mpsc::sync_channel::<Result<T, String>>(1);
         {
             let map = self.sessions.lock().unwrap();
-            let handle = map.get(session_id)
+            let handle = map
+                .get(session_id)
                 .ok_or_else(|| format!("Sesión SFTP no encontrada: {session_id}"))?;
             handle.tx.send(build(reply_tx)).map_err(|e| e.to_string())?;
         }
@@ -157,7 +186,11 @@ impl SftpManager {
     }
 
     pub fn remove(&self, session_id: &str, path: String, is_dir: bool) -> Result<(), String> {
-        self.send(session_id, |reply| SftpCommand::Remove { path, is_dir, reply })
+        self.send(session_id, |reply| SftpCommand::Remove {
+            path,
+            is_dir,
+            reply,
+        })
     }
 
     pub fn rename(&self, session_id: &str, from: String, to: String) -> Result<(), String> {
@@ -171,7 +204,12 @@ impl SftpManager {
         local: PathBuf,
         transfer_id: String,
     ) -> Result<(), String> {
-        self.send(session_id, |reply| SftpCommand::Download { remote, local, transfer_id, reply })
+        self.send(session_id, |reply| SftpCommand::Download {
+            remote,
+            local,
+            transfer_id,
+            reply,
+        })
     }
 
     pub fn upload(
@@ -181,7 +219,12 @@ impl SftpManager {
         remote: String,
         transfer_id: String,
     ) -> Result<(), String> {
-        self.send(session_id, |reply| SftpCommand::Upload { local, remote, transfer_id, reply })
+        self.send(session_id, |reply| SftpCommand::Upload {
+            local,
+            remote,
+            transfer_id,
+            reply,
+        })
     }
 
     pub fn disconnect(&self, session_id: &str) -> Result<(), String> {
@@ -226,7 +269,9 @@ async fn run_sftp_worker(
         password.as_deref(),
         passphrase.as_deref(),
         elevated,
-    ).await {
+    )
+    .await
+    {
         Ok(s) => s,
         Err(e) => {
             let _ = ready.send(Err(e));
@@ -254,11 +299,13 @@ async fn run_sftp_worker(
                 let _ = reply.send(do_home_dir(&sftp).await);
             }
             SftpCommand::Mkdir { path, reply } => {
-                let _ = reply.send(
-                    sftp.create_dir(path).await.map_err(|e| e.to_string())
-                );
+                let _ = reply.send(sftp.create_dir(path).await.map_err(|e| e.to_string()));
             }
-            SftpCommand::Remove { path, is_dir, reply } => {
+            SftpCommand::Remove {
+                path,
+                is_dir,
+                reply,
+            } => {
                 let res = if is_dir {
                     sftp.remove_dir(path).await
                 } else {
@@ -267,15 +314,23 @@ async fn run_sftp_worker(
                 let _ = reply.send(res.map_err(|e| e.to_string()));
             }
             SftpCommand::Rename { from, to, reply } => {
-                let _ = reply.send(
-                    sftp.rename(from, to).await.map_err(|e| e.to_string())
-                );
+                let _ = reply.send(sftp.rename(from, to).await.map_err(|e| e.to_string()));
             }
-            SftpCommand::Download { remote, local, transfer_id, reply } => {
+            SftpCommand::Download {
+                remote,
+                local,
+                transfer_id,
+                reply,
+            } => {
                 let res = do_download(&sftp, &remote, &local, &transfer_id, &app_handle).await;
                 let _ = reply.send(res);
             }
-            SftpCommand::Upload { local, remote, transfer_id, reply } => {
+            SftpCommand::Upload {
+                local,
+                remote,
+                transfer_id,
+                reply,
+            } => {
                 let res = do_upload(&sftp, &local, &remote, &transfer_id, &app_handle).await;
                 let _ = reply.send(res);
             }
@@ -310,29 +365,33 @@ async fn connect_and_open_sftp(
     let auth = match &profile.auth_type {
         AuthType::Password => {
             let pass = password.ok_or_else(|| "Se requiere contraseña".to_string())?;
-            handle.authenticate_password(profile.username.clone(), pass.to_string())
+            handle
+                .authenticate_password(profile.username.clone(), pass.to_string())
                 .await
                 .map_err(|e| format!("Error de autenticación: {e}"))?
         }
         AuthType::PublicKey => {
-            let key_path = profile.key_path.as_ref()
+            let key_path = profile
+                .key_path
+                .as_ref()
                 .ok_or_else(|| "Se requiere ruta de clave privada".to_string())?;
             let key = load_secret_key(Path::new(key_path), passphrase)
                 .map_err(|e| format!("Clave inválida: {e}"))?;
-            let hash_alg = handle.best_supported_rsa_hash().await
+            let hash_alg = handle
+                .best_supported_rsa_hash()
+                .await
                 .ok()
                 .flatten()
                 .flatten();
-            handle.authenticate_publickey(
-                profile.username.clone(),
-                PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
-            )
-            .await
-            .map_err(|e| format!("Error de autenticación por clave: {e}"))?
+            handle
+                .authenticate_publickey(
+                    profile.username.clone(),
+                    PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
+                )
+                .await
+                .map_err(|e| format!("Error de autenticación por clave: {e}"))?
         }
-        AuthType::Agent => {
-            authenticate_with_agent(&mut handle, &profile.username).await?
-        }
+        AuthType::Agent => authenticate_with_agent(&mut handle, &profile.username).await?,
     };
 
     match auth {
@@ -346,7 +405,8 @@ async fn connect_and_open_sftp(
     }
 
     // Abrir canal y activar SFTP (normal o elevado)
-    let channel = handle.channel_open_session()
+    let channel = handle
+        .channel_open_session()
         .await
         .map_err(|e| format!("No se pudo abrir canal: {e}"))?;
 
@@ -355,27 +415,27 @@ async fn connect_and_open_sftp(
         // que sea ejecutable. El `exec` final sustituye al shell sh, así que
         // no hay wrapper que estropee el protocolo SFTP en el pipe.
         let cmd = r#"for p in /usr/libexec/openssh/sftp-server /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server /usr/libexec/sftp-server; do [ -x "$p" ] && exec sudo -n "$p"; done; echo "sftp-server binary not found" >&2; exit 127"#;
-        channel.exec(true, cmd)
+        channel
+            .exec(true, cmd)
             .await
             .map_err(|e| format!("No se pudo lanzar sftp-server elevado: {e}"))?;
     } else {
-        channel.request_subsystem(true, "sftp")
+        channel
+            .request_subsystem(true, "sftp")
             .await
             .map_err(|e| format!("No se pudo abrir el subsistema SFTP: {e}"))?;
     }
 
-    let sftp = SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|e| {
-            if elevated {
-                format!(
-                    "No se pudo iniciar SFTP elevado ({e}). \
+    let sftp = SftpSession::new(channel.into_stream()).await.map_err(|e| {
+        if elevated {
+            format!(
+                "No se pudo iniciar SFTP elevado ({e}). \
                      Comprueba que /etc/sudoers permita NOPASSWD sobre sftp-server."
-                )
-            } else {
-                format!("No se pudo iniciar sesión SFTP: {e}")
-            }
-        })?;
+            )
+        } else {
+            format!("No se pudo iniciar sesión SFTP: {e}")
+        }
+    })?;
 
     Ok(sftp)
 }
@@ -393,7 +453,8 @@ async fn authenticate_with_agent(
         .await
         .map_err(|e| format!("No se pudo contactar con el agente SSH: {e}"))?
         .dynamic();
-    let identities = agent.request_identities()
+    let identities = agent
+        .request_identities()
         .await
         .map_err(|e| format!("No se pudieron listar identidades del agente: {e}"))?;
 
@@ -401,7 +462,12 @@ async fn authenticate_with_agent(
         return Err("El agente SSH no tiene claves cargadas".into());
     }
 
-    let hash_alg = handle.best_supported_rsa_hash().await.ok().flatten().flatten();
+    let hash_alg = handle
+        .best_supported_rsa_hash()
+        .await
+        .ok()
+        .flatten()
+        .flatten();
     let mut last_failure = None;
     for key in identities {
         let res = handle
@@ -429,7 +495,10 @@ async fn authenticate_with_agent(
 // ─── Operaciones ────────────────────────────────────────────────────────────
 
 async fn do_list_dir(sftp: &SftpSession, path: &str) -> Result<Vec<FileEntry>, String> {
-    let read = sftp.read_dir(path.to_string()).await.map_err(|e| e.to_string())?;
+    let read = sftp
+        .read_dir(path.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for entry in read {
         let name = entry.file_name();
@@ -447,19 +516,21 @@ async fn do_list_dir(sftp: &SftpSession, path: &str) -> Result<Vec<FileEntry>, S
         });
     }
     // Carpetas primero, luego por nombre (case-insensitive)
-    out.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    out.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
     Ok(out)
 }
 
 async fn do_stat(sftp: &SftpSession, path: &str) -> Result<FileEntry, String> {
-    let meta = sftp.metadata(path.to_string()).await.map_err(|e| e.to_string())?;
-    let name = Path::new(path).file_name()
+    let meta = sftp
+        .metadata(path.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+    let name = Path::new(path)
+        .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string());
     let ft = meta.file_type();
@@ -489,14 +560,24 @@ async fn do_download(
     transfer_id: &str,
     app: &AppHandle,
 ) -> Result<(), String> {
-    let meta = sftp.metadata(remote.to_string()).await.map_err(|e| e.to_string())?;
+    let meta = sftp
+        .metadata(remote.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
     let total = meta.len();
 
-    let mut remote_file = sftp.open(remote.to_string()).await.map_err(|e| e.to_string())?;
+    let mut remote_file = sftp
+        .open(remote.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
     if let Some(parent) = local.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| e.to_string())?;
     }
-    let mut local_file = tokio::fs::File::create(local).await.map_err(|e| e.to_string())?;
+    let mut local_file = tokio::fs::File::create(local)
+        .await
+        .map_err(|e| e.to_string())?;
 
     transfer_copy(&mut remote_file, &mut local_file, total, transfer_id, app).await
 }
@@ -508,10 +589,14 @@ async fn do_upload(
     transfer_id: &str,
     app: &AppHandle,
 ) -> Result<(), String> {
-    let meta = tokio::fs::metadata(local).await.map_err(|e| e.to_string())?;
+    let meta = tokio::fs::metadata(local)
+        .await
+        .map_err(|e| e.to_string())?;
     let total = meta.len();
 
-    let mut local_file = tokio::fs::File::open(local).await.map_err(|e| e.to_string())?;
+    let mut local_file = tokio::fs::File::open(local)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut remote_file = sftp
         .open_with_flags(
             remote.to_string(),
@@ -541,28 +626,39 @@ where
     let event = format!("sftp-progress-{transfer_id}");
 
     // Progreso inicial
-    let _ = app.emit(&event, serde_json::json!({
-        "transferred": 0u64, "total": total, "done": false,
-    }));
+    let _ = app.emit(
+        &event,
+        serde_json::json!({
+            "transferred": 0u64, "total": total, "done": false,
+        }),
+    );
 
     loop {
         let n = src.read(&mut buf).await.map_err(|e| e.to_string())?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         dst.write_all(&buf[..n]).await.map_err(|e| e.to_string())?;
         transferred += n as u64;
 
         if transferred - last_emit >= 262_144 {
             last_emit = transferred;
-            let _ = app.emit(&event, serde_json::json!({
-                "transferred": transferred, "total": total, "done": false,
-            }));
+            let _ = app.emit(
+                &event,
+                serde_json::json!({
+                    "transferred": transferred, "total": total, "done": false,
+                }),
+            );
         }
     }
 
     dst.flush().await.map_err(|e| e.to_string())?;
-    let _ = app.emit(&event, serde_json::json!({
-        "transferred": transferred, "total": total, "done": true,
-    }));
+    let _ = app.emit(
+        &event,
+        serde_json::json!({
+            "transferred": transferred, "total": total, "done": true,
+        }),
+    );
     Ok(())
 }
 

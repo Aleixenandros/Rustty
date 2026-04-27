@@ -19,6 +19,9 @@ pub enum AppError {
 
     #[error("Error de autenticación: {0}")]
     Auth(String),
+
+    #[error("Error de sincronización: {0}")]
+    Sync(String),
 }
 
 impl From<std::io::Error> for AppError {

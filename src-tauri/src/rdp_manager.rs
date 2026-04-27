@@ -37,10 +37,10 @@ impl RdpManager {
     ) -> Result<(), String> {
         let child = spawn_rdp_client(host, port, username, domain, password)?;
 
-        self.sessions.lock().unwrap().insert(
-            session_id.clone(),
-            RdpHandle { child, profile_id },
-        );
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(session_id.clone(), RdpHandle { child, profile_id });
 
         // Hilo vigilante: detecta cuándo el proceso externo termina
         let sessions = Arc::clone(&self.sessions);
@@ -122,7 +122,8 @@ fn spawn_rdp_client(
     cmd.arg("/w:1280");
     cmd.arg("/h:800");
 
-    cmd.spawn().map_err(|e| format!("Error al lanzar {binary}: {e}"))
+    cmd.spawn()
+        .map_err(|e| format!("Error al lanzar {binary}: {e}"))
 }
 
 /// Windows: escribe un archivo .rdp temporal y lo abre con mstsc.exe
@@ -139,10 +140,7 @@ fn spawn_rdp_client(
         domain = domain.unwrap_or("")
     );
 
-    let rdp_path = std::env::temp_dir().join(format!(
-        "rustty_{}.rdp",
-        uuid::Uuid::new_v4()
-    ));
+    let rdp_path = std::env::temp_dir().join(format!("rustty_{}.rdp", uuid::Uuid::new_v4()));
     std::fs::write(&rdp_path, rdp_content)
         .map_err(|e| format!("Error al crear fichero RDP temporal: {e}"))?;
 
@@ -161,9 +159,7 @@ fn spawn_rdp_client(
     _domain: Option<&str>,
     _password: Option<&str>,
 ) -> Result<std::process::Child, String> {
-    let url = format!(
-        "rdp://full%20address=s:{host}:{port}&username=s:{username}"
-    );
+    let url = format!("rdp://full%20address=s:{host}:{port}&username=s:{username}");
     std::process::Command::new("open")
         .arg(&url)
         .spawn()

@@ -184,14 +184,11 @@ async fn run_session(
     // 2. Autenticación
     let auth = match &profile.auth_type {
         AuthType::Password => {
-            let pass = password
-                .ok_or_else(|| AppError::Auth("Se requiere contraseña".into()))?;
+            let pass = password.ok_or_else(|| AppError::Auth("Se requiere contraseña".into()))?;
             handle
                 .authenticate_password(profile.username.clone(), pass)
                 .await
-                .map_err(|e| {
-                    AppError::Auth(format!("Autenticación por contraseña fallida: {e}"))
-                })?
+                .map_err(|e| AppError::Auth(format!("Autenticación por contraseña fallida: {e}")))?
         }
         AuthType::PublicKey => {
             let key_path = profile
@@ -300,12 +297,9 @@ async fn authenticate_with_agent(
         .await
         .map_err(|e| AppError::Auth(format!("No se pudo contactar con el agente SSH: {e}")))?
         .dynamic();
-    let identities = agent
-        .request_identities()
-        .await
-        .map_err(|e| {
-            AppError::Auth(format!("No se pudieron listar identidades del agente: {e}"))
-        })?;
+    let identities = agent.request_identities().await.map_err(|e| {
+        AppError::Auth(format!("No se pudieron listar identidades del agente: {e}"))
+    })?;
 
     if identities.is_empty() {
         return Err(AppError::Auth(

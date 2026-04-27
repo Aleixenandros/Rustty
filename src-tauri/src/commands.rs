@@ -8,6 +8,10 @@ use crate::profiles::{ConnectionProfile, ProfileManager};
 use crate::rdp_manager::RdpManager;
 use crate::sftp_manager::{FileEntry, SftpManager};
 use crate::ssh_manager::SshManager;
+use crate::sync::{
+    pack_state, unpack_state, OAuthFinishResult, OAuthProvider, OAuthStartResult, SyncBackendKind,
+    SyncConfig, SyncManager, SyncState,
+};
 
 // ─── Comandos de gestión de perfiles ─────────────────────────────────────────
 
@@ -63,7 +67,13 @@ pub fn ssh_connect(
     let session_id = uuid::Uuid::new_v4().to_string();
 
     ssh_state
-        .connect(session_id.clone(), profile, resolved_password, passphrase, app_handle)
+        .connect(
+            session_id.clone(),
+            profile,
+            resolved_password,
+            passphrase,
+            app_handle,
+        )
         .map_err(|e| e.to_string())?;
 
     Ok(session_id)
@@ -87,10 +97,7 @@ fn resolve_password_from_keepass(
     }
     match keepass_manager::get_password(entry_uuid).map_err(|e| e.to_string())? {
         Some(pw) => Ok(Some(pw)),
-        None => Err(format!(
-            "Entrada KeePass {} no encontrada",
-            entry_uuid
-        )),
+        None => Err(format!("Entrada KeePass {} no encontrada", entry_uuid)),
     }
 }
 
@@ -202,10 +209,7 @@ pub fn rdp_connect(
 
 /// Termina el proceso RDP asociado a la sesión
 #[tauri::command]
-pub fn rdp_disconnect(
-    rdp_state: State<'_, RdpManager>,
-    session_id: String,
-) -> Result<(), String> {
+pub fn rdp_disconnect(rdp_state: State<'_, RdpManager>, session_id: String) -> Result<(), String> {
     rdp_state.disconnect(&session_id)
 }
 
@@ -290,7 +294,10 @@ pub fn sftp_connect(
 }
 
 #[tauri::command]
-pub fn sftp_disconnect(sftp_state: State<'_, SftpManager>, session_id: String) -> Result<(), String> {
+pub fn sftp_disconnect(
+    sftp_state: State<'_, SftpManager>,
+    session_id: String,
+) -> Result<(), String> {
     sftp_state.disconnect(&session_id)
 }
 
@@ -359,7 +366,12 @@ pub fn sftp_download(
     local_path: String,
     transfer_id: String,
 ) -> Result<(), String> {
-    sftp_state.download(&session_id, remote_path, PathBuf::from(local_path), transfer_id)
+    sftp_state.download(
+        &session_id,
+        remote_path,
+        PathBuf::from(local_path),
+        transfer_id,
+    )
 }
 
 /// Sube un fichero local a `remote_path`.
@@ -371,7 +383,12 @@ pub fn sftp_upload(
     remote_path: String,
     transfer_id: String,
 ) -> Result<(), String> {
-    sftp_state.upload(&session_id, PathBuf::from(local_path), remote_path, transfer_id)
+    sftp_state.upload(
+        &session_id,
+        PathBuf::from(local_path),
+        remote_path,
+        transfer_id,
+    )
 }
 
 // ─── Comandos de keyring ──────────────────────────────────────────────────────
@@ -412,12 +429,8 @@ pub fn keepass_unlock(
     password: Option<String>,
     keyfile_path: Option<String>,
 ) -> Result<(), String> {
-    keepass_manager::unlock(
-        &path,
-        password.as_deref(),
-        keyfile_path.as_deref(),
-    )
-    .map_err(|e| e.to_string())
+    keepass_manager::unlock(&path, password.as_deref(), keyfile_path.as_deref())
+        .map_err(|e| e.to_string())
 }
 
 /// Cierra la base KeePass (borra la copia descifrada en memoria).
@@ -476,7 +489,8 @@ pub fn write_temp_file(
     name: String,
     data: Vec<u8>,
 ) -> Result<String, String> {
-    let dir = app_handle.path()
+    let dir = app_handle
+        .path()
         .app_cache_dir()
         .map_err(|e| e.to_string())?
         .join("sftp-uploads");
@@ -507,7 +521,10 @@ pub fn read_text_file(path: String) -> Result<String, String> {
 /// Une dos segmentos de ruta usando el separador nativo del SO.
 #[tauri::command]
 pub fn join_path(base: String, name: String) -> Result<String, String> {
-    Ok(std::path::Path::new(&base).join(&name).to_string_lossy().into_owned())
+    Ok(std::path::Path::new(&base)
+        .join(&name)
+        .to_string_lossy()
+        .into_owned())
 }
 
 /// Lista las familias de fuentes monoespaciadas instaladas en el sistema.
@@ -528,4 +545,134 @@ pub fn list_monospace_fonts() -> Result<Vec<String>, String> {
         }
     }
     Ok(families.into_iter().collect())
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Sincronización en la nube
+// ═══════════════════════════════════════════════════════════════════
+
+/// Devuelve la configuración de sincronización persistida.
+#[tauri::command]
+pub fn sync_get_config(state: State<SyncManager>) -> Result<SyncConfig, String> {
+    Ok(state.load_config())
+}
+
+/// Guarda la configuración de sincronización (sin secretos: la passphrase y
+/// la contraseña WebDAV viven en el keyring del SO).
+#[tauri::command]
+pub fn sync_save_config(state: State<SyncManager>, config: SyncConfig) -> Result<(), String> {
+    state.save_config(&config).map_err(|e| e.to_string())
+}
+
+/// Devuelve el `device_id` único de este equipo (UUID v4 persistido).
+#[tauri::command]
+pub fn sync_get_device_id(data_dir: State<crate::DataDir>) -> Result<String, String> {
+    Ok(crate::sync::get_or_create_device_id(&data_dir.0))
+}
+
+/// Verifica que el backend configurado sea accesible (lee el estado remoto;
+/// si no existe aún, devuelve "vacío" pero éxito).
+#[tauri::command]
+pub async fn sync_test_backend(
+    state: State<'_, SyncManager>,
+    webdav_password: Option<String>,
+) -> Result<String, String> {
+    let config = state.load_config();
+    if matches!(config.backend, SyncBackendKind::None) {
+        return Err("No hay backend seleccionado".into());
+    }
+    let backend = state
+        .backend(&config, webdav_password.as_deref().unwrap_or(""))
+        .map_err(|e| e.to_string())?;
+    match backend.read().await.map_err(|e| e.to_string())? {
+        Some(_) => Ok("ok-existing".into()),
+        None => Ok("ok-empty".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn sync_oauth_begin(
+    state: State<'_, SyncManager>,
+    provider: String,
+) -> Result<OAuthStartResult, String> {
+    let provider = OAuthProvider::parse(&provider).map_err(|e| e.to_string())?;
+    state.oauth_begin(provider).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn sync_oauth_complete(
+    state: State<'_, SyncManager>,
+    flow_id: String,
+) -> Result<OAuthFinishResult, String> {
+    state
+        .oauth_complete(&flow_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn sync_oauth_status(state: State<SyncManager>, provider: String) -> Result<bool, String> {
+    let provider = OAuthProvider::parse(&provider).map_err(|e| e.to_string())?;
+    state.oauth_connected(provider).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn sync_oauth_disconnect(state: State<SyncManager>, provider: String) -> Result<(), String> {
+    let provider = OAuthProvider::parse(&provider).map_err(|e| e.to_string())?;
+    state.oauth_disconnect(provider).map_err(|e| e.to_string())
+}
+
+/// Ejecuta una sincronización: pull → merge → push, devolviendo el estado
+/// resultante para que el frontend lo aplique. El frontend pasa su `current`
+/// (lo que tiene en memoria) y recibe el merge final.
+#[tauri::command]
+pub async fn sync_run(
+    state: State<'_, SyncManager>,
+    current: SyncState,
+    passphrase: String,
+    webdav_password: Option<String>,
+) -> Result<SyncState, String> {
+    let config = state.load_config();
+    if !config.enabled || matches!(config.backend, SyncBackendKind::None) {
+        return Err("Sincronización no habilitada".into());
+    }
+    let backend = state
+        .backend(&config, webdav_password.as_deref().unwrap_or(""))
+        .map_err(|e| e.to_string())?;
+
+    // 1. Pull
+    let remote = match backend.read().await.map_err(|e| e.to_string())? {
+        Some(bytes) => unpack_state(&passphrase, &bytes).map_err(|e| e.to_string())?,
+        None => SyncState::default(),
+    };
+
+    // 2. Merge: empezamos con el estado del frontend y aplicamos remoto LWW
+    let mut merged = current;
+    merged.merge(remote);
+
+    // 3. Push
+    let bytes = pack_state(&passphrase, &merged).map_err(|e| e.to_string())?;
+    backend.write(&bytes).await.map_err(|e| e.to_string())?;
+
+    // 4. Cache local (snapshot del último merge)
+    state.save_local_state(&merged).map_err(|e| e.to_string())?;
+
+    Ok(merged)
+}
+
+/// Exporta el estado a un fichero cifrado (`.rustty-sync.bin`) con la
+/// passphrase indicada. No requiere backend ni configuración previa: sirve
+/// de backup portable, transferible por USB/email.
+#[tauri::command]
+pub fn sync_export_file(path: String, passphrase: String, state: SyncState) -> Result<(), String> {
+    let bytes = pack_state(&passphrase, &state).map_err(|e| e.to_string())?;
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())
+}
+
+/// Importa un fichero cifrado y devuelve el estado descifrado. El frontend
+/// luego decide si reemplaza, fusiona o solo previsualiza.
+#[tauri::command]
+pub fn sync_import_file(path: String, passphrase: String) -> Result<SyncState, String> {
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    unpack_state(&passphrase, &bytes).map_err(|e| e.to_string())
 }

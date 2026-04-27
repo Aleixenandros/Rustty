@@ -6,6 +6,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+import * as sync from "./sync.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -568,6 +569,7 @@ function applyPrefsToAllTerminals() {
 let prefsActiveTab = "terminal";
 
 function switchPrefsTab(tab) {
+  if (tab === "sync") tab = "data";
   prefsActiveTab = tab;
   cancelShortcutCapture();
   document.querySelectorAll(".prefs-nav-item").forEach((el) =>
@@ -639,7 +641,319 @@ function openSettingsModal() {
   // Atajos: (re)render con los valores actuales
   renderShortcutsList();
 
+  // Sincronización: cargar config + secretos
+  populateSyncTab();
+
   document.getElementById("modal-prefs-overlay").classList.remove("hidden");
+}
+
+// ─── Sincronización: pestaña en Preferencias ────────────────────
+
+let _syncDeviceIdCache = null;
+let _syncConfigCache = null;
+let _syncSidebarState = "idle";
+let _syncSidebarTextKey = "prefs_sync.status_idle";
+async function populateSyncTab() {
+  const config = await sync.getConfig().catch(() => ({
+    enabled: false, backend: "none",
+    local: { folder: "" },
+    webdav: { url: "", username: "" },
+    google_drive: { client_id: "", client_secret: "" },
+    one_drive: { client_id: "", tenant: "common" },
+    dropbox: { client_id: "" },
+    selective: { profiles: true, prefs: true, themes: true, shortcuts: true, snippets: true },
+    auto_interval_seconds: 0,
+  }));
+  _syncConfigCache = config;
+
+  document.getElementById("sync-enabled").checked = !!config.enabled;
+  document.getElementById("sync-backend").value = config.backend || "none";
+  document.getElementById("sync-local-folder").value = config.local?.folder || "";
+  document.getElementById("sync-webdav-url").value  = config.webdav?.url || "";
+  document.getElementById("sync-webdav-user").value = config.webdav?.username || "";
+  document.getElementById("sync-google-client-id").value = config.google_drive?.client_id || "";
+  document.getElementById("sync-google-client-secret").value = config.google_drive?.client_secret || "";
+  document.getElementById("sync-onedrive-client-id").value = config.one_drive?.client_id || "";
+  document.getElementById("sync-onedrive-tenant").value = config.one_drive?.tenant || "common";
+  document.getElementById("sync-dropbox-client-id").value = config.dropbox?.client_id || "";
+  document.getElementById("sync-sel-profiles").checked  = config.selective?.profiles ?? true;
+  document.getElementById("sync-sel-prefs").checked     = config.selective?.prefs ?? true;
+  document.getElementById("sync-sel-themes").checked    = config.selective?.themes ?? true;
+  document.getElementById("sync-sel-shortcuts").checked = config.selective?.shortcuts ?? true;
+
+  // Passphrase (no la mostramos en claro, solo placeholder distinto si ya existe)
+  const passEl = document.getElementById("sync-passphrase");
+  const stored = await sync.getStoredPassphrase().catch(() => null);
+  if (stored) {
+    passEl.value = "";
+    passEl.placeholder = "•••••••• (configurada)";
+  } else {
+    passEl.placeholder = "••••••••";
+  }
+  // WebDAV password: idem
+  const wpEl = document.getElementById("sync-webdav-pass");
+  const wpStored = await sync.getStoredWebDavPassword().catch(() => null);
+  wpEl.value = "";
+  wpEl.placeholder = wpStored ? "•••••••• (configurada)" : "••••••••";
+
+  // Mostrar/ocultar bloques según backend
+  syncUpdateBackendVisibility();
+  refreshSyncOAuthStatus();
+
+  // Device ID
+  if (!_syncDeviceIdCache) {
+    _syncDeviceIdCache = await sync.getDeviceId().catch(() => "—");
+  }
+  document.getElementById("sync-device-id").textContent = _syncDeviceIdCache;
+  document.getElementById("sync-last-time").textContent =
+    prefs._lastSyncAt ? new Date(prefs._lastSyncAt).toLocaleString() : "—";
+  updateSidebarSyncStatus();
+}
+
+function syncUpdateBackendVisibility() {
+  const v = document.getElementById("sync-backend").value;
+  document.querySelectorAll(".sync-local-only").forEach((el) =>
+    el.classList.toggle("hidden", v !== "local")
+  );
+  document.querySelectorAll(".sync-webdav-only").forEach((el) =>
+    el.classList.toggle("hidden", v !== "webdav")
+  );
+  document.querySelectorAll(".sync-google-drive-only").forEach((el) =>
+    el.classList.toggle("hidden", v !== "google_drive")
+  );
+  document.querySelectorAll(".sync-one-drive-only").forEach((el) =>
+    el.classList.toggle("hidden", v !== "one_drive")
+  );
+  document.querySelectorAll(".sync-dropbox-only").forEach((el) =>
+    el.classList.toggle("hidden", v !== "dropbox")
+  );
+  document.querySelectorAll(".sync-oauth-only").forEach((el) =>
+    el.classList.toggle("hidden", !currentOAuthProvider())
+  );
+  refreshSyncOAuthStatus();
+}
+
+function setSyncStatus(state, textKey) {
+  const dot = document.getElementById("sync-status-dot");
+  const txt = document.getElementById("sync-status-text");
+  _syncSidebarState = state;
+  _syncSidebarTextKey = textKey;
+  if (dot && txt) {
+    dot.classList.remove("idle", "busy", "success", "error");
+    dot.classList.add(state);
+    txt.textContent = t(textKey);
+  }
+  updateSidebarSyncStatus();
+}
+
+function syncBackendLabel(backend) {
+  const map = {
+    none: "prefs_sync.backend_none",
+    local: "prefs_sync.backend_local",
+    webdav: "prefs_sync.backend_webdav",
+    google_drive: "prefs_sync.backend_google_drive",
+    one_drive: "prefs_sync.backend_one_drive",
+    dropbox: "prefs_sync.backend_dropbox",
+  };
+  return t(map[backend] || map.none);
+}
+
+function updateSidebarSyncStatus() {
+  const dot = document.getElementById("sidebar-sync-dot");
+  const label = document.getElementById("sidebar-sync-label");
+  const meta = document.getElementById("sidebar-sync-meta");
+  if (!dot || !label || !meta) return;
+  const enabled = !!_syncConfigCache?.enabled && _syncConfigCache.backend !== "none";
+  const state = enabled ? _syncSidebarState : "idle";
+  dot.classList.remove("idle", "busy", "success", "error");
+  dot.classList.add(state);
+  label.textContent = enabled ? t(_syncSidebarTextKey) : t("prefs_sync.status_disabled");
+  const backend = syncBackendLabel(_syncConfigCache?.backend || "none");
+  const last = prefs._lastSyncAt ? new Date(prefs._lastSyncAt).toLocaleString() : "—";
+  meta.textContent = enabled ? `${backend} · ${last}` : backend;
+}
+
+function currentOAuthProvider() {
+  const el = document.getElementById("sync-backend");
+  const value = el?.value || _syncConfigCache?.backend;
+  return ["google_drive", "one_drive", "dropbox"].includes(value) ? value : null;
+}
+
+function setOAuthStatus(connected) {
+  const dot = document.getElementById("sync-oauth-dot");
+  const txt = document.getElementById("sync-oauth-text");
+  if (!dot || !txt) return;
+  dot.classList.remove("idle", "busy", "success", "error");
+  dot.classList.add(connected ? "success" : "idle");
+  txt.textContent = connected
+    ? t("prefs_sync.oauth_connected")
+    : t("prefs_sync.oauth_disconnected");
+}
+
+async function refreshSyncOAuthStatus() {
+  const provider = currentOAuthProvider();
+  if (!provider) return;
+  const connected = await sync.oauthStatus(provider).catch(() => false);
+  setOAuthStatus(connected);
+}
+
+async function persistSyncConfig() {
+  const config = {
+    enabled: document.getElementById("sync-enabled").checked,
+    backend: document.getElementById("sync-backend").value,
+    local:  { folder: document.getElementById("sync-local-folder").value.trim() },
+    webdav: {
+      url: document.getElementById("sync-webdav-url").value.trim(),
+      username: document.getElementById("sync-webdav-user").value.trim(),
+    },
+    google_drive: {
+      client_id: document.getElementById("sync-google-client-id").value.trim(),
+      client_secret: document.getElementById("sync-google-client-secret").value.trim(),
+    },
+    one_drive: {
+      client_id: document.getElementById("sync-onedrive-client-id").value.trim(),
+      tenant: document.getElementById("sync-onedrive-tenant").value.trim() || "common",
+    },
+    dropbox: {
+      client_id: document.getElementById("sync-dropbox-client-id").value.trim(),
+    },
+    selective: {
+      profiles:  document.getElementById("sync-sel-profiles").checked,
+      prefs:     document.getElementById("sync-sel-prefs").checked,
+      themes:    document.getElementById("sync-sel-themes").checked,
+      shortcuts: document.getElementById("sync-sel-shortcuts").checked,
+      snippets:  true,
+    },
+    auto_interval_seconds: 0,
+  };
+  await sync.saveConfig(config);
+  _syncConfigCache = config;
+  // Passphrase + WebDAV pwd al keyring si el usuario rellenó algo nuevo
+  const passVal = document.getElementById("sync-passphrase").value;
+  if (passVal) await sync.setStoredPassphrase(passVal);
+  const wpVal = document.getElementById("sync-webdav-pass").value;
+  if (wpVal) await sync.setStoredWebDavPassword(wpVal);
+  updateSidebarSyncStatus();
+  return config;
+}
+
+async function syncOAuthConnectNow() {
+  const provider = currentOAuthProvider();
+  if (!provider) return;
+  const dot = document.getElementById("sync-oauth-dot");
+  const txt = document.getElementById("sync-oauth-text");
+  dot?.classList.remove("idle", "success", "error");
+  dot?.classList.add("busy");
+  if (txt) txt.textContent = t("prefs_sync.oauth_waiting");
+  try {
+    await persistSyncConfig();
+    await sync.oauthConnect(provider);
+    setOAuthStatus(true);
+    toast(t("prefs_sync.oauth_connected"), "success");
+  } catch (err) {
+    dot?.classList.remove("busy");
+    dot?.classList.add("error");
+    if (txt) txt.textContent = t("prefs_sync.status_error");
+    if (String(err).includes("Client ID OAuth") || String(err).includes("Client ID de")) {
+      const advanced = document.querySelector(".sync-oauth-advanced");
+      if (advanced) advanced.open = true;
+      toast(t("prefs_sync.oauth_missing_app_credentials"), "warning", 8000);
+      return;
+    }
+    toast(`OAuth: ${err}`, "error", 8000);
+  }
+}
+
+async function syncOAuthDisconnectNow() {
+  const provider = currentOAuthProvider();
+  if (!provider) return;
+  await sync.oauthDisconnect(provider).catch((err) => toast(`OAuth: ${err}`, "error", 6000));
+  setOAuthStatus(false);
+}
+
+async function syncRunNow() {
+  setSyncStatus("busy", "prefs_sync.status_busy");
+  try {
+    await persistSyncConfig();
+    const summary = await sync.runSync({
+      profiles, prefs, deviceId: _syncDeviceIdCache,
+    });
+    // Recargar perfiles del backend (puede haber añadidos/borrados)
+    profiles = await invoke("get_profiles");
+    renderConnectionList();
+    // Reaplica tema y prefs si cambiaron
+    applyTheme(prefs.theme);
+    applyPrefsToAllTerminals();
+    prefs._lastSyncAt = new Date().toISOString();
+    savePrefs();
+    document.getElementById("sync-last-time").textContent =
+      new Date(prefs._lastSyncAt).toLocaleString();
+    setSyncStatus("success", "prefs_sync.status_success");
+    const total = summary.addedProfiles + summary.deletedProfiles
+      + summary.themesChanged + summary.shortcutsChanged
+      + (summary.prefsChanged ? 1 : 0);
+    toast(t("prefs_sync.done_sync").replace("{n}", total), "success");
+  } catch (err) {
+    setSyncStatus("error", "prefs_sync.status_error");
+    if (String(err).includes("no_passphrase")) {
+      toast(t("prefs_sync.no_passphrase"), "warning", 6000);
+    } else {
+      toast(`Sync: ${err}`, "error", 6000);
+    }
+  }
+}
+
+async function syncTestNow() {
+  setSyncStatus("busy", "prefs_sync.status_busy");
+  try {
+    await persistSyncConfig();
+    const result = await sync.testBackend();
+    setSyncStatus("success", "prefs_sync.status_success");
+    toast(`Backend OK (${result})`, "success");
+  } catch (err) {
+    setSyncStatus("error", "prefs_sync.status_error");
+    toast(`Backend: ${err}`, "error", 6000);
+  }
+}
+
+async function syncBrowseLocalFolder() {
+  const path = await openDialog({
+    title: "Carpeta local de sincronización",
+    directory: true,
+    multiple: false,
+  }).catch(() => null);
+  if (path) document.getElementById("sync-local-folder").value = path;
+}
+
+async function syncExportFile() {
+  try {
+    const path = await sync.exportToFile({
+      profiles, prefs, deviceId: _syncDeviceIdCache,
+    });
+    if (path) toast(t("prefs_sync.done_export").replace("{path}", path), "success");
+  } catch (err) {
+    toast(`Export: ${err}`, "error", 6000);
+  }
+}
+
+async function syncImportFile() {
+  try {
+    const summary = await sync.importFromFile({
+      profiles, prefs, deviceId: _syncDeviceIdCache,
+    });
+    if (!summary) return;
+    profiles = await invoke("get_profiles");
+    renderConnectionList();
+    applyTheme(prefs.theme);
+    applyPrefsToAllTerminals();
+    savePrefs();
+    const total = summary.addedProfiles + summary.deletedProfiles
+      + summary.themesChanged + summary.shortcutsChanged
+      + (summary.prefsChanged ? 1 : 0);
+    toast(t("prefs_sync.done_import").replace("{n}", total), "success");
+  } catch (err) {
+    toast(`Import: ${err}`, "error", 6000);
+  }
 }
 
 let _cachedSystemFonts = null;
@@ -745,6 +1059,12 @@ function savePrefsFromModal() {
   };
 
   savePrefs();
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  // Persistir también la configuración de la pestaña de Sincronización
+  // (config del backend + secretos al keyring) si existe el formulario.
+  if (document.getElementById("sync-enabled")) {
+    persistSyncConfig().catch((e) => console.error("[sync] saveConfig", e));
+  }
   if (prefs.lang !== getLanguage()) {
     setLanguage(prefs.lang);
     applyTranslations();
@@ -871,6 +1191,7 @@ async function init() {
 
   renderConnectionList();
   bindUIEvents();
+  populateSyncTab().catch((e) => console.error("[sync] populate", e));
   // Consultar estado KeePass al arranque (por si una sesión anterior dejó
   // la DB abierta — no ocurre en MVP, queda como no-op).
   refreshKeepassStatus();
@@ -1488,6 +1809,7 @@ async function saveAndClose(shouldConnect) {
     created_at: editingProfileId
       ? (profiles.find((p) => p.id === editingProfileId)?.created_at ?? new Date().toISOString())
       : new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   };
 
   try {
@@ -2392,6 +2714,8 @@ async function deleteProfile(profileId) {
   try {
     await invoke("delete_profile", { id: profileId });
     profiles = profiles.filter((p) => p.id !== profileId);
+    sync.recordTombstone(prefs, "profiles", profileId);
+    savePrefs();
     renderConnectionList();
     toast("Conexión eliminada", "success");
   } catch (err) {
@@ -2415,6 +2739,7 @@ async function duplicateProfile(profileId) {
     id: crypto.randomUUID(),
     name: `${original.name} (copia)`,
     created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   };
   try {
     await invoke("save_profile", { profile: copy });
@@ -3222,6 +3547,11 @@ function bindUIEvents() {
   // Botón de preferencias (⚙)
   document.getElementById("btn-settings")
     .addEventListener("click", openSettingsModal);
+  document.getElementById("sidebar-sync-status")
+    ?.addEventListener("click", () => {
+      prefsActiveTab = "data";
+      openSettingsModal();
+    });
 
   // Botón de shell local ($_ )
   document.getElementById("btn-local-shell")
@@ -3280,6 +3610,24 @@ function bindUIEvents() {
     ?.addEventListener("click", () => exportCurrentTheme());
   document.getElementById("btn-import-theme")
     ?.addEventListener("click", () => importTheme());
+
+  // Sincronización en la nube
+  document.getElementById("sync-backend")
+    ?.addEventListener("change", syncUpdateBackendVisibility);
+  document.getElementById("btn-sync-local-browse")
+    ?.addEventListener("click", () => syncBrowseLocalFolder());
+  document.getElementById("btn-sync-test")
+    ?.addEventListener("click", () => syncTestNow());
+  document.getElementById("btn-sync-now")
+    ?.addEventListener("click", () => syncRunNow());
+  document.getElementById("btn-sync-export")
+    ?.addEventListener("click", () => syncExportFile());
+  document.getElementById("btn-sync-import")
+    ?.addEventListener("click", () => syncImportFile());
+  document.getElementById("btn-sync-oauth-connect")
+    ?.addEventListener("click", () => syncOAuthConnectNow());
+  document.getElementById("btn-sync-oauth-disconnect")
+    ?.addEventListener("click", () => syncOAuthDisconnectNow());
 
   // KeePass
   document.getElementById("btn-keepass-browse")

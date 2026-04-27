@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::sync::Mutex;
 
-use keepass::db::{Group};
+use keepass::db::Group;
 use keepass::{Database, DatabaseKey};
 use serde::Serialize;
 
@@ -102,8 +102,7 @@ pub fn get_password(entry_uuid: &str) -> Result<Option<String>, AppError> {
         Ok(u) => u,
         Err(_) => return Ok(None),
     };
-    Ok(u
-        .db
+    Ok(u.db
         .root
         .entry_by_uuid(uuid)
         .map(|e| e.get_password().unwrap_or("").to_string()))

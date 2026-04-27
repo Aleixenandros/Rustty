@@ -43,3 +43,14 @@ thiserror = "2"
 keepass = "0.10"
 # Enumeración de fuentes del sistema para el selector de familia del terminal
 fontdb = "0.23"
+# Sincronización en la nube: crypto + HTTP + timestamps
+# `age` provee cifrado simétrico con passphrase (scrypt + ChaCha20-Poly1305)
+# en formato estándar. `chrono` para timestamps de los items con LWW.
+# `reqwest` con rustls (sin openssl) para WebDAV/APIs cloud. `urlencoding`
+# para escapar rutas/queries y `sha2`/`base64` para PKCE OAuth.
+age = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+urlencoding = "2"
+sha2 = "0.10"
+base64 = "0.22"

@@ -43,7 +43,12 @@ impl LocalShellManager {
         let pty_system = native_pty_system();
 
         let pair = pty_system
-            .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .map_err(|e| format!("Error al abrir PTY: {e}"))?;
 
         let shell = get_default_shell();
@@ -53,23 +58,29 @@ impl LocalShellManager {
             cmd.cwd(home);
         }
 
-        let mut child = pair.slave
+        let mut child = pair
+            .slave
             .spawn_command(cmd)
             .map_err(|e| format!("Error al iniciar {shell}: {e}"))?;
 
         // Cerrar el extremo slave en el proceso padre (necesario en Unix)
         drop(pair.slave);
 
-        let mut reader = pair.master
+        let mut reader = pair
+            .master
             .try_clone_reader()
             .map_err(|e| format!("Error al clonar lector PTY: {e}"))?;
-        let mut writer = pair.master
+        let mut writer = pair
+            .master
             .take_writer()
             .map_err(|e| format!("Error al tomar escritor PTY: {e}"))?;
         let master = pair.master;
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<ShellCommand>();
-        self.sessions.lock().unwrap().insert(session_id.clone(), ShellHandle { cmd_tx });
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(session_id.clone(), ShellHandle { cmd_tx });
 
         // ── Hilo de lectura: shell → frontend ────────────────────
         let sid_r = session_id.clone();
@@ -83,10 +94,7 @@ impl LocalShellManager {
                         break;
                     }
                     Ok(n) => {
-                        let _ = app_r.emit(
-                            &format!("shell-data-{sid_r}"),
-                            buf[..n].to_vec(),
-                        );
+                        let _ = app_r.emit(&format!("shell-data-{sid_r}"), buf[..n].to_vec());
                     }
                 }
             }
@@ -99,7 +107,12 @@ impl LocalShellManager {
                     let _ = writer.write_all(&data);
                 }
                 Ok(ShellCommand::Resize { cols, rows }) => {
-                    let _ = master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+                    let _ = master.resize(PtySize {
+                        rows,
+                        cols,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    });
                 }
                 Ok(ShellCommand::Close) | Err(_) => {
                     let _ = child.kill();
@@ -113,16 +126,24 @@ impl LocalShellManager {
 
     pub fn send_input(&self, session_id: &str, data: Vec<u8>) -> Result<(), String> {
         let map = self.sessions.lock().unwrap();
-        let handle = map.get(session_id)
+        let handle = map
+            .get(session_id)
             .ok_or_else(|| format!("Sesión de shell no encontrada: {session_id}"))?;
-        handle.cmd_tx.send(ShellCommand::Input(data)).map_err(|e| e.to_string())
+        handle
+            .cmd_tx
+            .send(ShellCommand::Input(data))
+            .map_err(|e| e.to_string())
     }
 
     pub fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
         let map = self.sessions.lock().unwrap();
-        let handle = map.get(session_id)
+        let handle = map
+            .get(session_id)
             .ok_or_else(|| format!("Sesión de shell no encontrada: {session_id}"))?;
-        handle.cmd_tx.send(ShellCommand::Resize { cols, rows }).map_err(|e| e.to_string())
+        handle
+            .cmd_tx
+            .send(ShellCommand::Resize { cols, rows })
+            .map_err(|e| e.to_string())
     }
 
     pub fn close(&self, session_id: &str) -> Result<(), String> {
