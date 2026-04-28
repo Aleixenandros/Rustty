@@ -53,6 +53,10 @@
           <button id="btn-toggle-sidebar" data-i18n-title="sidebar.toggle_title" title="Ocultar / mostrar la barra lateral" aria-label="Toggle sidebar">
             <span class="chevron" aria-hidden="true">‹</span>
           </button>
+          <button id="home-tab" class="tab tab-home active" type="button" title="Inicio">
+            <span class="tab-home-icon" aria-hidden="true">⌂</span>
+            <span class="tab-name">Inicio</span>
+          </button>
           <div id="tabs-container"></div>
           <div id="tab-bar-drag" data-tauri-drag-region></div>
           <div id="window-controls" aria-hidden="false">
@@ -77,13 +81,60 @@
             <button data-action="broadcast" data-i18n-title="view_layout.broadcast" title="Replicar entrada en todas las panes (Broadcast Input)">⇶</button>
           </div>
           <div id="welcome-screen">
-            <div class="welcome-content">
-              <div class="welcome-logo" aria-hidden="true">🦀</div>
-              <h1>Rustty</h1>
-              <p data-i18n="app.cliente_ssh">Cliente SSH multiplataforma escrito en Rust</p>
-              <div class="welcome-actions">
-                <button id="btn-welcome-new" class="btn-primary" data-i18n="welcome.new_conn">Nueva conexión</button>
-                <button id="btn-welcome-local" class="btn-secondary" data-i18n="welcome.local_shell">Consola local</button>
+            <div class="dashboard-shell">
+              <section class="dashboard-command">
+                <div class="dashboard-brand" aria-hidden="true">🦀</div>
+                <div class="dashboard-title">Rustty</div>
+                <div class="dashboard-search-wrap">
+                  <span class="dashboard-search-icon" aria-hidden="true">⌕</span>
+                  <input id="dashboard-search" type="search" autocomplete="off" spellcheck="false" placeholder="Buscar perfil, host o usuario…" />
+                  <span class="dashboard-search-kbd">Ctrl K</span>
+                </div>
+              </section>
+
+              <section id="dashboard-search-section" class="dashboard-section dashboard-search-section hidden">
+                <div class="dashboard-section-head">
+                  <div>
+                    <p class="dashboard-kicker">Buscar</p>
+                    <h1>Coincidencias</h1>
+                  </div>
+                </div>
+                <div id="dashboard-search-results" class="dashboard-results-list"></div>
+              </section>
+
+              <section class="dashboard-grid">
+                <div class="dashboard-card dashboard-quick">
+                  <div class="dashboard-card-head">
+                    <div>
+                      <p class="dashboard-kicker">Acceso rápido</p>
+                    </div>
+                  </div>
+                  <div class="dashboard-quick-grid">
+                    <button id="btn-welcome-new" class="dashboard-tool" data-dashboard-action="new-connection">
+                      <span class="dashboard-tool-icon new">＋</span>
+                      <span>
+                        <strong>Nueva conexión</strong>
+                        <small>SSH o RDP</small>
+                      </span>
+                    </button>
+                    <button id="btn-welcome-local" class="dashboard-tool" data-dashboard-action="local-shell">
+                      <span class="dashboard-tool-icon local">$_</span>
+                      <span>
+                        <strong>Local</strong>
+                        <small>Consola del sistema</small>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="dashboard-card dashboard-activity">
+                  <div class="dashboard-card-head">
+                    <div>
+                      <p class="dashboard-kicker">Historial</p>
+                    </div>
+                  </div>
+                  <div id="dashboard-activity-list" class="dashboard-activity-list"></div>
+                </div>
               </div>
             </div>
           </div>

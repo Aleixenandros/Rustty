@@ -16,7 +16,7 @@ use rdp_manager::RdpManager;
 use sftp_manager::SftpManager;
 use ssh_manager::SshManager;
 use sync::SyncManager;
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 
 /// Directorio de datos efectivo de la aplicación.
 ///
@@ -75,6 +75,14 @@ pub fn run() {
             app.manage(DataDir(data_dir));
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if matches!(event, WindowEvent::CloseRequested { .. }) {
+                window.state::<SshManager>().disconnect_all();
+                window.state::<SftpManager>().disconnect_all();
+                window.state::<LocalShellManager>().close_all();
+                window.state::<RdpManager>().disconnect_all();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             // ── Perfiles de conexión

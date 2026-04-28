@@ -152,6 +152,19 @@ impl LocalShellManager {
         }
         Ok(())
     }
+
+    pub fn close_all(&self) {
+        let handles: Vec<_> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .drain()
+            .map(|(_, h)| h)
+            .collect();
+        for handle in handles {
+            let _ = handle.cmd_tx.send(ShellCommand::Close);
+        }
+    }
 }
 
 fn get_default_shell() -> String {

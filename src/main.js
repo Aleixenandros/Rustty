@@ -68,7 +68,7 @@ let activeSessionId = null;
 let editingProfileId = null;
 
 const KEYRING_SERVICE = "rustty";
-const WINDOW_SIZE_STORAGE_KEY = "rustty-window-size";
+const RECENT_CONNECTIONS_STORAGE_KEY = "rustty-recent-connections";
 const RELEASES_API_URL = "https://api.github.com/repos/Aleixenandros/Rustty/releases/latest";
 const RELEASES_PAGE_URL = "https://github.com/Aleixenandros/Rustty/releases/latest";
 
@@ -824,6 +824,7 @@ function updateSidebarSyncStatus() {
     ? new Date(prefs._lastSyncAt).toLocaleString()
     : t("prefs_sync.last_never");
   meta.textContent = enabled ? `${backend} · ${last}` : backend;
+  renderDashboard();
 }
 
 function currentOAuthProvider() {
@@ -1440,12 +1441,189 @@ function renderConnectionList() {
       </div>`;
     container.querySelector("#btn-first-connection")
       ?.addEventListener("click", () => openNewConnectionModal());
+    renderDashboard();
     return;
   }
 
   const tree = buildFolderTree();
   container.innerHTML = renderTreeNode(tree, 0);
   bindTreeEvents(container);
+  renderDashboard();
+}
+
+function loadRecentConnections() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_CONNECTIONS_STORAGE_KEY) || "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((item) => typeof item === "string"
+        ? { id: item, lastConnectedAt: null }
+        : { id: item?.id, lastConnectedAt: item?.lastConnectedAt || null })
+      .filter((item) => item.id);
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentConnections(items) {
+  localStorage.setItem(RECENT_CONNECTIONS_STORAGE_KEY, JSON.stringify(items.slice(0, 12)));
+}
+
+function recordRecentConnection(profileId) {
+  const items = loadRecentConnections().filter((item) => item.id !== profileId);
+  items.unshift({ id: profileId, lastConnectedAt: new Date().toISOString() });
+  saveRecentConnections(items);
+  renderDashboard();
+}
+
+function getRecentProfiles() {
+  const byId = new Map(profiles.map((p) => [p.id, p]));
+  return loadRecentConnections()
+    .map((item) => ({ profile: byId.get(item.id), lastConnectedAt: item.lastConnectedAt }))
+    .filter((item) => item.profile);
+}
+
+function profileMatchesDashboardQuery(profile, query) {
+  if (!query) return true;
+  const haystack = [
+    profile.name,
+    profile.host,
+    profile.username,
+    profile.group,
+    profile.connection_type || "ssh",
+  ].filter(Boolean).join(" ").toLowerCase();
+  return haystack.includes(query.toLowerCase());
+}
+
+function dashboardProfileHost(profile) {
+  const user = profile.username ? `${profile.username}@` : "";
+  const port = profile.port ? `:${profile.port}` : "";
+  return `${user}${profile.host}${port}`;
+}
+
+function formatDashboardTime(value) {
+  if (!value) return "Sin actividad";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Sin actividad";
+  const diff = Date.now() - date.getTime();
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diff < minute) return "Ahora";
+  if (diff < hour) return `Hace ${Math.max(1, Math.floor(diff / minute))} min`;
+  if (diff < day) return `Hace ${Math.floor(diff / hour)} h`;
+  if (diff < 7 * day) return `Hace ${Math.floor(diff / day)} d`;
+  return date.toLocaleDateString();
+}
+
+function dashboardProtocol(profile) {
+  return (profile.connection_type || "ssh").toUpperCase();
+}
+
+function getDashboardCandidates(query = "") {
+  const recent = getRecentProfiles();
+  const recentIds = new Set(recent.map((item) => item.profile.id));
+  if (query) {
+    return profiles
+      .filter((profile) => profileMatchesDashboardQuery(profile, query))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((profile) => ({
+        profile,
+        lastConnectedAt: recent.find((item) => item.profile.id === profile.id)?.lastConnectedAt || null,
+      }));
+  }
+  const rest = profiles
+    .filter((profile) => !recentIds.has(profile.id))
+    .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "") || a.name.localeCompare(b.name))
+    .map((profile) => ({ profile, lastConnectedAt: null }));
+  return [...recent, ...rest];
+}
+
+function renderDashboard() {
+  const root = document.getElementById("welcome-screen");
+  if (!root) return;
+
+  const search = document.getElementById("dashboard-search");
+  const query = search?.value?.trim() || "";
+  const candidates = getDashboardCandidates(query);
+  const searchSection = document.getElementById("dashboard-search-section");
+  const searchResults = document.getElementById("dashboard-search-results");
+  if (searchSection && searchResults) {
+    searchSection.classList.toggle("hidden", !query);
+    if (query) {
+      const visible = candidates.slice(0, 8);
+      searchResults.innerHTML = visible.length
+        ? visible.map(({ profile, lastConnectedAt }) => renderDashboardResultRow(profile, lastConnectedAt)).join("")
+        : `<div class="dashboard-empty-line">No hay coincidencias</div>`;
+      bindDashboardCards(searchResults);
+    } else {
+      searchResults.innerHTML = "";
+    }
+  }
+
+  const activity = document.getElementById("dashboard-activity-list");
+  if (activity) {
+    const rows = getRecentProfiles().slice(0, 5);
+    activity.innerHTML = rows.length
+      ? rows.map(({ profile, lastConnectedAt }) => renderDashboardActivityRow(profile, lastConnectedAt)).join("")
+      : `<div class="dashboard-empty-line">La actividad aparecerá aquí al conectar perfiles</div>`;
+    bindDashboardCards(activity);
+  }
+
+}
+
+function renderDashboardResultRow(profile, lastConnectedAt) {
+  const proto = dashboardProtocol(profile);
+  const protoClass = proto.toLowerCase();
+  return `
+    <div class="dashboard-result-row" role="button" tabindex="0" data-profile-id="${escHtml(profile.id)}">
+      <span class="dashboard-proto ${escHtml(protoClass)}">${escHtml(proto)}</span>
+      <div>
+        <div class="dashboard-result-name">${escHtml(profile.name)}</div>
+        <div class="dashboard-result-meta">${escHtml(dashboardProfileHost(profile))} · ${escHtml(profile.group || "Sin carpeta")}</div>
+      </div>
+      <span class="dashboard-result-time">${escHtml(formatDashboardTime(lastConnectedAt))}</span>
+      <button class="dashboard-connect" data-dashboard-connect="${escHtml(profile.id)}">Conectar</button>
+    </div>`;
+}
+
+function renderDashboardActivityRow(profile, lastConnectedAt) {
+  const proto = dashboardProtocol(profile);
+  return `
+    <div class="dashboard-activity-row" role="button" tabindex="0" data-profile-id="${escHtml(profile.id)}">
+      <span class="dashboard-activity-name">${escHtml(profile.name)}</span>
+      <span class="dashboard-activity-meta">${escHtml(proto)} · ${escHtml(formatDashboardTime(lastConnectedAt))}</span>
+    </div>`;
+}
+
+function bindDashboardCards(root) {
+  root.querySelectorAll("[data-profile-id]").forEach((el) => {
+    const open = () => connectProfile(el.dataset.profileId);
+    el.addEventListener("click", (event) => {
+      if (event.target.closest("[data-dashboard-connect]")) return;
+      open();
+    });
+    el.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      open();
+    });
+  });
+  root.querySelectorAll("[data-dashboard-connect]").forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      connectProfile(btn.dataset.dashboardConnect);
+    });
+  });
+}
+
+function focusDashboardSearch() {
+  const welcome = document.getElementById("welcome-screen");
+  const search = document.getElementById("dashboard-search");
+  if (!welcome || welcome.classList.contains("hidden") || !search) return false;
+  search.focus();
+  search.select();
+  return true;
 }
 
 function renderTreeNode(node, depth) {
@@ -1481,19 +1659,20 @@ function renderConnectionItem(p, depth) {
   const isConnected = [...sessions.values()].some(
     (s) => s.profileId === p.id && s.status === "connected"
   );
-  const isRdp = p.connection_type === "rdp";
+  const connType = p.connection_type || "ssh";
+  const proto = connectionProtocolMeta(connType);
   const indent = 14 + depth * 12;
   return `
     <div class="conn-item${isConnected ? " active" : ""}"
          data-id="${p.id}"
          style="padding-left:${indent}px">
-      <div class="conn-item-icon${isConnected ? " connected" : ""}${isRdp ? " rdp" : ""}">
-        ${isRdp ? (isConnected ? "▣" : "□") : (isConnected ? "●" : "○")}
+      <div class="conn-item-icon ${escHtml(proto.className)}${isConnected ? " connected" : ""}" title="${escHtml(proto.label)}">
+        ${escHtml(proto.icon)}
       </div>
       <div class="conn-item-info">
         <div class="conn-item-name">
           ${escHtml(p.name)}
-          ${isRdp ? '<span class="conn-badge-rdp">RDP</span>' : ""}
+          <span class="conn-badge conn-badge-${escHtml(proto.className)}">${escHtml(proto.label)}</span>
         </div>
         <div class="conn-item-host">${escHtml(p.username)}@${escHtml(p.host)}:${p.port}</div>
       </div>
@@ -1502,6 +1681,16 @@ function renderConnectionItem(p, depth) {
         <button class="btn-icon-sm danger" data-action="delete" data-id="${p.id}" title="Eliminar">✕</button>
       </div>
     </div>`;
+}
+
+function connectionProtocolMeta(type) {
+  switch (type) {
+    case "rdp":
+      return { className: "rdp", label: "RDP", icon: "▣" };
+    case "ssh":
+    default:
+      return { className: "ssh", label: "SSH", icon: ">_" };
+  }
 }
 
 function bindTreeEvents(container) {
@@ -2229,6 +2418,7 @@ async function connectRdp(profileId) {
 
     sessionObj.status = "connected";
     updateTabStatus(sessionId, "connected");
+    recordRecentConnection(profileId);
 
     // Escuchar el cierre del proceso externo
     const unlisten = await listen(`rdp-closed-${sessionId}`, () => {
@@ -2505,6 +2695,7 @@ async function reconnectLocalInPlace(s) {
     });
     s.status = "connected";
     updateTabStatus(sessionId, "connected");
+    renderDashboard();
 
     const decoder = new TextDecoder();
     const ul = await listen(`shell-data-${sessionId}`, (e) => {
@@ -2513,6 +2704,7 @@ async function reconnectLocalInPlace(s) {
     const ulClose = await listen(`shell-closed-${sessionId}`, () => {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
+      renderDashboard();
       s.terminal.writeln(`\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
     });
     s.unlisteners.push(ul, ulClose);
@@ -2599,6 +2791,12 @@ function selectSession(sid, additive = false) {
   renderView();
 }
 
+function selectHomeTab() {
+  viewSelection = [];
+  activeSessionId = null;
+  renderView();
+}
+
 function renderView() {
   const container = document.getElementById("terminals-container");
   const welcome   = document.getElementById("welcome-screen");
@@ -2614,6 +2812,7 @@ function renderView() {
   if (viewSelection.length === 0) {
     welcome.classList.remove("hidden");
     layoutBar?.classList.add("hidden");
+    renderDashboard();
     updateTabSelectionClasses();
     return;
   }
@@ -2687,11 +2886,15 @@ function updateLayoutBarActive() {
 }
 
 function updateTabSelectionClasses() {
+  const hasSessionTabs = document.querySelector("#tabs-container .tab") !== null;
+  document.body.classList.toggle("has-session-tabs", hasSessionTabs);
   document.querySelectorAll(".tab").forEach((t) => {
     const sid = t.dataset.session;
     t.classList.toggle("in-view",  viewSelection.includes(sid));
     t.classList.toggle("active",   sid === activeSessionId);
   });
+  document.getElementById("home-tab")
+    ?.classList.toggle("active", viewSelection.length === 0);
   document.querySelectorAll(".terminal-pane").forEach((p) => {
     p.classList.toggle("pane-focused",
       viewSelection.length > 1 && p.dataset.session === activeSessionId);
@@ -2876,6 +3079,7 @@ async function registerSshListeners(sessionId, terminal) {
     const s = sessions.get(sessionId);
     if (s) s.status = "connected";
     updateTabStatus(sessionId, "connected");
+    if (s?.profileId) recordRecentConnection(s.profileId);
     renderConnectionList();
     s?.fitAddon.fit();
     notifyResize(sessionId, terminal);
@@ -3812,10 +4016,28 @@ function bindUIEvents() {
   // Botones de nueva conexión
   document.getElementById("btn-new-connection")
     .addEventListener("click", () => openNewConnectionModal());
-  document.getElementById("btn-welcome-new")
-    ?.addEventListener("click", () => openNewConnectionModal());
-  document.getElementById("btn-welcome-local")
-    ?.addEventListener("click", () => openLocalShell());
+  document.getElementById("home-tab")
+    ?.addEventListener("click", () => selectHomeTab());
+  document.getElementById("dashboard-search")
+    ?.addEventListener("input", () => renderDashboard());
+  document.getElementById("dashboard-search")
+    ?.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      const first = getDashboardCandidates(e.currentTarget.value.trim())[0]?.profile;
+      if (first) connectProfile(first.id);
+    });
+  document.querySelectorAll("[data-dashboard-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const action = btn.dataset.dashboardAction;
+      if (action === "new-connection") openNewConnectionModal();
+      else if (action === "local-shell") openLocalShell();
+    });
+  });
+  window.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === "KeyK") {
+      if (focusDashboardSearch()) e.preventDefault();
+    }
+  });
 
   // Barra de layouts para la vista múltiple
   document.querySelectorAll("#view-layout-bar button").forEach((btn) => {
@@ -3849,10 +4071,6 @@ function bindUIEvents() {
     .addEventListener("click", closeSettingsModal);
   document.getElementById("btn-prefs-cancel")
     .addEventListener("click", closeSettingsModal);
-  document.getElementById("modal-prefs-overlay")
-    .addEventListener("click", (e) => {
-      if (e.target === e.currentTarget) closeSettingsModal();
-    });
   document.getElementById("btn-prefs-save")
     .addEventListener("click", savePrefsFromModal);
 
@@ -3999,9 +4217,6 @@ function bindUIEvents() {
   // Cerrar modal de conexión
   document.getElementById("btn-modal-close").addEventListener("click", closeModal);
   document.getElementById("btn-modal-cancel").addEventListener("click", closeModal);
-  document.getElementById("modal-overlay").addEventListener("click", (e) => {
-    if (e.target === e.currentTarget) closeModal();
-  });
 
   // Tipo de conexión → ajustar campos y puerto
   document.getElementById("f-conn-type").addEventListener("change", (e) =>
@@ -4119,10 +4334,10 @@ function bindUIEvents() {
 const SHORTCUT_ACTIONS = {
   paste_terminal:    { default: "Ctrl+Alt+V",     run: () => pasteIntoActiveTerminal() },
   copy_terminal:     { default: "Ctrl+Alt+C",     run: () => copyActiveSelection() },
-  paste_password:    { default: "Ctrl+Alt+P",     run: () => pasteSessionPasswordIntoActiveTerminal() },
+  paste_password:    { default: "Ctrl+P",         run: () => pasteSessionPasswordIntoActiveTerminal() },
   new_local_shell:   { default: "Ctrl+Shift+T",   run: () => openLocalShell() },
   new_connection:    { default: "Ctrl+Shift+N",   run: () => openNewConnectionModal() },
-  close_tab:         { default: "Ctrl+Shift+W",   run: () => { if (activeSessionId) closeSession(activeSessionId); } },
+  close_tab:         { default: "Ctrl+W",         run: () => { if (activeSessionId) closeSession(activeSessionId); } },
   next_tab:          { default: "Ctrl+Tab",       run: () => switchTab(1) },
   prev_tab:          { default: "Ctrl+Shift+Tab", run: () => switchTab(-1) },
   open_preferences:  { default: "Ctrl+,",         run: () => openSettingsModal() },
@@ -4312,7 +4527,7 @@ async function pasteSessionPasswordIntoActiveTerminal() {
   const s = sessions.get(activeSessionId);
   if (!s || s.status === "closed") return;
   if (s._closeOverride || s.type === "rdp" || !s.profileId) {
-    toast("Ctrl+Alt+P solo funciona en sesiones SSH con perfil", "warning");
+    toast("Ctrl+P solo funciona en sesiones SSH con perfil", "warning");
     return;
   }
   let password;
@@ -4381,7 +4596,6 @@ async function initWindowControls() {
   try {
     const mod = await import("@tauri-apps/api/window");
     win = mod.getCurrentWindow();
-    await restoreSavedWindowSize(win, mod);
     initWindowResizeHandles(win);
   } catch {
     return; // fuera de Tauri (p. ej. vite dev puro): no hay ventana
@@ -4393,10 +4607,7 @@ async function initWindowControls() {
 
   btnMin  ?.addEventListener("click", () => win.minimize());
   btnMax  ?.addEventListener("click", () => win.toggleMaximize());
-  btnClose?.addEventListener("click", async () => {
-    await persistWindowSize(win);
-    win.close();
-  });
+  btnClose?.addEventListener("click", () => win.close().catch(() => win.destroy()));
 
   // Doble clic en la zona arrastrable maximiza/restaura.
   document.getElementById("tab-bar-drag")
@@ -4411,14 +4622,10 @@ async function initWindowControls() {
   };
   syncMaximized();
   try {
-    let saveTimer = null;
     win.onResized(() => {
       syncMaximized();
-      clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => persistWindowSize(win), 250);
     });
   } catch {}
-  try { win.onCloseRequested(() => { persistWindowSize(win); }); } catch {}
 }
 
 function initWindowResizeHandles(win) {
@@ -4435,55 +4642,15 @@ function initWindowResizeHandles(win) {
   });
 }
 
-async function restoreSavedWindowSize(win, windowApi) {
-  const raw = localStorage.getItem(WINDOW_SIZE_STORAGE_KEY);
-  if (!raw) return;
-
-  let saved;
-  try {
-    saved = JSON.parse(raw);
-  } catch {
-    localStorage.removeItem(WINDOW_SIZE_STORAGE_KEY);
-    return;
-  }
-
-  const width = Number(saved?.width);
-  const height = Number(saved?.height);
-  if (!Number.isFinite(width) || !Number.isFinite(height)) return;
-
-  const scaleFactor = await win.scaleFactor().catch(() => 1);
-  const minWidth = Math.round(800 * scaleFactor);
-  const minHeight = Math.round(500 * scaleFactor);
-  const monitor = await windowApi.currentMonitor().catch(() => null);
-  const workArea = monitor?.workArea?.size || monitor?.size || null;
-  const maxWidth = workArea?.width ? Math.max(minWidth, workArea.width - 24) : Math.max(width, minWidth);
-  const maxHeight = workArea?.height ? Math.max(minHeight, workArea.height - 24) : Math.max(height, minHeight);
-
-  const nextWidth = Math.round(Math.min(Math.max(width, minWidth), maxWidth));
-  const nextHeight = Math.round(Math.min(Math.max(height, minHeight), maxHeight));
-  await win.setSize(new windowApi.PhysicalSize(nextWidth, nextHeight)).catch(() => {});
-}
-
-async function persistWindowSize(win) {
-  try {
-    if (await win.isMaximized()) return;
-    if (await win.isMinimized()) return;
-    const size = await win.innerSize();
-    if (!size?.width || !size?.height) return;
-    localStorage.setItem(WINDOW_SIZE_STORAGE_KEY, JSON.stringify({
-      width: size.width,
-      height: size.height,
-    }));
-  } catch {}
-}
-
 function switchTab(delta) {
-  const order = [...document.querySelectorAll("#tabs-container .tab")]
-    .map((el) => el.dataset.session);
+  const order = [null, ...document.querySelectorAll("#tabs-container .tab")]
+    .map((el) => el?.dataset?.session ?? null);
   if (!order.length) return;
-  const idx = order.indexOf(activeSessionId);
+  const current = viewSelection.length === 0 ? null : activeSessionId;
+  const idx = order.indexOf(current);
   const next = ((idx < 0 ? 0 : idx) + delta + order.length) % order.length;
-  setActiveTab(order[next]);
+  if (order[next] === null) selectHomeTab();
+  else setActiveTab(order[next]);
 }
 
 // ═══════════════════════════════════════════════════════════════

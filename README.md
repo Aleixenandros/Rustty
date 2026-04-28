@@ -16,7 +16,7 @@
 - **Seguridad**:
   - Integración nativa con el keyring del sistema (KWallet, GNOME Keyring, macOS Keychain, Windows Credential Store).
   - Soporte para bases de datos **KeePass** (`.kdbx`) como fuente de contraseñas.
-  - Atajo `Ctrl+Alt+P` para pegar la contraseña del perfil activo sin exponerla en pantalla.
+  - Atajo `Ctrl+P` para pegar la contraseña del perfil activo sin exponerla en pantalla.
 - **Copias de seguridad y sincronización E2E**: perfiles, preferencias, temas y atajos pueden sincronizarse con Google Drive, iCloud Drive, carpeta local / NAS o WebDAV. El blob remoto se cifra localmente con `age` y una passphrase maestra.
 - **Organización**: agrupa perfiles en carpetas y gestiona conexiones desde la barra lateral colapsable.
 - **Personalización**: 11 temas base integrados (Catppuccin Mocha / Latte, Dracula, Nord, xterm, VS Code Dark+, Tango, Solarized Dark / Light, Gruvbox Dark, Tokyo Night, Monokai) y ajustes de cursor, scrollback y *bell*. Posibilidad de importar temas personalizados.
@@ -52,13 +52,13 @@ Rustty incluye un **editor de atajos** en Preferencias → *Atajos* que permite 
 |--------------------------------|--------------------------------------------------------|
 | `Ctrl+Shift+N`                 | Nueva conexión                                         |
 | `Ctrl+Shift+T`                 | Nueva consola local                                    |
-| `Ctrl+Shift+W`                 | Cerrar pestaña activa                                  |
+| `Ctrl+W`                       | Cerrar pestaña activa                                  |
 | `Ctrl+Tab`                     | Pestaña siguiente                                      |
 | `Ctrl+Shift+Tab`               | Pestaña anterior                                       |
 | `Ctrl+,`                       | Abrir preferencias                                     |
 | `Ctrl+Alt+C`                   | Copiar selección del terminal                          |
 | `Ctrl+Alt+V`                   | Pegar en el terminal                                   |
-| `Ctrl+Alt+P`                   | Pegar la contraseña del perfil activo en el shell      |
+| `Ctrl+P`                       | Pegar la contraseña del perfil activo en el shell      |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Aumentar / disminuir / restablecer el tamaño de fuente |
 
 ## Instalación

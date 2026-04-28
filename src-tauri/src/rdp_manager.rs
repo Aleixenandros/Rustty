@@ -79,6 +79,19 @@ impl RdpManager {
         }
         Ok(())
     }
+
+    pub fn disconnect_all(&self) {
+        let handles: Vec<_> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .drain()
+            .map(|(_, h)| h)
+            .collect();
+        for mut handle in handles {
+            let _ = handle.child.kill();
+        }
+    }
 }
 
 // ─── Lanzadores por plataforma ────────────────────────────────────────────────

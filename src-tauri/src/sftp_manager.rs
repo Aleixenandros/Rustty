@@ -233,6 +233,19 @@ impl SftpManager {
         }
         Ok(())
     }
+
+    pub fn disconnect_all(&self) {
+        let handles: Vec<_> = self
+            .sessions
+            .lock()
+            .unwrap()
+            .drain()
+            .map(|(_, h)| h)
+            .collect();
+        for handle in handles {
+            let _ = handle.tx.send(SftpCommand::Close);
+        }
+    }
 }
 
 // ─── Handler russh ───────────────────────────────────────────────────────────

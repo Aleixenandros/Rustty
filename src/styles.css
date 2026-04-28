@@ -328,21 +328,31 @@ body.window-maximized .window-resize-handle {
 }
 
 .conn-item-icon {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
   background: var(--surface0);
   color: var(--blue);
   flex-shrink: 0;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
 }
 
-.conn-item-icon.connected {
+.conn-item-icon.ssh {
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+  color: var(--blue);
+}
+
+.conn-item-icon.ssh.connected {
   background: color-mix(in srgb, var(--green) 15%, transparent);
   color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
 }
 
 .conn-item-info {
@@ -552,6 +562,32 @@ body.window-maximized .win-ctrl .ico-restore { display: block; }
   right: 0;
   height: 2px;
   background: var(--blue);
+}
+
+.tab-home {
+  min-width: 94px;
+  max-width: 110px;
+  flex: 0 0 auto;
+  border-left: 0;
+}
+
+body.has-session-tabs .tab-home {
+  min-width: 40px;
+  width: 40px;
+  max-width: 40px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+}
+
+body.has-session-tabs .tab-home .tab-name {
+  display: none;
+}
+
+.tab-home-icon {
+  color: var(--blue);
+  font-size: 14px;
+  line-height: 1;
 }
 
 .tab-dot {
@@ -785,50 +821,396 @@ body.terminal-bell-visual::after {
   border-radius: 4px;
 }
 
-/* ─── Pantalla de bienvenida ─────────────────────────────────── */
+/* ─── Dashboard inicial ──────────────────────────────────────── */
 #welcome-screen {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--base);
+  overflow: auto;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--crust) 45%, transparent), transparent 34%),
+    var(--base);
 }
 
-.welcome-content {
-  text-align: center;
-  max-width: 360px;
+.dashboard-shell {
+  width: min(1120px, calc(100% - 42px));
+  margin: 0 auto;
+  padding: 38px 0 32px;
 }
 
-.welcome-logo {
+.dashboard-command {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.dashboard-brand {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 10px;
-  font-size: 52px;
+  width: 68px;
+  height: 52px;
+  font-size: 48px;
   line-height: 1;
 }
 
-.welcome-content h1 {
-  font-family: var(--font-mono);
-  font-size: 42px;
-  font-weight: 800;
-  color: var(--blue);
+.dashboard-title {
   margin-bottom: 8px;
+  color: var(--blue);
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1;
   letter-spacing: 0;
 }
 
-.welcome-content p {
-  color: var(--subtext0);
-  margin-bottom: 28px;
-  font-size: 14px;
+.dashboard-search-wrap {
+  width: min(560px, 100%);
+  height: 42px;
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 13px;
+  border: 1px solid var(--surface1);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--mantle) 78%, transparent);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
 }
 
-.welcome-actions {
+.dashboard-search-wrap:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 18%, transparent);
+}
+
+.dashboard-search-icon {
+  color: var(--blue);
+  font-size: 22px;
+  line-height: 1;
+}
+
+#dashboard-search {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+#dashboard-search::placeholder {
+  color: var(--overlay1);
+}
+
+.dashboard-search-kbd {
+  min-width: 48px;
+  padding: 3px 6px;
+  border: 1px solid var(--surface1);
+  border-radius: 5px;
+  color: var(--overlay1);
+  background: var(--crust);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-align: center;
+}
+
+.dashboard-section {
+  margin-bottom: 20px;
+}
+
+.dashboard-section-head,
+.dashboard-card-head {
   display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.dashboard-kicker {
+  margin-bottom: 2px;
+  color: var(--blue);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.dashboard-section-head h1,
+.dashboard-card h2 {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.dashboard-head-action {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--blue);
+  border-radius: 6px;
+  background: var(--blue);
+  color: var(--crust);
+  font-weight: 700;
+}
+
+.dashboard-head-action:hover {
+  filter: brightness(1.08);
+}
+
+.dashboard-card {
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mantle) 78%, var(--base));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+}
+
+.dashboard-results-list {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  background: var(--surface0);
+}
+
+.dashboard-result-row {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
   gap: 10px;
-  justify-content: center;
-  flex-wrap: wrap;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--mantle) 78%, var(--base));
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.dashboard-result-row:hover {
+  background: var(--surface0);
+}
+
+.dashboard-result-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-result-meta,
+.dashboard-result-time {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--subtext0);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-activity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dashboard-proto {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border: 1px solid var(--surface1);
+  border-radius: 4px;
+  color: var(--subtext1);
+  background: var(--crust);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.dashboard-proto.ssh { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 55%, var(--surface1)); }
+.dashboard-proto.rdp { color: var(--peach); border-color: color-mix(in srgb, var(--peach) 55%, var(--surface1)); }
+
+.dashboard-activity-meta {
+  color: var(--subtext0);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-connect {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 5px;
+  background: var(--blue);
+  color: var(--crust);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: 14px;
+}
+
+.dashboard-card {
+  padding: 14px;
+}
+
+.dashboard-activity {
+  min-width: 0;
+}
+
+.dashboard-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-tool {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--surface0);
+  border-radius: 7px;
+  background: var(--base);
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.dashboard-tool:hover {
+  border-color: var(--blue);
+  background: var(--surface0);
+}
+
+.dashboard-tool-icon {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--surface1);
+  border-radius: 6px;
+  background: var(--mantle);
+  color: var(--blue);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.dashboard-tool-icon.new { color: var(--blue); }
+.dashboard-tool-icon.rdp { color: var(--peach); }
+.dashboard-tool-icon.local { color: var(--green); font-size: 10px; }
+
+.dashboard-tool strong,
+.dashboard-tool small {
+  display: block;
+  min-width: 0;
+}
+
+.dashboard-tool strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.dashboard-tool small {
+  margin-top: 2px;
+  color: var(--subtext0);
+  font-size: 11px;
+}
+
+.dashboard-activity-list {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--surface0);
+  border-radius: 7px;
+}
+
+.dashboard-activity-row {
+  min-height: 38px;
+  padding: 8px 10px;
+  background: var(--base);
+}
+
+.dashboard-activity-row:hover {
+  background: var(--surface0);
+}
+
+.dashboard-activity-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-empty-line {
+  min-height: 72px;
+  display: grid;
+  place-items: center;
+  color: var(--subtext0);
+  background: var(--base);
+}
+
+@media (max-width: 980px) {
+  .dashboard-shell {
+    width: min(720px, calc(100% - 28px));
+    padding-top: 24px;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .dashboard-shell {
+    width: calc(100% - 20px);
+    padding-top: 18px;
+  }
+
+  .dashboard-brand {
+    width: 52px;
+    height: 42px;
+    font-size: 38px;
+  }
+
+  .dashboard-search-wrap {
+    grid-template-columns: 26px 1fr;
+    height: 40px;
+  }
+
+  .dashboard-search-kbd {
+    display: none;
+  }
+
+  .dashboard-section-head {
+    align-items: flex-start;
+  }
+
+  .dashboard-quick-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-result-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .dashboard-result-time {
+    display: none;
+  }
 }
 
 /* ─── Botones globales ───────────────────────────────────────── */
@@ -1872,25 +2254,35 @@ input[type="checkbox"] {
    CONEXIONES RDP
 ════════════════════════════════════════════════════════════════ */
 
-/* Badge "RDP" junto al nombre en el sidebar */
-.conn-badge-rdp {
+/* Badge de protocolo junto al nombre en el sidebar */
+.conn-badge {
   display: inline-block;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.4px;
-  background: color-mix(in srgb, var(--peach) 15%, transparent);
-  color: var(--peach);
   padding: 1px 5px;
   border-radius: 3px;
   margin-left: 5px;
   vertical-align: middle;
   text-transform: uppercase;
+  font-family: var(--font-mono);
+}
+
+.conn-badge-ssh {
+  background: color-mix(in srgb, var(--blue) 13%, transparent);
+  color: var(--blue);
+}
+
+.conn-badge-rdp {
+  background: color-mix(in srgb, var(--peach) 15%, transparent);
+  color: var(--peach);
 }
 
 /* Icono RDP en sidebar */
 .conn-item-icon.rdp {
   background: color-mix(in srgb, var(--peach) 12%, transparent);
   color: var(--peach);
+  border-color: color-mix(in srgb, var(--peach) 42%, transparent);
 }
 
 .conn-item-icon.rdp.connected {
