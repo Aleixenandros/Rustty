@@ -910,10 +910,21 @@
               </div>
 
               <div class="settings-row settings-row-inline">
-                <label for="sync-auto-interval" data-i18n="prefs_sync.auto_interval">Auto-sync</label>
+                <label for="sync-auto-enabled" data-i18n="prefs_sync.auto_sync">Auto-sync</label>
                 <div class="settings-control">
-                  <input type="number" id="sync-auto-interval" min="0" step="60" placeholder="0" />
-                  <p class="form-hint" data-i18n="prefs_sync.auto_interval_hint">0 desactiva el temporizador. Usa segundos.</p>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="sync-auto-enabled" />
+                    <span data-i18n="prefs_sync.auto_sync_enabled">Sí</span>
+                  </label>
+                  <p class="form-hint" data-i18n="prefs_sync.auto_sync_hint">Sincroniza al detectar cambios y cada 5 minutos.</p>
+                </div>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="sync-history-keep" data-i18n="prefs_sync.history_keep">Copias históricas</label>
+                <div class="settings-control">
+                  <input type="number" id="sync-history-keep" min="1" max="500" step="1" placeholder="30" />
+                  <p class="form-hint" data-i18n="prefs_sync.history_keep_hint">Número de snapshots cifrados a conservar antes de podar.</p>
                 </div>
               </div>
 
@@ -979,6 +990,10 @@
                 </div>
 
                 <div class="about-update">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="pref-check-updates-startup" />
+                    <span data-i18n="prefs_about.check_updates_startup">Comprobar al iniciar</span>
+                  </label>
                   <button type="button" class="btn-secondary" id="btn-about-check-updates" data-i18n="prefs_about.check_updates">
                     Comprobar actualizaciones
                   </button>

@@ -668,8 +668,9 @@ pub async fn sync_run(
     merged.merge(remote);
 
     // 3. Push
+    let history_keep = config.history_keep.max(1);
     backend
-        .archive_existing()
+        .archive_existing(history_keep)
         .await
         .map_err(|e| e.to_string())?;
     let bytes = pack_state(&passphrase, &merged).map_err(|e| e.to_string())?;

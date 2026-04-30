@@ -37,7 +37,7 @@ use crate::error::AppError;
 
 const STATE_FILENAME: &str = "rustty-sync.bin";
 const HISTORY_DIR: &str = "rustty-sync-history";
-const HISTORY_KEEP: usize = 12;
+const DEFAULT_HISTORY_KEEP: usize = 30;
 const STATE_VERSION: u32 = 1;
 
 // ─── Identidad del dispositivo ───────────────────────────────────────
@@ -178,7 +178,7 @@ impl Default for SyncSelective {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SyncConfig {
     pub enabled: bool,
     #[serde(default)]
@@ -191,12 +191,39 @@ pub struct SyncConfig {
     pub google_drive: GoogleDriveConfig,
     #[serde(default)]
     pub selective: SyncSelective,
-    /// 0 = solo manual; >0 = auto cada N segundos (sin implementar todavía).
+    /// Si true, el frontend sincroniza al detectar cambios y cada 5 minutos.
+    #[serde(default)]
+    pub auto_sync_enabled: bool,
+    /// Campo legacy: 0 = manual; >0 = intervalo antiguo en segundos.
     #[serde(default)]
     pub auto_interval_seconds: u64,
+    /// Número de snapshots históricos a conservar antes de podar.
+    #[serde(default = "default_history_keep")]
+    pub history_keep: usize,
     /// Última sincronización completada correctamente en este equipo.
     #[serde(default)]
     pub last_sync_at: Option<DateTime<Utc>>,
+}
+
+fn default_history_keep() -> usize {
+    DEFAULT_HISTORY_KEEP
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            backend: SyncBackendKind::None,
+            local: LocalConfig::default(),
+            webdav: WebDavConfig::default(),
+            google_drive: GoogleDriveConfig::default(),
+            selective: SyncSelective::default(),
+            auto_sync_enabled: false,
+            auto_interval_seconds: 0,
+            history_keep: DEFAULT_HISTORY_KEEP,
+            last_sync_at: None,
+        }
+    }
 }
 
 // ─── Modelo de estado sincronizado ───────────────────────────────────
@@ -483,7 +510,7 @@ fn token_missing_refresh_error(provider: OAuthProvider, token: &TokenResponse) -
 pub trait SyncBackend: Send + Sync {
     /// Devuelve `Ok(None)` si el remoto aún no tiene el fichero (primera sync).
     async fn read(&self) -> Result<Option<Vec<u8>>, AppError>;
-    async fn archive_existing(&self) -> Result<(), AppError> {
+    async fn archive_existing(&self, _keep: usize) -> Result<(), AppError> {
         Ok(())
     }
     async fn write(&self, data: &[u8]) -> Result<(), AppError>;
@@ -521,7 +548,7 @@ impl SyncBackend for LocalBackend {
         Ok(())
     }
 
-    async fn archive_existing(&self) -> Result<(), AppError> {
+    async fn archive_existing(&self, keep: usize) -> Result<(), AppError> {
         if !self.path.exists() {
             return Ok(());
         }
@@ -536,7 +563,7 @@ impl SyncBackend for LocalBackend {
         tokio::fs::copy(&self.path, &archive)
             .await
             .map_err(|e| AppError::Sync(format!("archivar remoto local: {e}")))?;
-        prune_local_history(&history).await?;
+        prune_local_history(&history, keep).await?;
         Ok(())
     }
 }
@@ -551,7 +578,7 @@ fn history_filename() -> String {
     format!("rustty-sync-{}.bin", Utc::now().format("%Y%m%dT%H%M%SZ"))
 }
 
-async fn prune_local_history(path: &Path) -> Result<(), AppError> {
+async fn prune_local_history(path: &Path, keep: usize) -> Result<(), AppError> {
     let mut entries = Vec::new();
     let mut dir = match tokio::fs::read_dir(path).await {
         Ok(dir) => dir,
@@ -572,7 +599,7 @@ async fn prune_local_history(path: &Path) -> Result<(), AppError> {
         }
     }
     entries.sort_by_key(|(_, modified)| *modified);
-    let delete_count = entries.len().saturating_sub(HISTORY_KEEP);
+    let delete_count = entries.len().saturating_sub(keep);
     for (path, _) in entries.into_iter().take(delete_count) {
         let _ = tokio::fs::remove_file(path).await;
     }
@@ -655,7 +682,7 @@ impl SyncBackend for WebDavBackend {
         Ok(())
     }
 
-    async fn archive_existing(&self) -> Result<(), AppError> {
+    async fn archive_existing(&self, keep: usize) -> Result<(), AppError> {
         let Some(bytes) = self.read().await? else {
             return Ok(());
         };
@@ -693,8 +720,77 @@ impl SyncBackend for WebDavBackend {
                 put.status()
             )));
         }
+        prune_webdav_history(&client, base, &self.username, &self.password, keep).await?;
         Ok(())
     }
+}
+
+async fn prune_webdav_history(
+    client: &reqwest::Client,
+    base: &str,
+    username: &str,
+    password: &str,
+    keep: usize,
+) -> Result<(), AppError> {
+    let history_base = format!("{}/{}", base, urlencoding::encode(HISTORY_DIR));
+    let resp = client
+        .request(
+            reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+            &history_base,
+        )
+        .basic_auth(username, Some(password))
+        .header("Depth", "1")
+        .send()
+        .await
+        .map_err(|e| AppError::Sync(format!("webdav histórico PROPFIND: {e}")))?;
+    if !resp.status().is_success() {
+        return Ok(());
+    }
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| AppError::Sync(format!("webdav histórico body: {e}")))?;
+    let mut names = webdav_history_filenames(&body);
+    names.sort();
+    let delete_count = names.len().saturating_sub(keep);
+    for name in names.into_iter().take(delete_count) {
+        let url = format!("{}/{}", history_base, urlencoding::encode(&name));
+        let _ = client
+            .delete(url)
+            .basic_auth(username, Some(password))
+            .send()
+            .await;
+    }
+    Ok(())
+}
+
+fn webdav_history_filenames(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = body;
+    while let Some(start) = rest.find("<") {
+        rest = &rest[start..];
+        let Some(tag_end) = rest.find(">") else { break };
+        let tag = &rest[..=tag_end];
+        if !tag.ends_with("href>") {
+            rest = &rest[tag_end + 1..];
+            continue;
+        }
+        let Some(end) = rest[tag_end + 1..].find("</") else {
+            rest = &rest[tag_end + 1..];
+            continue;
+        };
+        let href = &rest[tag_end + 1..tag_end + 1 + end];
+        if let Some(raw_name) = href.rsplit('/').find(|part| !part.is_empty()) {
+            let decoded = urlencoding::decode(raw_name)
+                .map(|value| value.into_owned())
+                .unwrap_or_else(|_| raw_name.to_string());
+            if decoded.starts_with("rustty-sync-") && decoded.ends_with(".bin") {
+                out.push(decoded);
+            }
+        }
+        rest = &rest[tag_end + 1 + end + 2..];
+    }
+    out
 }
 
 fn http_client(timeout_secs: u64) -> Result<reqwest::Client, AppError> {
@@ -833,6 +929,59 @@ impl GoogleDriveBackend {
         }
         Ok(())
     }
+
+    async fn prune_history(
+        &self,
+        client: &reqwest::Client,
+        token: &str,
+        keep: usize,
+    ) -> Result<(), AppError> {
+        let prefix = format!("{}-rustty-sync-", HISTORY_DIR);
+        let q = format!(
+            "name contains '{}' and 'appDataFolder' in parents and trashed=false",
+            prefix
+        );
+        let resp = client
+            .get("https://www.googleapis.com/drive/v3/files")
+            .bearer_auth(token)
+            .query(&[
+                ("spaces", "appDataFolder"),
+                ("fields", "files(id,name)"),
+                ("q", q.as_str()),
+            ])
+            .send()
+            .await
+            .map_err(|e| AppError::Sync(format!("google history list: {e}")))?;
+        if !resp.status().is_success() {
+            return Ok(());
+        }
+        let value: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Sync(format!("google history json: {e}")))?;
+        let mut files: Vec<(String, String)> = value
+            .get("files")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|file| {
+                Some((
+                    file.get("name")?.as_str()?.to_string(),
+                    file.get("id")?.as_str()?.to_string(),
+                ))
+            })
+            .collect();
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        let delete_count = files.len().saturating_sub(keep);
+        for (_, id) in files.into_iter().take(delete_count) {
+            let _ = client
+                .delete(format!("https://www.googleapis.com/drive/v3/files/{id}"))
+                .bearer_auth(token)
+                .send()
+                .await;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -894,7 +1043,7 @@ impl SyncBackend for GoogleDriveBackend {
             .await
     }
 
-    async fn archive_existing(&self) -> Result<(), AppError> {
+    async fn archive_existing(&self, keep: usize) -> Result<(), AppError> {
         let Some(bytes) = self.read().await? else {
             return Ok(());
         };
@@ -906,7 +1055,8 @@ impl SyncBackend for GoogleDriveBackend {
             &format!("{}-{}", HISTORY_DIR, history_filename()),
             &bytes,
         )
-        .await
+        .await?;
+        self.prune_history(&client, &token, keep).await
     }
 }
 

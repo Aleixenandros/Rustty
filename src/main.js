@@ -71,6 +71,9 @@ const KEYRING_SERVICE = "rustty";
 const RECENT_CONNECTIONS_STORAGE_KEY = "rustty-recent-connections";
 const RELEASES_API_URL = "https://api.github.com/repos/Aleixenandros/Rustty/releases/latest";
 const RELEASES_PAGE_URL = "https://github.com/Aleixenandros/Rustty/releases/latest";
+const AUTO_SYNC_INTERVAL_SECONDS = 300;
+const DEFAULT_SYNC_HISTORY_KEEP = 30;
+const WINDOW_STATE_FLAGS_SIZE_POSITION_MAXIMIZED = 1 | 2 | 4;
 
 let bellAudioContext = null;
 
@@ -296,6 +299,7 @@ const DEFAULT_PREFS = {
   // Overrides de atajos: { [actionId]: accelerator | null }
   // Solo se almacenan los atajos que el usuario ha modificado respecto al default.
   shortcuts:       {},
+  checkUpdatesOnStartup: true,
   // Carpetas manuales, incluidas las vacías. Se espejan también en rustty-folders.
   userFolders:     [],
 };
@@ -703,6 +707,8 @@ function openSettingsModal() {
 
   // Acerca de: versión (la resuelve una vez por sesión y cachea)
   populateAboutVersion();
+  document.getElementById("pref-check-updates-startup").checked =
+    prefs.checkUpdatesOnStartup !== false;
 
   // Atajos: (re)render con los valores actuales
   renderShortcutsList();
@@ -730,6 +736,8 @@ async function populateSyncTab() {
     webdav: { url: "", username: "" },
     selective: { profiles: true, prefs: true, themes: true, shortcuts: true, snippets: true },
     auto_interval_seconds: 0,
+    auto_sync_enabled: false,
+    history_keep: DEFAULT_SYNC_HISTORY_KEEP,
     last_sync_at: null,
   }));
   _syncConfigCache = config;
@@ -745,7 +753,10 @@ async function populateSyncTab() {
   document.getElementById("sync-sel-prefs").checked     = config.selective?.prefs ?? true;
   document.getElementById("sync-sel-themes").checked    = config.selective?.themes ?? true;
   document.getElementById("sync-sel-shortcuts").checked = config.selective?.shortcuts ?? true;
-  document.getElementById("sync-auto-interval").value = String(config.auto_interval_seconds || 0);
+  document.getElementById("sync-auto-enabled").checked =
+    config.auto_sync_enabled ?? ((config.auto_interval_seconds || 0) > 0);
+  document.getElementById("sync-history-keep").value =
+    String(Math.max(1, parseInt(config.history_keep, 10) || DEFAULT_SYNC_HISTORY_KEEP));
 
   // Passphrase (no la mostramos en claro, solo placeholder distinto si ya existe)
   const passEl = document.getElementById("sync-passphrase");
@@ -774,6 +785,9 @@ async function populateSyncTab() {
   const lastSyncAt = syncLastSyncAt();
   document.getElementById("sync-last-time").textContent =
     lastSyncAt ? new Date(lastSyncAt).toLocaleString() : "—";
+  if (config.enabled && backend !== "none" && lastSyncAt) {
+    setSyncStatus("success", "prefs_sync.status_success");
+  }
   updateSidebarSyncStatus();
   restartSyncIntervalTimer();
 }
@@ -891,7 +905,14 @@ async function persistSyncConfig() {
       shortcuts: document.getElementById("sync-sel-shortcuts").checked,
       snippets:  true,
     },
-    auto_interval_seconds: Math.max(0, parseInt(document.getElementById("sync-auto-interval").value, 10) || 0),
+    auto_sync_enabled: document.getElementById("sync-auto-enabled").checked,
+    auto_interval_seconds: document.getElementById("sync-auto-enabled").checked
+      ? AUTO_SYNC_INTERVAL_SECONDS
+      : 0,
+    history_keep: Math.max(
+      1,
+      parseInt(document.getElementById("sync-history-keep").value, 10) || DEFAULT_SYNC_HISTORY_KEEP
+    ),
     last_sync_at: syncLastSyncAt(),
   };
   await sync.saveConfig(config);
@@ -945,6 +966,7 @@ async function syncRunNow() {
 function shouldAutoSyncProfiles() {
   return !!_syncConfigCache?.enabled
     && _syncConfigCache.backend !== "none"
+    && !!(_syncConfigCache.auto_sync_enabled ?? ((_syncConfigCache.auto_interval_seconds || 0) > 0))
     && (
       (_syncConfigCache.selective?.profiles ?? true)
       || (_syncConfigCache.selective?.prefs ?? true)
@@ -963,8 +985,12 @@ function scheduleProfileAutoSync() {
 function restartSyncIntervalTimer() {
   clearInterval(_syncIntervalTimer);
   _syncIntervalTimer = null;
-  const seconds = Math.max(0, parseInt(_syncConfigCache?.auto_interval_seconds, 10) || 0);
-  if (!_syncConfigCache?.enabled || _syncConfigCache.backend === "none" || seconds <= 0) return;
+  const autoEnabled = !!(
+    _syncConfigCache?.auto_sync_enabled
+    ?? ((_syncConfigCache?.auto_interval_seconds || 0) > 0)
+  );
+  const seconds = AUTO_SYNC_INTERVAL_SECONDS;
+  if (!_syncConfigCache?.enabled || _syncConfigCache.backend === "none" || !autoEnabled) return;
   _syncIntervalTimer = setInterval(() => {
     runSyncWithCurrentState({ persistConfig: false, announce: false })
       .catch((err) => console.error("[sync] interval", err));
@@ -1166,10 +1192,10 @@ function setAboutUpdateStatus(text, type = "") {
   el.textContent = text;
 }
 
-async function checkForUpdates() {
+async function checkForUpdates({ interactive = true } = {}) {
   const btn = document.getElementById("btn-about-check-updates");
   if (btn) btn.disabled = true;
-  setAboutUpdateStatus(t("prefs_about.checking_updates"));
+  if (interactive) setAboutUpdateStatus(t("prefs_about.checking_updates"));
 
   try {
     await populateAboutVersion();
@@ -1196,12 +1222,14 @@ async function checkForUpdates() {
           .catch((err) => toast(`No se pudo abrir ${RELEASES_PAGE_URL}: ${err}`, "error", 6000));
       }
     } else {
-      setAboutUpdateStatus(t("prefs_about.update_current"), "success");
+      if (interactive) setAboutUpdateStatus(t("prefs_about.update_current"), "success");
     }
   } catch (err) {
     console.warn("[updates] check failed", err);
-    setAboutUpdateStatus(t("prefs_about.update_error"), "error");
-    toast(`${t("prefs_about.update_error")}: ${err}`, "error", 6000);
+    if (interactive) {
+      setAboutUpdateStatus(t("prefs_about.update_error"), "error");
+      toast(`${t("prefs_about.update_error")}: ${err}`, "error", 6000);
+    }
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -1269,6 +1297,7 @@ function savePrefsFromModal() {
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
     lang:            SUPPORTED_LANGS.includes(newLang) ? newLang : "es",
+    checkUpdatesOnStartup: document.getElementById("pref-check-updates-startup")?.checked ?? true,
     // Los atajos se editan en vivo (setShortcut/resetShortcut ya guardan), así
     // que aquí solo arrastramos lo que haya en memoria para no sobrescribirlos.
     shortcuts:       previousPrefs.shortcuts || {},
@@ -1288,7 +1317,7 @@ function savePrefsFromModal() {
   if (document.getElementById("sync-enabled")) {
     persistSyncConfig()
       .then((config) => {
-        if (config.enabled && config.backend !== "none") {
+        if (config.enabled && config.backend !== "none" && config.auto_sync_enabled) {
           runSyncWithCurrentState({ persistConfig: false, announce: false })
             .catch((e) => console.error("[sync] close preferences", e));
         }
@@ -1421,7 +1450,14 @@ async function init() {
 
   renderConnectionList();
   bindUIEvents();
-  populateSyncTab().catch((e) => console.error("[sync] populate", e));
+  await populateSyncTab().catch((e) => console.error("[sync] populate", e));
+  if (_syncConfigCache?.enabled && _syncConfigCache.backend !== "none") {
+    runSyncWithCurrentState({ persistConfig: false, announce: false })
+      .catch((e) => console.error("[sync] startup", e));
+  }
+  if (prefs.checkUpdatesOnStartup !== false) {
+    checkForUpdates({ interactive: false }).catch((e) => console.error("[updates] startup", e));
+  }
   // Consultar estado KeePass al arranque (por si una sesión anterior dejó
   // la DB abierta — no ocurre en MVP, queda como no-op).
   refreshKeepassStatus();
@@ -4729,12 +4765,21 @@ async function initWindowControls() {
   const btnClose = document.getElementById("btn-win-close");
 
   btnMin  ?.addEventListener("click", () => win.minimize());
-  btnMax  ?.addEventListener("click", () => win.toggleMaximize());
-  btnClose?.addEventListener("click", () => win.close().catch(() => win.destroy()));
+  btnMax  ?.addEventListener("click", async () => {
+    await win.toggleMaximize();
+    scheduleWindowStateSave();
+  });
+  btnClose?.addEventListener("click", async () => {
+    await saveWindowStateNow();
+    await win.close().catch(() => win.destroy());
+  });
 
   // Doble clic en la zona arrastrable maximiza/restaura.
   document.getElementById("tab-bar-drag")
-    ?.addEventListener("dblclick", () => win.toggleMaximize());
+    ?.addEventListener("dblclick", async () => {
+      await win.toggleMaximize();
+      scheduleWindowStateSave();
+    });
 
   // Mantener el icono maximizar/restaurar sincronizado con el estado.
   const syncMaximized = async () => {
@@ -4747,6 +4792,22 @@ async function initWindowControls() {
   try {
     win.onResized(() => {
       syncMaximized();
+      scheduleWindowStateSave();
+    });
+  } catch {}
+}
+
+let _windowStateSaveTimer = null;
+
+function scheduleWindowStateSave() {
+  clearTimeout(_windowStateSaveTimer);
+  _windowStateSaveTimer = setTimeout(() => saveWindowStateNow(), 400);
+}
+
+async function saveWindowStateNow() {
+  try {
+    await invoke("plugin:window-state|save_window_state", {
+      flags: WINDOW_STATE_FLAGS_SIZE_POSITION_MAXIMIZED,
     });
   } catch {}
 }
