@@ -36,6 +36,8 @@ use uuid::Uuid;
 use crate::error::AppError;
 
 const STATE_FILENAME: &str = "rustty-sync.bin";
+const HISTORY_DIR: &str = "rustty-sync-history";
+const HISTORY_KEEP: usize = 12;
 const STATE_VERSION: u32 = 1;
 
 // ─── Identidad del dispositivo ───────────────────────────────────────
@@ -89,6 +91,20 @@ fn default_icloud_folder() -> Result<PathBuf, AppError> {
         .join("Mobile Documents")
         .join("com~apple~CloudDocs")
         .join("Rustty"))
+}
+
+pub fn resolve_sync_folder(config: &SyncConfig) -> Result<Option<PathBuf>, AppError> {
+    match config.backend {
+        SyncBackendKind::Local => {
+            if config.local.folder.trim().is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(PathBuf::from(config.local.folder.trim())))
+            }
+        }
+        SyncBackendKind::Icloud => Ok(Some(default_icloud_folder()?)),
+        _ => Ok(None),
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -178,6 +194,9 @@ pub struct SyncConfig {
     /// 0 = solo manual; >0 = auto cada N segundos (sin implementar todavía).
     #[serde(default)]
     pub auto_interval_seconds: u64,
+    /// Última sincronización completada correctamente en este equipo.
+    #[serde(default)]
+    pub last_sync_at: Option<DateTime<Utc>>,
 }
 
 // ─── Modelo de estado sincronizado ───────────────────────────────────
@@ -464,6 +483,9 @@ fn token_missing_refresh_error(provider: OAuthProvider, token: &TokenResponse) -
 pub trait SyncBackend: Send + Sync {
     /// Devuelve `Ok(None)` si el remoto aún no tiene el fichero (primera sync).
     async fn read(&self) -> Result<Option<Vec<u8>>, AppError>;
+    async fn archive_existing(&self) -> Result<(), AppError> {
+        Ok(())
+    }
     async fn write(&self, data: &[u8]) -> Result<(), AppError>;
 }
 
@@ -498,12 +520,63 @@ impl SyncBackend for LocalBackend {
             .map_err(|e| AppError::Sync(format!("rename remoto local: {e}")))?;
         Ok(())
     }
+
+    async fn archive_existing(&self) -> Result<(), AppError> {
+        if !self.path.exists() {
+            return Ok(());
+        }
+        let Some(parent) = self.path.parent() else {
+            return Ok(());
+        };
+        let history = parent.join(HISTORY_DIR);
+        tokio::fs::create_dir_all(&history)
+            .await
+            .map_err(|e| AppError::Sync(format!("crear histórico local: {e}")))?;
+        let archive = history.join(history_filename());
+        tokio::fs::copy(&self.path, &archive)
+            .await
+            .map_err(|e| AppError::Sync(format!("archivar remoto local: {e}")))?;
+        prune_local_history(&history).await?;
+        Ok(())
+    }
 }
 
 pub struct WebDavBackend {
     pub url: String,
     pub username: String,
     pub password: String,
+}
+
+fn history_filename() -> String {
+    format!("rustty-sync-{}.bin", Utc::now().format("%Y%m%dT%H%M%SZ"))
+}
+
+async fn prune_local_history(path: &Path) -> Result<(), AppError> {
+    let mut entries = Vec::new();
+    let mut dir = match tokio::fs::read_dir(path).await {
+        Ok(dir) => dir,
+        Err(_) => return Ok(()),
+    };
+    while let Some(entry) = dir
+        .next_entry()
+        .await
+        .map_err(|e| AppError::Sync(format!("leer histórico local: {e}")))?
+    {
+        let metadata = entry
+            .metadata()
+            .await
+            .map_err(|e| AppError::Sync(format!("metadata histórico local: {e}")))?;
+        if metadata.is_file() {
+            let modified = metadata.modified().ok();
+            entries.push((entry.path(), modified));
+        }
+    }
+    entries.sort_by_key(|(_, modified)| *modified);
+    let delete_count = entries.len().saturating_sub(HISTORY_KEEP);
+    for (path, _) in entries.into_iter().take(delete_count) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -576,6 +649,47 @@ impl SyncBackend for WebDavBackend {
         if !put.status().is_success() {
             return Err(AppError::Sync(format!(
                 "webdav PUT status: {}",
+                put.status()
+            )));
+        }
+        Ok(())
+    }
+
+    async fn archive_existing(&self) -> Result<(), AppError> {
+        let Some(bytes) = self.read().await? else {
+            return Ok(());
+        };
+        let Some((base, _)) = self.url.rsplit_once('/') else {
+            return Ok(());
+        };
+        let history_url = format!(
+            "{}/{}/{}",
+            base,
+            urlencoding::encode(HISTORY_DIR),
+            urlencoding::encode(&history_filename())
+        );
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| AppError::Sync(format!("webdav client: {e}")))?;
+        let _ = client
+            .request(
+                reqwest::Method::from_bytes(b"MKCOL").unwrap(),
+                format!("{}/{}", base, urlencoding::encode(HISTORY_DIR)),
+            )
+            .basic_auth(&self.username, Some(&self.password))
+            .send()
+            .await;
+        let put = client
+            .put(history_url)
+            .basic_auth(&self.username, Some(&self.password))
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|e| AppError::Sync(format!("webdav histórico PUT: {e}")))?;
+        if !put.status().is_success() {
+            return Err(AppError::Sync(format!(
+                "webdav histórico PUT status: {}",
                 put.status()
             )));
         }
@@ -676,6 +790,49 @@ impl GoogleDriveBackend {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()))
     }
+
+    async fn upload_named(
+        &self,
+        client: &reqwest::Client,
+        token: &str,
+        name: &str,
+        data: &[u8],
+    ) -> Result<(), AppError> {
+        let boundary = format!("rustty-{}", Uuid::new_v4().simple());
+        let metadata = serde_json::json!({
+            "name": name,
+            "parents": ["appDataFolder"],
+        });
+        let mut body = Vec::new();
+        write!(
+            body,
+            "--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{}\r\n--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\n",
+            metadata
+        )
+        .map_err(|e| AppError::Sync(format!("google multipart: {e}")))?;
+        body.extend_from_slice(data);
+        write!(body, "\r\n--{boundary}--\r\n")
+            .map_err(|e| AppError::Sync(format!("google multipart finish: {e}")))?;
+        let resp = client
+            .post("https://www.googleapis.com/upload/drive/v3/files")
+            .bearer_auth(token)
+            .query(&[("uploadType", "multipart")])
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                format!("multipart/related; boundary={boundary}"),
+            )
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| AppError::Sync(format!("google create: {e}")))?;
+        if !resp.status().is_success() {
+            return Err(AppError::Sync(format!(
+                "google create status: {}",
+                resp.status()
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -733,40 +890,23 @@ impl SyncBackend for GoogleDriveBackend {
             return Ok(());
         }
 
-        let boundary = format!("rustty-{}", Uuid::new_v4().simple());
-        let metadata = serde_json::json!({
-            "name": STATE_FILENAME,
-            "parents": ["appDataFolder"],
-        });
-        let mut body = Vec::new();
-        write!(
-            body,
-            "--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{}\r\n--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\n",
-            metadata
-        )
-        .map_err(|e| AppError::Sync(format!("google multipart: {e}")))?;
-        body.extend_from_slice(data);
-        write!(body, "\r\n--{boundary}--\r\n")
-            .map_err(|e| AppError::Sync(format!("google multipart finish: {e}")))?;
-        let resp = client
-            .post("https://www.googleapis.com/upload/drive/v3/files")
-            .bearer_auth(&token)
-            .query(&[("uploadType", "multipart")])
-            .header(
-                reqwest::header::CONTENT_TYPE,
-                format!("multipart/related; boundary={boundary}"),
-            )
-            .body(body)
-            .send()
+        self.upload_named(&client, &token, STATE_FILENAME, data)
             .await
-            .map_err(|e| AppError::Sync(format!("google create: {e}")))?;
-        if !resp.status().is_success() {
-            return Err(AppError::Sync(format!(
-                "google create status: {}",
-                resp.status()
-            )));
-        }
-        Ok(())
+    }
+
+    async fn archive_existing(&self) -> Result<(), AppError> {
+        let Some(bytes) = self.read().await? else {
+            return Ok(());
+        };
+        let client = http_client(30)?;
+        let token = self.access_token().await?;
+        self.upload_named(
+            &client,
+            &token,
+            &format!("{}-{}", HISTORY_DIR, history_filename()),
+            &bytes,
+        )
+        .await
     }
 }
 

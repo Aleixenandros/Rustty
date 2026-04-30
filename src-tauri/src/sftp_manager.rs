@@ -26,6 +26,7 @@ use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::OpenFlags;
 
+use crate::host_keys;
 use crate::profiles::{AuthType, ConnectionProfile};
 
 // ─── Tipos expuestos al frontend ─────────────────────────────────────────────
@@ -248,23 +249,6 @@ impl SftpManager {
     }
 }
 
-// ─── Handler russh ───────────────────────────────────────────────────────────
-
-/// Handler mínimo: aceptamos la host key sin verificar (igual que hace el
-/// backend ssh2 actualmente). TODO pendiente: integrar `known_hosts`.
-struct Client;
-
-impl client::Handler for Client {
-    type Error = russh::Error;
-
-    async fn check_server_key(
-        &mut self,
-        _server_public_key: &russh::keys::ssh_key::PublicKey,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
-    }
-}
-
 // ─── Worker ──────────────────────────────────────────────────────────────────
 
 async fn run_sftp_worker(
@@ -370,9 +354,16 @@ async fn connect_and_open_sftp(
     });
 
     let addr = format!("{}:{}", profile.host, profile.port);
-    let mut handle = client::connect(config, addr.clone(), Client)
-        .await
-        .map_err(|e| format!("No se puede conectar a {addr}: {e}"))?;
+    let (client_handler, host_key_failure) = host_keys::client(profile.host.clone(), profile.port);
+    let mut handle = match client::connect(config, addr.clone(), client_handler).await {
+        Ok(handle) => handle,
+        Err(err) => {
+            if let Some(reason) = host_keys::take_failure(&host_key_failure) {
+                return Err(reason);
+            }
+            return Err(format!("No se puede conectar a {addr}: {err}"));
+        }
+    };
 
     // Autenticación
     let auth = match &profile.auth_type {
@@ -457,7 +448,7 @@ async fn connect_and_open_sftp(
 /// funcione o se acaben.
 #[cfg(unix)]
 async fn authenticate_with_agent(
-    handle: &mut client::Handle<Client>,
+    handle: &mut client::Handle<host_keys::KnownHostsClient>,
     username: &str,
 ) -> Result<AuthResult, String> {
     use russh::keys::agent::client::AgentClient;
@@ -499,7 +490,7 @@ async fn authenticate_with_agent(
 
 #[cfg(not(unix))]
 async fn authenticate_with_agent(
-    _handle: &mut client::Handle<Client>,
+    _handle: &mut client::Handle<host_keys::KnownHostsClient>,
     _username: &str,
 ) -> Result<AuthResult, String> {
     Err("Autenticación vía agente SSH no soportada en esta plataforma".into())

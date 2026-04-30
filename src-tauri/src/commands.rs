@@ -9,8 +9,8 @@ use crate::rdp_manager::RdpManager;
 use crate::sftp_manager::{FileEntry, SftpManager};
 use crate::ssh_manager::SshManager;
 use crate::sync::{
-    pack_state, unpack_state, OAuthFinishResult, OAuthProvider, OAuthStartResult, SyncBackendKind,
-    SyncConfig, SyncManager, SyncState,
+    pack_state, resolve_sync_folder, unpack_state, OAuthFinishResult, OAuthProvider,
+    OAuthStartResult, SyncBackendKind, SyncConfig, SyncManager, SyncState,
 };
 
 // ─── Comandos de gestión de perfiles ─────────────────────────────────────────
@@ -601,6 +601,13 @@ pub async fn sync_test_backend(
 }
 
 #[tauri::command]
+pub fn sync_get_backend_folder(state: State<SyncManager>) -> Result<Option<String>, String> {
+    let config = state.load_config();
+    let folder = resolve_sync_folder(&config).map_err(|e| e.to_string())?;
+    Ok(folder.map(|path| path.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
 pub async fn sync_oauth_begin(
     state: State<'_, SyncManager>,
     provider: String,
@@ -642,7 +649,7 @@ pub async fn sync_run(
     passphrase: String,
     webdav_password: Option<String>,
 ) -> Result<SyncState, String> {
-    let config = state.load_config();
+    let mut config = state.load_config();
     if !config.enabled || matches!(config.backend, SyncBackendKind::None) {
         return Err("Sincronización no habilitada".into());
     }
@@ -661,11 +668,17 @@ pub async fn sync_run(
     merged.merge(remote);
 
     // 3. Push
+    backend
+        .archive_existing()
+        .await
+        .map_err(|e| e.to_string())?;
     let bytes = pack_state(&passphrase, &merged).map_err(|e| e.to_string())?;
     backend.write(&bytes).await.map_err(|e| e.to_string())?;
 
     // 4. Cache local (snapshot del último merge)
     state.save_local_state(&merged).map_err(|e| e.to_string())?;
+    config.last_sync_at = Some(chrono::Utc::now());
+    state.save_config(&config).map_err(|e| e.to_string())?;
 
     Ok(merged)
 }

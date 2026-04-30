@@ -27,13 +27,14 @@ const SYNCED_PREF_KEYS = [
   "theme", "terminalTheme", "copyOnSelect", "rightClickPaste",
   "fontFamily", "fontSize", "lineHeight", "letterSpacing",
   "cursorStyle", "cursorBlink", "scrollback", "bell", "lang",
+  "userFolders",
 ];
 
 /* ───────────────────────────── Construcción del estado ─────────────────── */
 
 /**
  * Construye el SyncState a partir del estado local actual del frontend.
- * @param {object} ctx { profiles, prefs, deviceId, selective }
+ * @param {object} ctx { profiles, prefs, snippets, deviceId, selective }
  */
 export function buildSyncState(ctx) {
   const { profiles, prefs, deviceId, selective } = ctx;
@@ -59,7 +60,7 @@ export function buildSyncState(ctx) {
     for (const k of SYNCED_PREF_KEYS) bundle[k] = prefs[k];
     items["prefs:bundle"] = {
       data: bundle,
-      updated_at: prefs._prefsUpdatedAt || now,
+      updated_at: prefs._prefsUpdatedAt || prefs._lastSyncAt || now,
       device_id: deviceId,
     };
   }
@@ -68,7 +69,7 @@ export function buildSyncState(ctx) {
     for (const t of prefs.customThemes || []) {
       items[`theme:${t.id}`] = {
         data: t,
-        updated_at: t.updatedAt || now,
+        updated_at: t.updatedAt || prefs._lastSyncAt || now,
         device_id: deviceId,
       };
     }
@@ -83,12 +84,26 @@ export function buildSyncState(ctx) {
     for (const [id, accel] of Object.entries(sc)) {
       items[`shortcut:${id}`] = {
         data: accel,            // string o null (desactivado)
-        updated_at: ts[id] || new Date().toISOString(),
+        updated_at: ts[id] || prefs._lastSyncAt || now,
         device_id: deviceId,
       };
     }
     Object.entries(prefs.tombstones?.shortcuts || {}).forEach(([id, ts]) => {
       tombstones[`shortcut:${id}`] = ts;
+    });
+  }
+
+  if (selective.snippets) {
+    for (const snippet of ctx.snippets || []) {
+      if (!snippet?.id) continue;
+      items[`snippet:${snippet.id}`] = {
+        data: snippet,
+        updated_at: snippet.updated_at || snippet.updatedAt || prefs._lastSyncAt || now,
+        device_id: deviceId,
+      };
+    }
+    Object.entries(prefs.tombstones?.snippets || {}).forEach(([id, ts]) => {
+      tombstones[`snippet:${id}`] = ts;
     });
   }
 
@@ -131,6 +146,7 @@ export async function applyMergedState(merged, ctx) {
     } else if (key.startsWith("theme:")) {
       const id = key.slice(6);
       const theme = item.data;
+      theme.updatedAt = item.updated_at;
       const list = prefs.customThemes || (prefs.customThemes = []);
       const idx = list.findIndex((t) => t.id === id);
       if (idx >= 0) list[idx] = theme; else list.push(theme);
@@ -142,6 +158,12 @@ export async function applyMergedState(merged, ctx) {
       prefs._shortcutsTs = prefs._shortcutsTs || {};
       prefs._shortcutsTs[id] = item.updated_at;
       shortcutsChanged++;
+    } else if (key.startsWith("snippet:")) {
+      const id = key.slice(8);
+      const snippet = item.data;
+      snippet.id = snippet.id || id;
+      snippet.updated_at = item.updated_at;
+      upsertLocalSnippet(snippet);
     }
   }
 
@@ -169,10 +191,39 @@ export async function applyMergedState(merged, ctx) {
         delete prefs.shortcuts[id];
         shortcutsChanged++;
       }
+    } else if (key.startsWith("snippet:")) {
+      deleteLocalSnippet(key.slice(8));
     }
   }
 
   return { addedProfiles, deletedProfiles, prefsChanged, themesChanged, shortcutsChanged };
+}
+
+const SNIPPETS_STORAGE_KEY = "rustty-snippets";
+
+export function loadLocalSnippets() {
+  try {
+    const value = JSON.parse(localStorage.getItem(SNIPPETS_STORAGE_KEY) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalSnippets(snippets) {
+  localStorage.setItem(SNIPPETS_STORAGE_KEY, JSON.stringify(snippets));
+}
+
+function upsertLocalSnippet(snippet) {
+  const snippets = loadLocalSnippets();
+  const idx = snippets.findIndex((item) => item.id === snippet.id);
+  if (idx >= 0) snippets[idx] = snippet;
+  else snippets.push(snippet);
+  saveLocalSnippets(snippets);
+}
+
+function deleteLocalSnippet(id) {
+  saveLocalSnippets(loadLocalSnippets().filter((snippet) => snippet.id !== id));
 }
 
 /* ─────────────────────────── Helpers de keyring ────────────────────── */
@@ -278,7 +329,9 @@ export async function runSync(ctx) {
       prefs: !!config.selective?.prefs,
       themes: !!config.selective?.themes,
       shortcuts: !!config.selective?.shortcuts,
+      snippets: !!config.selective?.snippets,
     },
+    snippets: loadLocalSnippets(),
   });
 
   const merged = await invoke("sync_run", {
@@ -311,7 +364,8 @@ export async function exportToFile(ctx) {
     profiles: ctx.profiles,
     prefs: ctx.prefs,
     deviceId: ctx.deviceId,
-    selective: { profiles: true, prefs: true, themes: true, shortcuts: true },
+    selective: { profiles: true, prefs: true, themes: true, shortcuts: true, snippets: true },
+    snippets: loadLocalSnippets(),
   });
 
   await invoke("sync_export_file", { path, passphrase, state });

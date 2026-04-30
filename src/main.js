@@ -296,15 +296,23 @@ const DEFAULT_PREFS = {
   // Overrides de atajos: { [actionId]: accelerator | null }
   // Solo se almacenan los atajos que el usuario ha modificado respecto al default.
   shortcuts:       {},
+  // Carpetas manuales, incluidas las vacías. Se espejan también en rustty-folders.
+  userFolders:     [],
 };
 
 let prefs = { ...DEFAULT_PREFS };
 
 function loadPrefs() {
+  let stored = null;
   try {
-    const stored = JSON.parse(localStorage.getItem("rustty-prefs") || "null");
+    stored = JSON.parse(localStorage.getItem("rustty-prefs") || "null");
     if (stored) prefs = { ...DEFAULT_PREFS, ...stored };
   } catch {}
+  if (stored && Array.isArray(stored.userFolders)) {
+    userFolders = new Set(stored.userFolders.filter((f) => typeof f === "string" && f.trim()));
+  } else {
+    prefs.userFolders = [...userFolders].sort();
+  }
   if (!prefs.lang || !SUPPORTED_LANGS.includes(prefs.lang)) {
     prefs.lang = detectLanguage();
   }
@@ -711,7 +719,8 @@ let _syncDeviceIdCache = null;
 let _syncConfigCache = null;
 let _syncSidebarState = "idle";
 let _syncSidebarTextKey = "prefs_sync.status_idle";
-let _syncAutoTimer = null;
+let _syncProfileAutoTimer = null;
+let _syncIntervalTimer = null;
 let _syncInFlight = false;
 let _syncPending = false;
 async function populateSyncTab() {
@@ -721,6 +730,7 @@ async function populateSyncTab() {
     webdav: { url: "", username: "" },
     selective: { profiles: true, prefs: true, themes: true, shortcuts: true, snippets: true },
     auto_interval_seconds: 0,
+    last_sync_at: null,
   }));
   _syncConfigCache = config;
 
@@ -735,6 +745,7 @@ async function populateSyncTab() {
   document.getElementById("sync-sel-prefs").checked     = config.selective?.prefs ?? true;
   document.getElementById("sync-sel-themes").checked    = config.selective?.themes ?? true;
   document.getElementById("sync-sel-shortcuts").checked = config.selective?.shortcuts ?? true;
+  document.getElementById("sync-auto-interval").value = String(config.auto_interval_seconds || 0);
 
   // Passphrase (no la mostramos en claro, solo placeholder distinto si ya existe)
   const passEl = document.getElementById("sync-passphrase");
@@ -760,9 +771,11 @@ async function populateSyncTab() {
     _syncDeviceIdCache = await sync.getDeviceId().catch(() => "—");
   }
   document.getElementById("sync-device-id").textContent = _syncDeviceIdCache;
+  const lastSyncAt = syncLastSyncAt();
   document.getElementById("sync-last-time").textContent =
-    prefs._lastSyncAt ? new Date(prefs._lastSyncAt).toLocaleString() : "—";
+    lastSyncAt ? new Date(lastSyncAt).toLocaleString() : "—";
   updateSidebarSyncStatus();
+  restartSyncIntervalTimer();
 }
 
 function syncUpdateBackendVisibility() {
@@ -809,6 +822,16 @@ function syncBackendLabel(backend) {
   return t(map[backend] || map.none);
 }
 
+function syncLastSyncAt() {
+  const values = [prefs._lastSyncAt, _syncConfigCache?.last_sync_at]
+    .filter(Boolean)
+    .map((value) => ({ value, time: new Date(value).getTime() }))
+    .filter((entry) => Number.isFinite(entry.time));
+  if (!values.length) return null;
+  values.sort((a, b) => b.time - a.time);
+  return values[0].value;
+}
+
 function updateSidebarSyncStatus() {
   const dot = document.getElementById("sidebar-sync-dot");
   const label = document.getElementById("sidebar-sync-label");
@@ -820,8 +843,9 @@ function updateSidebarSyncStatus() {
   dot.classList.add(state);
   label.textContent = enabled ? t(_syncSidebarTextKey) : t("prefs_sync.status_disabled");
   const backend = syncBackendLabel(_syncConfigCache?.backend || "none");
-  const last = prefs._lastSyncAt
-    ? new Date(prefs._lastSyncAt).toLocaleString()
+  const lastSyncAt = syncLastSyncAt();
+  const last = lastSyncAt
+    ? new Date(lastSyncAt).toLocaleString()
     : t("prefs_sync.last_never");
   meta.textContent = enabled ? `${backend} · ${last}` : backend;
   renderDashboard();
@@ -867,10 +891,12 @@ async function persistSyncConfig() {
       shortcuts: document.getElementById("sync-sel-shortcuts").checked,
       snippets:  true,
     },
-    auto_interval_seconds: 0,
+    auto_interval_seconds: Math.max(0, parseInt(document.getElementById("sync-auto-interval").value, 10) || 0),
+    last_sync_at: syncLastSyncAt(),
   };
   await sync.saveConfig(config);
   _syncConfigCache = config;
+  restartSyncIntervalTimer();
   // Passphrase + WebDAV pwd al keyring si el usuario rellenó algo nuevo
   const passVal = document.getElementById("sync-passphrase").value;
   if (passVal) await sync.setStoredPassphrase(passVal);
@@ -919,16 +945,30 @@ async function syncRunNow() {
 function shouldAutoSyncProfiles() {
   return !!_syncConfigCache?.enabled
     && _syncConfigCache.backend !== "none"
-    && (_syncConfigCache.selective?.profiles ?? true);
+    && (
+      (_syncConfigCache.selective?.profiles ?? true)
+      || (_syncConfigCache.selective?.prefs ?? true)
+    );
 }
 
 function scheduleProfileAutoSync() {
   if (!shouldAutoSyncProfiles()) return;
-  clearTimeout(_syncAutoTimer);
-  _syncAutoTimer = setTimeout(() => {
+  clearTimeout(_syncProfileAutoTimer);
+  _syncProfileAutoTimer = setTimeout(() => {
     runSyncWithCurrentState({ persistConfig: false, announce: false })
       .catch((err) => console.error("[sync] auto", err));
   }, 1200);
+}
+
+function restartSyncIntervalTimer() {
+  clearInterval(_syncIntervalTimer);
+  _syncIntervalTimer = null;
+  const seconds = Math.max(0, parseInt(_syncConfigCache?.auto_interval_seconds, 10) || 0);
+  if (!_syncConfigCache?.enabled || _syncConfigCache.backend === "none" || seconds <= 0) return;
+  _syncIntervalTimer = setInterval(() => {
+    runSyncWithCurrentState({ persistConfig: false, announce: false })
+      .catch((err) => console.error("[sync] interval", err));
+  }, seconds * 1000);
 }
 
 async function runSyncWithCurrentState({ persistConfig = false, announce = false } = {}) {
@@ -949,16 +989,19 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     const summary = await sync.runSync({
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
+    applySyncedUserFolders();
     // Recargar perfiles del backend (puede haber añadidos/borrados)
     profiles = await invoke("get_profiles");
     renderConnectionList();
     // Reaplica tema y prefs si cambiaron
     applyTheme(prefs.theme);
     applyPrefsToAllTerminals();
-    prefs._lastSyncAt = new Date().toISOString();
+    const lastSyncAt = new Date().toISOString();
+    prefs._lastSyncAt = lastSyncAt;
+    if (_syncConfigCache) _syncConfigCache.last_sync_at = lastSyncAt;
     savePrefs();
     document.getElementById("sync-last-time").textContent =
-      new Date(prefs._lastSyncAt).toLocaleString();
+      new Date(lastSyncAt).toLocaleString();
     setSyncStatus("success", "prefs_sync.status_success");
     const total = summary.addedProfiles + summary.deletedProfiles
       + summary.themesChanged + summary.shortcutsChanged
@@ -1006,6 +1049,33 @@ async function syncBrowseLocalFolder() {
   if (path) document.getElementById("sync-local-folder").value = path;
 }
 
+async function openPathInFileManager(path, label = "carpeta") {
+  if (!path) {
+    toast(`No hay ${label} configurada`, "warning");
+    return;
+  }
+  try {
+    await invoke("plugin:opener|open_path", { path });
+  } catch (err) {
+    toast(`No se pudo abrir la ${label}: ${err}. Ruta: ${path}`, "error", 8000);
+  }
+}
+
+async function syncOpenLocalFolder() {
+  await persistSyncConfig().catch((err) => console.error("[sync] save before open local", err));
+  const path = document.getElementById("sync-local-folder")?.value?.trim();
+  await openPathInFileManager(path, "carpeta local de sync");
+}
+
+async function syncOpenBackendFolder() {
+  await persistSyncConfig().catch((err) => console.error("[sync] save before open backend", err));
+  const path = await invoke("sync_get_backend_folder").catch((err) => {
+    toast(`Sync: ${err}`, "error", 6000);
+    return null;
+  });
+  await openPathInFileManager(path, "carpeta de sync");
+}
+
 async function syncExportFile() {
   try {
     const path = await sync.exportToFile({
@@ -1023,6 +1093,7 @@ async function syncImportFile() {
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
     if (!summary) return;
+    applySyncedUserFolders();
     profiles = await invoke("get_profiles");
     renderConnectionList();
     applyTheme(prefs.theme);
@@ -1157,6 +1228,7 @@ function closeSettingsModal() {
 }
 
 function savePrefsFromModal() {
+  const previousPrefs = prefs;
   // Tema: leer desde radio (fuente única de verdad) con fallback a prefs actuales
   const selectedTheme =
     document.querySelector('input[name="pref-theme"]:checked')?.value
@@ -1199,17 +1271,29 @@ function savePrefsFromModal() {
     lang:            SUPPORTED_LANGS.includes(newLang) ? newLang : "es",
     // Los atajos se editan en vivo (setShortcut/resetShortcut ya guardan), así
     // que aquí solo arrastramos lo que haya en memoria para no sobrescribirlos.
-    shortcuts:       prefs.shortcuts || {},
+    shortcuts:       previousPrefs.shortcuts || {},
     // Temas importados persistidos aparte; evitar que se borren al guardar prefs.
-    customThemes:    prefs.customThemes || [],
+    customThemes:    previousPrefs.customThemes || [],
+    // Metadatos internos que no pertenecen al formulario pero sí deben sobrevivir.
+    userFolders:     normalizedUserFolders(),
+    tombstones:      previousPrefs.tombstones || {},
+    _shortcutsTs:    previousPrefs._shortcutsTs || {},
+    _lastSyncAt:     previousPrefs._lastSyncAt || null,
+    _prefsUpdatedAt: new Date().toISOString(),
   };
 
   savePrefs();
-  prefs._prefsUpdatedAt = new Date().toISOString();
   // Persistir también la configuración de la pestaña de Sincronización
   // (config del backend + secretos al keyring) si existe el formulario.
   if (document.getElementById("sync-enabled")) {
-    persistSyncConfig().catch((e) => console.error("[sync] saveConfig", e));
+    persistSyncConfig()
+      .then((config) => {
+        if (config.enabled && config.backend !== "none") {
+          runSyncWithCurrentState({ persistConfig: false, announce: false })
+            .catch((e) => console.error("[sync] close preferences", e));
+        }
+      })
+      .catch((e) => console.error("[sync] saveConfig", e));
   }
   if (prefs.lang !== getLanguage()) {
     setLanguage(prefs.lang);
@@ -1422,8 +1506,40 @@ function getAllFolderPaths() {
   return [...paths].sort();
 }
 
-function saveUserFolders() {
-  localStorage.setItem("rustty-folders", JSON.stringify([...userFolders]));
+function normalizedUserFolders() {
+  return [...new Set(
+    [...userFolders]
+      .filter((f) => typeof f === "string")
+      .map((f) => f.trim())
+      .filter(Boolean)
+  )].sort();
+}
+
+function saveUserFolders({ touchPrefs = true } = {}) {
+  const folders = normalizedUserFolders();
+  userFolders = new Set(folders);
+  prefs.userFolders = folders;
+  if (touchPrefs) prefs._prefsUpdatedAt = new Date().toISOString();
+  localStorage.setItem("rustty-folders", JSON.stringify(folders));
+  savePrefs();
+}
+
+function applySyncedUserFolders() {
+  if (!Array.isArray(prefs.userFolders)) return false;
+  const next = [...new Set(
+    prefs.userFolders
+      .filter((f) => typeof f === "string")
+      .map((f) => f.trim())
+      .filter(Boolean)
+  )].sort();
+  const current = normalizedUserFolders();
+  if (JSON.stringify(current) === JSON.stringify(next)) {
+    localStorage.setItem("rustty-folders", JSON.stringify(next));
+    return false;
+  }
+  userFolders = new Set(next);
+  saveUserFolders({ touchPrefs: false });
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1870,6 +1986,7 @@ function startInlineFolderCreation(parentPath = null) {
       saveUserFolders();
       openFolders.add(fullPath);
       renderConnectionList();
+      scheduleProfileAutoSync();
       toast(`Carpeta "${name}" creada`, "success");
     } else if (e.key === "Escape") {
       wrapper.remove();
@@ -1889,6 +2006,7 @@ async function renameFolder(folderPath) {
   const newPath = [...parts.slice(0, -1), newName.trim()].join("/") || newName.trim();
   const prefix    = folderPath + "/";
   const newPrefix = newPath + "/";
+  const updatedAt = new Date().toISOString();
 
   // Actualizar perfiles que estén en esta carpeta o subcarpetas
   for (const p of profiles) {
@@ -1901,7 +2019,7 @@ async function renameFolder(folderPath) {
     } else {
       continue;
     }
-    const updated = { ...p, group: newGroup };
+    const updated = { ...p, group: newGroup, updated_at: updatedAt };
     await invoke("save_profile", { profile: updated }).catch(() => {});
     profiles[profiles.findIndex((x) => x.id === p.id)] = updated;
   }
@@ -1935,9 +2053,10 @@ async function deleteFolderAndMoveConnections(folderPath) {
   if (!window.confirm(msg)) return;
 
   const prefix = folderPath + "/";
+  const updatedAt = new Date().toISOString();
   for (const p of profiles) {
     if (p.group !== folderPath && !p.group?.startsWith(prefix)) continue;
-    const updated = { ...p, group: null };
+    const updated = { ...p, group: null, updated_at: updatedAt };
     await invoke("save_profile", { profile: updated }).catch(() => {});
     profiles[profiles.findIndex((x) => x.id === p.id)] = updated;
   }
@@ -4117,6 +4236,10 @@ function bindUIEvents() {
     ?.addEventListener("change", syncUpdateBackendVisibility);
   document.getElementById("btn-sync-local-browse")
     ?.addEventListener("click", () => syncBrowseLocalFolder());
+  document.getElementById("btn-sync-local-open")
+    ?.addEventListener("click", () => syncOpenLocalFolder());
+  document.getElementById("btn-sync-icloud-open")
+    ?.addEventListener("click", () => syncOpenBackendFolder());
   document.getElementById("btn-sync-test")
     ?.addEventListener("click", () => syncTestNow());
   document.getElementById("btn-sync-now")

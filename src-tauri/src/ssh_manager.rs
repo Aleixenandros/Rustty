@@ -22,6 +22,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
 use crate::error::AppError;
+use crate::host_keys;
 use crate::profiles::{AuthType, ConnectionProfile};
 
 // ─── Mensajes del frontend al hilo SSH ──────────────────────────────────────
@@ -157,23 +158,6 @@ impl SshManager {
     }
 }
 
-// ─── Handler russh ───────────────────────────────────────────────────────────
-
-/// Handler mínimo: aceptamos la host key sin verificar (igual que hacía el
-/// backend ssh2). TODO pendiente: integrar `known_hosts` de verdad.
-struct Client;
-
-impl client::Handler for Client {
-    type Error = russh::Error;
-
-    async fn check_server_key(
-        &mut self,
-        _server_public_key: &russh::keys::ssh_key::PublicKey,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
-    }
-}
-
 // ─── Worker asíncrono ───────────────────────────────────────────────────────
 
 async fn run_session(
@@ -190,9 +174,18 @@ async fn run_session(
         ..Default::default()
     });
     let addr = format!("{}:{}", profile.host, profile.port);
-    let mut handle = client::connect(config, addr.clone(), Client)
-        .await
-        .map_err(|e| AppError::Io(format!("No se puede conectar a {addr}: {e}")))?;
+    let (client_handler, host_key_failure) = host_keys::client(profile.host.clone(), profile.port);
+    let mut handle = match client::connect(config, addr.clone(), client_handler).await {
+        Ok(handle) => handle,
+        Err(err) => {
+            if let Some(reason) = host_keys::take_failure(&host_key_failure) {
+                return Err(AppError::Auth(reason));
+            }
+            return Err(AppError::Io(format!(
+                "No se puede conectar a {addr}: {err}"
+            )));
+        }
+    };
 
     // 2. Autenticación
     let auth = match &profile.auth_type {
@@ -301,7 +294,7 @@ async fn run_session(
 /// funcione o se acaben.
 #[cfg(unix)]
 async fn authenticate_with_agent(
-    handle: &mut client::Handle<Client>,
+    handle: &mut client::Handle<host_keys::KnownHostsClient>,
     username: &str,
 ) -> Result<AuthResult, AppError> {
     use russh::keys::agent::client::AgentClient;
@@ -344,7 +337,7 @@ async fn authenticate_with_agent(
 
 #[cfg(not(unix))]
 async fn authenticate_with_agent(
-    _handle: &mut client::Handle<Client>,
+    _handle: &mut client::Handle<host_keys::KnownHostsClient>,
     _username: &str,
 ) -> Result<AuthResult, AppError> {
     Err(AppError::Auth(

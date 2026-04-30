@@ -825,6 +825,7 @@
                 <div class="settings-control settings-file-row">
                   <input type="text" id="sync-local-folder" data-i18n-placeholder="prefs_sync.local_folder_ph" placeholder="/ruta/a/carpeta/sincronizada" />
                   <button type="button" class="btn-secondary" id="btn-sync-local-browse" data-i18n="prefs_sync.browse">Examinar…</button>
+                  <button type="button" class="btn-secondary" id="btn-sync-local-open" data-i18n="prefs_sync.open_folder">Abrir carpeta</button>
                   <p class="form-hint" data-i18n="prefs_sync.local_cloud_hint">Puedes apuntar aquí a una carpeta local, NAS o carpeta sincronizada por el sistema.</p>
                 </div>
               </div>
@@ -834,6 +835,7 @@
                 <label data-i18n="prefs_sync.icloud_folder">Carpeta iCloud</label>
                 <div class="settings-control settings-control-wide">
                   <code class="sync-path-code">~/Library/Mobile Documents/com~apple~CloudDocs/Rustty/</code>
+                  <button type="button" class="btn-secondary" id="btn-sync-icloud-open" data-i18n="prefs_sync.open_folder">Abrir carpeta</button>
                   <p class="form-hint" data-i18n="prefs_sync.icloud_hint">Usa iCloud Drive como carpeta local sincronizada. Disponible en macOS con iCloud Drive activo.</p>
                 </div>
               </div>
@@ -905,6 +907,14 @@
                 <p class="settings-hint" data-i18n="prefs_sync.never_synced">
                   Nunca se sincroniza el keyring del SO ni la base KeePass desbloqueada.
                 </p>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="sync-auto-interval" data-i18n="prefs_sync.auto_interval">Auto-sync</label>
+                <div class="settings-control">
+                  <input type="number" id="sync-auto-interval" min="0" step="60" placeholder="0" />
+                  <p class="form-hint" data-i18n="prefs_sync.auto_interval_hint">0 desactiva el temporizador. Usa segundos.</p>
+                </div>
               </div>
 
               <!-- Estado y acciones -->

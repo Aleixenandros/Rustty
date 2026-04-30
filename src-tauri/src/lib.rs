@@ -1,5 +1,6 @@
 mod commands;
 mod error;
+mod host_keys;
 mod keepass_manager;
 mod local_shell_manager;
 mod profiles;
@@ -138,6 +139,7 @@ pub fn run() {
             commands::sync_get_device_id,
             commands::sync_run,
             commands::sync_test_backend,
+            commands::sync_get_backend_folder,
             commands::sync_oauth_begin,
             commands::sync_oauth_complete,
             commands::sync_oauth_status,
