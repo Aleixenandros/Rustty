@@ -5,20 +5,22 @@
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
 
-> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable.
+> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Última versión: **0.2.6**. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
 
 ## Características principales
 
 - **Multi-protocolo**: conexiones SSH, SFTP y RDP (este último mediante `xfreerdp` / `mstsc` externos).
-- **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback y soporte de OSC 7 (seguimiento del `cwd` remoto).
-- **Panel SFTP integrado**: explorador de ficheros con subida / descarga, drag & drop, sigue automáticamente el directorio del terminal y permite elevar la sesión a **sudo** cuando el servidor lo permita.
+- **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F) y soporte de OSC 7 (seguimiento del `cwd` remoto).
+- **Panel SFTP integrado**: explorador de ficheros con **vista dividida remoto / local**, transferencia recursiva de carpetas, drag & drop, seguimiento automático del directorio del terminal y modo elevado a **sudo** cuando el servidor lo permita.
+- **Opciones avanzadas SSH por perfil**: keep-alive configurable, agent forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) en servidores antiguos.
 - **Multi-pestaña y vistas divididas**: trabaja con varias sesiones simultáneas, distribúyelas en *split* horizontal / vertical / grid y activa el *broadcast* para teclear en varias a la vez.
 - **Seguridad**:
   - Integración nativa con el keyring del sistema (KWallet, GNOME Keyring, macOS Keychain, Windows Credential Store).
   - Soporte para bases de datos **KeePass** (`.kdbx`) como fuente de contraseñas.
   - Atajo `Ctrl+P` para pegar la contraseña del perfil activo sin exponerla en pantalla.
-- **Copias de seguridad y sincronización E2E**: perfiles, preferencias, temas y atajos pueden sincronizarse con Google Drive, iCloud Drive, carpeta local / NAS o WebDAV. El blob remoto se cifra localmente con `age` y una passphrase maestra.
-- **Organización**: agrupa perfiles en carpetas y gestiona conexiones desde la barra lateral colapsable.
+  - Verificación de `known_hosts` con TOFU y aviso ante cambios de fingerprint.
+- **Copias de seguridad y sincronización E2E**: perfiles, preferencias, temas y atajos pueden sincronizarse con Google Drive, iCloud Drive, carpeta local / NAS o WebDAV. El blob remoto se cifra localmente con `age` y una passphrase maestra. Sincronización **por evento** (al iniciar y al detectar cambios locales) y **restauración de snapshots históricos** desde la pestaña de Copias.
+- **Organización**: agrupa conexiones en **perfiles-contenedor (workspaces)** independientes, en carpetas dentro de cada workspace, búsqueda rápida en la sidebar y duplicación de conexiones / sesiones desde el menú contextual.
 - **Personalización**: 11 temas base integrados (Catppuccin Mocha / Latte, Dracula, Nord, xterm, VS Code Dark+, Tango, Solarized Dark / Light, Gruvbox Dark, Tokyo Night, Monokai) y ajustes de cursor, scrollback y *bell*. Posibilidad de importar temas personalizados.
 - **Internacionalización**: interfaz traducida a español, inglés, francés y portugués. (Traducciones realizadas con IA)
 
@@ -59,6 +61,7 @@ Rustty incluye un **editor de atajos** en Preferencias → *Atajos* que permite 
 | `Ctrl+Alt+C`                   | Copiar selección del terminal                          |
 | `Ctrl+Alt+V`                   | Pegar en el terminal                                   |
 | `Ctrl+P`                       | Pegar la contraseña del perfil activo en el shell      |
+| `Ctrl+F`                       | Buscar dentro del buffer del terminal                  |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Aumentar / disminuir / restablecer el tamaño de fuente |
 
 ## Instalación
@@ -182,6 +185,8 @@ Rustty incluye una pestaña **Preferencias → Copias de seguridad** con tres fl
 - **Datos locales**: export/import JSON de perfiles para interoperabilidad y copias simples.
 
 La sincronización es opt-in y cifra el estado antes de subirlo. Se sincronizan perfiles, preferencias, temas personalizados y atajos. Nunca se sincronizan el keyring del sistema, la base KeePass desbloqueada ni rutas locales como `keepassPath` o `keepassKeyfile`.
+
+La sincronización se dispara al iniciar la app y cuando detecta cambios locales (debounce de 1,2 s). Antes de sobrescribir el blob remoto se guarda un snapshot cifrado; desde el desplegable **Restaurar copia** puedes volver a cualquier snapshot anterior disponible en el backend.
 
 Backends:
 

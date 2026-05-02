@@ -2,8 +2,36 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
-El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y
-el versionado se ajusta a [Semantic Versioning](https://semver.org/lang/es/).
+## [0.2.6] – 2026-05-02
+
+### Añadido
+- **Perfiles-contenedor (workspaces)**: cada conexión guarda su `workspace_id`.
+  El sidebar incluye un selector con las acciones Nuevo / Renombrar /
+  Eliminar; la lista de perfiles, el dashboard y la búsqueda se filtran
+  por el workspace activo, y el formulario de conexión muestra un selector
+  de workspace cuando hay más de uno. Los workspaces viajan con la
+  sincronización en la nube como parte del bundle de preferencias.
+
+### Cambiado
+- **Panel SFTP**: el panel remoto pasa a la izquierda y el local a la
+  derecha; las flechas centrales se reordenan para apuntar visualmente al
+  destino.
+- **Formulario de conexión**: eliminado el checkbox "Seguir CWD del terminal
+  en el panel SFTP" — el toggle está disponible en el propio panel SFTP
+  mediante el botón "CWD".
+- **Pantalla principal**: eliminadas las sombras de la barra de búsqueda
+  y de las tarjetas para una apariencia más plana.
+
+### Corregido
+- **Doble clic en la topbar**: ya no se maximiza y restaura en cascada. Se
+  delega completamente en el comportamiento nativo de
+  `data-tauri-drag-region`, que ahora maximiza/restaura una sola vez.
+
+### Traducciones
+- Añadidas las cadenas del switcher de workspaces en español, inglés,
+  francés y portugués.
+- Completadas en francés y portugués las cadenas `search_placeholder` y
+  `search_no_results` de la sidebar, que caían al fallback en español.
 
 ## [0.2.5] – 2026-05-02
 

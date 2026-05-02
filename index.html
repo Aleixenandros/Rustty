@@ -32,6 +32,15 @@
           </div>
         </div>
 
+        <div id="sidebar-workspace-wrap">
+          <button id="btn-workspace-switcher" type="button" class="workspace-switcher" data-i18n-title="sidebar.workspace_title" title="Cambiar de perfil">
+            <span class="workspace-icon" aria-hidden="true">📁</span>
+            <span id="workspace-current-name" class="workspace-name">Default</span>
+            <span class="workspace-caret" aria-hidden="true">▾</span>
+          </button>
+          <div id="workspace-menu" class="workspace-menu hidden" role="menu"></div>
+        </div>
+
         <div id="sidebar-search-wrap">
           <input type="search" id="sidebar-search" data-i18n-placeholder="sidebar.search_placeholder" placeholder="Buscar conexiones…" spellcheck="false" />
         </div>
@@ -284,6 +293,12 @@
             <input id="f-domain" type="text" data-i18n-placeholder="modal_conn.domain_ph" placeholder="WORKGROUP" />
           </div>
 
+          <!-- Selector de perfil contenedor (workspace). Solo visible si hay >1. -->
+          <div class="form-row hidden" id="field-workspace">
+            <label for="f-workspace" data-i18n="modal_conn.workspace">Perfil</label>
+            <select id="f-workspace"></select>
+          </div>
+
           <!-- Selector de carpeta (reemplaza al campo "Grupo") -->
           <div class="form-row">
             <label><span data-i18n="modal_conn.folder">Carpeta</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
@@ -350,16 +365,6 @@
               <input id="f-save-passphrase" type="checkbox" />
               <span data-i18n="modal_conn.save_passphrase">Guardar passphrase en el keyring del sistema</span>
             </label>
-          </div>
-
-          <div class="form-row" id="field-follow-cwd">
-            <label class="checkbox-label">
-              <input id="f-follow-cwd" type="checkbox" checked />
-              <span data-i18n="modal_conn.follow_cwd">Seguir CWD del terminal en el panel SFTP</span>
-            </label>
-            <p class="form-hint" data-i18n="modal_conn.follow_cwd_hint">
-              Al conectar inyecta un hook en el shell (bash/zsh) para reportar el directorio actual. Desactívalo si prefieres no modificar PROMPT_COMMAND.
-            </p>
           </div>
 
           <details class="form-advanced ssh-only" id="field-advanced">

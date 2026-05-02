@@ -302,6 +302,10 @@ const DEFAULT_PREFS = {
   checkUpdatesOnStartup: true,
   // Carpetas manuales, incluidas las vacías. Se espejan también en rustty-folders.
   userFolders:     [],
+  // Perfiles-contenedor (workspaces). Cada perfil agrupa su propio árbol de
+  // carpetas y conexiones. Por defecto solo existe "default".
+  workspaces:      [{ id: "default", name: "Default" }],
+  activeWorkspaceId: "default",
 };
 
 let prefs = { ...DEFAULT_PREFS };
@@ -317,6 +321,12 @@ function loadPrefs() {
   } else {
     prefs.userFolders = [...userFolders].sort();
   }
+  if (!Array.isArray(prefs.workspaces) || prefs.workspaces.length === 0) {
+    prefs.workspaces = [{ id: "default", name: "Default" }];
+  }
+  if (!prefs.workspaces.some((w) => w.id === prefs.activeWorkspaceId)) {
+    prefs.activeWorkspaceId = prefs.workspaces[0].id;
+  }
   if (!prefs.lang || !SUPPORTED_LANGS.includes(prefs.lang)) {
     prefs.lang = detectLanguage();
   }
@@ -324,6 +334,15 @@ function loadPrefs() {
   applyTranslations();
   registerAllCustomThemes();
   applyTheme(prefs.theme);
+}
+
+function getActiveWorkspaceId() {
+  return prefs.activeWorkspaceId || "default";
+}
+
+function profileBelongsToActiveWorkspace(p) {
+  const wid = p.workspace_id || "default";
+  return wid === getActiveWorkspaceId();
 }
 
 function savePrefs() {
@@ -1519,8 +1538,9 @@ function buildFolderTree() {
     ensureFolderPath(root, folderPath);
   }
 
-  // Luego añadir los perfiles en sus carpetas correspondientes
+  // Luego añadir los perfiles del workspace activo en sus carpetas
   for (const p of profiles) {
+    if (!profileBelongsToActiveWorkspace(p)) continue;
     if (!p.group) {
       root.connections.push(p);
     } else {
@@ -1614,8 +1634,10 @@ let _sidebarSearchQuery = "";
 
 function renderConnectionList() {
   const container = document.getElementById("connection-list");
+  renderWorkspaceSwitcher();
 
-  if (profiles.length === 0 && userFolders.size === 0) {
+  const activeProfiles = profiles.filter(profileBelongsToActiveWorkspace);
+  if (activeProfiles.length === 0 && userFolders.size === 0) {
     container.innerHTML = `
       <div class="empty-state">
         <p>Sin conexiones guardadas</p>
@@ -1676,6 +1698,99 @@ function applySidebarSearchFilter() {
     empty.className = "empty-state sidebar-empty-search";
     empty.textContent = t("sidebar.search_no_results");
     container.appendChild(empty);
+  }
+}
+
+function renderWorkspaceSwitcher() {
+  const nameEl = document.getElementById("workspace-current-name");
+  const menu   = document.getElementById("workspace-menu");
+  if (!nameEl || !menu) return;
+  const active = prefs.workspaces.find((w) => w.id === getActiveWorkspaceId())
+    || prefs.workspaces[0];
+  nameEl.textContent = active ? active.name : "Default";
+
+  const items = prefs.workspaces.map((w) => {
+    const active = w.id === getActiveWorkspaceId();
+    return `<button class="ws-item${active ? " active" : ""}" data-ws-action="select" data-ws-id="${escHtml(w.id)}">
+      <span>${active ? "● " : "○ "}${escHtml(w.name)}</span>
+    </button>`;
+  }).join("");
+  const canDelete = prefs.workspaces.length > 1;
+  menu.innerHTML = `${items}
+    <div class="ws-sep"></div>
+    <button class="ws-item" data-ws-action="new"><span>＋ ${escHtml(t("sidebar.workspace_new"))}</span></button>
+    <button class="ws-item" data-ws-action="rename"><span>✎ ${escHtml(t("sidebar.workspace_rename"))}</span></button>
+    <button class="ws-item danger" data-ws-action="delete" ${canDelete ? "" : "disabled"}><span>✕ ${escHtml(t("sidebar.workspace_delete"))}</span></button>`;
+}
+
+function toggleWorkspaceMenu(open) {
+  const menu = document.getElementById("workspace-menu");
+  if (!menu) return;
+  if (open === undefined) menu.classList.toggle("hidden");
+  else menu.classList.toggle("hidden", !open);
+}
+
+function handleWorkspaceMenuClick(action, wsId) {
+  if (action === "select" && wsId) {
+    if (wsId !== getActiveWorkspaceId()) {
+      prefs.activeWorkspaceId = wsId;
+      savePrefs();
+      renderConnectionList();
+    }
+    toggleWorkspaceMenu(false);
+    return;
+  }
+  if (action === "new") {
+    const name = prompt(t("sidebar.workspace_prompt_new"));
+    if (name && name.trim()) {
+      const id = `ws-${crypto.randomUUID()}`;
+      prefs.workspaces.push({ id, name: name.trim() });
+      prefs.activeWorkspaceId = id;
+      savePrefs();
+      renderConnectionList();
+    }
+    toggleWorkspaceMenu(false);
+    return;
+  }
+  if (action === "rename") {
+    const cur = prefs.workspaces.find((w) => w.id === getActiveWorkspaceId());
+    if (!cur) return;
+    const name = prompt(t("sidebar.workspace_prompt_rename"), cur.name);
+    if (name && name.trim()) {
+      cur.name = name.trim();
+      savePrefs();
+      renderConnectionList();
+    }
+    toggleWorkspaceMenu(false);
+    return;
+  }
+  if (action === "delete") {
+    if (prefs.workspaces.length <= 1) return;
+    const cur = prefs.workspaces.find((w) => w.id === getActiveWorkspaceId());
+    if (!cur) return;
+    const inUse = profiles.some((p) => (p.workspace_id || "default") === cur.id);
+    const msg = inUse
+      ? t("sidebar.workspace_confirm_delete_full")
+      : t("sidebar.workspace_confirm_delete");
+    if (!confirm(msg)) return;
+    const finalize = () => {
+      prefs.workspaces = prefs.workspaces.filter((w) => w.id !== cur.id);
+      prefs.activeWorkspaceId = prefs.workspaces[0].id;
+      savePrefs();
+      renderConnectionList();
+    };
+    if (inUse) {
+      const toDelete = profiles.filter((p) => (p.workspace_id || "default") === cur.id);
+      Promise.all(toDelete.map((p) => invoke("delete_profile", { id: p.id }).catch(() => null)))
+        .then(async () => {
+          try { profiles = await invoke("get_profiles"); } catch {}
+          finalize();
+        });
+    } else {
+      finalize();
+    }
+    toggleWorkspaceMenu(false);
+    return;
   }
 }
 
@@ -1760,10 +1875,11 @@ function dashboardProtocol(profile) {
 }
 
 function getDashboardCandidates(query = "") {
-  const recent = getRecentProfiles();
+  const recent = getRecentProfiles().filter((item) => profileBelongsToActiveWorkspace(item.profile));
   const recentIds = new Set(recent.map((item) => item.profile.id));
+  const scoped = profiles.filter(profileBelongsToActiveWorkspace);
   if (query) {
-    return profiles
+    return scoped
       .filter((profile) => profileMatchesDashboardQuery(profile, query))
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((profile) => ({
@@ -1771,7 +1887,7 @@ function getDashboardCandidates(query = "") {
         lastConnectedAt: recent.find((item) => item.profile.id === profile.id)?.lastConnectedAt || null,
       }));
   }
-  const rest = profiles
+  const rest = scoped
     .filter((profile) => !recentIds.has(profile.id))
     .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "") || a.name.localeCompare(b.name))
     .map((profile) => ({ profile, lastConnectedAt: null }));
@@ -2222,8 +2338,25 @@ function openNewConnectionModal(preselectedFolder = null) {
     updateConnTypeFields("ssh");
   });
   populateFolderSelect(preselectedFolder);
+  populateWorkspaceFormSelect(getActiveWorkspaceId());
   document.getElementById("modal-overlay").classList.remove("hidden");
   document.getElementById("f-name").focus();
+}
+
+function populateWorkspaceFormSelect(selectedId) {
+  const field = document.getElementById("field-workspace");
+  const sel = document.getElementById("f-workspace");
+  if (!field || !sel) return;
+  const list = Array.isArray(prefs.workspaces) ? prefs.workspaces : [];
+  if (list.length <= 1) {
+    field.classList.add("hidden");
+    sel.innerHTML = "";
+    return;
+  }
+  field.classList.remove("hidden");
+  sel.innerHTML = list
+    .map((w) => `<option value="${escHtml(w.id)}"${w.id === selectedId ? " selected" : ""}>${escHtml(w.name)}</option>`)
+    .join("");
 }
 
 function openEditConnectionModal(profileId) {
@@ -2249,11 +2382,11 @@ function openEditConnectionModal(profileId) {
   refreshStoredCredentialCheckboxes(profile);
 
   populateFolderSelect(profile.group || "");
-  document.getElementById("f-follow-cwd").checked = profile.follow_cwd !== false;
   document.getElementById("f-keep-alive").value = profile.keep_alive_secs ?? "";
   document.getElementById("f-allow-legacy").checked = !!profile.allow_legacy_algorithms;
   document.getElementById("f-agent-forwarding").checked = !!profile.agent_forwarding;
   document.getElementById("f-x11-forwarding").checked = !!profile.x11_forwarding;
+  populateWorkspaceFormSelect(profile.workspace_id || getActiveWorkspaceId());
   refreshKeepassStatus().then(() => {
     document.getElementById("f-use-keepass").checked = !!profile.keepass_entry_uuid;
     populateKeepassEntrySelect(profile.keepass_entry_uuid || null);
@@ -2339,7 +2472,6 @@ function updateConnTypeFields(type, adjustPort = false) {
   document.getElementById("field-key-path").classList.add("hidden");
   document.getElementById("field-passphrase").classList.add("hidden");
   document.getElementById("field-save-passphrase").classList.add("hidden");
-  document.getElementById("field-follow-cwd").classList.toggle("hidden", isRdp);
   document.getElementById("field-advanced").classList.toggle("hidden", isRdp);
 
   if (isRdp) {
@@ -2448,6 +2580,15 @@ async function saveAndClose(shouldConnect) {
     ? (document.getElementById("f-keepass-entry").value || null)
     : null;
 
+  const wsSelect = document.getElementById("f-workspace");
+  const wsFromForm = wsSelect && !wsSelect.closest(".form-row").classList.contains("hidden")
+    ? wsSelect.value
+    : null;
+  const fallbackWs = editingProfileId
+    ? (profiles.find((p) => p.id === editingProfileId)?.workspace_id || getActiveWorkspaceId())
+    : getActiveWorkspaceId();
+  const workspaceId = wsFromForm || fallbackWs || "default";
+
   const profile = {
     id:                  editingProfileId || crypto.randomUUID(),
     name:                document.getElementById("f-name").value.trim(),
@@ -2459,8 +2600,9 @@ async function saveAndClose(shouldConnect) {
     auth_type:           authType,
     key_path:            keyPath,
     group,
+    workspace_id:        workspaceId,
     keepass_entry_uuid:  keepassEntryUuid,
-    follow_cwd:          document.getElementById("f-follow-cwd").checked,
+    follow_cwd:          true,
     keep_alive_secs:     keepAliveFromInput(document.getElementById("f-keep-alive").value),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     agent_forwarding:    document.getElementById("f-agent-forwarding").checked,
@@ -3788,8 +3930,8 @@ function buildSftpPanel(sessionId) {
     </div>
 
     <div class="sftp-divider">
-      <button class="sftp-xfer-btn" data-sftp-xfer="upload" title="Subir selección al remoto">⇨</button>
-      <button class="sftp-xfer-btn" data-sftp-xfer="download" title="Descargar selección al local">⇦</button>
+      <button class="sftp-xfer-btn" data-sftp-xfer="download" title="Descargar selección al local">⇨</button>
+      <button class="sftp-xfer-btn" data-sftp-xfer="upload" title="Subir selección al remoto">⇦</button>
     </div>
 
     <div class="sftp-side sftp-side-remote" data-side="remote">
@@ -4422,6 +4564,28 @@ function bindUIEvents() {
   // Reemplazar todos los <select> nativos por el dropdown personalizado
   document.querySelectorAll("select").forEach(enhanceSelect);
   enhanceNumberSteppers();
+
+  // Workspace switcher
+  const wsBtn = document.getElementById("btn-workspace-switcher");
+  const wsMenu = document.getElementById("workspace-menu");
+  if (wsBtn && wsMenu) {
+    wsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleWorkspaceMenu();
+    });
+    wsMenu.addEventListener("click", (e) => {
+      const btn = e.target.closest(".ws-item");
+      if (!btn || btn.disabled) return;
+      handleWorkspaceMenuClick(btn.dataset.wsAction, btn.dataset.wsId);
+    });
+    document.addEventListener("click", (e) => {
+      if (!wsMenu.classList.contains("hidden") &&
+          !wsMenu.contains(e.target) &&
+          !wsBtn.contains(e.target)) {
+        toggleWorkspaceMenu(false);
+      }
+    });
+  }
 
   // Búsqueda en la sidebar
   const sidebarSearch = document.getElementById("sidebar-search");
@@ -5199,12 +5363,8 @@ async function initWindowControls() {
     await win.close().catch(() => win.destroy());
   });
 
-  // Doble clic en la zona arrastrable maximiza/restaura.
-  document.getElementById("tab-bar-drag")
-    ?.addEventListener("dblclick", async () => {
-      await win.toggleMaximize();
-      scheduleWindowStateSave();
-    });
+  // El doble clic en data-tauri-drag-region ya maximiza/restaura nativamente;
+  // no añadimos listener JS para evitar el doble toggle (maximiza+restaura).
 
   // Mantener el icono maximizar/restaurar sincronizado con el estado.
   const syncMaximized = async () => {

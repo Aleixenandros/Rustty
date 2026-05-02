@@ -257,6 +257,98 @@ body.sidebar-collapsed #sidebar-resize-handle {
   color: var(--text);
 }
 
+#sidebar-workspace-wrap {
+  position: relative;
+  padding: 6px 10px 0;
+  background: var(--mantle);
+}
+
+.workspace-switcher {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  background: var(--base);
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.workspace-switcher:hover {
+  border-color: var(--blue);
+}
+
+.workspace-switcher .workspace-icon {
+  font-size: 13px;
+}
+
+.workspace-switcher .workspace-name {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.workspace-switcher .workspace-caret {
+  color: var(--overlay1);
+  font-size: 10px;
+}
+
+.workspace-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 10px;
+  right: 10px;
+  z-index: 40;
+  background: var(--mantle);
+  border: 1px solid var(--surface1);
+  border-radius: 6px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-menu.hidden { display: none; }
+
+.workspace-menu .ws-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-menu .ws-item:hover {
+  background: var(--surface0);
+}
+
+.workspace-menu .ws-item.active {
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.workspace-menu .ws-item.danger {
+  color: var(--red);
+}
+
+.workspace-menu .ws-sep {
+  height: 1px;
+  background: var(--surface0);
+  margin: 4px 0;
+}
+
 #sidebar-search-wrap {
   padding: 6px 10px 4px;
   border-bottom: 1px solid var(--surface0);
@@ -1002,7 +1094,6 @@ body.terminal-bell-visual::after {
   border: 1px solid var(--surface1);
   border-radius: 7px;
   background: color-mix(in srgb, var(--mantle) 78%, transparent);
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
 }
 
 .dashboard-search-wrap:focus-within {
@@ -1092,7 +1183,6 @@ body.terminal-bell-visual::after {
   border: 1px solid var(--surface0);
   border-radius: 8px;
   background: color-mix(in srgb, var(--mantle) 78%, var(--base));
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
 }
 
 .dashboard-results-list {
@@ -3022,7 +3112,7 @@ html.theme-monokai {
   grid-template-columns: 1fr 44px 1fr;
   grid-template-rows: 1fr auto;
   grid-template-areas:
-    "local divider remote"
+    "remote divider local"
     "transfers transfers transfers";
   gap: 0;
 }
@@ -3040,7 +3130,7 @@ html.theme-monokai {
   border-right: 1px solid var(--surface0);
 }
 
-.sftp-side-remote { border-right: none; }
+.sftp-side-local { border-right: none; }
 
 .sftp-side-title {
   font-size: 11px;

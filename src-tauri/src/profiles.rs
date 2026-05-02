@@ -24,6 +24,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_workspace_id() -> String {
+    "default".to_string()
+}
+
 /// Perfil de conexión guardado por el usuario.
 /// Soporta SSH y RDP. No almacena contraseñas en texto plano; usa keyring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +53,10 @@ pub struct ConnectionProfile {
     pub key_path: Option<String>,
     /// Grupo o etiqueta para organizar conexiones
     pub group: Option<String>,
+    /// Identificador del perfil-contenedor (workspace) al que pertenece.
+    /// Por defecto "default" para no romper perfiles previos a la feature.
+    #[serde(default = "default_workspace_id")]
+    pub workspace_id: String,
     /// UUID de la entrada KeePass cuya contraseña se usará en vez del keyring.
     /// Solo aplica cuando `auth_type == Password` y la DB está desbloqueada.
     #[serde(default)]
