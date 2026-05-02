@@ -32,6 +32,10 @@
           </div>
         </div>
 
+        <div id="sidebar-search-wrap">
+          <input type="search" id="sidebar-search" data-i18n-placeholder="sidebar.search_placeholder" placeholder="Buscar conexiones…" spellcheck="false" />
+        </div>
+
         <div id="connection-list">
           <div class="empty-state">
             <p data-i18n="sidebar.empty_no_conns">Sin conexiones guardadas</p>
@@ -46,6 +50,8 @@
           </span>
         </button>
       </aside>
+
+      <div id="sidebar-resize-handle" aria-hidden="true"></div>
 
       <!-- ── Área principal ── -->
       <main id="main-area">
@@ -355,6 +361,48 @@
               Al conectar inyecta un hook en el shell (bash/zsh) para reportar el directorio actual. Desactívalo si prefieres no modificar PROMPT_COMMAND.
             </p>
           </div>
+
+          <details class="form-advanced ssh-only" id="field-advanced">
+            <summary data-i18n="modal_conn.advanced">Opciones avanzadas</summary>
+
+            <div class="form-row">
+              <label for="f-keep-alive" data-i18n="modal_conn.keep_alive">Keep-alive (segundos)</label>
+              <input id="f-keep-alive" type="number" min="0" max="3600" step="5" placeholder="0" />
+              <p class="form-hint" data-i18n="modal_conn.keep_alive_hint">
+                0 = desactivado. Envía un paquete keepalive al servidor cada N segundos para evitar caídas por NAT.
+              </p>
+            </div>
+
+            <div class="form-row">
+              <label class="checkbox-label">
+                <input id="f-allow-legacy" type="checkbox" />
+                <span data-i18n="modal_conn.allow_legacy">Permitir cifrados / kex / MAC antiguos</span>
+              </label>
+              <p class="form-hint warning" data-i18n="modal_conn.allow_legacy_hint">
+                ⚠️ Añade aes-cbc, dh-sha1, hmac-sha1 y ssh-rsa a la negociación. Reduce la seguridad: úsalo solo con servidores antiguos.
+              </p>
+            </div>
+
+            <div class="form-row">
+              <label class="checkbox-label">
+                <input id="f-agent-forwarding" type="checkbox" />
+                <span data-i18n="modal_conn.agent_forwarding">Reenviar agente SSH (Agent forwarding)</span>
+              </label>
+              <p class="form-hint" data-i18n="modal_conn.agent_forwarding_hint">
+                Reusa el socket del agente local ($SSH_AUTH_SOCK) para autenticar saltos desde el host remoto.
+              </p>
+            </div>
+
+            <div class="form-row">
+              <label class="checkbox-label">
+                <input id="f-x11-forwarding" type="checkbox" />
+                <span data-i18n="modal_conn.x11_forwarding">Reenviar X11</span>
+              </label>
+              <p class="form-hint" data-i18n="modal_conn.x11_forwarding_hint">
+                Requiere un X server local en localhost:6000 (DISPLAY=:0). En Windows o macOS necesitarás un servidor X dedicado.
+              </p>
+            </div>
+          </details>
 
           <div class="modal-actions">
             <button type="button" class="btn-secondary" id="btn-modal-cancel" data-i18n="modal_conn.cancel">Cancelar</button>
@@ -910,21 +958,22 @@
               </div>
 
               <div class="settings-row settings-row-inline">
-                <label for="sync-auto-enabled" data-i18n="prefs_sync.auto_sync">Auto-sync</label>
-                <div class="settings-control">
-                  <label class="checkbox-label">
-                    <input type="checkbox" id="sync-auto-enabled" />
-                    <span data-i18n="prefs_sync.auto_sync_enabled">Sí</span>
-                  </label>
-                  <p class="form-hint" data-i18n="prefs_sync.auto_sync_hint">Sincroniza al detectar cambios y cada 5 minutos.</p>
-                </div>
-              </div>
-
-              <div class="settings-row settings-row-inline">
                 <label for="sync-history-keep" data-i18n="prefs_sync.history_keep">Copias históricas</label>
                 <div class="settings-control">
                   <input type="number" id="sync-history-keep" min="1" max="500" step="1" placeholder="30" />
-                  <p class="form-hint" data-i18n="prefs_sync.history_keep_hint">Número de snapshots cifrados a conservar antes de podar.</p>
+                  <p class="form-hint" data-i18n="prefs_sync.history_keep_hint">Número de snapshots cifrados a conservar antes de podar. La sincronización ocurre al iniciar y cuando detecta cambios locales.</p>
+                </div>
+              </div>
+
+              <div class="settings-row settings-row-inline" id="sync-snapshots-row">
+                <label for="sync-snapshots" data-i18n="prefs_sync.snapshots">Restaurar copia</label>
+                <div class="settings-control sync-snapshots-control">
+                  <select id="sync-snapshots">
+                    <option value="" data-i18n="prefs_sync.snapshots_none">— Sin copias disponibles —</option>
+                  </select>
+                  <button type="button" class="btn-secondary" id="btn-sync-restore" data-i18n="prefs_sync.snapshots_restore">Restaurar</button>
+                  <button type="button" class="btn-icon" id="btn-sync-snapshots-refresh" data-i18n-aria-label="prefs_sync.snapshots_refresh" aria-label="Refrescar copias">⟳</button>
+                  <p class="form-hint" data-i18n="prefs_sync.snapshots_hint">Selecciona una copia previa y pulsa "Restaurar" para sustituir tu estado actual con esa versión.</p>
                 </div>
               </div>
 

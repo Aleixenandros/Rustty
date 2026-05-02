@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 
 use crate::error::AppError;
@@ -58,6 +57,22 @@ pub struct ConnectionProfile {
     /// pueda seguir el cwd del terminal. Solo aplica a conexiones SSH.
     #[serde(default = "default_true")]
     pub follow_cwd: bool,
+    /// Intervalo en segundos para enviar keepalives al servidor SSH.
+    /// `None` o `0` deshabilita el keepalive. Útil contra caídas por NAT.
+    #[serde(default)]
+    pub keep_alive_secs: Option<u32>,
+    /// Si true, extiende las listas de algoritmos preferidos con variantes
+    /// legacy (aes-cbc, 3des-cbc, dh-group14-sha1, hmac-sha1, ssh-rsa) para
+    /// poder conectar con servidores antiguos. Reduce la seguridad.
+    #[serde(default)]
+    pub allow_legacy_algorithms: bool,
+    /// Si true, permite reenviar el agente SSH local hacia la sesión remota.
+    #[serde(default)]
+    pub agent_forwarding: bool,
+    /// Si true, solicita X11 forwarding al servidor. Requiere un X server
+    /// local escuchando en `localhost:6000` (DISPLAY=:0).
+    #[serde(default)]
+    pub x11_forwarding: bool,
     /// Timestamp ISO 8601 de creación
     pub created_at: String,
     /// Timestamp ISO 8601 de la última modificación. Usado por la
@@ -118,6 +133,7 @@ impl ProfileManager {
 
 #[cfg(unix)]
 fn write_private_file(path: &PathBuf, data: &[u8]) -> Result<(), AppError> {
+    use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut file = fs::OpenOptions::new()

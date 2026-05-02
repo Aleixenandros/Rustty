@@ -84,6 +84,18 @@ enum SftpCommand {
         transfer_id: String,
         reply: Reply<()>,
     },
+    DownloadDir {
+        remote: String,
+        local: PathBuf,
+        transfer_id: String,
+        reply: Reply<()>,
+    },
+    UploadDir {
+        local: PathBuf,
+        remote: String,
+        transfer_id: String,
+        reply: Reply<()>,
+    },
     Close,
 }
 
@@ -228,6 +240,36 @@ impl SftpManager {
         })
     }
 
+    pub fn download_dir(
+        &self,
+        session_id: &str,
+        remote: String,
+        local: PathBuf,
+        transfer_id: String,
+    ) -> Result<(), String> {
+        self.send(session_id, |reply| SftpCommand::DownloadDir {
+            remote,
+            local,
+            transfer_id,
+            reply,
+        })
+    }
+
+    pub fn upload_dir(
+        &self,
+        session_id: &str,
+        local: PathBuf,
+        remote: String,
+        transfer_id: String,
+    ) -> Result<(), String> {
+        self.send(session_id, |reply| SftpCommand::UploadDir {
+            local,
+            remote,
+            transfer_id,
+            reply,
+        })
+    }
+
     pub fn disconnect(&self, session_id: &str) -> Result<(), String> {
         if let Some(handle) = self.sessions.lock().unwrap().remove(session_id) {
             let _ = handle.tx.send(SftpCommand::Close);
@@ -331,6 +373,25 @@ async fn run_sftp_worker(
                 let res = do_upload(&sftp, &local, &remote, &transfer_id, &app_handle).await;
                 let _ = reply.send(res);
             }
+            SftpCommand::DownloadDir {
+                remote,
+                local,
+                transfer_id,
+                reply,
+            } => {
+                let res =
+                    do_download_dir(&sftp, &remote, &local, &transfer_id, &app_handle).await;
+                let _ = reply.send(res);
+            }
+            SftpCommand::UploadDir {
+                local,
+                remote,
+                transfer_id,
+                reply,
+            } => {
+                let res = do_upload_dir(&sftp, &local, &remote, &transfer_id, &app_handle).await;
+                let _ = reply.send(res);
+            }
             SftpCommand::Close => break,
         }
     }
@@ -354,7 +415,8 @@ async fn connect_and_open_sftp(
     });
 
     let addr = format!("{}:{}", profile.host, profile.port);
-    let (client_handler, host_key_failure) = host_keys::client(profile.host.clone(), profile.port);
+    let (client_handler, host_key_failure) =
+        host_keys::client(profile.host.clone(), profile.port, false, false);
     let mut handle = match client::connect(config, addr.clone(), client_handler).await {
         Ok(handle) => handle,
         Err(err) => {
@@ -673,4 +735,87 @@ fn join_remote(base: &str, name: &str) -> String {
     } else {
         format!("{base}/{name}")
     }
+}
+
+/// Recorre un directorio remoto y descarga su contenido al `local`,
+/// preservando la estructura. Cada archivo emite progreso en su propio evento
+/// `sftp-progress-{transfer_id}-{idx}` y al final se emite el resumen en
+/// `sftp-progress-{transfer_id}` con `done: true`.
+async fn do_download_dir(
+    sftp: &SftpSession,
+    remote: &str,
+    local: &Path,
+    transfer_id: &str,
+    app: &AppHandle,
+) -> Result<(), String> {
+    tokio::fs::create_dir_all(local)
+        .await
+        .map_err(|e| e.to_string())?;
+    let summary_event = format!("sftp-progress-{transfer_id}");
+    let mut idx: u32 = 0;
+
+    let mut stack = vec![(remote.to_string(), local.to_path_buf())];
+    while let Some((rdir, ldir)) = stack.pop() {
+        let entries = do_list_dir(sftp, &rdir).await?;
+        for e in entries {
+            let local_target = ldir.join(&e.name);
+            if e.is_dir {
+                tokio::fs::create_dir_all(&local_target)
+                    .await
+                    .map_err(|err| err.to_string())?;
+                stack.push((e.path.clone(), local_target));
+            } else if !e.is_symlink {
+                idx += 1;
+                let sub_id = format!("{transfer_id}-{idx}");
+                do_download(sftp, &e.path, &local_target, &sub_id, app).await?;
+            }
+        }
+    }
+    let _ = app.emit(
+        &summary_event,
+        serde_json::json!({
+            "transferred": idx as u64, "total": idx as u64, "done": true, "kind": "dir",
+        }),
+    );
+    Ok(())
+}
+
+/// Sube recursivamente un directorio local al `remote`. Crea las carpetas
+/// remotas conforme avanza y reusa `do_upload` para los archivos.
+async fn do_upload_dir(
+    sftp: &SftpSession,
+    local: &Path,
+    remote: &str,
+    transfer_id: &str,
+    app: &AppHandle,
+) -> Result<(), String> {
+    let _ = sftp.create_dir(remote.to_string()).await; // ignorar si ya existe
+    let summary_event = format!("sftp-progress-{transfer_id}");
+    let mut idx: u32 = 0;
+
+    let mut stack = vec![(local.to_path_buf(), remote.to_string())];
+    while let Some((ldir, rdir)) = stack.pop() {
+        let mut read = tokio::fs::read_dir(&ldir).await.map_err(|e| e.to_string())?;
+        while let Some(entry) = read.next_entry().await.map_err(|e| e.to_string())? {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path();
+            let remote_target = join_remote(&rdir, &name);
+            let ft = entry.file_type().await.map_err(|e| e.to_string())?;
+            if ft.is_dir() {
+                let _ = sftp.create_dir(remote_target.clone()).await;
+                stack.push((path, remote_target));
+            } else if ft.is_file() {
+                idx += 1;
+                let sub_id = format!("{transfer_id}-{idx}");
+                do_upload(sftp, &path, &remote_target, &sub_id, app).await?;
+            }
+        }
+    }
+    let _ = app.emit(
+        &summary_event,
+        serde_json::json!({
+            "transferred": idx as u64, "total": idx as u64, "done": true, "kind": "dir",
+        }),
+    );
+    Ok(())
 }

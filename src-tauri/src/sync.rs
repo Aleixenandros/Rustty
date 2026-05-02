@@ -192,7 +192,7 @@ pub struct SyncConfig {
     #[serde(default)]
     pub selective: SyncSelective,
     /// Si true, el frontend sincroniza al detectar cambios y cada 5 minutos.
-    #[serde(default)]
+    #[serde(default = "default_auto_sync_enabled")]
     pub auto_sync_enabled: bool,
     /// Campo legacy: 0 = manual; >0 = intervalo antiguo en segundos.
     #[serde(default)]
@@ -209,6 +209,10 @@ fn default_history_keep() -> usize {
     DEFAULT_HISTORY_KEEP
 }
 
+fn default_auto_sync_enabled() -> bool {
+    true
+}
+
 impl Default for SyncConfig {
     fn default() -> Self {
         Self {
@@ -218,8 +222,8 @@ impl Default for SyncConfig {
             webdav: WebDavConfig::default(),
             google_drive: GoogleDriveConfig::default(),
             selective: SyncSelective::default(),
-            auto_sync_enabled: false,
-            auto_interval_seconds: 0,
+            auto_sync_enabled: true,
+            auto_interval_seconds: 300,
             history_keep: DEFAULT_HISTORY_KEEP,
             last_sync_at: None,
         }
@@ -514,6 +518,24 @@ pub trait SyncBackend: Send + Sync {
         Ok(())
     }
     async fn write(&self, data: &[u8]) -> Result<(), AppError>;
+    async fn list_snapshots(&self) -> Result<Vec<SnapshotEntry>, AppError> {
+        Ok(Vec::new())
+    }
+    async fn read_snapshot(&self, _id: &str) -> Result<Option<Vec<u8>>, AppError> {
+        Ok(None)
+    }
+}
+
+/// Metadatos de una copia histórica disponible en el backend remoto.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotEntry {
+    /// Identificador opaco para el backend (ruta absoluta, file id de Drive,
+    /// nombre WebDAV…). El frontend solo lo guarda como `value` del select.
+    pub id: String,
+    /// Nombre legible para el usuario (timestamp formateado).
+    pub label: String,
+    /// Timestamp ISO 8601 si el backend lo expone.
+    pub modified: Option<String>,
 }
 
 pub struct LocalBackend {
@@ -565,6 +587,90 @@ impl SyncBackend for LocalBackend {
             .map_err(|e| AppError::Sync(format!("archivar remoto local: {e}")))?;
         prune_local_history(&history, keep).await?;
         Ok(())
+    }
+
+    async fn list_snapshots(&self) -> Result<Vec<SnapshotEntry>, AppError> {
+        let Some(parent) = self.path.parent() else {
+            return Ok(Vec::new());
+        };
+        let history = parent.join(HISTORY_DIR);
+        let mut dir = match tokio::fs::read_dir(&history).await {
+            Ok(d) => d,
+            Err(_) => return Ok(Vec::new()),
+        };
+        let mut out = Vec::new();
+        while let Some(entry) = dir
+            .next_entry()
+            .await
+            .map_err(|e| AppError::Sync(format!("leer histórico local: {e}")))?
+        {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.starts_with("rustty-sync-") || !name.ends_with(".bin") {
+                continue;
+            }
+            let modified = entry
+                .metadata()
+                .await
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| {
+                    let dur = t.duration_since(std::time::UNIX_EPOCH).ok()?;
+                    Some(
+                        DateTime::<Utc>::from_timestamp(dur.as_secs() as i64, 0)?
+                            .to_rfc3339(),
+                    )
+                });
+            out.push(SnapshotEntry {
+                id: entry.path().to_string_lossy().into_owned(),
+                label: snapshot_label_from_filename(&name),
+                modified,
+            });
+        }
+        out.sort_by(|a, b| b.id.cmp(&a.id));
+        Ok(out)
+    }
+
+    async fn read_snapshot(&self, id: &str) -> Result<Option<Vec<u8>>, AppError> {
+        // Validamos que el `id` esté dentro de nuestro HISTORY_DIR para evitar
+        // que un valor manipulado lea un fichero arbitrario.
+        let Some(parent) = self.path.parent() else {
+            return Ok(None);
+        };
+        let history = parent.join(HISTORY_DIR);
+        let target = PathBuf::from(id);
+        if target.parent() != Some(history.as_path()) {
+            return Err(AppError::Sync("Snapshot fuera del directorio histórico".into()));
+        }
+        if !target.exists() {
+            return Ok(None);
+        }
+        let bytes = tokio::fs::read(&target)
+            .await
+            .map_err(|e| AppError::Sync(format!("leer snapshot local: {e}")))?;
+        Ok(Some(bytes))
+    }
+}
+
+fn snapshot_label_from_filename(name: &str) -> String {
+    // rustty-sync-YYYYMMDDTHHMMSSZ.bin → "YYYY-MM-DD HH:MM:SS UTC"
+    let stripped = name
+        .strip_prefix("rustty-sync-")
+        .and_then(|s| s.strip_suffix(".bin"))
+        .unwrap_or(name);
+    if stripped.len() == 16 && stripped.as_bytes().get(8) == Some(&b'T') {
+        let date = &stripped[..8];
+        let time = &stripped[9..15];
+        format!(
+            "{}-{}-{} {}:{}:{} UTC",
+            &date[..4],
+            &date[4..6],
+            &date[6..8],
+            &time[..2],
+            &time[2..4],
+            &time[4..6],
+        )
+    } else {
+        stripped.to_string()
     }
 }
 
@@ -722,6 +828,78 @@ impl SyncBackend for WebDavBackend {
         }
         prune_webdav_history(&client, base, &self.username, &self.password, keep).await?;
         Ok(())
+    }
+
+    async fn list_snapshots(&self) -> Result<Vec<SnapshotEntry>, AppError> {
+        let Some((base, _)) = self.url.rsplit_once('/') else {
+            return Ok(Vec::new());
+        };
+        let client = http_client(20)?;
+        let history_base = format!("{}/{}", base, urlencoding::encode(HISTORY_DIR));
+        let resp = client
+            .request(
+                reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+                &history_base,
+            )
+            .basic_auth(&self.username, Some(&self.password))
+            .header("Depth", "1")
+            .send()
+            .await
+            .map_err(|e| AppError::Sync(format!("webdav snapshots PROPFIND: {e}")))?;
+        if !resp.status().is_success() {
+            return Ok(Vec::new());
+        }
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| AppError::Sync(format!("webdav snapshots body: {e}")))?;
+        let mut names = webdav_history_filenames(&body);
+        names.sort();
+        names.reverse();
+        Ok(names
+            .into_iter()
+            .map(|name| SnapshotEntry {
+                label: snapshot_label_from_filename(&name),
+                modified: None,
+                id: name,
+            })
+            .collect())
+    }
+
+    async fn read_snapshot(&self, id: &str) -> Result<Option<Vec<u8>>, AppError> {
+        if !id.starts_with("rustty-sync-") || !id.ends_with(".bin") {
+            return Err(AppError::Sync("Identificador de snapshot inválido".into()));
+        }
+        let Some((base, _)) = self.url.rsplit_once('/') else {
+            return Ok(None);
+        };
+        let url = format!(
+            "{}/{}/{}",
+            base,
+            urlencoding::encode(HISTORY_DIR),
+            urlencoding::encode(id)
+        );
+        let client = http_client(30)?;
+        let resp = client
+            .get(&url)
+            .basic_auth(&self.username, Some(&self.password))
+            .send()
+            .await
+            .map_err(|e| AppError::Sync(format!("webdav snapshot GET: {e}")))?;
+        if resp.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(AppError::Sync(format!(
+                "webdav snapshot GET status: {}",
+                resp.status()
+            )));
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| AppError::Sync(format!("webdav snapshot body: {e}")))?;
+        Ok(Some(bytes.to_vec()))
     }
 }
 
@@ -1057,6 +1235,90 @@ impl SyncBackend for GoogleDriveBackend {
         )
         .await?;
         self.prune_history(&client, &token, keep).await
+    }
+
+    async fn list_snapshots(&self) -> Result<Vec<SnapshotEntry>, AppError> {
+        let client = http_client(20)?;
+        let token = self.access_token().await?;
+        let prefix = format!("{}-rustty-sync-", HISTORY_DIR);
+        let q = format!(
+            "name contains '{}' and 'appDataFolder' in parents and trashed=false",
+            prefix
+        );
+        let resp = client
+            .get("https://www.googleapis.com/drive/v3/files")
+            .bearer_auth(&token)
+            .query(&[
+                ("spaces", "appDataFolder"),
+                ("fields", "files(id,name,modifiedTime)"),
+                ("q", q.as_str()),
+                ("pageSize", "200"),
+            ])
+            .send()
+            .await
+            .map_err(|e| AppError::Sync(format!("google snapshots list: {e}")))?;
+        if !resp.status().is_success() {
+            return Ok(Vec::new());
+        }
+        let value: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Sync(format!("google snapshots json: {e}")))?;
+        let mut out: Vec<SnapshotEntry> = value
+            .get("files")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|file| {
+                let name = file.get("name")?.as_str()?.to_string();
+                let id = file.get("id")?.as_str()?.to_string();
+                let modified = file
+                    .get("modifiedTime")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let label_src = name
+                    .strip_prefix(&format!("{}-", HISTORY_DIR))
+                    .unwrap_or(&name)
+                    .to_string();
+                Some(SnapshotEntry {
+                    id,
+                    label: snapshot_label_from_filename(&label_src),
+                    modified,
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| b.label.cmp(&a.label));
+        Ok(out)
+    }
+
+    async fn read_snapshot(&self, id: &str) -> Result<Option<Vec<u8>>, AppError> {
+        if id.is_empty() || id.contains('/') {
+            return Err(AppError::Sync("Identificador de snapshot inválido".into()));
+        }
+        let client = http_client(30)?;
+        let token = self.access_token().await?;
+        let url = format!("https://www.googleapis.com/drive/v3/files/{id}");
+        let resp = client
+            .get(url)
+            .bearer_auth(&token)
+            .query(&[("alt", "media")])
+            .send()
+            .await
+            .map_err(|e| AppError::Sync(format!("google snapshot download: {e}")))?;
+        if resp.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(AppError::Sync(format!(
+                "google snapshot status: {}",
+                resp.status()
+            )));
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| AppError::Sync(format!("google snapshot body: {e}")))?;
+        Ok(Some(bytes.to_vec()))
     }
 }
 

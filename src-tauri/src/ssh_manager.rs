@@ -15,9 +15,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use std::borrow::Cow;
+
 use russh::client::{self, AuthResult};
+use russh::keys::ssh_key::Algorithm;
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
-use russh::ChannelMsg;
+use russh::{cipher, kex, ChannelMsg, Preferred};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
@@ -169,12 +172,28 @@ async fn run_session(
     app_handle: AppHandle,
 ) -> Result<(), AppError> {
     // 1. TCP + handshake SSH
+    let keepalive_interval = profile
+        .keep_alive_secs
+        .filter(|s| *s > 0)
+        .map(|s| Duration::from_secs(s as u64));
+    let preferred = if profile.allow_legacy_algorithms {
+        legacy_preferred()
+    } else {
+        Preferred::default()
+    };
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
+        keepalive_interval,
+        preferred,
         ..Default::default()
     });
     let addr = format!("{}:{}", profile.host, profile.port);
-    let (client_handler, host_key_failure) = host_keys::client(profile.host.clone(), profile.port);
+    let (client_handler, host_key_failure) = host_keys::client(
+        profile.host.clone(),
+        profile.port,
+        profile.agent_forwarding,
+        profile.x11_forwarding,
+    );
     let mut handle = match client::connect(config, addr.clone(), client_handler).await {
         Ok(handle) => handle,
         Err(err) => {
@@ -235,6 +254,20 @@ async fn run_session(
         .channel_open_session()
         .await
         .map_err(|e| AppError::Ssh(format!("No se pudo abrir canal: {e}")))?;
+
+    if profile.agent_forwarding {
+        // No bloqueamos la conexión si el servidor no acepta agent forwarding.
+        let _ = channel.agent_forward(false).await;
+    }
+
+    if profile.x11_forwarding {
+        // Cookie MIT-MAGIC-COOKIE-1 sintética. Requiere X server local y un
+        // `xauth add` previo si el server valida la cookie estrictamente.
+        let cookie = generate_x11_cookie();
+        let _ = channel
+            .request_x11(false, false, "MIT-MAGIC-COOKIE-1", cookie, 0)
+            .await;
+    }
 
     channel
         .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
@@ -343,4 +376,53 @@ async fn authenticate_with_agent(
     Err(AppError::Auth(
         "Autenticación vía agente SSH no soportada en esta plataforma".into(),
     ))
+}
+
+/// Construye una lista de algoritmos preferidos que conserva los modernos
+/// como prioritarios pero añade variantes legacy (CBC, 3DES, DH-SHA1,
+/// HMAC-SHA1, ssh-rsa) al final para poder negociar con servidores antiguos.
+fn legacy_preferred() -> Preferred {
+    let default = Preferred::default();
+
+    let mut cipher: Vec<cipher::Name> = default.cipher.iter().copied().collect();
+    for extra in [
+        cipher::AES_256_CBC,
+        cipher::AES_192_CBC,
+        cipher::AES_128_CBC,
+    ] {
+        if !cipher.contains(&extra) {
+            cipher.push(extra);
+        }
+    }
+
+    let mut kex_list: Vec<kex::Name> = default.kex.iter().copied().collect();
+    for extra in [kex::DH_GEX_SHA1, kex::DH_G14_SHA1, kex::DH_G1_SHA1] {
+        if !kex_list.contains(&extra) {
+            kex_list.push(extra);
+        }
+    }
+
+    // mac::HMAC_SHA1 ya está en el orden por defecto, así que no toca añadirlo.
+
+    let mut keys: Vec<Algorithm> = default.key.iter().cloned().collect();
+    let rsa_sha1 = Algorithm::Rsa { hash: None };
+    if !keys.iter().any(|k| matches!(k, Algorithm::Rsa { hash: None })) {
+        keys.push(rsa_sha1);
+    }
+
+    Preferred {
+        kex: Cow::Owned(kex_list),
+        key: Cow::Owned(keys),
+        cipher: Cow::Owned(cipher),
+        mac: default.mac.clone(),
+        compression: default.compression.clone(),
+    }
+}
+
+/// Genera una cookie hex aleatoria de 16 bytes para MIT-MAGIC-COOKIE-1.
+fn generate_x11_cookie() -> String {
+    use sha2::Digest;
+    let nonce = uuid::Uuid::new_v4();
+    let digest = sha2::Sha256::digest(nonce.as_bytes());
+    digest.iter().take(16).map(|b| format!("{b:02x}")).collect()
 }

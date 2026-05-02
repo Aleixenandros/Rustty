@@ -393,6 +393,27 @@ export async function importFromFile(ctx) {
   return summary;
 }
 
+/* ─────────────────────────── Snapshots históricos ────────────────── */
+
+export async function listSnapshots() {
+  const webdavPassword = await getStoredWebDavPassword();
+  return await invoke("sync_list_snapshots", { webdavPassword });
+}
+
+export async function restoreSnapshot(snapshotId, ctx) {
+  const passphrase = await getStoredPassphrase();
+  if (!passphrase) {
+    throw new Error("Configura la passphrase de sync antes de restaurar");
+  }
+  const webdavPassword = await getStoredWebDavPassword();
+  const state = await invoke("sync_read_snapshot", {
+    snapshotId,
+    passphrase,
+    webdavPassword,
+  });
+  return await applyMergedState(state, ctx);
+}
+
 /* ─────────────────────────── Tracking de tombstones ──────────────── */
 
 export function recordTombstone(prefs, kind, id) {

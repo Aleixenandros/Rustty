@@ -124,6 +124,16 @@ pub fn run() {
             commands::sftp_rename,
             commands::sftp_download,
             commands::sftp_upload,
+            commands::sftp_download_dir,
+            commands::sftp_upload_dir,
+            // ── FS local (panel SFTP partido)
+            commands::local_list_dir,
+            commands::local_home_dir,
+            commands::local_mkdir,
+            commands::local_remove,
+            commands::local_rename,
+            commands::local_path_join,
+            commands::local_path_parent,
             // ── Utilidades
             commands::get_data_dir,
             commands::get_download_dir,
@@ -146,6 +156,8 @@ pub fn run() {
             commands::sync_oauth_disconnect,
             commands::sync_export_file,
             commands::sync_import_file,
+            commands::sync_list_snapshots,
+            commands::sync_read_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("Error al iniciar la aplicación Rustty");

@@ -10,7 +10,7 @@ use crate::sftp_manager::{FileEntry, SftpManager};
 use crate::ssh_manager::SshManager;
 use crate::sync::{
     pack_state, resolve_sync_folder, unpack_state, OAuthFinishResult, OAuthProvider,
-    OAuthStartResult, SyncBackendKind, SyncConfig, SyncManager, SyncState,
+    OAuthStartResult, SnapshotEntry, SyncBackendKind, SyncConfig, SyncManager, SyncState,
 };
 
 // ─── Comandos de gestión de perfiles ─────────────────────────────────────────
@@ -391,6 +391,127 @@ pub fn sftp_upload(
     )
 }
 
+/// Descarga un directorio remoto recursivamente a `local_path`.
+#[tauri::command]
+pub fn sftp_download_dir(
+    sftp_state: State<'_, SftpManager>,
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+    transfer_id: String,
+) -> Result<(), String> {
+    sftp_state.download_dir(
+        &session_id,
+        remote_path,
+        PathBuf::from(local_path),
+        transfer_id,
+    )
+}
+
+/// Sube un directorio local recursivamente a `remote_path`.
+#[tauri::command]
+pub fn sftp_upload_dir(
+    sftp_state: State<'_, SftpManager>,
+    session_id: String,
+    local_path: String,
+    remote_path: String,
+    transfer_id: String,
+) -> Result<(), String> {
+    sftp_state.upload_dir(
+        &session_id,
+        PathBuf::from(local_path),
+        remote_path,
+        transfer_id,
+    )
+}
+
+// ─── Comandos de FS local (panel SFTP partido) ────────────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct LocalFileEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+    pub size: u64,
+    pub modified: Option<u64>,
+}
+
+/// Lista un directorio local con el mismo formato (forma) que `sftp_list_dir`.
+#[tauri::command]
+pub fn local_list_dir(path: String) -> Result<Vec<LocalFileEntry>, String> {
+    let read = std::fs::read_dir(&path).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for entry in read.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let p = entry.path();
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        out.push(LocalFileEntry {
+            name,
+            path: p.to_string_lossy().into_owned(),
+            is_dir: meta.is_dir(),
+            is_symlink: meta.file_type().is_symlink(),
+            size: if meta.is_file() { meta.len() } else { 0 },
+            modified,
+        });
+    }
+    out.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+    Ok(out)
+}
+
+/// Devuelve el directorio home del usuario.
+#[tauri::command]
+pub fn local_home_dir() -> Result<String, String> {
+    dirs::home_dir()
+        .ok_or_else(|| "No se pudo resolver el home del usuario".to_string())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub fn local_mkdir(path: String) -> Result<(), String> {
+    std::fs::create_dir_all(&path).map_err(|e| e.to_string())
+}
+
+/// Borra un fichero o directorio local. Si es directorio, borra recursivamente.
+#[tauri::command]
+pub fn local_remove(path: String) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+    if meta.is_dir() && !meta.file_type().is_symlink() {
+        std::fs::remove_dir_all(&path).map_err(|e| e.to_string())
+    } else {
+        std::fs::remove_file(&path).map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub fn local_rename(from: String, to: String) -> Result<(), String> {
+    std::fs::rename(&from, &to).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn local_path_join(base: String, name: String) -> Result<String, String> {
+    Ok(PathBuf::from(base).join(name).to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub fn local_path_parent(path: String) -> Result<Option<String>, String> {
+    Ok(PathBuf::from(path)
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned()))
+}
+
 // ─── Comandos de keyring ──────────────────────────────────────────────────────
 
 /// Guarda una contraseña/passphrase en el gestor de credenciales del SO.
@@ -698,5 +819,47 @@ pub fn sync_export_file(path: String, passphrase: String, state: SyncState) -> R
 #[tauri::command]
 pub fn sync_import_file(path: String, passphrase: String) -> Result<SyncState, String> {
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    unpack_state(&passphrase, &bytes).map_err(|e| e.to_string())
+}
+
+/// Lista los snapshots históricos disponibles en el backend remoto.
+/// Devuelve `Vec<SnapshotEntry>` (id, label, modified). Si el backend no
+/// guarda histórico (None) o aún no hay copias, devuelve la lista vacía.
+#[tauri::command]
+pub async fn sync_list_snapshots(
+    state: State<'_, SyncManager>,
+    webdav_password: Option<String>,
+) -> Result<Vec<SnapshotEntry>, String> {
+    let config = state.load_config();
+    if matches!(config.backend, SyncBackendKind::None) {
+        return Ok(Vec::new());
+    }
+    let backend = state
+        .backend(&config, webdav_password.as_deref().unwrap_or(""))
+        .map_err(|e| e.to_string())?;
+    backend.list_snapshots().await.map_err(|e| e.to_string())
+}
+
+/// Descarga un snapshot, lo descifra y devuelve el `SyncState`.
+/// El frontend lo aplica con la misma rutina que importFromFile.
+#[tauri::command]
+pub async fn sync_read_snapshot(
+    state: State<'_, SyncManager>,
+    snapshot_id: String,
+    passphrase: String,
+    webdav_password: Option<String>,
+) -> Result<SyncState, String> {
+    let config = state.load_config();
+    if matches!(config.backend, SyncBackendKind::None) {
+        return Err("Sincronización no habilitada".into());
+    }
+    let backend = state
+        .backend(&config, webdav_password.as_deref().unwrap_or(""))
+        .map_err(|e| e.to_string())?;
+    let bytes = backend
+        .read_snapshot(&snapshot_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Snapshot no encontrado".to_string())?;
     unpack_state(&passphrase, &bytes).map_err(|e| e.to_string())
 }
