@@ -2,6 +2,33 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [0.2.7] – 2026-05-02
+
+### Añadido
+- **Conexiones favoritas**: cada conexión puede marcarse como favorita con
+  el botón estrella (☆/★) o desde el menú contextual, y se sincronizan en
+  la nube con el resto de preferencias.
+- **Vistas de la sidebar**: nuevo selector con los modos *Workspace actual*,
+  *Todos los perfiles* (árbol agrupado por workspace) y *Favoritos*. Al
+  cambiar de modo, la cabecera muestra el contexto activo en una barra fina.
+- **Menú contextual sobre el nodo de un workspace** (en la vista *Todos los
+  perfiles*): renombrar y eliminar el workspace sin tener que activarlo
+  antes.
+
+### Cambiado
+- **Cabecera de la sidebar unificada**: el switcher de workspaces se
+  sustituye por un único botón **≡** que abre un popover compacto con la
+  vista activa, el switcher de workspaces y la búsqueda. La cabecera ya no
+  ocupa dos filas.
+- **Carpetas manuales por workspace**: cada workspace mantiene su propio
+  conjunto de carpetas, en lugar de compartir una lista global. Las
+  carpetas existentes se migran automáticamente al workspace activo en el
+  primer arranque tras la actualización.
+- **Sincronización en la nube**: el bundle de preferencias incluye ahora
+  `userFoldersByWorkspace`, `workspaces`, `activeWorkspaceId`, `favorites`
+  y `sidebarViewMode` para que el modo de vista, el workspace activo, las
+  favoritas y el árbol por workspace viajen entre equipos.
+
 ## [0.2.6] – 2026-05-02
 
 ### Añadido

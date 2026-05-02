@@ -300,12 +300,19 @@ const DEFAULT_PREFS = {
   // Solo se almacenan los atajos que el usuario ha modificado respecto al default.
   shortcuts:       {},
   checkUpdatesOnStartup: true,
-  // Carpetas manuales, incluidas las vacías. Se espejan también en rustty-folders.
+  // [legacy] Carpetas manuales globales. Se mantiene por compatibilidad para
+  // migrar a userFoldersByWorkspace en el primer arranque tras la 0.2.6.
   userFolders:     [],
+  // Carpetas manuales por workspace. Mapa { workspaceId: ["A", "A/B", ...] }.
+  userFoldersByWorkspace: {},
   // Perfiles-contenedor (workspaces). Cada perfil agrupa su propio árbol de
   // carpetas y conexiones. Por defecto solo existe "default".
   workspaces:      [{ id: "default", name: "Default" }],
   activeWorkspaceId: "default",
+  // IDs de conexiones marcadas como favoritas.
+  favorites:       [],
+  // Modo de la vista de la sidebar: "current" | "all" | "favorites".
+  sidebarViewMode: "current",
 };
 
 let prefs = { ...DEFAULT_PREFS };
@@ -316,16 +323,32 @@ function loadPrefs() {
     stored = JSON.parse(localStorage.getItem("rustty-prefs") || "null");
     if (stored) prefs = { ...DEFAULT_PREFS, ...stored };
   } catch {}
-  if (stored && Array.isArray(stored.userFolders)) {
-    userFolders = new Set(stored.userFolders.filter((f) => typeof f === "string" && f.trim()));
-  } else {
-    prefs.userFolders = [...userFolders].sort();
-  }
   if (!Array.isArray(prefs.workspaces) || prefs.workspaces.length === 0) {
     prefs.workspaces = [{ id: "default", name: "Default" }];
   }
   if (!prefs.workspaces.some((w) => w.id === prefs.activeWorkspaceId)) {
     prefs.activeWorkspaceId = prefs.workspaces[0].id;
+  }
+  // Migración de carpetas globales → por workspace
+  if (!prefs.userFoldersByWorkspace || typeof prefs.userFoldersByWorkspace !== "object") {
+    prefs.userFoldersByWorkspace = {};
+  }
+  const legacy = stored && Array.isArray(stored.userFolders)
+    ? stored.userFolders.filter((f) => typeof f === "string" && f.trim())
+    : [];
+  if (legacy.length && !prefs.userFoldersByWorkspace[prefs.activeWorkspaceId]) {
+    prefs.userFoldersByWorkspace[prefs.activeWorkspaceId] = [...legacy];
+  }
+  prefs.userFolders = []; // legacy vacío tras migración
+  for (const w of prefs.workspaces) {
+    if (!Array.isArray(prefs.userFoldersByWorkspace[w.id])) {
+      prefs.userFoldersByWorkspace[w.id] = [];
+    }
+  }
+  userFolders = new Set(prefs.userFoldersByWorkspace[prefs.activeWorkspaceId] || []);
+  if (!Array.isArray(prefs.favorites)) prefs.favorites = [];
+  if (!["current", "all", "favorites"].includes(prefs.sidebarViewMode)) {
+    prefs.sidebarViewMode = "current";
   }
   if (!prefs.lang || !SUPPORTED_LANGS.includes(prefs.lang)) {
     prefs.lang = detectLanguage();
@@ -343,6 +366,32 @@ function getActiveWorkspaceId() {
 function profileBelongsToActiveWorkspace(p) {
   const wid = p.workspace_id || "default";
   return wid === getActiveWorkspaceId();
+}
+
+function getWorkspaceFolders(wsId) {
+  const list = prefs.userFoldersByWorkspace?.[wsId];
+  return Array.isArray(list) ? list : [];
+}
+
+function setActiveWorkspaceFolders(folders) {
+  const wsId = getActiveWorkspaceId();
+  prefs.userFoldersByWorkspace = prefs.userFoldersByWorkspace || {};
+  prefs.userFoldersByWorkspace[wsId] = [...new Set(folders.filter(Boolean))].sort();
+  userFolders = new Set(prefs.userFoldersByWorkspace[wsId]);
+}
+
+function isFavoriteProfile(id) {
+  return Array.isArray(prefs.favorites) && prefs.favorites.includes(id);
+}
+
+function toggleFavoriteProfile(id) {
+  if (!Array.isArray(prefs.favorites)) prefs.favorites = [];
+  const idx = prefs.favorites.indexOf(id);
+  if (idx >= 0) prefs.favorites.splice(idx, 1);
+  else prefs.favorites.push(id);
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+  renderConnectionList();
 }
 
 function savePrefs() {
@@ -1351,7 +1400,12 @@ function savePrefsFromModal() {
     // Temas importados persistidos aparte; evitar que se borren al guardar prefs.
     customThemes:    previousPrefs.customThemes || [],
     // Metadatos internos que no pertenecen al formulario pero sí deben sobrevivir.
-    userFolders:     normalizedUserFolders(),
+    userFolders:     [], // legacy: vacío — fuente de verdad: userFoldersByWorkspace
+    userFoldersByWorkspace: previousPrefs.userFoldersByWorkspace || {},
+    favorites:       Array.isArray(previousPrefs.favorites) ? [...previousPrefs.favorites] : [],
+    workspaces:      previousPrefs.workspaces || [{ id: "default", name: "Default" }],
+    activeWorkspaceId: previousPrefs.activeWorkspaceId || "default",
+    sidebarViewMode: previousPrefs.sidebarViewMode || "current",
     tombstones:      previousPrefs.tombstones || {},
     _shortcutsTs:    previousPrefs._shortcutsTs || {},
     _lastSyncAt:     previousPrefs._lastSyncAt || null,
@@ -1602,20 +1656,34 @@ function normalizedUserFolders() {
 function saveUserFolders({ touchPrefs = true } = {}) {
   const folders = normalizedUserFolders();
   userFolders = new Set(folders);
-  prefs.userFolders = folders;
+  const wsId = getActiveWorkspaceId();
+  prefs.userFoldersByWorkspace = prefs.userFoldersByWorkspace || {};
+  prefs.userFoldersByWorkspace[wsId] = folders;
+  prefs.userFolders = []; // legacy vacío
   if (touchPrefs) prefs._prefsUpdatedAt = new Date().toISOString();
   localStorage.setItem("rustty-folders", JSON.stringify(folders));
   savePrefs();
 }
 
 function applySyncedUserFolders() {
-  if (!Array.isArray(prefs.userFolders)) return false;
-  const next = [...new Set(
-    prefs.userFolders
-      .filter((f) => typeof f === "string")
-      .map((f) => f.trim())
-      .filter(Boolean)
-  )].sort();
+  // Tras la migración, las carpetas viven en userFoldersByWorkspace; este
+  // helper sigue existiendo para compatibilidad con flujos de sync que
+  // entreguen el campo legacy `userFolders`.
+  if (Array.isArray(prefs.userFolders) && prefs.userFolders.length > 0) {
+    const wsId = getActiveWorkspaceId();
+    prefs.userFoldersByWorkspace = prefs.userFoldersByWorkspace || {};
+    const merged = new Set([
+      ...(prefs.userFoldersByWorkspace[wsId] || []),
+      ...prefs.userFolders
+        .filter((f) => typeof f === "string")
+        .map((f) => f.trim())
+        .filter(Boolean),
+    ]);
+    prefs.userFoldersByWorkspace[wsId] = [...merged].sort();
+    prefs.userFolders = [];
+  }
+  const wsId = getActiveWorkspaceId();
+  const next = [...(prefs.userFoldersByWorkspace?.[wsId] || [])].sort();
   const current = normalizedUserFolders();
   if (JSON.stringify(current) === JSON.stringify(next)) {
     localStorage.setItem("rustty-folders", JSON.stringify(next));
@@ -1636,6 +1704,22 @@ function renderConnectionList() {
   const container = document.getElementById("connection-list");
   renderWorkspaceSwitcher();
 
+  if (prefs.sidebarViewMode === "all") {
+    container.innerHTML = renderAllWorkspacesTree();
+    bindTreeEvents(container);
+    applySidebarSearchFilter();
+    renderDashboard();
+    return;
+  }
+
+  if (prefs.sidebarViewMode === "favorites") {
+    container.innerHTML = renderFavoritesTree();
+    bindTreeEvents(container);
+    applySidebarSearchFilter();
+    renderDashboard();
+    return;
+  }
+
   const activeProfiles = profiles.filter(profileBelongsToActiveWorkspace);
   if (activeProfiles.length === 0 && userFolders.size === 0) {
     container.innerHTML = `
@@ -1654,6 +1738,44 @@ function renderConnectionList() {
   bindTreeEvents(container);
   applySidebarSearchFilter();
   renderDashboard();
+}
+
+function renderAllWorkspacesTree() {
+  if (!prefs.workspaces.length) return `<div class="empty-state"><p>—</p></div>`;
+  return prefs.workspaces.map((w) => {
+    const wsProfiles = profiles.filter((p) => (p.workspace_id || "default") === w.id);
+    const wsFolders = getWorkspaceFolders(w.id);
+    const root = { connections: [], folders: {} };
+    for (const fp of wsFolders) ensureFolderPath(root, fp);
+    for (const p of wsProfiles) {
+      if (!p.group) root.connections.push(p);
+      else ensureFolderPath(root, p.group).connections.push(p);
+    }
+    const inner = renderTreeNode(root, 1);
+    const open = openFolders.has(`__ws__/${w.id}`) ? "open" : "";
+    const childrenHidden = open ? "" : "hidden";
+    const count = wsProfiles.length;
+    return `<div class="folder-item ws-folder-item" data-ws-root="${escHtml(w.id)}">
+      <div class="folder-header" data-folder-path="__ws__/${escHtml(w.id)}">
+        <span class="folder-arrow ${open}">▶</span>
+        <span class="folder-icon">📁</span>
+        <span class="folder-name">${escHtml(w.name)}</span>
+        <span class="folder-count">${count}</span>
+      </div>
+      <div class="folder-children ${childrenHidden}">
+        ${inner}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderFavoritesTree() {
+  const favs = profiles.filter((p) => isFavoriteProfile(p.id));
+  if (favs.length === 0) {
+    return `<div class="empty-state"><p>${escHtml(t("sidebar.favorites_empty"))}</p></div>`;
+  }
+  favs.sort((a, b) => a.name.localeCompare(b.name));
+  return favs.map((p) => renderConnectionItem(p, 0)).join("");
 }
 
 function applySidebarSearchFilter() {
@@ -1702,17 +1824,29 @@ function applySidebarSearchFilter() {
 }
 
 function renderWorkspaceSwitcher() {
-  const nameEl = document.getElementById("workspace-current-name");
-  const menu   = document.getElementById("workspace-menu");
-  if (!nameEl || !menu) return;
-  const active = prefs.workspaces.find((w) => w.id === getActiveWorkspaceId())
-    || prefs.workspaces[0];
-  nameEl.textContent = active ? active.name : "Default";
+  const ctxLabel = document.getElementById("sidebar-context-label");
+  const menu     = document.getElementById("workspace-menu");
+  if (ctxLabel) {
+    if (prefs.sidebarViewMode === "all") {
+      ctxLabel.textContent = t("sidebar.view_all");
+    } else if (prefs.sidebarViewMode === "favorites") {
+      ctxLabel.textContent = t("sidebar.view_favorites");
+    } else {
+      const active = prefs.workspaces.find((w) => w.id === getActiveWorkspaceId());
+      ctxLabel.textContent = active ? active.name : "Default";
+    }
+  }
 
+  // Marcar el modo de vista activo
+  document.querySelectorAll(".tools-view-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.viewMode === prefs.sidebarViewMode);
+  });
+
+  if (!menu) return;
   const items = prefs.workspaces.map((w) => {
-    const active = w.id === getActiveWorkspaceId();
-    return `<button class="ws-item${active ? " active" : ""}" data-ws-action="select" data-ws-id="${escHtml(w.id)}">
-      <span>${active ? "● " : "○ "}${escHtml(w.name)}</span>
+    const isActive = w.id === getActiveWorkspaceId() && prefs.sidebarViewMode === "current";
+    return `<button class="ws-item${isActive ? " active" : ""}" data-ws-action="select" data-ws-id="${escHtml(w.id)}">
+      <span>${isActive ? "● " : "○ "}${escHtml(w.name)}</span>
     </button>`;
   }).join("");
   const canDelete = prefs.workspaces.length > 1;
@@ -1723,17 +1857,29 @@ function renderWorkspaceSwitcher() {
     <button class="ws-item danger" data-ws-action="delete" ${canDelete ? "" : "disabled"}><span>✕ ${escHtml(t("sidebar.workspace_delete"))}</span></button>`;
 }
 
-function toggleWorkspaceMenu(open) {
-  const menu = document.getElementById("workspace-menu");
-  if (!menu) return;
-  if (open === undefined) menu.classList.toggle("hidden");
-  else menu.classList.toggle("hidden", !open);
+function toggleSidebarTools(open) {
+  const popover = document.getElementById("sidebar-tools-popover");
+  if (!popover) return;
+  if (open === undefined) popover.classList.toggle("hidden");
+  else popover.classList.toggle("hidden", !open);
+  if (!popover.classList.contains("hidden")) renderWorkspaceSwitcher();
+}
+// Compatibilidad con llamadas previas
+function toggleWorkspaceMenu(open) { toggleSidebarTools(open); }
+
+function setSidebarViewMode(mode) {
+  if (!["current", "all", "favorites"].includes(mode)) mode = "current";
+  prefs.sidebarViewMode = mode;
+  savePrefs();
+  renderConnectionList();
 }
 
 function handleWorkspaceMenuClick(action, wsId) {
   if (action === "select" && wsId) {
     if (wsId !== getActiveWorkspaceId()) {
       prefs.activeWorkspaceId = wsId;
+      userFolders = new Set(getWorkspaceFolders(wsId));
+      prefs.sidebarViewMode = "current";
       savePrefs();
       renderConnectionList();
     }
@@ -1745,7 +1891,11 @@ function handleWorkspaceMenuClick(action, wsId) {
     if (name && name.trim()) {
       const id = `ws-${crypto.randomUUID()}`;
       prefs.workspaces.push({ id, name: name.trim() });
+      prefs.userFoldersByWorkspace = prefs.userFoldersByWorkspace || {};
+      prefs.userFoldersByWorkspace[id] = [];
       prefs.activeWorkspaceId = id;
+      userFolders = new Set();
+      prefs.sidebarViewMode = "current";
       savePrefs();
       renderConnectionList();
     }
@@ -1775,7 +1925,9 @@ function handleWorkspaceMenuClick(action, wsId) {
     if (!confirm(msg)) return;
     const finalize = () => {
       prefs.workspaces = prefs.workspaces.filter((w) => w.id !== cur.id);
+      if (prefs.userFoldersByWorkspace) delete prefs.userFoldersByWorkspace[cur.id];
       prefs.activeWorkspaceId = prefs.workspaces[0].id;
+      userFolders = new Set(getWorkspaceFolders(prefs.activeWorkspaceId));
       savePrefs();
       renderConnectionList();
     };
@@ -2032,6 +2184,7 @@ function renderConnectionItem(p, depth) {
         <div class="conn-item-host">${escHtml(p.username)}@${escHtml(p.host)}:${p.port}</div>
       </div>
       <div class="conn-item-actions">
+        <button class="btn-icon-sm conn-fav${isFavoriteProfile(p.id) ? " on" : ""}" data-action="toggle-favorite" data-id="${p.id}" title="${escHtml(t("ctx.toggle_favorite"))}">${isFavoriteProfile(p.id) ? "★" : "☆"}</button>
         <button class="btn-icon-sm" data-action="edit" data-id="${p.id}" title="Editar">✎</button>
         <button class="btn-icon-sm danger" data-action="delete" data-id="${p.id}" title="Eliminar">✕</button>
       </div>
@@ -2076,6 +2229,12 @@ function bindTreeEvents(container) {
       deleteProfile(btn.dataset.id);
     });
   });
+  container.querySelectorAll("[data-action='toggle-favorite']").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFavoriteProfile(btn.dataset.id);
+    });
+  });
 
   // Clic en carpeta → colapsar/expandir
   container.querySelectorAll(".folder-header").forEach((header) => {
@@ -2101,8 +2260,8 @@ function bindTreeEvents(container) {
 // MENÚ CONTEXTUAL
 // ═══════════════════════════════════════════════════════════════
 
-function showContextMenu(x, y, type, id = null, folderPath = null) {
-  ctxTarget = { type, id, folderPath };
+function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
+  ctxTarget = { type, id, folderPath, workspaceId: extra.workspaceId || null };
 
   const menu = document.getElementById("context-menu");
 
@@ -2112,6 +2271,9 @@ function showContextMenu(x, y, type, id = null, folderPath = null) {
   );
   menu.querySelectorAll(".ctx-conn-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "connection")
+  );
+  menu.querySelectorAll(".ctx-ws-only").forEach((el) =>
+    el.classList.toggle("hidden", type !== "workspace")
   );
   // "Abrir directorio de datos" solo visible en el clic sobre la zona vacía
   menu.querySelectorAll(".ctx-sidebar-only").forEach((el) =>
@@ -2160,12 +2322,63 @@ function handleContextMenuAction(action) {
     case "duplicate-conn":
       duplicateProfile(id);
       break;
+    case "toggle-favorite":
+      if (id) toggleFavoriteProfile(id);
+      break;
     case "delete-conn":
       deleteProfile(id);
+      break;
+    case "rename-ws":
+      renameWorkspaceById(ctxTarget.workspaceId);
+      break;
+    case "delete-ws":
+      deleteWorkspaceById(ctxTarget.workspaceId);
       break;
     case "open-data-dir":
       openDataDirectory();
       break;
+  }
+}
+
+function renameWorkspaceById(wsId) {
+  const ws = prefs.workspaces.find((w) => w.id === wsId);
+  if (!ws) return;
+  const name = prompt(t("sidebar.workspace_prompt_rename"), ws.name);
+  if (!name || !name.trim()) return;
+  ws.name = name.trim();
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+  renderConnectionList();
+}
+
+function deleteWorkspaceById(wsId) {
+  if (prefs.workspaces.length <= 1) return;
+  const ws = prefs.workspaces.find((w) => w.id === wsId);
+  if (!ws) return;
+  const inUse = profiles.some((p) => (p.workspace_id || "default") === ws.id);
+  const msg = inUse
+    ? t("sidebar.workspace_confirm_delete_full")
+    : t("sidebar.workspace_confirm_delete");
+  if (!confirm(msg)) return;
+  const finalize = () => {
+    if (prefs.userFoldersByWorkspace) delete prefs.userFoldersByWorkspace[ws.id];
+    prefs.workspaces = prefs.workspaces.filter((w) => w.id !== ws.id);
+    if (prefs.activeWorkspaceId === ws.id) {
+      prefs.activeWorkspaceId = prefs.workspaces[0].id;
+      userFolders = new Set(getWorkspaceFolders(prefs.activeWorkspaceId));
+    }
+    savePrefs();
+    renderConnectionList();
+  };
+  if (inUse) {
+    const toDelete = profiles.filter((p) => (p.workspace_id || "default") === ws.id);
+    Promise.all(toDelete.map((p) => invoke("delete_profile", { id: p.id }).catch(() => null)))
+      .then(async () => {
+        try { profiles = await invoke("get_profiles"); } catch {}
+        finalize();
+      });
+  } else {
+    finalize();
   }
 }
 
@@ -4565,24 +4778,32 @@ function bindUIEvents() {
   document.querySelectorAll("select").forEach(enhanceSelect);
   enhanceNumberSteppers();
 
-  // Workspace switcher
-  const wsBtn = document.getElementById("btn-workspace-switcher");
-  const wsMenu = document.getElementById("workspace-menu");
-  if (wsBtn && wsMenu) {
-    wsBtn.addEventListener("click", (e) => {
+  // Botón ≡ → popover compacto con switcher + modos de vista + buscador
+  const toolsBtn = document.getElementById("btn-sidebar-tools");
+  const popover  = document.getElementById("sidebar-tools-popover");
+  if (toolsBtn && popover) {
+    toolsBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      toggleWorkspaceMenu();
+      toggleSidebarTools();
     });
-    wsMenu.addEventListener("click", (e) => {
-      const btn = e.target.closest(".ws-item");
-      if (!btn || btn.disabled) return;
-      handleWorkspaceMenuClick(btn.dataset.wsAction, btn.dataset.wsId);
+    popover.addEventListener("click", (e) => {
+      const wsBtn = e.target.closest(".ws-item");
+      if (wsBtn && !wsBtn.disabled) {
+        handleWorkspaceMenuClick(wsBtn.dataset.wsAction, wsBtn.dataset.wsId);
+        return;
+      }
+      const viewBtn = e.target.closest(".tools-view-btn");
+      if (viewBtn) {
+        setSidebarViewMode(viewBtn.dataset.viewMode);
+        renderWorkspaceSwitcher();
+        return;
+      }
     });
     document.addEventListener("click", (e) => {
-      if (!wsMenu.classList.contains("hidden") &&
-          !wsMenu.contains(e.target) &&
-          !wsBtn.contains(e.target)) {
-        toggleWorkspaceMenu(false);
+      if (!popover.classList.contains("hidden") &&
+          !popover.contains(e.target) &&
+          !toolsBtn.contains(e.target)) {
+        toggleSidebarTools(false);
       }
     });
   }
@@ -4865,7 +5086,12 @@ function bindUIEvents() {
       showContextMenu(e.clientX, e.clientY, "connection", connItem.dataset.id, profile?.group ?? null);
     } else if (folderHeader) {
       const folderItem = folderHeader.closest(".folder-item");
-      showContextMenu(e.clientX, e.clientY, "folder", null, folderItem.dataset.folderPath);
+      const wsRoot = folderItem.dataset.wsRoot;
+      if (wsRoot) {
+        showContextMenu(e.clientX, e.clientY, "workspace", null, null, { workspaceId: wsRoot });
+      } else {
+        showContextMenu(e.clientX, e.clientY, "folder", null, folderItem.dataset.folderPath);
+      }
     } else {
       showContextMenu(e.clientX, e.clientY, "sidebar");
     }

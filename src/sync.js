@@ -27,7 +27,8 @@ const SYNCED_PREF_KEYS = [
   "theme", "terminalTheme", "copyOnSelect", "rightClickPaste",
   "fontFamily", "fontSize", "lineHeight", "letterSpacing",
   "cursorStyle", "cursorBlink", "scrollback", "bell", "lang",
-  "userFolders",
+  "userFolders", "userFoldersByWorkspace",
+  "workspaces", "activeWorkspaceId", "favorites", "sidebarViewMode",
 ];
 
 /* ───────────────────────────── Construcción del estado ─────────────────── */

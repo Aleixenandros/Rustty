@@ -26,22 +26,32 @@
         <div id="sidebar-header">
           <span class="app-logo">Rustty</span>
           <div class="sidebar-header-actions">
+            <button id="btn-sidebar-tools" data-i18n-title="sidebar.tools_title" title="Filtrar y cambiar de perfil">≡</button>
             <button id="btn-settings" data-i18n-title="sidebar.prefs_title" title="Preferencias">⚙</button>
             <button id="btn-local-shell" data-i18n-title="sidebar.local_shell_title" title="Consola local">$_</button>
             <button id="btn-new-connection" data-i18n-title="sidebar.new_conn_title" title="Nueva conexión">+</button>
           </div>
         </div>
 
-        <div id="sidebar-workspace-wrap">
-          <button id="btn-workspace-switcher" type="button" class="workspace-switcher" data-i18n-title="sidebar.workspace_title" title="Cambiar de perfil">
-            <span class="workspace-icon" aria-hidden="true">📁</span>
-            <span id="workspace-current-name" class="workspace-name">Default</span>
-            <span class="workspace-caret" aria-hidden="true">▾</span>
-          </button>
-          <div id="workspace-menu" class="workspace-menu hidden" role="menu"></div>
+        <!-- Barra fina con el nombre del perfil/vista actual y el filtro activo -->
+        <div id="sidebar-context-bar">
+          <span class="ctx-icon" aria-hidden="true">📁</span>
+          <span id="sidebar-context-label" class="ctx-label">Default</span>
         </div>
 
-        <div id="sidebar-search-wrap">
+        <!-- Popover compacto con switcher, buscador y modo de vista -->
+        <div id="sidebar-tools-popover" class="sidebar-tools-popover hidden" role="menu">
+          <div class="tools-section-title" data-i18n="sidebar.tools_view">Vista</div>
+          <div class="tools-view-modes">
+            <button class="tools-view-btn" data-view-mode="current" data-i18n="sidebar.view_current">Workspace actual</button>
+            <button class="tools-view-btn" data-view-mode="all" data-i18n="sidebar.view_all">Todos los perfiles</button>
+            <button class="tools-view-btn" data-view-mode="favorites" data-i18n="sidebar.view_favorites">Favoritos</button>
+          </div>
+
+          <div class="tools-section-title" data-i18n="sidebar.tools_workspace">Perfil</div>
+          <div id="workspace-menu" class="workspace-menu" role="menu"></div>
+
+          <div class="tools-section-title" data-i18n="sidebar.tools_search">Buscar</div>
           <input type="search" id="sidebar-search" data-i18n-placeholder="sidebar.search_placeholder" placeholder="Buscar conexiones…" spellcheck="false" />
         </div>
 
@@ -194,8 +204,20 @@
       <button class="ctx-item ctx-conn-only hidden" data-ctx="duplicate-conn">
         <span class="ctx-icon">⎘</span><span data-i18n="ctx.duplicate">Duplicar</span>
       </button>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-favorite">
+        <span class="ctx-icon">★</span><span data-i18n="ctx.toggle_favorite">Marcar / desmarcar como favorito</span>
+      </button>
       <button class="ctx-item danger ctx-conn-only hidden" data-ctx="delete-conn">
         <span class="ctx-icon">✕</span><span data-i18n="ctx.delete">Eliminar</span>
+      </button>
+
+      <!-- Solo cuando el clic fue sobre un workspace en vista "Todos" -->
+      <div class="ctx-sep ctx-ws-only hidden"></div>
+      <button class="ctx-item ctx-ws-only hidden" data-ctx="rename-ws">
+        <span class="ctx-icon">✎</span><span data-i18n="ctx.rename_workspace">Renombrar perfil</span>
+      </button>
+      <button class="ctx-item danger ctx-ws-only hidden" data-ctx="delete-ws">
+        <span class="ctx-icon">✕</span><span data-i18n="ctx.delete_workspace">Eliminar perfil</span>
       </button>
     </div>
 

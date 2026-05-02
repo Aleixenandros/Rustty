@@ -5,7 +5,7 @@
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
 
-> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Última versión: **0.2.6**. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
+> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Última versión: **0.2.7**. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
 
 ## Características principales
 
@@ -20,7 +20,7 @@
   - Atajo `Ctrl+P` para pegar la contraseña del perfil activo sin exponerla en pantalla.
   - Verificación de `known_hosts` con TOFU y aviso ante cambios de fingerprint.
 - **Copias de seguridad y sincronización E2E**: perfiles, preferencias, temas y atajos pueden sincronizarse con Google Drive, iCloud Drive, carpeta local / NAS o WebDAV. El blob remoto se cifra localmente con `age` y una passphrase maestra. Sincronización **por evento** (al iniciar y al detectar cambios locales) y **restauración de snapshots históricos** desde la pestaña de Copias.
-- **Organización**: agrupa conexiones en **perfiles-contenedor (workspaces)** independientes, en carpetas dentro de cada workspace, búsqueda rápida en la sidebar y duplicación de conexiones / sesiones desde el menú contextual.
+- **Organización**: agrupa conexiones en **perfiles-contenedor (workspaces)** independientes, en carpetas dentro de cada workspace, **conexiones favoritas** y vistas de la sidebar (workspace actual, todos los perfiles, favoritos), búsqueda rápida y duplicación de conexiones / sesiones desde el menú contextual.
 - **Personalización**: 11 temas base integrados (Catppuccin Mocha / Latte, Dracula, Nord, xterm, VS Code Dark+, Tango, Solarized Dark / Light, Gruvbox Dark, Tokyo Night, Monokai) y ajustes de cursor, scrollback y *bell*. Posibilidad de importar temas personalizados.
 - **Internacionalización**: interfaz traducida a español, inglés, francés y portugués. (Traducciones realizadas con IA)
 
