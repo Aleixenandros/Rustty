@@ -316,6 +316,10 @@ const DEFAULT_PREFS = {
   // Color por carpeta. Mapa { folderPath: colorId } donde colorId es uno de
   // los presets en FOLDER_COLOR_PRESETS o null para "sin color".
   folderColors:    {},
+  // Reglas de resaltado por regex aplicadas a la salida del terminal.
+  // Cada regla: { pattern: string, color: "red"|"yellow"|"green"|"blue"|"magenta"|"cyan"|"white", bold: bool }.
+  // Se aplican en orden — la primera coincidencia gana.
+  highlightRules:  [],
 };
 
 // Paleta de colores predefinidos para las carpetas. Cada entrada es el id que
@@ -754,6 +758,7 @@ function openSettingsModal() {
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
   document.getElementById("pref-bell").value                = prefs.bell;
+  renderHighlightRulesEditor();
 
   // Marcar el radio + .selected correspondientes al tema de UI actual
   document.querySelectorAll('input[name="pref-theme"]').forEach((r) => {
@@ -783,9 +788,10 @@ function openSettingsModal() {
   document.getElementById("pref-keepass-keyfile").value = prefs.keepassKeyfile || "";
   refreshKeepassStatus();
 
-  // Idioma
+  // Idioma. `prefs.lang` se guarda como null cuando el usuario eligió "Sistema"
+  // (auto-detect en cada arranque). El select expone esa opción como "system".
   const langSel = document.getElementById("pref-language");
-  if (langSel) langSel.value = prefs.lang || getLanguage();
+  if (langSel) langSel.value = prefs.lang ? prefs.lang : "system";
 
   // Mantener la última pestaña activa al reabrir
   switchPrefsTab(prefsActiveTab);
@@ -1383,10 +1389,10 @@ function savePrefsFromModal() {
     ?? "inherit";
   const selectedTerminalTheme = (rawTerminalTheme === "inherit") ? null : rawTerminalTheme;
 
-  const newLang =
-    document.getElementById("pref-language")?.value ||
-    prefs.lang ||
-    getLanguage();
+  // "system" → guardar `lang: null` para que loadPrefs() vuelva a auto-detectar
+  // en cada arranque. Cualquier otro valor reconocido se persiste tal cual.
+  const rawLang = document.getElementById("pref-language")?.value || "system";
+  const newLang = rawLang === "system" ? null : rawLang;
 
   prefs = {
     theme:           selectedTheme,
@@ -1409,7 +1415,7 @@ function savePrefsFromModal() {
     bell:            document.getElementById("pref-bell").value,
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
-    lang:            SUPPORTED_LANGS.includes(newLang) ? newLang : "es",
+    lang:            newLang === null ? null : (SUPPORTED_LANGS.includes(newLang) ? newLang : "es"),
     checkUpdatesOnStartup: document.getElementById("pref-check-updates-startup")?.checked ?? true,
     // Los atajos se editan en vivo (setShortcut/resetShortcut ya guardan), así
     // que aquí solo arrastramos lo que haya en memoria para no sobrescribirlos.
@@ -1423,6 +1429,8 @@ function savePrefsFromModal() {
     workspaces:      previousPrefs.workspaces || [{ id: "default", name: "Default" }],
     activeWorkspaceId: previousPrefs.activeWorkspaceId || "default",
     sidebarViewMode: previousPrefs.sidebarViewMode || "current",
+    folderColors:    previousPrefs.folderColors || {},
+    highlightRules:  readHighlightRulesFromEditor(),
     tombstones:      previousPrefs.tombstones || {},
     _shortcutsTs:    previousPrefs._shortcutsTs || {},
     _lastSyncAt:     previousPrefs._lastSyncAt || null,
@@ -1442,8 +1450,12 @@ function savePrefsFromModal() {
       })
       .catch((e) => console.error("[sync] saveConfig", e));
   }
-  if (prefs.lang !== getLanguage()) {
-    setLanguage(prefs.lang);
+  // Si lang es null ("Sistema"), aplicamos el idioma detectado del SO sin
+  // persistirlo en prefs.lang (sigue siendo null para que cada arranque
+  // re-detecte).
+  const effectiveLang = prefs.lang || detectLanguage();
+  if (effectiveLang !== getLanguage()) {
+    setLanguage(effectiveLang);
     applyTranslations();
   }
   // Los snapshots ya no son relevantes: las prefs guardadas son la verdad.
@@ -3612,6 +3624,94 @@ function queueTerminalEchoSuppression(sessionObj, needle) {
   };
 }
 
+/* ─── Editor de reglas de resaltado en Preferencias ─── */
+const HIGHLIGHT_COLOR_OPTIONS = ["red", "yellow", "green", "blue", "magenta", "cyan", "white"];
+
+function renderHighlightRulesEditor() {
+  const body = document.getElementById("highlight-rules-body");
+  if (!body) return;
+  const rules = Array.isArray(prefs.highlightRules) ? prefs.highlightRules : [];
+  body.innerHTML = rules.map((rule, idx) => `
+    <tr data-rule-idx="${idx}">
+      <td><input type="text" class="hl-pattern" value="${escHtml(rule.pattern || "")}" placeholder="ERROR|FAIL" spellcheck="false" /></td>
+      <td>
+        <select class="hl-color">
+          ${HIGHLIGHT_COLOR_OPTIONS.map((c) =>
+            `<option value="${c}"${c === rule.color ? " selected" : ""}>${c}</option>`
+          ).join("")}
+        </select>
+      </td>
+      <td><input type="checkbox" class="hl-bold"${rule.bold ? " checked" : ""} /></td>
+      <td><button type="button" class="btn-icon-sm danger hl-delete" title="Eliminar">✕</button></td>
+    </tr>`).join("");
+}
+
+function readHighlightRulesFromEditor() {
+  const body = document.getElementById("highlight-rules-body");
+  if (!body) return Array.isArray(prefs.highlightRules) ? prefs.highlightRules : [];
+  return [...body.querySelectorAll("tr[data-rule-idx]")]
+    .map((tr) => ({
+      pattern: tr.querySelector(".hl-pattern").value.trim(),
+      color: tr.querySelector(".hl-color").value,
+      bold: tr.querySelector(".hl-bold").checked,
+    }))
+    .filter((r) => r.pattern);
+}
+
+// Tabla nombre-color → código SGR para foreground brillante (90–97).
+const HIGHLIGHT_COLORS = {
+  red:     "91",
+  yellow:  "93",
+  green:   "92",
+  blue:    "94",
+  magenta: "95",
+  cyan:    "96",
+  white:   "97",
+};
+
+let _compiledHighlightRules = null;
+let _compiledHighlightRulesSnapshot = null;
+
+function compileHighlightRules() {
+  const raw = Array.isArray(prefs.highlightRules) ? prefs.highlightRules : [];
+  const snapshot = JSON.stringify(raw);
+  if (_compiledHighlightRulesSnapshot === snapshot) return _compiledHighlightRules;
+  const compiled = [];
+  for (const rule of raw) {
+    if (!rule?.pattern) continue;
+    const color = HIGHLIGHT_COLORS[rule.color] || HIGHLIGHT_COLORS.yellow;
+    const bold = rule.bold ? "1;" : "";
+    try {
+      compiled.push({
+        re: new RegExp(rule.pattern, "g"),
+        prefix: `\x1b[${bold}${color}m`,
+        suffix: "\x1b[0m",
+      });
+    } catch {
+      // patrón inválido → ignorar la regla
+    }
+  }
+  _compiledHighlightRules = compiled;
+  _compiledHighlightRulesSnapshot = snapshot;
+  return compiled;
+}
+
+/**
+ * Aplica las reglas `prefs.highlightRules` envolviendo cada coincidencia con
+ * códigos SGR. Se hace por chunk (no por línea), así que matches que crucen
+ * un límite de chunk no se resaltan — limitación aceptable para reglas
+ * típicas como `ERROR`, `WARN`, IPs, etc.
+ */
+function applyHighlightRules(text) {
+  const rules = compileHighlightRules();
+  if (!rules.length) return text;
+  let out = text;
+  for (const r of rules) {
+    out = out.replace(r.re, (m) => `${r.prefix}${m}${r.suffix}`);
+  }
+  return out;
+}
+
 function filterSuppressedTerminalOutput(sessionObj, text) {
   const suppression = sessionObj?._outputSuppression;
   if (!suppression || !text) return text;
@@ -3803,12 +3903,61 @@ function selectSession(sid, additive = false) {
   }
   activeSessionId = sid;
   renderView();
+  updateStatusBar();
 }
 
 function selectHomeTab() {
   viewSelection = [];
   activeSessionId = null;
   renderView();
+  updateStatusBar();
+}
+
+let _statusLatencyTimer = null;
+
+function updateStatusBar() {
+  const bar = document.getElementById("status-bar");
+  if (!bar) return;
+  const s = activeSessionId ? sessions.get(activeSessionId) : null;
+  const profile = s?.profileId ? profiles.find((p) => p.id === s.profileId) : null;
+  // Solo mostramos status bar para sesiones SSH (RDP no es interactivo;
+  // shell local no tiene host remoto).
+  if (!profile || (profile.connection_type || "ssh") !== "ssh") {
+    bar.classList.add("hidden");
+    if (_statusLatencyTimer) { clearInterval(_statusLatencyTimer); _statusLatencyTimer = null; }
+    return;
+  }
+  bar.classList.remove("hidden");
+
+  const userHost = `${profile.username}@${profile.host}:${profile.port}`;
+  const userHostEl = document.getElementById("status-user-host");
+  if (userHostEl) userHostEl.textContent = userHost;
+
+  const dot = document.getElementById("status-dot");
+  if (dot) {
+    dot.classList.remove("connected", "error", "reconnecting");
+    if (s.status === "connected") dot.classList.add("connected");
+    else if (s.status === "reconnecting") dot.classList.add("reconnecting");
+    else if (s.status === "error" || s.status === "closed") dot.classList.add("error");
+  }
+
+  // Reanudar el probe de latencia cada vez que cambiamos de sesión activa
+  if (_statusLatencyTimer) { clearInterval(_statusLatencyTimer); _statusLatencyTimer = null; }
+  const latEl = document.getElementById("status-latency");
+  if (latEl) latEl.textContent = "—";
+  const probe = async () => {
+    if (activeSessionId !== s.sessionId) return; // cambió la sesión activa
+    try {
+      const ms = await invoke("tcp_ping", { host: profile.host, port: profile.port });
+      if (latEl && activeSessionId === s.sessionId) latEl.textContent = `${ms} ms`;
+    } catch {
+      if (latEl && activeSessionId === s.sessionId) latEl.textContent = "—";
+    }
+  };
+  // Cachear sessionId en la propia sesión (no estaba)
+  s.sessionId = activeSessionId;
+  probe();
+  _statusLatencyTimer = setInterval(probe, 10000);
 }
 
 function renderView() {
@@ -4098,7 +4247,7 @@ async function registerSshListeners(sessionId, terminal) {
     const s = sessions.get(sessionId);
     const text = decoder.decode(new Uint8Array(e.payload));
     const filtered = filterSuppressedTerminalOutput(s, text);
-    if (filtered) terminal.write(filtered);
+    if (filtered) terminal.write(applyHighlightRules(filtered));
   }));
 
   ul.push(await listen(`ssh-connected-${sessionId}`, () => {
@@ -4150,6 +4299,7 @@ function setActiveTab(sessionId) {
 function updateTabStatus(sessionId, status) {
   document.querySelector(`.tab[data-session="${sessionId}"] .tab-dot`)
     ?.setAttribute("class", `tab-dot ${status}`);
+  if (sessionId === activeSessionId) updateStatusBar();
 }
 
 async function closeSession(sessionId) {
@@ -4509,6 +4659,9 @@ async function toggleSftpElevated(sessionId) {
     s.sftp.sftpSessionId = sftpSessionId;
     s.sftp.elevated = targetElevated;
     btn?.classList.toggle("active", targetElevated);
+    panel
+      .querySelector("[data-sftp-sudo-badge]")
+      ?.classList.toggle("hidden", !targetElevated);
     await navigateSftp(sessionId, prevCwd || "/");
     toast(targetElevated ? "SFTP elevado activo" : "SFTP sin privilegios extra",
           targetElevated ? "success" : "info");
@@ -4558,7 +4711,10 @@ function buildSftpPanel(sessionId) {
     </div>
 
     <div class="sftp-side sftp-side-remote" data-side="remote">
-      <div class="sftp-side-title">Remoto</div>
+      <div class="sftp-side-title">
+        <span>Remoto</span>
+        <span class="sftp-sudo-badge hidden" data-sftp-sudo-badge title="Sesión SFTP con privilegios elevados (sudo)">sudo</span>
+      </div>
       <div class="sftp-toolbar">
         <button class="sftp-nav-btn" data-sftp-nav="up" data-side="remote" title="Directorio padre">↑</button>
         <button class="sftp-nav-btn" data-sftp-nav="home" data-side="remote" title="Inicio">⌂</button>
@@ -5224,6 +5380,141 @@ async function importConnections() {
   }
 }
 
+/**
+ * Parsea el contenido de un fichero `~/.ssh/config` (formato OpenSSH).
+ *
+ * Formato resumido: bloques `Host <pattern>` seguidos de líneas indentadas
+ * `Key Value`. Las claves son case-insensitive. Ignoramos directivas que no
+ * mapean directamente a un perfil de Rustty (Match, Include, etc.) y los
+ * patrones con comodines (`*`, `?`).
+ *
+ * Devuelve un array de objetos `{ alias, host, user, port, identityFile, proxyJump }`.
+ */
+function parseSshConfig(content) {
+  const blocks = [];
+  let current = null;
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.replace(/#.*$/, "").trim();
+    if (!line) continue;
+    // Aceptar `Key Value` o `Key=Value`
+    const m = line.match(/^([A-Za-z][A-Za-z0-9_-]*)\s*[=\s]\s*(.+)$/);
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    const value = m[2].trim();
+    if (key === "host") {
+      // Puede haber varios alias separados por espacio: tomamos el primero sin
+      // wildcards.
+      const aliases = value.split(/\s+/).filter((a) => !/[*?]/.test(a));
+      if (aliases.length === 0) {
+        current = null; // bloque comodín, lo ignoramos
+        continue;
+      }
+      current = { alias: aliases[0], host: aliases[0] };
+      blocks.push(current);
+    } else if (current) {
+      switch (key) {
+        case "hostname":      current.host = value; break;
+        case "user":          current.user = value; break;
+        case "port":          current.port = parseInt(value, 10); break;
+        case "identityfile":  current.identityFile = value.replace(/^~/, ""); break;
+        case "proxyjump":     current.proxyJump = value; break;
+        // Resto: lo ignoramos en MVP.
+      }
+    }
+  }
+  return blocks.filter((b) => b.alias && b.host);
+}
+
+/**
+ * Importa los hosts del fichero `~/.ssh/config` del usuario como perfiles
+ * Rustty bajo la carpeta `SSH Config` del workspace activo. Si un perfil con
+ * el mismo `name` ya existe en esa carpeta, no se duplica.
+ */
+async function importFromSshConfig() {
+  let path;
+  try {
+    const home = await invoke("local_home_dir").catch(() => null);
+    const defaultPath = home ? `${home}/.ssh/config` : null;
+    path = await openDialog({
+      title: "Importar ~/.ssh/config",
+      multiple: false,
+      defaultPath,
+    });
+  } catch (err) {
+    toast(`Error al abrir diálogo: ${err}`, "error");
+    return;
+  }
+  if (!path) return;
+
+  let blocks;
+  try {
+    const text = await invoke("read_text_file", { path });
+    blocks = parseSshConfig(text);
+  } catch (err) {
+    toast(`No se pudo leer ${path}: ${err}`, "error");
+    return;
+  }
+
+  if (blocks.length === 0) {
+    toast("No se encontraron entradas Host válidas en el fichero", "info");
+    return;
+  }
+
+  const wsId = getActiveWorkspaceId();
+  const folder = "SSH Config";
+  userFolders.add(folder);
+  saveUserFolders();
+
+  const existing = new Set(
+    profiles
+      .filter((p) => (p.workspace_id || "default") === wsId && p.group === folder)
+      .map((p) => p.name)
+  );
+
+  let added = 0, skipped = 0;
+  const now = new Date().toISOString();
+  for (const b of blocks) {
+    if (existing.has(b.alias)) { skipped++; continue; }
+    const hasKey = !!b.identityFile;
+    const profile = {
+      id: crypto.randomUUID(),
+      name: b.alias,
+      host: b.host,
+      port: Number.isFinite(b.port) ? b.port : 22,
+      username: b.user || "",
+      connection_type: "ssh",
+      domain: null,
+      auth_type: hasKey ? "public_key" : "password",
+      key_path: hasKey ? b.identityFile : null,
+      group: folder,
+      workspace_id: wsId,
+      keepass_entry_uuid: null,
+      follow_cwd: true,
+      keep_alive_secs: null,
+      allow_legacy_algorithms: false,
+      agent_forwarding: false,
+      x11_forwarding: false,
+      auto_reconnect: null,
+      session_log: false,
+      session_log_dir: null,
+      proxy_jump: b.proxyJump || null,
+      created_at: now,
+      updated_at: now,
+    };
+    try {
+      await invoke("save_profile", { profile });
+      profiles.push(profile);
+      added++;
+    } catch (err) {
+      console.error("[ssh_config] save_profile failed for", b.alias, err);
+    }
+  }
+
+  renderConnectionList();
+  scheduleProfileAutoSync();
+  toast(`SSH Config: ${added} nuevas, ${skipped} ya existían`, "success");
+}
+
 // ═══════════════════════════════════════════════════════════════
 // ENLACE DE EVENTOS DE LA UI
 // ═══════════════════════════════════════════════════════════════
@@ -5369,6 +5660,25 @@ function bindUIEvents() {
   document.getElementById("btn-prefs-save")
     .addEventListener("click", savePrefsFromModal);
 
+  // Editor de reglas de resaltado
+  document.getElementById("btn-highlight-add")
+    ?.addEventListener("click", () => {
+      const rules = readHighlightRulesFromEditor();
+      rules.push({ pattern: "", color: "yellow", bold: false });
+      prefs.highlightRules = rules; // estado intermedio sólo para re-render
+      renderHighlightRulesEditor();
+      // Foco en el input recién añadido
+      const tbody = document.getElementById("highlight-rules-body");
+      tbody?.querySelector("tr:last-child .hl-pattern")?.focus();
+    });
+  document.getElementById("highlight-rules-body")
+    ?.addEventListener("click", (e) => {
+      if (e.target.classList.contains("hl-delete")) {
+        const tr = e.target.closest("tr[data-rule-idx]");
+        tr?.remove();
+      }
+    });
+
   // Navegación entre secciones de Preferencias
   document.querySelectorAll(".prefs-nav-item").forEach((btn) => {
     btn.addEventListener("click", () => switchPrefsTab(btn.dataset.prefsTab));
@@ -5460,6 +5770,8 @@ function bindUIEvents() {
     });
   document.getElementById("btn-import")
     .addEventListener("click", () => importConnections());
+  document.getElementById("btn-import-ssh-config")
+    ?.addEventListener("click", () => importFromSshConfig());
 
   // Selector de tema de UI: sincronizar .selected con el radio + preview en vivo
   document.querySelectorAll('input[name="pref-theme"]').forEach((radio) => {

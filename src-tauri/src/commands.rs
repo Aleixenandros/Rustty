@@ -482,6 +482,23 @@ pub fn local_home_dir() -> Result<String, String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Mide la latencia (en milisegundos) hasta `host:port` abriendo una
+/// conexión TCP nueva. Útil para la barra de estado de la sesión SSH activa.
+/// Timeout: 3 segundos.
+#[tauri::command]
+pub async fn tcp_ping(host: String, port: u16) -> Result<u64, String> {
+    let start = std::time::Instant::now();
+    let addr = format!("{host}:{port}");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tokio::net::TcpStream::connect(addr),
+    )
+    .await
+    .map_err(|_| "timeout".to_string())?
+    .map_err(|e| e.to_string())?;
+    Ok(start.elapsed().as_millis() as u64)
+}
+
 #[tauri::command]
 pub fn local_mkdir(path: String) -> Result<(), String> {
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())

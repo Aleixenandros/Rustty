@@ -143,6 +143,7 @@ pub fn run() {
             commands::read_text_file,
             commands::join_path,
             commands::list_monospace_fonts,
+            commands::tcp_ping,
             // ── Sincronización en la nube
             commands::sync_get_config,
             commands::sync_save_config,

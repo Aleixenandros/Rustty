@@ -109,6 +109,17 @@
           </div>
         </div>
         <div id="terminals-container">
+          <div id="status-bar" class="hidden" aria-hidden="true">
+            <span class="status-conn">
+              <span class="status-dot" id="status-dot"></span>
+              <span id="status-user-host">—</span>
+            </span>
+            <span class="status-sep"></span>
+            <span class="status-latency">
+              <span class="status-label" data-i18n="status.latency">Latencia</span>
+              <span id="status-latency">—</span>
+            </span>
+          </div>
           <div id="view-layout-bar" class="hidden">
             <button data-layout="columns" data-i18n-title="view_layout.columns" title="Dividir en columnas">⫴</button>
             <button data-layout="rows" data-i18n-title="view_layout.rows" title="Dividir en filas">☰</button>
@@ -628,6 +639,25 @@
                   <option value="sound" data-i18n="prefs_terminal.bell_sound">Sonido</option>
                 </select>
               </div>
+
+              <div class="settings-row">
+                <label data-i18n="prefs_terminal.highlight_title">Resaltado por regex</label>
+                <p class="form-hint" data-i18n="prefs_terminal.highlight_hint">
+                  Cada regla colorea las coincidencias del patrón en el buffer del terminal. Los matches que crucen un chunk de red no se resaltan.
+                </p>
+                <table class="highlight-rules-table">
+                  <thead>
+                    <tr>
+                      <th data-i18n="prefs_terminal.highlight_pattern">Patrón</th>
+                      <th data-i18n="prefs_terminal.highlight_color">Color</th>
+                      <th data-i18n="prefs_terminal.highlight_bold">Negrita</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="highlight-rules-body"></tbody>
+                </table>
+                <button type="button" class="btn-secondary" id="btn-highlight-add" data-i18n="prefs_terminal.highlight_add">＋ Añadir regla</button>
+              </div>
             </section>
 
             <!-- ── Apariencia ── -->
@@ -874,6 +904,7 @@
               <div class="settings-row settings-row-inline">
                 <label for="pref-language" data-i18n="prefs_language.language">Idioma</label>
                 <select id="pref-language">
+                  <option value="system" data-i18n="prefs_language.lang_system">Sistema</option>
                   <option value="es" data-i18n="prefs_language.lang_es">Español</option>
                   <option value="en" data-i18n="prefs_language.lang_en">Inglés (English)</option>
                   <option value="fr" data-i18n="prefs_language.lang_fr">Francés (Français)</option>
@@ -1107,6 +1138,9 @@
                 </div>
                 <button type="button" class="btn-secondary" id="btn-import" data-i18n="prefs_data.import">
                   Importar…
+                </button>
+                <button type="button" class="btn-secondary" id="btn-import-ssh-config" data-i18n="prefs_data.import_ssh_config">
+                  Importar ~/.ssh/config
                 </button>
               </div>
             </section>
