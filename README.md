@@ -5,15 +5,17 @@
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
 
-> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Última versión: **0.2.7**. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
+> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Última versión: **0.3.0**. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
 
 ## Características principales
 
 - **Multi-protocolo**: conexiones SSH, SFTP y RDP (este último mediante `xfreerdp` / `mstsc` externos).
 - **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F) y soporte de OSC 7 (seguimiento del `cwd` remoto).
 - **Panel SFTP integrado**: explorador de ficheros con **vista dividida remoto / local**, transferencia recursiva de carpetas, drag & drop, seguimiento automático del directorio del terminal y modo elevado a **sudo** cuando el servidor lo permita.
-- **Opciones avanzadas SSH por perfil**: keep-alive configurable, agent forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) en servidores antiguos.
+- **Opciones avanzadas SSH por perfil**: keep-alive configurable, **reconexión automática con backoff** ante caídas, **grabación de sesión** a fichero, agent forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) en servidores antiguos.
 - **Multi-pestaña y vistas divididas**: trabaja con varias sesiones simultáneas, distribúyelas en *split* horizontal / vertical / grid y activa el *broadcast* para teclear en varias a la vez.
+- **Sidebar pulida**: rail vertical de iconos (Perfiles, Favoritos, Sync, Preferencias y acciones rápidas), **drag & drop** entre carpetas y workspaces, y **colores por carpeta** desde el menú contextual.
+- **Exportación granular**: exporta todos los perfiles, los de una carpeta o los de un workspace a JSON desde el menú contextual.
 - **Seguridad**:
   - Integración nativa con el keyring del sistema (KWallet, GNOME Keyring, macOS Keychain, Windows Credential Store).
   - Soporte para bases de datos **KeePass** (`.kdbx`) como fuente de contraseñas.

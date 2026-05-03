@@ -313,7 +313,24 @@ const DEFAULT_PREFS = {
   favorites:       [],
   // Modo de la vista de la sidebar: "current" | "all" | "favorites".
   sidebarViewMode: "current",
+  // Color por carpeta. Mapa { folderPath: colorId } donde colorId es uno de
+  // los presets en FOLDER_COLOR_PRESETS o null para "sin color".
+  folderColors:    {},
 };
+
+// Paleta de colores predefinidos para las carpetas. Cada entrada es el id que
+// se persiste en prefs.folderColors[path] y el color (var CSS) que se usa
+// para pintar la franja izquierda del folder-header (--folder-tint).
+const FOLDER_COLOR_PRESETS = [
+  { id: "red",     color: "var(--red)" },
+  { id: "peach",   color: "var(--peach)" },
+  { id: "yellow",  color: "var(--yellow)" },
+  { id: "green",   color: "var(--green)" },
+  { id: "teal",    color: "var(--teal)" },
+  { id: "blue",    color: "var(--blue)" },
+  { id: "mauve",   color: "var(--mauve)" },
+  { id: "pink",    color: "var(--pink)" },
+];
 
 let prefs = { ...DEFAULT_PREFS };
 
@@ -1862,7 +1879,37 @@ function toggleSidebarTools(open) {
   if (!popover) return;
   if (open === undefined) popover.classList.toggle("hidden");
   else popover.classList.toggle("hidden", !open);
-  if (!popover.classList.contains("hidden")) renderWorkspaceSwitcher();
+  if (!popover.classList.contains("hidden")) {
+    renderWorkspaceSwitcher();
+    positionSidebarToolsPopover();
+  }
+}
+
+function positionSidebarToolsPopover() {
+  const trigger = document.getElementById("btn-sidebar-tools");
+  const popover = document.getElementById("sidebar-tools-popover");
+  if (!trigger || !popover) return;
+
+  // Medir el popover (ya visible) y la posición del botón en viewport
+  const triggerRect = trigger.getBoundingClientRect();
+  const popRect = popover.getBoundingClientRect();
+  const margin = 6;
+
+  // Por defecto: justo debajo del botón, alineado a su borde izquierdo
+  let top = triggerRect.bottom + margin;
+  let left = triggerRect.left;
+
+  // Flip horizontal si se sale por la derecha del viewport
+  if (left + popRect.width > window.innerWidth - margin) {
+    left = Math.max(margin, triggerRect.right - popRect.width);
+  }
+  // Flip vertical si se sale por debajo del viewport
+  if (top + popRect.height > window.innerHeight - margin) {
+    top = Math.max(margin, triggerRect.top - popRect.height - margin);
+  }
+
+  popover.style.top = `${top}px`;
+  popover.style.left = `${left}px`;
 }
 // Compatibilidad con llamadas previas
 function toggleWorkspaceMenu(open) { toggleSidebarTools(open); }
@@ -1872,6 +1919,17 @@ function setSidebarViewMode(mode) {
   prefs.sidebarViewMode = mode;
   savePrefs();
   renderConnectionList();
+  updateRailActiveState();
+}
+
+function updateRailActiveState() {
+  document.querySelectorAll("#rail [data-rail-view]").forEach((btn) => {
+    const view = btn.dataset.railView;
+    let active = false;
+    if (view === "favorites") active = prefs.sidebarViewMode === "favorites";
+    else if (view === "profiles") active = prefs.sidebarViewMode !== "favorites";
+    btn.classList.toggle("active", active);
+  });
 }
 
 function handleWorkspaceMenuClick(action, wsId) {
@@ -2147,9 +2205,10 @@ function renderFolderNode(name, node, depth) {
   const isOpen = openFolders.has(path);
   const count = countConnections(node);
   const indent = 14 + depth * 12;
+  const tintAttrs = folderTintAttrs(path);
 
   return `
-    <div class="folder-item" data-folder-path="${escHtml(path)}">
+    <div class="folder-item" data-folder-path="${escHtml(path)}" draggable="true"${tintAttrs}>
       <div class="folder-header" style="padding-left:${indent}px; padding-right:14px">
         <span class="folder-arrow ${isOpen ? "open" : ""}">▶</span>
         <span class="folder-icon">📁</span>
@@ -2162,6 +2221,29 @@ function renderFolderNode(name, node, depth) {
     </div>`;
 }
 
+function getFolderColor(path) {
+  if (!path || !prefs.folderColors) return null;
+  const id = prefs.folderColors[path];
+  if (!id) return null;
+  return FOLDER_COLOR_PRESETS.find((c) => c.id === id) || null;
+}
+
+function folderTintAttrs(path) {
+  const c = getFolderColor(path);
+  if (!c) return "";
+  return ` data-folder-tint="${escHtml(c.id)}" style="--folder-tint:${c.color}"`;
+}
+
+function setFolderColor(path, colorId) {
+  if (!path) return;
+  prefs.folderColors = prefs.folderColors || {};
+  if (!colorId) delete prefs.folderColors[path];
+  else prefs.folderColors[path] = colorId;
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+  renderConnectionList();
+}
+
 function renderConnectionItem(p, depth) {
   const isConnected = [...sessions.values()].some(
     (s) => s.profileId === p.id && s.status === "connected"
@@ -2172,6 +2254,7 @@ function renderConnectionItem(p, depth) {
   return `
     <div class="conn-item${isConnected ? " active" : ""}"
          data-id="${p.id}"
+         draggable="true"
          style="padding-left:${indent}px">
       <div class="conn-item-icon ${escHtml(proto.className)}${isConnected ? " connected" : ""}" title="${escHtml(proto.label)}">
         ${escHtml(proto.icon)}
@@ -2254,6 +2337,274 @@ function bindTreeEvents(container) {
       }
     });
   });
+
+  bindSidebarDragAndDrop(container);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DRAG & DROP EN LA SIDEBAR
+// ═══════════════════════════════════════════════════════════════
+
+let _dragState = null;
+
+function workspaceForElement(el) {
+  const wsRootEl = el?.closest?.("[data-ws-root]");
+  if (wsRootEl) return wsRootEl.dataset.wsRoot;
+  return getActiveWorkspaceId();
+}
+
+function bindSidebarDragAndDrop(container) {
+  // Favoritos: solo lectura, no permitir reordenar/mover
+  if (prefs.sidebarViewMode === "favorites") return;
+
+  // ── Origen: conexiones ─────────────────────────────────────────
+  container.querySelectorAll(".conn-item").forEach((el) => {
+    el.addEventListener("dragstart", (e) => {
+      const profile = profiles.find((p) => p.id === el.dataset.id);
+      if (!profile) { e.preventDefault(); return; }
+      _dragState = {
+        kind: "conn",
+        id: profile.id,
+        sourceWs: profile.workspace_id || "default",
+      };
+      el.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", profile.id); } catch {}
+    });
+    el.addEventListener("dragend", () => {
+      el.classList.remove("dragging");
+      clearDropTargets(container);
+      _dragState = null;
+    });
+  });
+
+  // ── Origen: carpetas ───────────────────────────────────────────
+  container.querySelectorAll(".folder-item:not(.ws-folder-item)").forEach((el) => {
+    el.addEventListener("dragstart", (e) => {
+      // Si el dragstart proviene de una conn-item interna, no robarlo
+      if (e.target.closest(".conn-item")) return;
+      e.stopPropagation();
+      _dragState = {
+        kind: "folder",
+        path: el.dataset.folderPath,
+        sourceWs: workspaceForElement(el),
+      };
+      el.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", el.dataset.folderPath); } catch {}
+    });
+    el.addEventListener("dragend", () => {
+      el.classList.remove("dragging");
+      clearDropTargets(container);
+      _dragState = null;
+    });
+  });
+
+  // ── Destinos: cabeceras de carpeta (folder y workspace pseudo-folder) ──
+  container.querySelectorAll(".folder-header").forEach((header) => {
+    const folderItem = header.closest(".folder-item");
+    header.addEventListener("dragover", (e) => {
+      if (!_dragState) return;
+      const targetPath = folderItem.dataset.folderPath || "";
+      const isWsHeader = folderItem.classList.contains("ws-folder-item");
+      const targetFolder = isWsHeader ? "" : targetPath;
+      const targetWs = isWsHeader
+        ? folderItem.dataset.wsRoot
+        : workspaceForElement(folderItem);
+      if (!isValidDropTarget(_dragState, targetFolder, targetWs)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      clearDropTargets(container);
+      header.classList.add("drag-over");
+    });
+    header.addEventListener("dragleave", () => {
+      header.classList.remove("drag-over");
+    });
+    header.addEventListener("drop", async (e) => {
+      if (!_dragState) return;
+      const targetPath = folderItem.dataset.folderPath || "";
+      const isWsHeader = folderItem.classList.contains("ws-folder-item");
+      const targetFolder = isWsHeader ? "" : targetPath;
+      const targetWs = isWsHeader
+        ? folderItem.dataset.wsRoot
+        : workspaceForElement(folderItem);
+      if (!isValidDropTarget(_dragState, targetFolder, targetWs)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      header.classList.remove("drag-over");
+      const drag = _dragState;
+      _dragState = null;
+      // Abrir la carpeta destino para que se vea el resultado
+      if (targetFolder) openFolders.add(targetFolder);
+      else if (isWsHeader) openFolders.add(`__ws__/${targetWs}`);
+      await applyDrop(drag, targetFolder, targetWs);
+    });
+  });
+
+  // ── Destino: zona vacía del contenedor (raíz del workspace activo) ──
+  container.addEventListener("dragover", (e) => {
+    if (!_dragState) return;
+    if (e.target.closest(".folder-header")) return; // ya gestionado
+    if (e.target.closest(".conn-item")) return;
+    if (prefs.sidebarViewMode === "all") return; // raíz ambigua entre workspaces
+    if (!isValidDropTarget(_dragState, "", getActiveWorkspaceId())) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    clearDropTargets(container);
+    container.classList.add("drag-over-root");
+  });
+  container.addEventListener("dragleave", (e) => {
+    if (e.target === container) container.classList.remove("drag-over-root");
+  });
+  container.addEventListener("drop", async (e) => {
+    if (!_dragState) return;
+    if (e.target.closest(".folder-header")) return;
+    if (prefs.sidebarViewMode === "all") return;
+    e.preventDefault();
+    container.classList.remove("drag-over-root");
+    const drag = _dragState;
+    _dragState = null;
+    await applyDrop(drag, "", getActiveWorkspaceId());
+  });
+}
+
+function clearDropTargets(container) {
+  container.querySelectorAll(".drag-over").forEach((el) => el.classList.remove("drag-over"));
+  container.classList.remove("drag-over-root");
+}
+
+function isValidDropTarget(drag, targetFolder, targetWs) {
+  if (!drag) return false;
+  if (drag.kind === "conn") {
+    const p = profiles.find((x) => x.id === drag.id);
+    if (!p) return false;
+    return !((p.group || "") === targetFolder && (p.workspace_id || "default") === targetWs);
+  }
+  if (drag.kind === "folder") {
+    if (!drag.path) return false;
+    const sameWs = drag.sourceWs === targetWs;
+    if (sameWs) {
+      // No mover dentro de sí misma o de un descendiente
+      if (targetFolder === drag.path) return false;
+      if (targetFolder.startsWith(drag.path + "/")) return false;
+      // No-op: ya está en ese padre
+      const parent = drag.path.includes("/") ? drag.path.slice(0, drag.path.lastIndexOf("/")) : "";
+      if (parent === targetFolder) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+async function applyDrop(drag, targetFolder, targetWs) {
+  try {
+    if (drag.kind === "conn") {
+      await moveConnectionTo(drag.id, targetFolder, targetWs);
+    } else if (drag.kind === "folder") {
+      await moveFolderTo(drag.path, drag.sourceWs, targetFolder, targetWs);
+    }
+  } catch (err) {
+    toast(`Error al mover: ${err}`, "error");
+  }
+}
+
+function saveWorkspaceFolders(wsId, folders) {
+  const norm = [...new Set(folders.filter(Boolean))].sort();
+  prefs.userFoldersByWorkspace = prefs.userFoldersByWorkspace || {};
+  prefs.userFoldersByWorkspace[wsId] = norm;
+  if (wsId === getActiveWorkspaceId()) {
+    userFolders = new Set(norm);
+    localStorage.setItem("rustty-folders", JSON.stringify(norm));
+  }
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+}
+
+async function moveConnectionTo(profileId, targetFolder, targetWs) {
+  const p = profiles.find((x) => x.id === profileId);
+  if (!p) return;
+  if ((p.group || "") === targetFolder && (p.workspace_id || "default") === targetWs) return;
+  const updated = {
+    ...p,
+    group: targetFolder || null,
+    workspace_id: targetWs,
+    updated_at: new Date().toISOString(),
+  };
+  await invoke("save_profile", { profile: updated });
+  profiles[profiles.findIndex((x) => x.id === p.id)] = updated;
+  scheduleProfileAutoSync();
+  renderConnectionList();
+}
+
+async function moveFolderTo(folderPath, sourceWs, targetParent, targetWs) {
+  const folderName = folderPath.split("/").at(-1);
+  const newPath = targetParent ? `${targetParent}/${folderName}` : folderName;
+  const sameWs = sourceWs === targetWs;
+
+  if (sameWs && newPath === folderPath) return;
+  if (sameWs && newPath.startsWith(folderPath + "/")) {
+    toast("No se puede mover una carpeta dentro de sí misma", "error");
+    return;
+  }
+
+  const prefix = folderPath + "/";
+  const newPrefix = newPath + "/";
+  const updatedAt = new Date().toISOString();
+
+  // Mover/renombrar perfiles afectados
+  for (const p of profiles) {
+    if ((p.workspace_id || "default") !== sourceWs) continue;
+    if (!p.group) continue;
+    let newGroup = null;
+    if (p.group === folderPath) newGroup = newPath;
+    else if (p.group.startsWith(prefix)) newGroup = newPrefix + p.group.slice(prefix.length);
+    else continue;
+    const updated = {
+      ...p,
+      group: newGroup,
+      workspace_id: targetWs,
+      updated_at: updatedAt,
+    };
+    await invoke("save_profile", { profile: updated }).catch(() => {});
+    profiles[profiles.findIndex((x) => x.id === p.id)] = updated;
+  }
+
+  // Actualizar listas de carpetas
+  const sourceList = new Set(getWorkspaceFolders(sourceWs));
+  const targetList = sameWs ? sourceList : new Set(getWorkspaceFolders(targetWs));
+  for (const f of [...sourceList]) {
+    let np = null;
+    if (f === folderPath) np = newPath;
+    else if (f.startsWith(prefix)) np = newPrefix + f.slice(prefix.length);
+    if (np !== null) {
+      sourceList.delete(f);
+      targetList.add(np);
+    }
+  }
+  saveWorkspaceFolders(sourceWs, [...sourceList]);
+  if (!sameWs) saveWorkspaceFolders(targetWs, [...targetList]);
+
+  // Remapear colores asignados a la carpeta o sus descendientes
+  if (prefs.folderColors) {
+    const remapped = {};
+    for (const [path, color] of Object.entries(prefs.folderColors)) {
+      if (path === folderPath) remapped[newPath] = color;
+      else if (path.startsWith(prefix)) remapped[newPrefix + path.slice(prefix.length)] = color;
+      else remapped[path] = color;
+    }
+    prefs.folderColors = remapped;
+    savePrefs();
+  }
+
+  // Estado de apertura
+  if (openFolders.has(folderPath)) {
+    openFolders.delete(folderPath);
+    openFolders.add(newPath);
+  }
+  if (targetParent) openFolders.add(targetParent);
+
+  scheduleProfileAutoSync();
+  renderConnectionList();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2265,9 +2616,15 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
 
   const menu = document.getElementById("context-menu");
 
+  // Las pseudo-carpetas que representan un workspace (__ws__/<id>) usan el
+  // árbol de carpetas pero no son carpetas reales: ocultar acciones de carpeta.
+  const isRealFolder = type === "folder"
+    && typeof folderPath === "string"
+    && !folderPath.startsWith("__ws__/");
+
   // Mostrar u ocultar secciones según el tipo de objetivo
   menu.querySelectorAll(".ctx-folder-only").forEach((el) =>
-    el.classList.toggle("hidden", type !== "folder")
+    el.classList.toggle("hidden", !isRealFolder)
   );
   menu.querySelectorAll(".ctx-conn-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "connection")
@@ -2333,6 +2690,12 @@ function handleContextMenuAction(action) {
       break;
     case "delete-ws":
       deleteWorkspaceById(ctxTarget.workspaceId);
+      break;
+    case "export-folder":
+      if (folderPath) exportConnections(folderPath);
+      break;
+    case "export-ws":
+      if (ctxTarget.workspaceId) exportConnectionsByWorkspace(ctxTarget.workspaceId);
       break;
     case "open-data-dir":
       openDataDirectory();
@@ -2485,6 +2848,18 @@ async function renameFolder(folderPath) {
   toAdd.forEach((f) => userFolders.add(f));
   saveUserFolders();
 
+  // Remapear colores asignados a la carpeta o sus descendientes
+  if (prefs.folderColors) {
+    const remapped = {};
+    for (const [path, color] of Object.entries(prefs.folderColors)) {
+      if (path === folderPath) remapped[newPath] = color;
+      else if (path.startsWith(prefix)) remapped[newPrefix + path.slice(prefix.length)] = color;
+      else remapped[path] = color;
+    }
+    prefs.folderColors = remapped;
+    savePrefs();
+  }
+
   // Actualizar estado de apertura
   if (openFolders.has(folderPath)) { openFolders.delete(folderPath); openFolders.add(newPath); }
 
@@ -2519,6 +2894,19 @@ async function deleteFolderAndMoveConnections(folderPath) {
   }
   saveUserFolders();
   openFolders.delete(folderPath);
+
+  // Limpiar colores asignados a la carpeta y sus descendientes
+  if (prefs.folderColors) {
+    let mutated = false;
+    for (const path of Object.keys(prefs.folderColors)) {
+      if (path === folderPath || path.startsWith(prefix)) {
+        delete prefs.folderColors[path];
+        mutated = true;
+      }
+    }
+    if (mutated) savePrefs();
+  }
+
   renderConnectionList();
   scheduleProfileAutoSync();
   toast(`Carpeta "${folderPath}" eliminada`, "info");
@@ -2533,6 +2921,13 @@ function keepAliveFromInput(value) {
   const n = parseInt(value, 10);
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.min(n, 3600);
+}
+
+function autoReconnectFromInput(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const n = parseInt(value, 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(n, 20);
 }
 
 /**
@@ -2599,6 +2994,8 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-allow-legacy").checked = !!profile.allow_legacy_algorithms;
   document.getElementById("f-agent-forwarding").checked = !!profile.agent_forwarding;
   document.getElementById("f-x11-forwarding").checked = !!profile.x11_forwarding;
+  document.getElementById("f-auto-reconnect").value = profile.auto_reconnect ?? "";
+  document.getElementById("f-session-log").checked = !!profile.session_log;
   populateWorkspaceFormSelect(profile.workspace_id || getActiveWorkspaceId());
   refreshKeepassStatus().then(() => {
     document.getElementById("f-use-keepass").checked = !!profile.keepass_entry_uuid;
@@ -2820,6 +3217,8 @@ async function saveAndClose(shouldConnect) {
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     agent_forwarding:    document.getElementById("f-agent-forwarding").checked,
     x11_forwarding:      document.getElementById("f-x11-forwarding").checked,
+    auto_reconnect:      autoReconnectFromInput(document.getElementById("f-auto-reconnect").value),
+    session_log:         document.getElementById("f-session-log").checked,
     created_at: editingProfileId
       ? (profiles.find((p) => p.id === editingProfileId)?.created_at ?? new Date().toISOString())
       : new Date().toISOString(),
@@ -3720,6 +4119,15 @@ async function registerSshListeners(sessionId, terminal) {
     updateTabStatus(sessionId, "error");
     terminal.writeln(`\r\n\x1b[31m✗ Error: ${e.payload}\x1b[0m\r\n`);
     toast(`Error SSH: ${e.payload}`, "error");
+  }));
+
+  ul.push(await listen(`ssh-reconnecting-${sessionId}`, (e) => {
+    const s = sessions.get(sessionId);
+    if (s) s.status = "reconnecting";
+    updateTabStatus(sessionId, "error");
+    const { attempt, max, delay_ms } = e.payload || {};
+    const secs = Math.round((delay_ms || 0) / 1000);
+    terminal.writeln(`\r\n\x1b[33m↻ Reintentando conexión (${attempt}/${max}) en ${secs}s…\x1b[0m`);
   }));
 
   ul.push(await listen(`ssh-closed-${sessionId}`, () => {
@@ -4667,13 +5075,16 @@ function formatTime(secs) {
  * @param {string|null} folderFilter  Si se indica, exporta solo esa carpeta (y subcarpetas).
  */
 async function exportConnections(folderFilter) {
+  const activeWs = getActiveWorkspaceId();
   let profilesToExport = profiles;
   let foldersToExport = [...userFolders];
 
   if (folderFilter) {
     const prefix = folderFilter + "/";
     profilesToExport = profiles.filter(
-      (p) => p.group === folderFilter || p.group?.startsWith(prefix)
+      (p) =>
+        (p.workspace_id || "default") === activeWs &&
+        (p.group === folderFilter || p.group?.startsWith(prefix))
     );
     foldersToExport = foldersToExport.filter(
       (f) => f === folderFilter || f.startsWith(prefix)
@@ -4713,6 +5124,52 @@ async function exportConnections(folderFilter) {
       `${profilesToExport.length} conexiones exportadas${folderFilter ? ` (${folderFilter})` : ""}`,
       "success"
     );
+  } catch (err) {
+    toast(`Error al escribir fichero: ${err}`, "error");
+  }
+}
+
+/**
+ * Exporta a JSON todos los perfiles de un workspace concreto, junto con sus carpetas.
+ */
+async function exportConnectionsByWorkspace(workspaceId) {
+  const ws = prefs.workspaces.find((w) => w.id === workspaceId);
+  const wsName = ws ? ws.name : workspaceId;
+  const profilesToExport = profiles.filter(
+    (p) => (p.workspace_id || "default") === workspaceId
+  );
+  const foldersToExport = getWorkspaceFolders(workspaceId);
+
+  const data = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    source: "Rustty",
+    profiles: profilesToExport,
+    folders: foldersToExport,
+  };
+
+  const safeName = wsName.replace(/[^\w\-]+/g, "_");
+  const defaultName = `rustty-connections-${safeName}-${new Date().toISOString().slice(0, 10)}.json`;
+
+  let path;
+  try {
+    path = await saveDialog({
+      title: "Exportar conexiones",
+      defaultPath: defaultName,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+  } catch (err) {
+    toast(`Error al abrir diálogo: ${err}`, "error");
+    return;
+  }
+  if (!path) return;
+
+  try {
+    await invoke("write_text_file", {
+      path,
+      contents: JSON.stringify(data, null, 2),
+    });
+    toast(`${profilesToExport.length} conexiones exportadas (${wsName})`, "success");
   } catch (err) {
     toast(`Error al escribir fichero: ${err}`, "error");
   }
@@ -4827,7 +5284,7 @@ function bindUIEvents() {
 
   // Botones de nueva conexión
   document.getElementById("btn-new-connection")
-    .addEventListener("click", () => openNewConnectionModal());
+    ?.addEventListener("click", () => openNewConnectionModal());
   document.getElementById("home-tab")
     ?.addEventListener("click", () => selectHomeTab());
   document.getElementById("dashboard-search")
@@ -4861,7 +5318,7 @@ function bindUIEvents() {
 
   // Botón de preferencias (⚙)
   document.getElementById("btn-settings")
-    .addEventListener("click", openSettingsModal);
+    ?.addEventListener("click", openSettingsModal);
   document.getElementById("sidebar-sync-status")
     ?.addEventListener("click", () => {
       prefsActiveTab = "data";
@@ -4870,7 +5327,30 @@ function bindUIEvents() {
 
   // Botón de shell local ($_ )
   document.getElementById("btn-local-shell")
-    .addEventListener("click", openLocalShell);
+    ?.addEventListener("click", openLocalShell);
+
+  // Rail vertical de iconos (acciones rápidas + cambio de vista)
+  document.querySelectorAll("#rail [data-rail-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const action = btn.dataset.railAction;
+      if (action === "new-connection") openNewConnectionModal();
+      else if (action === "local-shell") openLocalShell();
+      else if (action === "settings") openSettingsModal();
+      else if (action === "sync") {
+        prefsActiveTab = "data";
+        openSettingsModal();
+      }
+    });
+  });
+  document.querySelectorAll("#rail [data-rail-view]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const view = btn.dataset.railView;
+      if (view === "favorites") setSidebarViewMode("favorites");
+      else setSidebarViewMode("current");
+      updateRailActiveState();
+    });
+  });
+  updateRailActiveState();
 
   // Toggle de la barra lateral (persistido en localStorage)
   initSidebarToggle();
@@ -5106,7 +5586,15 @@ function bindUIEvents() {
   // Acciones del menú contextual
   document.getElementById("context-menu").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-ctx]");
-    if (btn) handleContextMenuAction(btn.dataset.ctx);
+    if (!btn) return;
+    if (btn.dataset.ctx === "set-folder-color") {
+      const colorId = btn.dataset.colorId || null;
+      const path = ctxTarget.folderPath;
+      hideContextMenu();
+      if (path) setFolderColor(path, colorId === "none" ? null : colorId);
+      return;
+    }
+    handleContextMenuAction(btn.dataset.ctx);
   });
 
   // Clic derecho en una pestaña

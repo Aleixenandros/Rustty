@@ -29,6 +29,7 @@ const SYNCED_PREF_KEYS = [
   "cursorStyle", "cursorBlink", "scrollback", "bell", "lang",
   "userFolders", "userFoldersByWorkspace",
   "workspaces", "activeWorkspaceId", "favorites", "sidebarViewMode",
+  "folderColors",
 ];
 
 /* ───────────────────────────── Construcción del estado ─────────────────── */

@@ -10,7 +10,7 @@
 //! pública (con passphrase opcional) y agente SSH del sistema.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -22,6 +22,7 @@ use russh::keys::ssh_key::Algorithm;
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
 use russh::{cipher, kex, ChannelMsg, Preferred};
 use tauri::{AppHandle, Emitter};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
 use crate::error::AppError;
@@ -63,6 +64,7 @@ impl SshManager {
     ///   - `ssh-connected-{id}` : conexión establecida
     ///   - `ssh-data-{id}`      : bytes recibidos del servidor (stdout + stderr)
     ///   - `ssh-error-{id}`     : error de conexión/autenticación
+    ///   - `ssh-reconnecting-{id}` : intentando reconectar (payload: número de intento)
     ///   - `ssh-closed-{id}`    : sesión terminada
     pub fn connect(
         &self,
@@ -71,6 +73,7 @@ impl SshManager {
         password: Option<String>,
         passphrase: Option<String>,
         app_handle: AppHandle,
+        default_log_dir: PathBuf,
     ) -> Result<(), AppError> {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
 
@@ -92,17 +95,15 @@ impl SshManager {
                     return;
                 }
             };
-            let res = rt.block_on(run_session(
+            rt.block_on(run_session_with_reconnect(
                 sid.clone(),
                 profile,
                 password,
                 passphrase,
                 cmd_rx,
                 ah.clone(),
+                default_log_dir,
             ));
-            if let Err(e) = res {
-                let _ = ah.emit(&format!("ssh-error-{}", sid), e.to_string());
-            }
             let _ = ah.emit(&format!("ssh-closed-{}", sid), "");
         });
 
@@ -163,14 +164,136 @@ impl SshManager {
 
 // ─── Worker asíncrono ───────────────────────────────────────────────────────
 
-async fn run_session(
+/// Indica cómo terminó una iteración de `run_session`. Se usa para decidir si
+/// conviene reintentar (en caso de cierre del servidor) o no (cierre del
+/// usuario o error fatal).
+enum SessionExit {
+    /// El usuario pidió desconectar (Disconnect command o cmd_rx cerrado).
+    UserDisconnect,
+    /// El servidor cerró el canal o caída de red. Candidato a reconectar.
+    ServerClosed,
+    /// Error fatal (auth, conexión imposible…). No reintenta automáticamente.
+    Fatal(AppError),
+}
+
+async fn run_session_with_reconnect(
     session_id: String,
     profile: ConnectionProfile,
     password: Option<String>,
     passphrase: Option<String>,
     mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
     app_handle: AppHandle,
-) -> Result<(), AppError> {
+    default_log_dir: PathBuf,
+) {
+    let max_attempts = profile.auto_reconnect.unwrap_or(0);
+    let mut attempt: u32 = 0;
+    let log_path = if profile.session_log {
+        Some(resolve_log_path(&profile, &default_log_dir))
+    } else {
+        None
+    };
+
+    loop {
+        let exit = run_session(
+            session_id.clone(),
+            profile.clone(),
+            password.clone(),
+            passphrase.clone(),
+            &mut cmd_rx,
+            app_handle.clone(),
+            log_path.clone(),
+        )
+        .await;
+
+        match exit {
+            SessionExit::UserDisconnect => return,
+            SessionExit::Fatal(err) => {
+                let _ = app_handle.emit(&format!("ssh-error-{}", session_id), err.to_string());
+                return;
+            }
+            SessionExit::ServerClosed => {
+                if max_attempts == 0 || attempt >= max_attempts {
+                    return;
+                }
+                attempt += 1;
+                let delay = backoff_delay(attempt);
+                let _ = app_handle.emit(
+                    &format!("ssh-reconnecting-{}", session_id),
+                    serde_json::json!({
+                        "attempt": attempt,
+                        "max": max_attempts,
+                        "delay_ms": delay.as_millis() as u64,
+                    }),
+                );
+                // Si el usuario pide desconectar durante el backoff, abortamos
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {}
+                    cmd = cmd_rx.recv() => {
+                        match cmd {
+                            Some(SessionCommand::Disconnect) | None => return,
+                            // Cualquier otro comando durante el sleep se ignora
+                            // (no hay sesión activa donde reenviarlo).
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn backoff_delay(attempt: u32) -> Duration {
+    // 2s, 4s, 8s, 16s, 32s, capado a 60s
+    let secs = 2u64.saturating_pow(attempt.min(5)).min(60);
+    Duration::from_secs(secs)
+}
+
+fn resolve_log_path(profile: &ConnectionProfile, default_dir: &Path) -> PathBuf {
+    let base: PathBuf = profile
+        .session_log_dir
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_dir.join("session_logs"));
+    let safe_name = sanitize_filename(&profile.name);
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    base.join(format!("{}-{}.log", safe_name, stamp))
+}
+
+fn sanitize_filename(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
+}
+
+async fn open_session_log(path: &Path) -> Option<tokio::fs::File> {
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .await
+        .ok()
+}
+
+async fn run_session(
+    session_id: String,
+    profile: ConnectionProfile,
+    password: Option<String>,
+    passphrase: Option<String>,
+    cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
+    app_handle: AppHandle,
+    log_path: Option<PathBuf>,
+) -> SessionExit {
+    // Si está activado el log de sesión, abrimos el fichero en modo append.
+    let mut log_file = match &log_path {
+        Some(p) => open_session_log(p).await,
+        None => None,
+    };
+
     // 1. TCP + handshake SSH
     let keepalive_interval = profile
         .keep_alive_secs
@@ -198,51 +321,82 @@ async fn run_session(
         Ok(handle) => handle,
         Err(err) => {
             if let Some(reason) = host_keys::take_failure(&host_key_failure) {
-                return Err(AppError::Auth(reason));
+                return SessionExit::Fatal(AppError::Auth(reason));
             }
-            return Err(AppError::Io(format!(
-                "No se puede conectar a {addr}: {err}"
-            )));
+            // Errores de red/TCP: candidatos a reconectar
+            let _ = app_handle.emit(
+                &format!("ssh-error-{}", session_id),
+                format!("No se puede conectar a {addr}: {err}"),
+            );
+            return SessionExit::ServerClosed;
         }
     };
 
     // 2. Autenticación
     let auth = match &profile.auth_type {
         AuthType::Password => {
-            let pass = password.ok_or_else(|| AppError::Auth("Se requiere contraseña".into()))?;
-            handle
+            let pass = match password.clone() {
+                Some(p) => p,
+                None => return SessionExit::Fatal(AppError::Auth("Se requiere contraseña".into())),
+            };
+            match handle
                 .authenticate_password(profile.username.clone(), pass)
                 .await
-                .map_err(|e| AppError::Auth(format!("Autenticación por contraseña fallida: {e}")))?
+            {
+                Ok(a) => a,
+                Err(e) => {
+                    return SessionExit::Fatal(AppError::Auth(format!(
+                        "Autenticación por contraseña fallida: {e}"
+                    )))
+                }
+            }
         }
         AuthType::PublicKey => {
-            let key_path = profile
-                .key_path
-                .as_ref()
-                .ok_or_else(|| AppError::Auth("Se requiere ruta de clave privada".into()))?;
-            let key = load_secret_key(Path::new(key_path), passphrase.as_deref())
-                .map_err(|e| AppError::Auth(format!("Clave inválida: {e}")))?;
+            let key_path = match profile.key_path.as_ref() {
+                Some(p) => p,
+                None => {
+                    return SessionExit::Fatal(AppError::Auth(
+                        "Se requiere ruta de clave privada".into(),
+                    ))
+                }
+            };
+            let key = match load_secret_key(Path::new(key_path), passphrase.as_deref()) {
+                Ok(k) => k,
+                Err(e) => {
+                    return SessionExit::Fatal(AppError::Auth(format!("Clave inválida: {e}")))
+                }
+            };
             let hash_alg = handle
                 .best_supported_rsa_hash()
                 .await
                 .ok()
                 .flatten()
                 .flatten();
-            handle
+            match handle
                 .authenticate_publickey(
                     profile.username.clone(),
                     PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
                 )
                 .await
-                .map_err(|e| AppError::Auth(format!("Autenticación por clave fallida: {e}")))?
+            {
+                Ok(a) => a,
+                Err(e) => {
+                    return SessionExit::Fatal(AppError::Auth(format!(
+                        "Autenticación por clave fallida: {e}"
+                    )))
+                }
+            }
         }
-        AuthType::Agent => authenticate_with_agent(&mut handle, &profile.username).await?,
+        AuthType::Agent => match authenticate_with_agent(&mut handle, &profile.username).await {
+            Ok(a) => a,
+            Err(e) => return SessionExit::Fatal(e),
+        },
     };
 
     match auth {
         AuthResult::Success => {}
         AuthResult::Failure { remaining_methods } => {
-            return Err(AppError::Auth(format!(
+            return SessionExit::Fatal(AppError::Auth(format!(
                 "Autenticación fallida. Métodos restantes: {:?}",
                 remaining_methods
             )));
@@ -250,10 +404,12 @@ async fn run_session(
     }
 
     // 3. Canal + PTY + shell
-    let mut channel = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| AppError::Ssh(format!("No se pudo abrir canal: {e}")))?;
+    let mut channel = match handle.channel_open_session().await {
+        Ok(c) => c,
+        Err(e) => {
+            return SessionExit::Fatal(AppError::Ssh(format!("No se pudo abrir canal: {e}")))
+        }
+    };
 
     if profile.agent_forwarding {
         // No bloqueamos la conexión si el servidor no acepta agent forwarding.
@@ -269,29 +425,37 @@ async fn run_session(
             .await;
     }
 
-    channel
+    if let Err(e) = channel
         .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
         .await
-        .map_err(|e| AppError::Ssh(format!("No se pudo solicitar PTY: {e}")))?;
+    {
+        return SessionExit::Fatal(AppError::Ssh(format!("No se pudo solicitar PTY: {e}")));
+    }
 
-    channel
-        .request_shell(true)
-        .await
-        .map_err(|e| AppError::Ssh(format!("No se pudo abrir shell: {e}")))?;
+    if let Err(e) = channel.request_shell(true).await {
+        return SessionExit::Fatal(AppError::Ssh(format!("No se pudo abrir shell: {e}")));
+    }
 
     let _ = app_handle.emit(&format!("ssh-connected-{}", session_id), &profile.name);
 
     // 4. Bucle de E/S: multiplexa datos del servidor y comandos del frontend
+    let mut exit_kind = SessionExit::ServerClosed;
     loop {
         tokio::select! {
             msg = channel.wait() => {
                 match msg {
                     Some(ChannelMsg::Data { data }) => {
+                        if let Some(f) = log_file.as_mut() {
+                            let _ = f.write_all(&data).await;
+                        }
                         let _ = app_handle
                             .emit(&format!("ssh-data-{}", session_id), data.to_vec());
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
                         // stderr → lo mezclamos con stdout, como hacía ssh2.
+                        if let Some(f) = log_file.as_mut() {
+                            let _ = f.write_all(&data).await;
+                        }
                         let _ = app_handle
                             .emit(&format!("ssh-data-{}", session_id), data.to_vec());
                     }
@@ -311,16 +475,22 @@ async fn run_session(
                     Some(SessionCommand::Resize { cols, rows }) => {
                         let _ = channel.window_change(cols, rows, 0, 0).await;
                     }
-                    Some(SessionCommand::Disconnect) | None => break,
+                    Some(SessionCommand::Disconnect) | None => {
+                        exit_kind = SessionExit::UserDisconnect;
+                        break;
+                    }
                 }
             }
         }
     }
 
     // 5. Cierre limpio
+    if let Some(mut f) = log_file.take() {
+        let _ = f.flush().await;
+    }
     let _ = channel.eof().await;
     let _ = channel.close().await;
-    Ok(())
+    exit_kind
 }
 
 /// Autenticación vía agente SSH. Probamos cada identidad hasta que una

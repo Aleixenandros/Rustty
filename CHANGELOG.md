@@ -2,6 +2,53 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [0.3.0] – 2026-05-03
+
+### Añadido
+- **Barra lateral vertical de iconos** (`#rail`): franja izquierda fija de
+  44 px con dos secciones — arriba 📁 Perfiles, ★ Favoritos, ⇅
+  Sincronización y ⚙ Preferencias; abajo $_ Consola local y ＋ Nueva
+  conexión. El icono activo refleja `prefs.sidebarViewMode`.
+- **Drag & drop en la sidebar**: las conexiones y carpetas se pueden
+  arrastrar entre carpetas, hacia la cabecera de un workspace o a la zona
+  vacía (raíz). Bloquea destinos inválidos (carpeta dentro de sí misma o
+  de un descendiente) y persiste en `profile.group` /
+  `prefs.userFoldersByWorkspace`. Feedback visual con resaltado del
+  `folder-header` y borde azul en la raíz.
+- **Colores por carpeta**: paleta de 8 colores predefinidos + "Quitar
+  color" en el menú contextual de la carpeta. Persistido en
+  `prefs.folderColors[path]`, pintado como franja izquierda de 3 px en el
+  `folder-header` (`--folder-tint`) y sincronizado como parte del bundle
+  de prefs.
+- **Exportar conexiones de una carpeta**: nueva opción
+  "Exportar conexiones…" en el menú contextual de carpeta. Vuelca a JSON
+  los perfiles de la carpeta y sus subcarpetas, sin contraseñas en claro.
+- **Exportar conexiones de un workspace**: misma acción desde el menú
+  contextual del nodo de workspace en la vista "Todos los perfiles".
+- **Reconexión automática SSH**: campo `auto_reconnect` por perfil
+  (0 – 20 reintentos). El backend reintenta con backoff exponencial
+  (2s, 4s, 8s, …, 60s máx) y emite `ssh-reconnecting-{id}` con el número
+  de intento. Se interrumpe si el usuario pulsa Disconnect durante el
+  backoff.
+- **Grabación de sesión**: toggle `session_log` por perfil. Vuelca toda
+  la salida del shell SSH a `<data_dir>/session_logs/<perfil>-<timestamp>.log`
+  (o a `session_log_dir` si se indica).
+
+### Cambiado
+- **Cabecera de la sidebar simplificada**: los botones ⚙, $_ y ＋ se
+  mueven al rail vertical. La cabecera queda con logo + ≡ (popover de
+  filtros y switcher de workspaces).
+- **Icono "Filtrar / cambiar de perfil"**: ahora tiene el mismo tamaño
+  que el resto de iconos del header (26×26).
+- **Popover ≡ anclado bajo el botón**: antes se abría con `right: 8px`,
+  fuera de eje respecto al trigger; ahora se posiciona dinámicamente bajo
+  el botón con flip horizontal/vertical si no cabe en el viewport.
+
+### Corregido
+- **Detección de host key cambiada**: ya estaba cubierta por la
+  verificación TOFU + `known_hosts` real introducida en versiones
+  anteriores. Marcado como completado en `tareas.md`.
+
 ## [0.2.7] – 2026-05-02
 
 ### Añadido

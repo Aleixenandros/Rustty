@@ -86,6 +86,77 @@ input, select, textarea {
   overflow: hidden;
 }
 
+/* ─── Rail vertical de iconos ────────────────────────────────── */
+#rail {
+  width: 44px;
+  flex-shrink: 0;
+  background: var(--crust);
+  border-right: 1px solid var(--surface0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  box-sizing: border-box;
+}
+
+.rail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+
+.rail-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--overlay1);
+  font-size: 16px;
+  line-height: 1;
+  border: 0;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.12s, color 0.12s;
+}
+
+.rail-btn:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+.rail-btn.active {
+  color: var(--blue);
+}
+
+.rail-btn.active::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--blue);
+  border-radius: 0 2px 2px 0;
+}
+
+.rail-btn-primary {
+  background: var(--blue);
+  color: var(--crust);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.rail-btn-primary:hover {
+  background: var(--blue);
+  color: var(--crust);
+  filter: brightness(1.08);
+}
+
 .window-resize-handle {
   position: fixed;
   z-index: 10000;
@@ -219,7 +290,8 @@ body.sidebar-collapsed #sidebar-resize-handle {
 
 #btn-new-connection,
 #btn-settings,
-#btn-local-shell {
+#btn-local-shell,
+#btn-sidebar-tools {
   width: 26px;
   height: 26px;
   border-radius: var(--border-radius);
@@ -234,6 +306,11 @@ body.sidebar-collapsed #sidebar-resize-handle {
 }
 
 #btn-new-connection { font-size: 18px; }
+#btn-sidebar-tools { font-size: 16px; }
+#btn-sidebar-tools:hover {
+  background: var(--surface1);
+  color: var(--text);
+}
 
 #btn-local-shell {
   font-family: var(--font-mono);
@@ -279,9 +356,9 @@ body.sidebar-collapsed #sidebar-resize-handle {
 }
 
 .sidebar-tools-popover {
-  position: absolute;
+  position: fixed;
   top: 44px;
-  right: 8px;
+  left: 8px;
   width: 240px;
   z-index: 60;
   background: var(--mantle);
@@ -409,6 +486,22 @@ body.sidebar-collapsed #sidebar-resize-handle {
 .conn-item.dimmed,
 .folder-item.dimmed {
   display: none;
+}
+
+/* ─── Drag & drop en la sidebar ──────────────────────────────── */
+.conn-item.dragging,
+.folder-item.dragging {
+  opacity: 0.45;
+}
+
+.folder-header.drag-over {
+  background: color-mix(in srgb, var(--blue) 22%, transparent);
+  outline: 1px dashed var(--blue);
+  outline-offset: -2px;
+}
+
+#connection-list.drag-over-root {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--blue) 60%, transparent);
 }
 
 /* ─── Lista de conexiones ────────────────────────────────────── */
@@ -1902,6 +1995,18 @@ input[type="checkbox"] {
 
 .folder-header:hover { background: var(--surface0); }
 
+.folder-item[data-folder-tint] > .folder-header::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--folder-tint, transparent);
+  pointer-events: none;
+}
+
 .folder-arrow {
   font-size: 8px;
   color: var(--overlay0);
@@ -2030,6 +2135,51 @@ input[type="checkbox"] {
   height: 1px;
   background: var(--surface0);
   margin: 4px 6px;
+}
+
+.ctx-folder-color {
+  padding: 6px 12px 8px;
+}
+
+.ctx-folder-color-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--overlay1);
+  margin-bottom: 6px;
+}
+
+.ctx-folder-color-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ctx-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--surface1);
+  background: var(--folder-tint, var(--surface0));
+  cursor: pointer;
+  padding: 0;
+  font-size: 10px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.1s, border-color 0.1s;
+}
+
+.ctx-swatch:hover {
+  transform: scale(1.18);
+  border-color: var(--text);
+}
+
+.ctx-swatch-clear {
+  background: transparent;
+  color: var(--overlay1);
 }
 
 /* ═══════════════════════════════════════════════════════════════

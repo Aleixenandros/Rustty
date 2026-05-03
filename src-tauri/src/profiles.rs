@@ -81,6 +81,20 @@ pub struct ConnectionProfile {
     /// local escuchando en `localhost:6000` (DISPLAY=:0).
     #[serde(default)]
     pub x11_forwarding: bool,
+    /// Si > 0, intenta reconectar automáticamente al caer la conexión SSH.
+    /// El backend reintenta hasta `auto_reconnect` veces con backoff
+    /// exponencial (2s, 4s, 8s, …). 0 / None = desactivado.
+    #[serde(default)]
+    pub auto_reconnect: Option<u32>,
+    /// Si true, vuelca toda la salida del shell SSH a un fichero de log
+    /// dentro de `session_log_dir` (o, si no se indica, en
+    /// `<data_dir>/session_logs/`). Útil para auditoría y depuración.
+    #[serde(default)]
+    pub session_log: bool,
+    /// Carpeta personalizada para los logs de sesión. Si está vacía se usa
+    /// `<data_dir>/session_logs/<perfil>/<timestamp>.log`.
+    #[serde(default)]
+    pub session_log_dir: Option<String>,
     /// Timestamp ISO 8601 de creación
     pub created_at: String,
     /// Timestamp ISO 8601 de la última modificación. Usado por la

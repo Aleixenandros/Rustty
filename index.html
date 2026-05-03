@@ -21,15 +21,26 @@
         <div class="window-resize-handle resize-sw" data-resize-dir="SouthWest"></div>
       </div>
 
+      <!-- ── Rail vertical de iconos ── -->
+      <aside id="rail" aria-label="Navegación">
+        <div class="rail-section rail-top">
+          <button class="rail-btn" data-rail-view="profiles" data-i18n-title="rail.view_profiles" title="Perfiles" aria-label="Perfiles">📁</button>
+          <button class="rail-btn" data-rail-view="favorites" data-i18n-title="rail.view_favorites" title="Favoritos" aria-label="Favoritos">★</button>
+          <button class="rail-btn" data-rail-action="sync" data-i18n-title="rail.sync" title="Sincronización" aria-label="Sincronización">⇅</button>
+          <button class="rail-btn" id="rail-btn-settings" data-rail-action="settings" data-i18n-title="sidebar.prefs_title" title="Preferencias" aria-label="Preferencias">⚙</button>
+        </div>
+        <div class="rail-section rail-bottom">
+          <button class="rail-btn" id="rail-btn-local" data-rail-action="local-shell" data-i18n-title="sidebar.local_shell_title" title="Consola local" aria-label="Consola local">$_</button>
+          <button class="rail-btn rail-btn-primary" id="rail-btn-new" data-rail-action="new-connection" data-i18n-title="sidebar.new_conn_title" title="Nueva conexión" aria-label="Nueva conexión">＋</button>
+        </div>
+      </aside>
+
       <!-- ── Barra lateral izquierda ── -->
       <aside id="sidebar">
         <div id="sidebar-header">
           <span class="app-logo">Rustty</span>
           <div class="sidebar-header-actions">
             <button id="btn-sidebar-tools" data-i18n-title="sidebar.tools_title" title="Filtrar y cambiar de perfil">≡</button>
-            <button id="btn-settings" data-i18n-title="sidebar.prefs_title" title="Preferencias">⚙</button>
-            <button id="btn-local-shell" data-i18n-title="sidebar.local_shell_title" title="Consola local">$_</button>
-            <button id="btn-new-connection" data-i18n-title="sidebar.new_conn_title" title="Nueva conexión">+</button>
           </div>
         </div>
 
@@ -189,6 +200,23 @@
       <button class="ctx-item ctx-folder-only hidden" data-ctx="rename-folder">
         <span class="ctx-icon">✎</span><span data-i18n="ctx.rename_folder">Renombrar carpeta</span>
       </button>
+      <button class="ctx-item ctx-folder-only hidden" data-ctx="export-folder">
+        <span class="ctx-icon">⇪</span><span data-i18n="ctx.export_folder">Exportar conexiones de la carpeta…</span>
+      </button>
+      <div class="ctx-folder-only ctx-folder-color hidden">
+        <span class="ctx-folder-color-label" data-i18n="ctx.folder_color">Color</span>
+        <div class="ctx-folder-color-swatches">
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="red"    style="--folder-tint:var(--red)"    title="Rojo"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="peach"  style="--folder-tint:var(--peach)"  title="Melocotón"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="yellow" style="--folder-tint:var(--yellow)" title="Amarillo"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="green"  style="--folder-tint:var(--green)"  title="Verde"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="teal"   style="--folder-tint:var(--teal)"   title="Turquesa"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="blue"   style="--folder-tint:var(--blue)"   title="Azul"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="mauve"  style="--folder-tint:var(--mauve)"  title="Malva"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="pink"   style="--folder-tint:var(--pink)"   title="Rosa"></button>
+          <button class="ctx-swatch ctx-swatch-clear" data-ctx="set-folder-color" data-color-id="none" data-i18n-title="ctx.folder_color_clear" title="Quitar color">✕</button>
+        </div>
+      </div>
       <button class="ctx-item danger ctx-folder-only hidden" data-ctx="delete-folder">
         <span class="ctx-icon">✕</span><span data-i18n="ctx.delete_folder">Eliminar carpeta</span>
       </button>
@@ -215,6 +243,9 @@
       <div class="ctx-sep ctx-ws-only hidden"></div>
       <button class="ctx-item ctx-ws-only hidden" data-ctx="rename-ws">
         <span class="ctx-icon">✎</span><span data-i18n="ctx.rename_workspace">Renombrar perfil</span>
+      </button>
+      <button class="ctx-item ctx-ws-only hidden" data-ctx="export-ws">
+        <span class="ctx-icon">⇪</span><span data-i18n="ctx.export_workspace">Exportar conexiones del perfil…</span>
       </button>
       <button class="ctx-item danger ctx-ws-only hidden" data-ctx="delete-ws">
         <span class="ctx-icon">✕</span><span data-i18n="ctx.delete_workspace">Eliminar perfil</span>
@@ -427,6 +458,24 @@
               </label>
               <p class="form-hint" data-i18n="modal_conn.x11_forwarding_hint">
                 Requiere un X server local en localhost:6000 (DISPLAY=:0). En Windows o macOS necesitarás un servidor X dedicado.
+              </p>
+            </div>
+
+            <div class="form-row">
+              <label for="f-auto-reconnect" data-i18n="modal_conn.auto_reconnect">Reintentos de reconexión</label>
+              <input id="f-auto-reconnect" type="number" min="0" max="20" step="1" placeholder="0" />
+              <p class="form-hint" data-i18n="modal_conn.auto_reconnect_hint">
+                0 = desactivado. Número de reintentos automáticos al caer la conexión, con backoff exponencial (2s, 4s, 8s…).
+              </p>
+            </div>
+
+            <div class="form-row">
+              <label class="checkbox-label">
+                <input id="f-session-log" type="checkbox" />
+                <span data-i18n="modal_conn.session_log">Grabar sesión a fichero</span>
+              </label>
+              <p class="form-hint" data-i18n="modal_conn.session_log_hint">
+                Vuelca la salida del shell a un fichero de log dentro de session_logs/&lt;perfil&gt;-&lt;timestamp&gt;.log en el directorio de datos.
               </p>
             </div>
           </details>

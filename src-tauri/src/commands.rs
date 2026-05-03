@@ -8,6 +8,7 @@ use crate::profiles::{ConnectionProfile, ProfileManager};
 use crate::rdp_manager::RdpManager;
 use crate::sftp_manager::{FileEntry, SftpManager};
 use crate::ssh_manager::SshManager;
+use crate::DataDir;
 use crate::sync::{
     pack_state, resolve_sync_folder, unpack_state, OAuthFinishResult, OAuthProvider,
     OAuthStartResult, SnapshotEntry, SyncBackendKind, SyncConfig, SyncManager, SyncState,
@@ -51,6 +52,7 @@ pub fn delete_profile(state: State<ProfileManager>, id: String) -> Result<(), St
 pub fn ssh_connect(
     ssh_state: State<'_, SshManager>,
     profile_state: State<'_, ProfileManager>,
+    data_dir: State<'_, DataDir>,
     app_handle: AppHandle,
     profile_id: String,
     password: Option<String>,
@@ -73,6 +75,7 @@ pub fn ssh_connect(
             resolved_password,
             passphrase,
             app_handle,
+            data_dir.0.clone(),
         )
         .map_err(|e| e.to_string())?;
 
