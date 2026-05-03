@@ -470,6 +470,14 @@
             </div>
 
             <div class="form-row">
+              <label for="f-proxy-jump" data-i18n="modal_conn.proxy_jump">Bastion / Jump host</label>
+              <input id="f-proxy-jump" type="text" placeholder="[user@]host[:port]" />
+              <p class="form-hint" data-i18n="modal_conn.proxy_jump_hint">
+                Conecta primero a este host bastión y abre un canal SSH al destino real a través suyo (ProxyJump). Reutiliza las credenciales del perfil.
+              </p>
+            </div>
+
+            <div class="form-row">
               <label class="checkbox-label">
                 <input id="f-session-log" type="checkbox" />
                 <span data-i18n="modal_conn.session_log">Grabar sesión a fichero</span>

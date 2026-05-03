@@ -311,86 +311,133 @@ async fn run_session(
         ..Default::default()
     });
     let addr = format!("{}:{}", profile.host, profile.port);
-    let (client_handler, host_key_failure) = host_keys::client(
-        profile.host.clone(),
-        profile.port,
-        profile.agent_forwarding,
-        profile.x11_forwarding,
-    );
-    let mut handle = match client::connect(config, addr.clone(), client_handler).await {
-        Ok(handle) => handle,
-        Err(err) => {
-            if let Some(reason) = host_keys::take_failure(&host_key_failure) {
-                return SessionExit::Fatal(AppError::Auth(reason));
+    let proxy_spec = profile
+        .proxy_jump
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let mut handle = if let Some(spec) = proxy_spec {
+        // ── Modo ProxyJump: conectar al bastion → direct-tcpip → handshake target
+        let (b_user, b_host, b_port) = parse_jump_spec(spec, &profile.username);
+        let bastion_addr = format!("{}:{}", b_host, b_port);
+        let (bastion_handler, bastion_failure) = host_keys::client(
+            b_host.clone(),
+            b_port,
+            false,
+            false,
+        );
+        let mut bastion = match client::connect(
+            config.clone(),
+            bastion_addr.clone(),
+            bastion_handler,
+        )
+        .await
+        {
+            Ok(h) => h,
+            Err(err) => {
+                if let Some(reason) = host_keys::take_failure(&bastion_failure) {
+                    return SessionExit::Fatal(AppError::Auth(format!("Bastion: {reason}")));
+                }
+                let _ = app_handle.emit(
+                    &format!("ssh-error-{}", session_id),
+                    format!("No se puede conectar al bastion {bastion_addr}: {err}"),
+                );
+                return SessionExit::ServerClosed;
             }
-            // Errores de red/TCP: candidatos a reconectar
-            let _ = app_handle.emit(
-                &format!("ssh-error-{}", session_id),
-                format!("No se puede conectar a {addr}: {err}"),
-            );
-            return SessionExit::ServerClosed;
+        };
+
+        match authenticate_handle(
+            &mut bastion,
+            &profile.auth_type,
+            &b_user,
+            password.as_ref(),
+            passphrase.as_ref(),
+            profile.key_path.as_deref(),
+        )
+        .await
+        {
+            Ok(AuthResult::Success) => {}
+            Ok(AuthResult::Failure { remaining_methods }) => {
+                return SessionExit::Fatal(AppError::Auth(format!(
+                    "Autenticación contra bastion fallida. Métodos restantes: {:?}",
+                    remaining_methods
+                )));
+            }
+            Err(e) => return SessionExit::Fatal(AppError::Auth(format!("Bastion: {e}"))),
+        }
+
+        let chan = match bastion
+            .channel_open_direct_tcpip(
+                profile.host.clone(),
+                profile.port as u32,
+                "127.0.0.1".to_string(),
+                0,
+            )
+            .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return SessionExit::Fatal(AppError::Ssh(format!(
+                    "No se pudo abrir canal direct-tcpip a través del bastion: {e}"
+                )))
+            }
+        };
+        let stream = chan.into_stream();
+
+        let (target_handler, target_failure) = host_keys::client(
+            profile.host.clone(),
+            profile.port,
+            profile.agent_forwarding,
+            profile.x11_forwarding,
+        );
+        match client::connect_stream(config, stream, target_handler).await {
+            Ok(h) => h,
+            Err(err) => {
+                if let Some(reason) = host_keys::take_failure(&target_failure) {
+                    return SessionExit::Fatal(AppError::Auth(reason));
+                }
+                return SessionExit::Fatal(AppError::Io(format!(
+                    "No se puede establecer SSH con {addr} a través del bastion: {err}"
+                )));
+            }
+        }
+    } else {
+        // ── Conexión directa
+        let (client_handler, host_key_failure) = host_keys::client(
+            profile.host.clone(),
+            profile.port,
+            profile.agent_forwarding,
+            profile.x11_forwarding,
+        );
+        match client::connect(config, addr.clone(), client_handler).await {
+            Ok(handle) => handle,
+            Err(err) => {
+                if let Some(reason) = host_keys::take_failure(&host_key_failure) {
+                    return SessionExit::Fatal(AppError::Auth(reason));
+                }
+                let _ = app_handle.emit(
+                    &format!("ssh-error-{}", session_id),
+                    format!("No se puede conectar a {addr}: {err}"),
+                );
+                return SessionExit::ServerClosed;
+            }
         }
     };
 
-    // 2. Autenticación
-    let auth = match &profile.auth_type {
-        AuthType::Password => {
-            let pass = match password.clone() {
-                Some(p) => p,
-                None => return SessionExit::Fatal(AppError::Auth("Se requiere contraseña".into())),
-            };
-            match handle
-                .authenticate_password(profile.username.clone(), pass)
-                .await
-            {
-                Ok(a) => a,
-                Err(e) => {
-                    return SessionExit::Fatal(AppError::Auth(format!(
-                        "Autenticación por contraseña fallida: {e}"
-                    )))
-                }
-            }
-        }
-        AuthType::PublicKey => {
-            let key_path = match profile.key_path.as_ref() {
-                Some(p) => p,
-                None => {
-                    return SessionExit::Fatal(AppError::Auth(
-                        "Se requiere ruta de clave privada".into(),
-                    ))
-                }
-            };
-            let key = match load_secret_key(Path::new(key_path), passphrase.as_deref()) {
-                Ok(k) => k,
-                Err(e) => {
-                    return SessionExit::Fatal(AppError::Auth(format!("Clave inválida: {e}")))
-                }
-            };
-            let hash_alg = handle
-                .best_supported_rsa_hash()
-                .await
-                .ok()
-                .flatten()
-                .flatten();
-            match handle
-                .authenticate_publickey(
-                    profile.username.clone(),
-                    PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
-                )
-                .await
-            {
-                Ok(a) => a,
-                Err(e) => {
-                    return SessionExit::Fatal(AppError::Auth(format!(
-                        "Autenticación por clave fallida: {e}"
-                    )))
-                }
-            }
-        }
-        AuthType::Agent => match authenticate_with_agent(&mut handle, &profile.username).await {
-            Ok(a) => a,
-            Err(e) => return SessionExit::Fatal(e),
-        },
+    // 2. Autenticación contra el destino
+    let auth = match authenticate_handle(
+        &mut handle,
+        &profile.auth_type,
+        &profile.username,
+        password.as_ref(),
+        passphrase.as_ref(),
+        profile.key_path.as_deref(),
+    )
+    .await
+    {
+        Ok(a) => a,
+        Err(e) => return SessionExit::Fatal(e),
     };
 
     match auth {
@@ -586,6 +633,69 @@ fn legacy_preferred() -> Preferred {
         cipher: Cow::Owned(cipher),
         mac: default.mac.clone(),
         compression: default.compression.clone(),
+    }
+}
+
+/// Parsea un spec de jump host con formato `[user@]host[:port]`.
+/// Si el `user` no se especifica, hereda el del perfil destino. Puerto por
+/// defecto: 22.
+fn parse_jump_spec(spec: &str, default_user: &str) -> (String, String, u16) {
+    let s = spec.trim();
+    let (user, rest) = match s.split_once('@') {
+        Some((u, r)) => (u.to_string(), r),
+        None => (default_user.to_string(), s),
+    };
+    let (host, port) = match rest.rsplit_once(':') {
+        Some((h, p)) => {
+            let port: u16 = p.parse().unwrap_or(22);
+            (h.to_string(), port)
+        }
+        None => (rest.to_string(), 22u16),
+    };
+    (user, host, port)
+}
+
+/// Autentica un `client::Handle` aplicando el `auth_type` con las credenciales
+/// dadas. Reusable para el bastion (ProxyJump) y para el destino. La auth por
+/// clave pública requiere `key_path`.
+async fn authenticate_handle(
+    handle: &mut client::Handle<host_keys::KnownHostsClient>,
+    auth_type: &AuthType,
+    username: &str,
+    password: Option<&String>,
+    passphrase: Option<&String>,
+    key_path: Option<&str>,
+) -> Result<AuthResult, AppError> {
+    match auth_type {
+        AuthType::Password => {
+            let pass = password
+                .cloned()
+                .ok_or_else(|| AppError::Auth("Se requiere contraseña".into()))?;
+            handle
+                .authenticate_password(username.to_string(), pass)
+                .await
+                .map_err(|e| AppError::Auth(format!("Autenticación por contraseña fallida: {e}")))
+        }
+        AuthType::PublicKey => {
+            let key_path = key_path
+                .ok_or_else(|| AppError::Auth("Se requiere ruta de clave privada".into()))?;
+            let key = load_secret_key(Path::new(key_path), passphrase.map(|s| s.as_str()))
+                .map_err(|e| AppError::Auth(format!("Clave inválida: {e}")))?;
+            let hash_alg = handle
+                .best_supported_rsa_hash()
+                .await
+                .ok()
+                .flatten()
+                .flatten();
+            handle
+                .authenticate_publickey(
+                    username.to_string(),
+                    PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
+                )
+                .await
+                .map_err(|e| AppError::Auth(format!("Autenticación por clave fallida: {e}")))
+        }
+        AuthType::Agent => authenticate_with_agent(handle, username).await,
     }
 }
 

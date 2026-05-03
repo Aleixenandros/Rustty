@@ -2996,6 +2996,7 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-x11-forwarding").checked = !!profile.x11_forwarding;
   document.getElementById("f-auto-reconnect").value = profile.auto_reconnect ?? "";
   document.getElementById("f-session-log").checked = !!profile.session_log;
+  document.getElementById("f-proxy-jump").value = profile.proxy_jump || "";
   populateWorkspaceFormSelect(profile.workspace_id || getActiveWorkspaceId());
   refreshKeepassStatus().then(() => {
     document.getElementById("f-use-keepass").checked = !!profile.keepass_entry_uuid;
@@ -3219,6 +3220,7 @@ async function saveAndClose(shouldConnect) {
     x11_forwarding:      document.getElementById("f-x11-forwarding").checked,
     auto_reconnect:      autoReconnectFromInput(document.getElementById("f-auto-reconnect").value),
     session_log:         document.getElementById("f-session-log").checked,
+    proxy_jump:          (document.getElementById("f-proxy-jump").value || "").trim() || null,
     created_at: editingProfileId
       ? (profiles.find((p) => p.id === editingProfileId)?.created_at ?? new Date().toISOString())
       : new Date().toISOString(),

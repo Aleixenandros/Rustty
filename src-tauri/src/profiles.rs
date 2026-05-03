@@ -86,6 +86,15 @@ pub struct ConnectionProfile {
     /// exponencial (2s, 4s, 8s, …). 0 / None = desactivado.
     #[serde(default)]
     pub auto_reconnect: Option<u32>,
+    /// Bastion / jump host (ProxyJump). Formato `[user@]host[:port]`.
+    /// Si está presente, primero se conecta al bastion vía SSH, se abre un
+    /// canal `direct-tcpip` al host destino y la sesión SSH del target se
+    /// realiza sobre ese stream tunelizado. Para autenticar el bastion se
+    /// reutilizan las credenciales del perfil (mismo `auth_type`,
+    /// `key_path`, `password`, `passphrase`) — la mayoría de despliegues
+    /// usan la misma clave en bastion y destino.
+    #[serde(default)]
+    pub proxy_jump: Option<String>,
     /// Si true, vuelca toda la salida del shell SSH a un fichero de log
     /// dentro de `session_log_dir` (o, si no se indica, en
     /// `<data_dir>/session_logs/`). Útil para auditoría y depuración.
