@@ -54,6 +54,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             // Si es la build portable de Windows, los datos viajan junto al
@@ -95,6 +96,9 @@ pub fn run() {
             commands::ssh_disconnect,
             commands::ssh_send_input,
             commands::ssh_resize,
+            commands::ssh_start_tunnel,
+            commands::ssh_stop_tunnel,
+            commands::ssh_list_tunnels,
             commands::get_profile_password,
             // ── Keyring (credenciales del SO)
             commands::keyring_set,

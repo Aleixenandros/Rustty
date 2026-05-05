@@ -5,14 +5,15 @@
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
 
-> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Última versión: **0.3.0**. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
+> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Última versión: **0.4.0**. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
 
 ## Características principales
 
 - **Multi-protocolo**: conexiones SSH, SFTP y RDP (este último mediante `xfreerdp` / `mstsc` externos).
 - **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F) y soporte de OSC 7 (seguimiento del `cwd` remoto).
 - **Panel SFTP integrado**: explorador de ficheros con **vista dividida remoto / local**, transferencia recursiva de carpetas, drag & drop, seguimiento automático del directorio del terminal y modo elevado a **sudo** cuando el servidor lo permita.
-- **Opciones avanzadas SSH por perfil**: keep-alive configurable, **reconexión automática con backoff** ante caídas, **grabación de sesión** a fichero, agent forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) en servidores antiguos.
+- **Túneles SSH integrados**: redirección de puertos **local** (`-L`), **remota** (`-R`) y **dinámica / SOCKS** (`-D`) sobre una sesión activa, con panel de estado, tráfico y autoconexión opcional por perfil.
+- **Opciones avanzadas SSH por perfil**: keep-alive configurable, **reconexión automática con backoff** ante caídas, **grabación de sesión** a fichero, bastion / ProxyJump, agent forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) en servidores antiguos.
 - **Multi-pestaña y vistas divididas**: trabaja con varias sesiones simultáneas, distribúyelas en *split* horizontal / vertical / grid y activa el *broadcast* para teclear en varias a la vez.
 - **Sidebar pulida**: rail vertical de iconos (Perfiles, Favoritos, Sync, Preferencias y acciones rápidas), **drag & drop** entre carpetas y workspaces, y **colores por carpeta** desde el menú contextual.
 - **Exportación granular**: exporta todos los perfiles, los de una carpeta o los de un workspace a JSON desde el menú contextual.
@@ -23,7 +24,7 @@
   - Verificación de `known_hosts` con TOFU y aviso ante cambios de fingerprint.
 - **Copias de seguridad y sincronización E2E**: perfiles, preferencias, temas y atajos pueden sincronizarse con Google Drive, iCloud Drive, carpeta local / NAS o WebDAV. El blob remoto se cifra localmente con `age` y una passphrase maestra. Sincronización **por evento** (al iniciar y al detectar cambios locales) y **restauración de snapshots históricos** desde la pestaña de Copias.
 - **Organización**: agrupa conexiones en **perfiles-contenedor (workspaces)** independientes, en carpetas dentro de cada workspace, **conexiones favoritas** y vistas de la sidebar (workspace actual, todos los perfiles, favoritos), búsqueda rápida y duplicación de conexiones / sesiones desde el menú contextual.
-- **Personalización**: 11 temas base integrados (Catppuccin Mocha / Latte, Dracula, Nord, xterm, VS Code Dark+, Tango, Solarized Dark / Light, Gruvbox Dark, Tokyo Night, Monokai) y ajustes de cursor, scrollback y *bell*. Posibilidad de importar temas personalizados.
+- **Personalización**: 12 temas base integrados (Catppuccin Mocha / Latte, Dracula, Nord, xterm, VS Code Dark+, Tango, Solarized Dark / Light, Gruvbox Dark, Tokyo Night, Monokai) y ajustes de cursor, scrollback y *bell*. Posibilidad de importar temas personalizados en formato JSON v2 con tokens de UI y terminal.
 - **Internacionalización**: interfaz traducida a español, inglés, francés y portugués. (Traducciones realizadas con IA)
 
 ## Capturas

@@ -237,6 +237,9 @@
       <button class="ctx-item ctx-conn-only hidden" data-ctx="connect">
         <span class="ctx-icon">▶</span><span data-i18n="ctx.connect">Conectar</span>
       </button>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="new-tunnel">
+        <span class="ctx-icon">⇄</span><span data-i18n="ctx.new_tunnel">Nuevo túnel…</span>
+      </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="edit-conn">
         <span class="ctx-icon">✎</span><span data-i18n="ctx.edit">Editar</span>
       </button>
@@ -405,7 +408,19 @@
 
           <div class="form-row auth-field" id="field-password">
             <label for="f-password" data-i18n="modal_conn.password">Contraseña</label>
-            <input id="f-password" type="password" placeholder="••••••••" />
+            <div class="password-field">
+              <input id="f-password" type="password" placeholder="••••••••" />
+              <button
+                type="button"
+                class="btn-icon password-toggle"
+                id="btn-toggle-password"
+                data-i18n-title="modal_conn.show_password"
+                data-i18n-aria-label="modal_conn.show_password"
+                title="Ver contraseña"
+                aria-label="Ver contraseña"
+                aria-pressed="false"
+              >◉</button>
+            </div>
           </div>
           <div class="form-row auth-field" id="field-save-password">
             <label class="checkbox-label">
@@ -890,6 +905,7 @@
                 <label data-i18n="prefs_appearance.theme_io">Exportar / importar tema</label>
                 <div class="theme-io-actions">
                   <button type="button" class="btn-secondary" id="btn-export-theme" data-i18n="prefs_appearance.export_theme">Exportar tema actual</button>
+                  <button type="button" class="btn-secondary" id="btn-export-theme-template" data-i18n="prefs_appearance.export_theme_template">Exportar plantilla</button>
                   <button type="button" class="btn-secondary" id="btn-import-theme" data-i18n="prefs_appearance.import_theme">Importar tema…</button>
                 </div>
                 <p class="settings-hint" data-i18n="prefs_appearance.theme_io_hint">Se exporta la paleta xterm.js y los tokens de UI del tema activo. Los temas importados aparecen al final del selector.</p>

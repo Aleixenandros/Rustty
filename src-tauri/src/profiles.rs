@@ -28,6 +28,36 @@ fn default_workspace_id() -> String {
     "default".to_string()
 }
 
+/// Tipo de túnel SSH persistido en un perfil.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SshTunnelType {
+    /// Equivalente a `ssh -L local_port:remote_host:remote_port`.
+    Local,
+    /// Equivalente a `ssh -R remote_port:local_host:local_port`.
+    Remote,
+    /// Equivalente a `ssh -D local_port` (SOCKS5 local).
+    Dynamic,
+}
+
+/// Configuración de redirección de puertos asociada a un perfil.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshTunnelProfile {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    pub tunnel_type: SshTunnelType,
+    #[serde(default)]
+    pub bind_host: Option<String>,
+    pub local_port: u16,
+    #[serde(default)]
+    pub remote_host: Option<String>,
+    #[serde(default)]
+    pub remote_port: Option<u16>,
+    #[serde(default)]
+    pub auto_start: bool,
+}
+
 /// Perfil de conexión guardado por el usuario.
 /// Soporta SSH y RDP. No almacena contraseñas en texto plano; usa keyring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +134,10 @@ pub struct ConnectionProfile {
     /// `<data_dir>/session_logs/<perfil>/<timestamp>.log`.
     #[serde(default)]
     pub session_log_dir: Option<String>,
+    /// Túneles SSH guardados para este perfil. Si `auto_start` está activo,
+    /// el frontend los levanta al establecer la sesión interactiva.
+    #[serde(default)]
+    pub ssh_tunnels: Vec<SshTunnelProfile>,
     /// Timestamp ISO 8601 de creación
     pub created_at: String,
     /// Timestamp ISO 8601 de la última modificación. Usado por la

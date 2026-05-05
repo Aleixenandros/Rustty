@@ -379,8 +379,7 @@ async fn run_sftp_worker(
                 transfer_id,
                 reply,
             } => {
-                let res =
-                    do_download_dir(&sftp, &remote, &local, &transfer_id, &app_handle).await;
+                let res = do_download_dir(&sftp, &remote, &local, &transfer_id, &app_handle).await;
                 let _ = reply.send(res);
             }
             SftpCommand::UploadDir {
@@ -795,7 +794,9 @@ async fn do_upload_dir(
 
     let mut stack = vec![(local.to_path_buf(), remote.to_string())];
     while let Some((ldir, rdir)) = stack.pop() {
-        let mut read = tokio::fs::read_dir(&ldir).await.map_err(|e| e.to_string())?;
+        let mut read = tokio::fs::read_dir(&ldir)
+            .await
+            .map_err(|e| e.to_string())?;
         while let Some(entry) = read.next_entry().await.map_err(|e| e.to_string())? {
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = entry.path();

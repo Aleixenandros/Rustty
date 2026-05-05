@@ -2,6 +2,36 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [0.4.0] – 2026-05-05
+
+### Añadido
+- **Túneles SSH con redirección de puertos** sobre sesiones activas:
+  locales (`-L`), remotos (`-R`) y dinámicos / SOCKS (`-D`). Incluye panel
+  por sesión con estado, tráfico y cierre individual, botón `⇄` en pestañas
+  SSH, acción contextual "Nuevo túnel…" en perfiles, persistencia por perfil
+  y autoconexión opcional.
+- **Formato de temas v2**: los temas personalizados usan `formatVersion: 2`
+  con tokens separados para UI y terminal. Se añadió exportación de plantilla
+  desde Preferencias → Apariencia y documentación en `docs/themes.md`.
+- **Botón de ver / ocultar contraseña** en el modal de crear o editar
+  conexión.
+- **Portapapeles nativo de Tauri** para copiar/pegar texto del terminal,
+  evitando limitaciones del WebView al pegar con clic derecho contenido
+  copiado fuera de Rustty.
+
+### Cambiado
+- El modal de conexión ahora es **redimensionable** y recuerda su tamaño,
+  pensado para rutas KeePass largas o formularios con muchas opciones.
+- Los temas personalizados antiguos se sustituyen por el formato v2 sin capa
+  de compatibilidad.
+
+### Corregido
+- **Restauración de tamaño y posición de ventana** al arrancar: el estado
+  guardado por `tauri-plugin-window-state` se aplica explícitamente al abrir
+  la ventana principal.
+- **Pegar con botón derecho** funciona también con texto copiado desde fuera
+  de Rustty.
+
 ## [0.3.0] – 2026-05-03
 
 ### Añadido

@@ -615,10 +615,7 @@ impl SyncBackend for LocalBackend {
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| {
                     let dur = t.duration_since(std::time::UNIX_EPOCH).ok()?;
-                    Some(
-                        DateTime::<Utc>::from_timestamp(dur.as_secs() as i64, 0)?
-                            .to_rfc3339(),
-                    )
+                    Some(DateTime::<Utc>::from_timestamp(dur.as_secs() as i64, 0)?.to_rfc3339())
                 });
             out.push(SnapshotEntry {
                 id: entry.path().to_string_lossy().into_owned(),
@@ -639,7 +636,9 @@ impl SyncBackend for LocalBackend {
         let history = parent.join(HISTORY_DIR);
         let target = PathBuf::from(id);
         if target.parent() != Some(history.as_path()) {
-            return Err(AppError::Sync("Snapshot fuera del directorio histórico".into()));
+            return Err(AppError::Sync(
+                "Snapshot fuera del directorio histórico".into(),
+            ));
         }
         if !target.exists() {
             return Ok(None);

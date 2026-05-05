@@ -1716,11 +1716,32 @@ body.terminal-bell-visual::after {
   background: var(--mantle);
   border: 1px solid var(--surface0);
   border-radius: 10px;
-  width: 480px;
+  width: var(--connection-modal-width, 480px);
+  height: var(--connection-modal-height, auto);
+  min-width: min(480px, 95vw);
+  min-height: min(360px, 90vh);
   max-width: 95vw;
   max-height: 90vh;
   overflow-y: auto;
+  resize: both;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+#modal-connection::after {
+  content: "";
+  position: sticky;
+  display: block;
+  width: 13px;
+  height: 13px;
+  margin-left: auto;
+  margin-top: -13px;
+  right: 4px;
+  bottom: 4px;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, transparent 0 45%, var(--surface2) 45% 55%, transparent 55%),
+    linear-gradient(135deg, transparent 0 62%, var(--surface1) 62% 72%, transparent 72%);
+  opacity: 0.75;
 }
 
 .modal-header {
@@ -1802,6 +1823,30 @@ input[type="password"]:hover,
 input[type="number"]:hover,
 select:hover {
   border-color: var(--surface2);
+}
+
+.password-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-field input {
+  padding-right: 42px;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 4px;
+  width: 28px;
+  height: 28px;
+  border-radius: calc(var(--border-radius) - 2px);
+  color: var(--subtext0);
+  font-size: 12px;
+}
+
+.password-toggle[aria-pressed="true"] {
+  color: var(--blue);
 }
 
 /* Ocultar las flechas nativas del input number (WebKit/Firefox). Se prefiere
@@ -3760,8 +3805,9 @@ html.theme-monokai {
   cursor: wait;
 }
 
-/* Botón ⇅ en el tab (solo SSH) */
-.tab-sftp {
+/* Botones auxiliares en el tab (solo SSH) */
+.tab-sftp,
+.tab-tunnels {
   background: transparent;
   border: none;
   color: var(--overlay1);
@@ -3777,7 +3823,158 @@ html.theme-monokai {
   transition: all 120ms;
 }
 
-.tab-sftp:hover {
+.tab-sftp:hover,
+.tab-tunnels:hover {
   color: var(--blue);
   background: var(--surface0);
+}
+
+/* ─── Panel de túneles SSH ─────────────────────────────────── */
+.tunnel-panel {
+  flex: 0 0 auto;
+  max-height: 42%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 8px;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  overflow: auto;
+  font-size: 12px;
+}
+
+.tunnel-panel.hidden { display: none; }
+
+.tunnel-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tunnel-title {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.tunnel-subtitle {
+  color: var(--overlay1);
+  font-size: 11px;
+}
+
+.tunnel-close,
+.tunnel-stop {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--overlay1);
+  cursor: pointer;
+}
+
+.tunnel-close:hover,
+.tunnel-stop:hover {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+}
+
+.tunnel-form {
+  display: grid;
+  grid-template-columns: 108px 120px 96px minmax(140px, 1fr) 96px minmax(120px, 1fr) auto auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.tunnel-form input,
+.tunnel-form select {
+  min-width: 0;
+  height: 30px;
+  border-radius: 4px;
+  border: 1px solid var(--surface0);
+  background: var(--base);
+  color: var(--text);
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.tunnel-form input:disabled {
+  opacity: 0.55;
+}
+
+.tunnel-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--subtext1);
+  white-space: nowrap;
+}
+
+.tunnel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tunnel-empty {
+  padding: 10px;
+  color: var(--overlay1);
+  border: 1px dashed var(--surface0);
+  border-radius: 5px;
+}
+
+.tunnel-row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--base);
+  border: 1px solid var(--surface0);
+  border-radius: 5px;
+}
+
+.tunnel-kind {
+  justify-self: start;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--blue) 16%, transparent);
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.tunnel-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tunnel-main strong,
+.tunnel-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tunnel-main small,
+.tunnel-traffic {
+  color: var(--overlay1);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+@media (max-width: 980px) {
+  .tunnel-form {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+  .tunnel-row {
+    grid-template-columns: 58px minmax(0, 1fr) 28px;
+  }
+  .tunnel-traffic {
+    grid-column: 2 / 3;
+  }
 }

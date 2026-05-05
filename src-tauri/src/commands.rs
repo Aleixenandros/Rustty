@@ -7,12 +7,12 @@ use crate::local_shell_manager::LocalShellManager;
 use crate::profiles::{ConnectionProfile, ProfileManager};
 use crate::rdp_manager::RdpManager;
 use crate::sftp_manager::{FileEntry, SftpManager};
-use crate::ssh_manager::SshManager;
-use crate::DataDir;
+use crate::ssh_manager::{SshManager, SshTunnelConfig, SshTunnelInfo};
 use crate::sync::{
     pack_state, resolve_sync_folder, unpack_state, OAuthFinishResult, OAuthProvider,
     OAuthStartResult, SnapshotEntry, SyncBackendKind, SyncConfig, SyncManager, SyncState,
 };
+use crate::DataDir;
 
 // ─── Comandos de gestión de perfiles ─────────────────────────────────────────
 
@@ -170,6 +170,32 @@ pub fn ssh_resize(
     ssh_state
         .resize(&session_id, cols, rows)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn ssh_start_tunnel(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    config: SshTunnelConfig,
+) -> Result<SshTunnelInfo, String> {
+    ssh_state.start_tunnel(&session_id, config).await
+}
+
+#[tauri::command]
+pub async fn ssh_stop_tunnel(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    tunnel_id: String,
+) -> Result<(), String> {
+    ssh_state.stop_tunnel(&session_id, tunnel_id).await
+}
+
+#[tauri::command]
+pub async fn ssh_list_tunnels(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+) -> Result<Vec<SshTunnelInfo>, String> {
+    ssh_state.list_tunnels(&session_id).await
 }
 
 // ─── Comandos RDP ────────────────────────────────────────────────────────────
@@ -522,7 +548,10 @@ pub fn local_rename(from: String, to: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn local_path_join(base: String, name: String) -> Result<String, String> {
-    Ok(PathBuf::from(base).join(name).to_string_lossy().into_owned())
+    Ok(PathBuf::from(base)
+        .join(name)
+        .to_string_lossy()
+        .into_owned())
 }
 
 #[tauri::command]

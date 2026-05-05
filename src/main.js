@@ -6,6 +6,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask, save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { readText as readClipboardText, writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import * as sync from "./sync.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -455,27 +456,46 @@ function applyTheme(theme) {
 //
 // Formato:
 //   {
-//     formatVersion: 1,
+//     formatVersion: 2,
 //     id: "tokyo-night-fork",
 //     name: "Tokyo Night (fork)",
 //     terminal: { background, foreground, cursor, ..., 16 colores ANSI },
-//     ui: { "--base": "#...", "--text": "#...", ... }
+//     ui: { base: "#...", text: "#...", blue: "#...", ... }
 //   }
 
-const UI_THEME_VARS = [
-  "--base", "--mantle", "--crust",
-  "--surface0", "--surface1", "--surface2",
-  "--overlay0", "--overlay1",
-  "--text", "--subtext0", "--subtext1",
-  "--blue", "--red", "--green", "--yellow",
-  "--mauve", "--peach", "--teal", "--sky", "--lavender",
+const THEME_FORMAT_VERSION = 2;
+const BASE_THEME_IDS = new Set(Object.keys(TERMINAL_THEMES));
+
+const UI_THEME_TOKENS = [
+  "base", "mantle", "crust",
+  "surface0", "surface1", "surface2",
+  "overlay0", "overlay1",
+  "text", "subtext0", "subtext1",
+  "blue", "red", "green", "yellow",
+  "mauve", "peach", "teal", "sky", "lavender",
 ];
 
-function slugifyThemeId(name) {
-  const slug = (name || "custom").toLowerCase()
+const TERMINAL_THEME_TOKENS = [
+  "background", "foreground", "cursor", "cursorAccent", "selectionBackground",
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "brightBlack", "brightRed", "brightGreen", "brightYellow",
+  "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+];
+
+function baseSlugifyThemeId(name) {
+  return (name || "custom").toLowerCase()
     .normalize("NFD").replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
     .slice(0, 40) || "custom";
+}
+
+function slugifyThemeId(name) {
+  const slug = baseSlugifyThemeId(name);
+  return uniqueThemeId(slug);
+}
+
+function uniqueThemeId(baseId) {
+  const slug = baseSlugifyThemeId(baseId);
   // Garantiza unicidad frente a temas base y otros custom
   const existing = new Set([
     ...Object.keys(TERMINAL_THEMES),
@@ -487,12 +507,55 @@ function slugifyThemeId(name) {
   return `${slug}-${i}`;
 }
 
-function gatherActiveUiVars() {
+function pickThemeTokens(source, keys) {
+  if (!source || typeof source !== "object") return {};
+  const out = {};
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) out[key] = value.trim();
+  }
+  return out;
+}
+
+function gatherActiveUiTokens() {
   const cs = getComputedStyle(document.documentElement);
   return Object.fromEntries(
-    UI_THEME_VARS.map((v) => [v, cs.getPropertyValue(v).trim()])
+    UI_THEME_TOKENS.map((token) => [token, cs.getPropertyValue(`--${token}`).trim()])
       .filter(([, val]) => val !== "")
   );
+}
+
+function normalizeThemeDocument(data) {
+  if (!data || data.formatVersion !== THEME_FORMAT_VERSION) {
+    throw new Error("unsupported_theme_format");
+  }
+  const name = String(data.name || "").trim().slice(0, 60);
+  if (!name) throw new Error("theme_name_required");
+
+  const ui = pickThemeTokens(data.ui, UI_THEME_TOKENS);
+  const terminal = pickThemeTokens(data.terminal, TERMINAL_THEME_TOKENS);
+  if (!ui.base || !ui.text || !terminal.background || !terminal.foreground) {
+    throw new Error("theme_required_tokens_missing");
+  }
+
+  return {
+    formatVersion: THEME_FORMAT_VERSION,
+    id: slugifyThemeId(data.id || name),
+    name,
+    ui,
+    terminal,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function buildThemeDocument({ id, name, ui, terminal }) {
+  return {
+    formatVersion: THEME_FORMAT_VERSION,
+    id,
+    name,
+    ui: pickThemeTokens(ui, UI_THEME_TOKENS),
+    terminal: pickThemeTokens(terminal, TERMINAL_THEME_TOKENS),
+  };
 }
 
 /** Registra un tema custom en runtime: extiende TERMINAL_THEMES, inyecta
@@ -508,8 +571,8 @@ function registerCustomTheme(theme) {
     styleEl.id = "rustty-custom-themes-style";
     document.head.appendChild(styleEl);
   }
-  const decl = UI_THEME_VARS
-    .map((v) => theme.ui[v] ? `${v}: ${theme.ui[v]};` : "")
+  const decl = UI_THEME_TOKENS
+    .map((token) => theme.ui[token] ? `--${token}: ${theme.ui[token]};` : "")
     .filter(Boolean).join(" ");
   styleEl.appendChild(
     document.createTextNode(`\nhtml.${cssClass} { ${decl} }\n`)
@@ -523,27 +586,61 @@ function registerCustomTheme(theme) {
 function appendCustomSwatch(picker, theme) {
   const root = document.querySelector(`.theme-picker[data-for="${picker}"]`);
   if (!root) return;
-  // Evitar duplicados si se re-registra
-  if (root.querySelector(`.theme-option[data-theme="${CSS.escape(theme.id)}"]`)) return;
-  const label = document.createElement("label");
+  let label = root.querySelector(`.theme-option[data-theme="${CSS.escape(theme.id)}"]`);
+  if (!label) {
+    label = document.createElement("label");
+    label.className = "theme-option";
+    label.dataset.theme = theme.id;
+    root.appendChild(label);
+  }
   label.className = "theme-option";
   label.dataset.theme = theme.id;
   const inputName = picker === "ui" ? "pref-theme" : "pref-terminal-theme";
   label.innerHTML = `
     <input type="radio" name="${inputName}" value="${escHtml(theme.id)}" />
-    <div class="theme-preview" style="background:${escHtml(theme.ui["--base"] || "#222")}">
-      <div class="theme-preview-sidebar" style="background:${escHtml(theme.ui["--mantle"] || "#1a1a1a")}"></div>
-      <div class="theme-preview-main" style="background:${escHtml(theme.ui["--base"] || "#222")}"></div>
+    <div class="theme-preview" style="background:${escHtml(theme.ui.base || "#222")}">
+      <div class="theme-preview-sidebar" style="background:${escHtml(theme.ui.mantle || "#1a1a1a")}"></div>
+      <div class="theme-preview-main" style="background:${escHtml(theme.ui.base || "#222")}"></div>
     </div>
     <span class="theme-label">${escHtml(theme.name)}</span>`;
-  root.appendChild(label);
+  const radio = label.querySelector("input");
+  radio.addEventListener("change", () => {
+    if (picker === "ui") selectUiTheme(theme.id);
+    else selectTerminalTheme(theme.id);
+  });
 }
 
 /** Registra todos los temas custom al arranque (tras loadPrefs). */
 function registerAllCustomThemes() {
+  let styleEl = document.getElementById("rustty-custom-themes-style");
+  if (styleEl) styleEl.textContent = "";
+  document.querySelectorAll(".theme-picker .theme-option").forEach((opt) => {
+    const id = opt.dataset.theme;
+    if (id && id !== "system" && id !== "inherit" && !BASE_THEME_IDS.has(id)) opt.remove();
+  });
+
+  const validThemes = [];
   for (const t of (prefs.customThemes || [])) {
-    registerCustomTheme(t);
+    try {
+      if (t?.formatVersion !== THEME_FORMAT_VERSION) continue;
+      const theme = {
+        formatVersion: THEME_FORMAT_VERSION,
+        id: baseSlugifyThemeId(t.id || t.name),
+        name: String(t.name || "").trim().slice(0, 60),
+        ui: pickThemeTokens(t.ui, UI_THEME_TOKENS),
+        terminal: pickThemeTokens(t.terminal, TERMINAL_THEME_TOKENS),
+        updatedAt: t.updatedAt,
+      };
+      if (!theme.id || !theme.name || !theme.ui.base || !theme.ui.text) continue;
+      if (!theme.terminal.background || !theme.terminal.foreground) continue;
+      if (BASE_THEME_IDS.has(theme.id)) continue;
+      validThemes.push(theme);
+      registerCustomTheme(theme);
+    } catch (err) {
+      console.warn("[theme] invalid custom theme skipped", err);
+    }
   }
+  prefs.customThemes = validThemes;
 }
 
 async function exportCurrentTheme() {
@@ -552,19 +649,18 @@ async function exportCurrentTheme() {
   const termId = (prefs.terminalTheme && prefs.terminalTheme !== "inherit")
     ? prefs.terminalTheme : uiId;
   const palette = TERMINAL_THEMES[termId] || TERMINAL_THEMES.dark;
-  const ui = gatherActiveUiVars();
+  const ui = gatherActiveUiTokens();
   const baseName = (() => {
     const custom = (prefs.customThemes || []).find((t) => t.id === uiId);
     return custom?.name || uiId;
   })();
 
-  const exported = {
-    formatVersion: 1,
+  const exported = buildThemeDocument({
     id: uiId,
     name: baseName,
     terminal: palette,
     ui,
-  };
+  });
 
   const defaultName = `rustty-theme-${uiId}.json`;
   let path;
@@ -586,6 +682,33 @@ async function exportCurrentTheme() {
   } catch (err) { toast(`${err}`, "error"); }
 }
 
+async function exportThemeTemplate() {
+  const template = buildThemeDocument({
+    id: "mi-tema",
+    name: "Mi tema",
+    ui: gatherActiveUiTokens(),
+    terminal: getTerminalTheme(),
+  });
+
+  let path;
+  try {
+    path = await saveDialog({
+      title: t("toast.export_theme_title"),
+      defaultPath: "rustty-theme-template.json",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+  } catch (err) { toast(`${err}`, "error"); return; }
+  if (!path) return;
+
+  try {
+    await invoke("write_text_file", {
+      path,
+      contents: JSON.stringify(template, null, 2),
+    });
+    toast(t("toast.theme_exported").replace("{name}", template.name), "success");
+  } catch (err) { toast(`${err}`, "error"); }
+}
+
 async function importTheme() {
   let path;
   try {
@@ -603,40 +726,46 @@ async function importTheme() {
     data = JSON.parse(text);
   } catch (err) { toast(t("toast.theme_import_invalid"), "error"); return; }
 
-  // Validación mínima
-  if (!data || !data.terminal || !data.ui || !data.name) {
+  let theme;
+  try {
+    theme = normalizeThemeDocument(data);
+  } catch (err) {
     toast(t("toast.theme_import_invalid"), "error");
     return;
   }
-  const required = ["background", "foreground"];
-  if (!required.every((k) => typeof data.terminal[k] === "string")) {
-    toast(t("toast.theme_import_invalid"), "error");
-    return;
-  }
-
-  const theme = {
-    id: slugifyThemeId(data.id || data.name),
-    name: String(data.name).slice(0, 60),
-    terminal: data.terminal,
-    ui: data.ui,
-  };
 
   prefs.customThemes = prefs.customThemes || [];
   prefs.customThemes.push(theme);
-  savePrefs();
   registerCustomTheme(theme);
 
   // Seleccionarlo como tema activo de UI
   prefs.theme = theme.id;
   applyTheme(theme.id);
-  // Sincronizar el picker abierto
-  document.querySelectorAll('input[name="pref-theme"]').forEach((r) => {
-    r.checked = (r.value === theme.id);
-  });
-  document.querySelectorAll('.theme-picker[data-for="ui"] .theme-option').forEach((opt) =>
-    opt.classList.toggle("selected", opt.dataset.theme === theme.id)
-  );
+  selectUiTheme(theme.id);
+  savePrefs();
+  scheduleProfileAutoSync();
   toast(t("toast.theme_imported").replace("{name}", theme.name), "success");
+}
+
+function selectUiTheme(theme) {
+  document.querySelectorAll('input[name="pref-theme"]').forEach((r) => {
+    r.checked = (r.value === theme);
+  });
+  document.querySelectorAll('.theme-picker[data-for="ui"] .theme-option').forEach((o) =>
+    o.classList.toggle("selected", o.dataset.theme === theme)
+  );
+  applyTheme(theme);
+}
+
+function selectTerminalTheme(value) {
+  document.querySelectorAll('input[name="pref-terminal-theme"]').forEach((r) => {
+    r.checked = (r.value === value);
+  });
+  document.querySelectorAll('.theme-picker[data-for="terminal"] .theme-option').forEach((o) =>
+    o.classList.toggle("selected", o.dataset.theme === value)
+  );
+  prefs.terminalTheme = (value === "inherit") ? null : value;
+  applyPrefsToAllTerminals();
 }
 
 /**
@@ -1081,6 +1210,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
     applySyncedUserFolders();
+    registerAllCustomThemes();
     // Recargar perfiles del backend (puede haber añadidos/borrados)
     profiles = await invoke("get_profiles");
     renderConnectionList();
@@ -1186,6 +1316,7 @@ async function syncImportFile() {
     });
     if (!summary) return;
     applySyncedUserFolders();
+    registerAllCustomThemes();
     profiles = await invoke("get_profiles");
     renderConnectionList();
     applyTheme(prefs.theme);
@@ -1237,6 +1368,7 @@ async function syncRestoreSnapshot() {
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
     applySyncedUserFolders();
+    registerAllCustomThemes();
     profiles = await invoke("get_profiles");
     renderConnectionList();
     applyTheme(prefs.theme);
@@ -2685,6 +2817,9 @@ function handleContextMenuAction(action) {
     case "connect":
       connectProfile(id);
       break;
+    case "new-tunnel":
+      openTunnelForProfile(id);
+      break;
     case "edit-conn":
       openEditConnectionModal(id);
       break;
@@ -2928,6 +3063,12 @@ async function deleteFolderAndMoveConnections(folderPath) {
 // MODAL DE CONEXIÓN
 // ═══════════════════════════════════════════════════════════════
 
+const CONNECTION_MODAL_SIZE_KEY = "rustty-connection-modal-size";
+const CONNECTION_MODAL_DEFAULT_WIDTH = 480;
+const CONNECTION_MODAL_DEFAULT_HEIGHT = null;
+const CONNECTION_MODAL_MIN_WIDTH = 480;
+const CONNECTION_MODAL_MIN_HEIGHT = 360;
+
 function keepAliveFromInput(value) {
   if (value === "" || value === null || value === undefined) return null;
   const n = parseInt(value, 10);
@@ -2942,6 +3083,20 @@ function autoReconnectFromInput(value) {
   return Math.min(n, 20);
 }
 
+function setPasswordVisible(visible) {
+  const input = document.getElementById("f-password");
+  const btn = document.getElementById("btn-toggle-password");
+  if (!input || !btn) return;
+
+  input.type = visible ? "text" : "password";
+  btn.setAttribute("aria-pressed", visible ? "true" : "false");
+  btn.textContent = visible ? "◎" : "◉";
+
+  const label = t(visible ? "modal_conn.hide_password" : "modal_conn.show_password");
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+}
+
 /**
  * Abre el modal para nueva conexión.
  * @param {string|null} preselectedFolder  Carpeta a preseleccionar en el picker
@@ -2950,6 +3105,7 @@ function openNewConnectionModal(preselectedFolder = null) {
   editingProfileId = null;
   document.getElementById("modal-title").textContent = "Nueva conexión";
   document.getElementById("form-connection").reset();
+  setPasswordVisible(false);
   document.getElementById("f-conn-type").value = "ssh";
   document.getElementById("f-save-password").checked = true;
   document.getElementById("f-save-passphrase").checked = true;
@@ -2959,6 +3115,7 @@ function openNewConnectionModal(preselectedFolder = null) {
   });
   populateFolderSelect(preselectedFolder);
   populateWorkspaceFormSelect(getActiveWorkspaceId());
+  applyConnectionModalSize();
   document.getElementById("modal-overlay").classList.remove("hidden");
   document.getElementById("f-name").focus();
 }
@@ -2996,6 +3153,7 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-auth-type").value  = profile.auth_type;
   document.getElementById("f-key-path").value   = profile.key_path || "";
   document.getElementById("f-password").value = "";
+  setPasswordVisible(false);
   document.getElementById("f-passphrase").value = "";
   document.getElementById("f-save-password").checked = false;
   document.getElementById("f-save-passphrase").checked = false;
@@ -3015,6 +3173,7 @@ function openEditConnectionModal(profileId) {
     populateKeepassEntrySelect(profile.keepass_entry_uuid || null);
     updateConnTypeFields(connType);
   });
+  applyConnectionModalSize();
   document.getElementById("modal-overlay").classList.remove("hidden");
 }
 
@@ -3035,7 +3194,80 @@ function populateKeepassEntrySelect(selectedUuid) {
 function closeModal() {
   document.getElementById("modal-overlay").classList.add("hidden");
   document.getElementById("form-connection").reset();
+  setPasswordVisible(false);
   editingProfileId = null;
+}
+
+function getConnectionModalSizeLimits() {
+  return {
+    minWidth: Math.min(CONNECTION_MODAL_MIN_WIDTH, Math.floor(window.innerWidth * 0.95)),
+    minHeight: Math.min(CONNECTION_MODAL_MIN_HEIGHT, Math.floor(window.innerHeight * 0.9)),
+    maxWidth: Math.floor(window.innerWidth * 0.95),
+    maxHeight: Math.floor(window.innerHeight * 0.9),
+  };
+}
+
+function clampConnectionModalSize(width, height) {
+  const limits = getConnectionModalSizeLimits();
+  return {
+    width: Math.min(limits.maxWidth, Math.max(limits.minWidth, Math.round(width || CONNECTION_MODAL_DEFAULT_WIDTH))),
+    height: height
+      ? Math.min(limits.maxHeight, Math.max(limits.minHeight, Math.round(height)))
+      : null,
+  };
+}
+
+function applyConnectionModalSize() {
+  const modal = document.getElementById("modal-connection");
+  if (!modal) return;
+  let size = null;
+  try { size = JSON.parse(localStorage.getItem(CONNECTION_MODAL_SIZE_KEY) || "null"); } catch {}
+  if (!size) {
+    modal.style.width = `${CONNECTION_MODAL_DEFAULT_WIDTH}px`;
+    modal.style.height = CONNECTION_MODAL_DEFAULT_HEIGHT ? `${CONNECTION_MODAL_DEFAULT_HEIGHT}px` : "";
+    return;
+  }
+  const clamped = clampConnectionModalSize(size.width, size.height);
+  modal.style.width = `${clamped.width}px`;
+  modal.style.height = clamped.height ? `${clamped.height}px` : "";
+}
+
+function resetConnectionModalSize() {
+  const modal = document.getElementById("modal-connection");
+  localStorage.removeItem(CONNECTION_MODAL_SIZE_KEY);
+  if (!modal) return;
+  modal.style.width = `${CONNECTION_MODAL_DEFAULT_WIDTH}px`;
+  modal.style.height = "";
+}
+
+function initConnectionModalResizePersistence() {
+  const modal = document.getElementById("modal-connection");
+  const overlay = document.getElementById("modal-overlay");
+  if (!modal || !overlay || typeof ResizeObserver === "undefined") return;
+
+  let saveTimer = null;
+  const saveSize = () => {
+    if (overlay.classList.contains("hidden")) return;
+    const rect = modal.getBoundingClientRect();
+    const size = clampConnectionModalSize(rect.width, rect.height);
+    localStorage.setItem(CONNECTION_MODAL_SIZE_KEY, JSON.stringify(size));
+  };
+
+  const observer = new ResizeObserver(() => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveSize, 250);
+  });
+  observer.observe(modal);
+
+  modal.addEventListener("dblclick", (e) => {
+    const rect = modal.getBoundingClientRect();
+    const nearResizeCorner = e.clientX >= rect.right - 28 && e.clientY >= rect.bottom - 28;
+    if (nearResizeCorner) resetConnectionModalSize();
+  });
+
+  window.addEventListener("resize", () => {
+    if (!overlay.classList.contains("hidden")) applyConnectionModalSize();
+  });
 }
 
 /** Rellena el <select> de carpetas con todos los paths existentes */
@@ -3064,6 +3296,7 @@ function populateFolderSelect(selectedPath = null) {
 
 function updateAuthFields(authType) {
   const isPwd = authType === "password";
+  if (!isPwd) setPasswordVisible(false);
   document.getElementById("field-password").classList.toggle("hidden", !isPwd);
   document.getElementById("field-save-password").classList.toggle("hidden", !isPwd);
   document.getElementById("field-key-path").classList.toggle("hidden", authType !== "public_key");
@@ -3076,6 +3309,7 @@ function updateAuthFields(authType) {
   document.getElementById("field-keepass-entry").classList.toggle("hidden", !isPwd || !useKp);
   // Si KeePass está activo, ocultar los campos de contraseña
   if (isPwd && useKp) {
+    setPasswordVisible(false);
     document.getElementById("field-password").classList.add("hidden");
     document.getElementById("field-save-password").classList.add("hidden");
   }
@@ -3233,6 +3467,7 @@ async function saveAndClose(shouldConnect) {
     auto_reconnect:      autoReconnectFromInput(document.getElementById("f-auto-reconnect").value),
     session_log:         document.getElementById("f-session-log").checked,
     proxy_jump:          (document.getElementById("f-proxy-jump").value || "").trim() || null,
+    ssh_tunnels:         profiles.find((p) => p.id === editingProfileId)?.ssh_tunnels || [],
     created_at: editingProfileId
       ? (profiles.find((p) => p.id === editingProfileId)?.created_at ?? new Date().toISOString())
       : new Date().toISOString(),
@@ -3538,20 +3773,27 @@ function createTab(sessionId, profile, initialStatus, { sftp = true } = {}) {
   tab.className = "tab";
   tab.dataset.session = sessionId;
   const sftpBtn = sftp ? `<button class="tab-sftp" title="Panel SFTP">⇅</button>` : "";
+  const tunnelBtn = sftp ? `<button class="tab-tunnels" title="Túneles SSH">⇄</button>` : "";
   tab.innerHTML = `
     <span class="tab-dot ${initialStatus}"></span>
     <span class="tab-name">${escHtml(profile.name)}</span>
     ${sftpBtn}
+    ${tunnelBtn}
     <button class="tab-close" title="Cerrar">✕</button>`;
   tab.addEventListener("click", (e) => {
     if (e.target.classList.contains("tab-close")) return;
     if (e.target.classList.contains("tab-sftp")) return;
+    if (e.target.classList.contains("tab-tunnels")) return;
     selectSession(tab.dataset.session, e.ctrlKey || e.metaKey);
   });
   tab.querySelector(".tab-close").addEventListener("click", () => closeSession(tab.dataset.session));
   tab.querySelector(".tab-sftp")?.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleSftpPanel(tab.dataset.session);
+  });
+  tab.querySelector(".tab-tunnels")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleTunnelPanel(tab.dataset.session);
   });
   document.getElementById("tabs-container").appendChild(tab);
   return tab;
@@ -3613,6 +3855,32 @@ function sendTerminalInput(sessionObj, data) {
     sessionId: sessionObj.id,
     data: Array.from(new TextEncoder().encode(data)),
   }).catch(() => {});
+}
+
+async function readSystemClipboardText() {
+  try {
+    return await readClipboardText();
+  } catch (err) {
+    console.warn("[clipboard] plugin read failed, falling back to navigator", err);
+    return await navigator.clipboard?.readText?.().catch(() => null);
+  }
+}
+
+async function writeSystemClipboardText(text) {
+  if (!text) return;
+  try {
+    await writeClipboardText(text);
+  } catch (err) {
+    console.warn("[clipboard] plugin write failed, falling back to navigator", err);
+    await navigator.clipboard?.writeText?.(text).catch(() => {});
+  }
+}
+
+async function pasteClipboardIntoSession(sessionObj) {
+  if (!sessionObj || sessionObj.status === "closed" || sessionObj.type === "rdp") return;
+  const text = await readSystemClipboardText();
+  if (!text) return;
+  sendTerminalInput(sessionObj, text);
 }
 
 function queueTerminalEchoSuppression(sessionObj, needle) {
@@ -4176,6 +4444,8 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     unlisteners: [],
     status: initialStatus,
     remoteCwd: null,
+    tunnels: new Map(),
+    tunnelPanel: null,
   };
   sessions.set(sessionId, sessionObj);
   wirePaneFocusOnClick(pane, sessionId);
@@ -4200,26 +4470,17 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   terminal.onSelectionChange(() => {
     if (!prefs.copyOnSelect) return;
     const sel = terminal.getSelection();
-    if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+    if (sel) writeSystemClipboardText(sel);
   });
 
   // Pegar con clic derecho (se activa/desactiva según prefs en tiempo real).
-  // Usamos mousedown en fase de captura porque xterm.js intercepta el evento
-  // contextmenu internamente y no llega al div contenedor.
-  xtermDiv.addEventListener("mousedown", (e) => {
-    if (e.button !== 2) return;
-    if (!prefs.rightClickPaste) return;
-    e.preventDefault();
-    e.stopPropagation();
-    navigator.clipboard.readText().then((text) => {
-      if (!text || sessionObj.status === "closed") return;
-      sendTerminalInput(sessionObj, text);
-    }).catch(() => {});
-  }, true);
+  // El portapapeles externo se lee vía plugin Tauri para no depender de las
+  // restricciones de activación de `navigator.clipboard` en el WebView.
   xtermDiv.addEventListener("contextmenu", (e) => {
     if (prefs.rightClickPaste) {
       e.preventDefault();
       e.stopPropagation();
+      pasteClipboardIntoSession(sessionObj);
     }
   }, true);
 
@@ -4262,6 +4523,7 @@ async function registerSshListeners(sessionId, terminal) {
     if (!prof || prof.follow_cwd !== false) {
       setTimeout(() => injectOsc7Setup(sessionId), 400);
     }
+    startProfileAutoTunnels(sessionId);
   }));
 
   ul.push(await listen(`ssh-error-${sessionId}`, (e) => {
@@ -4287,6 +4549,16 @@ async function registerSshListeners(sessionId, terminal) {
     updateTabStatus(sessionId, "error");
     terminal.writeln(`\r\n\x1b[33m• ${t("terminal.closed")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
     renderConnectionList();
+  }));
+
+  ul.push(await listen(`ssh-tunnel-traffic-${sessionId}`, (e) => {
+    const s = sessions.get(sessionId);
+    const payload = e.payload || {};
+    const tunnel = s?.tunnels?.get(payload.id);
+    if (!tunnel) return;
+    tunnel.bytesUp = payload.bytesUp || 0;
+    tunnel.bytesDown = payload.bytesDown || 0;
+    renderTunnelList(sessionId);
   }));
 
   return ul;
@@ -4439,6 +4711,273 @@ async function openDataDirectory() {
   } catch (err) {
     toast(`No se pudo abrir el directorio: ${err}. Ruta: ${dataDir}`, "error", 8000);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TÚNELES SSH
+// ═══════════════════════════════════════════════════════════════
+
+function normalizeTunnelConfig(raw = {}) {
+  const type = raw.tunnel_type || raw.tunnelType || "local";
+  return {
+    id: raw.id || crypto.randomUUID(),
+    name: raw.name || null,
+    tunnelType: type,
+    bindHost: raw.bind_host || raw.bindHost || "127.0.0.1",
+    localPort: Number(raw.local_port ?? raw.localPort ?? 0),
+    remoteHost: raw.remote_host ?? raw.remoteHost ?? null,
+    remotePort: raw.remote_port ?? raw.remotePort ?? null,
+    autoStart: !!(raw.auto_start ?? raw.autoStart),
+  };
+}
+
+function tunnelToProfileShape(tunnel) {
+  return {
+    id: tunnel.id,
+    name: tunnel.name || null,
+    tunnel_type: tunnel.tunnelType,
+    bind_host: tunnel.bindHost || "127.0.0.1",
+    local_port: Number(tunnel.localPort || 0),
+    remote_host: tunnel.remoteHost || null,
+    remote_port: tunnel.remotePort ? Number(tunnel.remotePort) : null,
+    auto_start: !!tunnel.autoStart,
+  };
+}
+
+function findOpenSessionForProfile(profileId) {
+  for (const [sid, s] of sessions) {
+    if (s.profileId === profileId && s.status !== "closed" && s.type !== "rdp") return sid;
+  }
+  return null;
+}
+
+async function openTunnelForProfile(profileId) {
+  if (!profileId) return;
+  let sessionId = findOpenSessionForProfile(profileId);
+  if (!sessionId) {
+    await connectProfile(profileId);
+    sessionId = findOpenSessionForProfile(profileId);
+  }
+  if (!sessionId) {
+    toast("Abre primero una sesión SSH para crear el túnel", "warning");
+    return;
+  }
+  await openTunnelPanel(sessionId, { focusForm: true });
+}
+
+async function toggleTunnelPanel(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s || s.status !== "connected") {
+    toast("La sesión SSH debe estar conectada", "warning");
+    return;
+  }
+  if (s.tunnelPanel) {
+    s.tunnelPanel.classList.toggle("hidden");
+    s.fitAddon?.fit();
+    return;
+  }
+  await openTunnelPanel(sessionId);
+}
+
+async function openTunnelPanel(sessionId, opts = {}) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  if (!s.tunnels) s.tunnels = new Map();
+  if (!s.tunnelPanel) {
+    s.tunnelPanel = buildTunnelPanel(sessionId);
+    s.pane.appendChild(s.tunnelPanel);
+  }
+  s.tunnelPanel.classList.remove("hidden");
+  renderTunnelList(sessionId);
+  s.fitAddon?.fit();
+  if (opts.focusForm) s.tunnelPanel.querySelector('[name="localPort"]')?.focus();
+}
+
+function buildTunnelPanel(sessionId) {
+  const panel = document.createElement("div");
+  panel.className = "tunnel-panel";
+  panel.innerHTML = `
+    <div class="tunnel-panel-head">
+      <div>
+        <div class="tunnel-title">Túneles SSH</div>
+        <div class="tunnel-subtitle">Port forwarding sobre la sesión activa</div>
+      </div>
+      <button class="tunnel-close" type="button" title="Cerrar panel">✕</button>
+    </div>
+    <form class="tunnel-form">
+      <select name="type" title="Tipo de túnel">
+        <option value="local">Local (-L)</option>
+        <option value="remote">Remoto (-R)</option>
+        <option value="dynamic">SOCKS (-D)</option>
+      </select>
+      <input name="bindHost" type="text" value="127.0.0.1" title="Host de escucha" />
+      <input name="localPort" type="number" min="1" max="65535" placeholder="Puerto local" required />
+      <input name="remoteHost" type="text" placeholder="Host destino" />
+      <input name="remotePort" type="number" min="1" max="65535" placeholder="Puerto destino" />
+      <input name="name" type="text" placeholder="Nombre opcional" />
+      <label class="tunnel-check"><input name="save" type="checkbox" /> Guardar</label>
+      <label class="tunnel-check"><input name="autoStart" type="checkbox" /> Auto</label>
+      <button type="submit" class="btn-primary">Abrir</button>
+    </form>
+    <div class="tunnel-list"></div>`;
+
+  panel.querySelector(".tunnel-close").addEventListener("click", () => {
+    panel.classList.add("hidden");
+    sessions.get(sessionId)?.fitAddon?.fit();
+  });
+  const typeSel = panel.querySelector('[name="type"]');
+  const updateFields = () => {
+    const type = typeSel.value;
+    const remoteHost = panel.querySelector('[name="remoteHost"]');
+    const remotePort = panel.querySelector('[name="remotePort"]');
+    remoteHost.placeholder = type === "remote" ? "Host local destino" : "Host remoto destino";
+    remotePort.placeholder = type === "remote" ? "Puerto remoto" : "Puerto destino";
+    remoteHost.disabled = type === "dynamic";
+    remotePort.disabled = type === "dynamic";
+    if (type === "dynamic") {
+      remoteHost.value = "";
+      remotePort.value = "";
+    }
+  };
+  typeSel.addEventListener("change", updateFields);
+  updateFields();
+  panel.querySelector(".tunnel-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    startTunnelFromPanel(sessionId, panel);
+  });
+  return panel;
+}
+
+function readTunnelForm(panel) {
+  const type = panel.querySelector('[name="type"]').value;
+  const localPort = Number(panel.querySelector('[name="localPort"]').value || 0);
+  const remotePortValue = Number(panel.querySelector('[name="remotePort"]').value || 0);
+  return {
+    id: crypto.randomUUID(),
+    name: panel.querySelector('[name="name"]').value.trim() || null,
+    tunnelType: type,
+    bindHost: panel.querySelector('[name="bindHost"]').value.trim() || "127.0.0.1",
+    localPort,
+    remoteHost: type === "dynamic"
+      ? null
+      : (panel.querySelector('[name="remoteHost"]').value.trim() || "127.0.0.1"),
+    remotePort: type === "dynamic" ? null : remotePortValue,
+    autoStart: panel.querySelector('[name="autoStart"]').checked,
+    save: panel.querySelector('[name="save"]').checked,
+  };
+}
+
+async function startTunnelFromPanel(sessionId, panel) {
+  const cfg = readTunnelForm(panel);
+  try {
+    await startSshTunnel(sessionId, cfg, { persist: cfg.save || cfg.autoStart });
+    panel.querySelector(".tunnel-form").reset();
+    panel.querySelector('[name="bindHost"]').value = "127.0.0.1";
+    panel.querySelector('[name="type"]').dispatchEvent(new Event("change"));
+  } catch (err) {
+    toast(`No se pudo abrir el túnel: ${err}`, "error", 8000);
+  }
+}
+
+async function startSshTunnel(sessionId, cfg, opts = {}) {
+  const s = sessions.get(sessionId);
+  if (!s) throw new Error("Sesión no encontrada");
+  const tunnel = normalizeTunnelConfig(cfg);
+  const info = await invoke("ssh_start_tunnel", {
+    sessionId,
+    config: {
+      id: tunnel.id,
+      name: tunnel.name,
+      tunnelType: tunnel.tunnelType,
+      bindHost: tunnel.bindHost,
+      localPort: tunnel.localPort,
+      remoteHost: tunnel.remoteHost,
+      remotePort: tunnel.remotePort,
+    },
+  });
+  tunnel.localPort = info.localPort || tunnel.localPort;
+  tunnel.remotePort = info.remotePort || tunnel.remotePort;
+  tunnel.bytesUp = 0;
+  tunnel.bytesDown = 0;
+  tunnel.status = "running";
+  s.tunnels.set(tunnel.id, tunnel);
+  renderTunnelList(sessionId);
+  if (opts.persist && s.profileId) await persistTunnelForProfile(s.profileId, tunnel);
+  toast(`Túnel abierto: ${describeTunnel(tunnel)}`, "success");
+  return tunnel;
+}
+
+async function stopSshTunnel(sessionId, tunnelId) {
+  await invoke("ssh_stop_tunnel", { sessionId, tunnelId }).catch((err) => {
+    toast(`No se pudo cerrar el túnel: ${err}`, "error");
+  });
+  const s = sessions.get(sessionId);
+  const tunnel = s?.tunnels?.get(tunnelId);
+  if (tunnel) tunnel.status = "closed";
+  s?.tunnels?.delete(tunnelId);
+  renderTunnelList(sessionId);
+}
+
+async function persistTunnelForProfile(profileId, tunnel) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+  const list = Array.isArray(profile.ssh_tunnels) ? profile.ssh_tunnels.map(normalizeTunnelConfig) : [];
+  const idx = list.findIndex((t) => t.id === tunnel.id);
+  if (idx >= 0) list[idx] = tunnel;
+  else list.push(tunnel);
+  profile.ssh_tunnels = list.map(tunnelToProfileShape);
+  profile.updated_at = new Date().toISOString();
+  await invoke("save_profile", { profile });
+  scheduleProfileAutoSync();
+}
+
+async function startProfileAutoTunnels(sessionId) {
+  const s = sessions.get(sessionId);
+  const profile = s?.profileId ? profiles.find((p) => p.id === s.profileId) : null;
+  const tunnels = Array.isArray(profile?.ssh_tunnels) ? profile.ssh_tunnels : [];
+  for (const cfg of tunnels.map(normalizeTunnelConfig).filter((t) => t.autoStart)) {
+    try {
+      await startSshTunnel(sessionId, cfg, { persist: false });
+    } catch (err) {
+      toast(`Autotúnel "${cfg.name || cfg.id}" falló: ${err}`, "warning", 8000);
+    }
+  }
+}
+
+function describeTunnel(t) {
+  if (t.tunnelType === "dynamic") return `${t.bindHost}:${t.localPort} SOCKS`;
+  if (t.tunnelType === "remote") {
+    return `${t.bindHost}:${t.remotePort} ⇢ ${t.remoteHost}:${t.localPort}`;
+  }
+  return `${t.bindHost}:${t.localPort} ⇢ ${t.remoteHost}:${t.remotePort}`;
+}
+
+function renderTunnelList(sessionId) {
+  const s = sessions.get(sessionId);
+  const panel = s?.tunnelPanel;
+  if (!panel) return;
+  const list = panel.querySelector(".tunnel-list");
+  const tunnels = [...(s.tunnels?.values() || [])];
+  if (!tunnels.length) {
+    list.innerHTML = `<div class="tunnel-empty">Sin túneles activos</div>`;
+    return;
+  }
+  list.innerHTML = tunnels.map((tun) => `
+    <div class="tunnel-row" data-tunnel-id="${escHtml(tun.id)}">
+      <span class="tunnel-kind">${tun.tunnelType === "dynamic" ? "SOCKS" : tun.tunnelType.toUpperCase()}</span>
+      <span class="tunnel-main">
+        <strong>${escHtml(tun.name || describeTunnel(tun))}</strong>
+        <small>${escHtml(describeTunnel(tun))}</small>
+      </span>
+      <span class="tunnel-traffic">↑ ${formatSize(tun.bytesUp || 0)} · ↓ ${formatSize(tun.bytesDown || 0)}</span>
+      <button type="button" class="tunnel-stop" title="Cerrar túnel">✕</button>
+    </div>`).join("");
+  list.querySelectorAll(".tunnel-stop").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.closest(".tunnel-row")?.dataset.tunnelId;
+      if (id) stopSshTunnel(sessionId, id);
+    });
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5714,6 +6253,8 @@ function bindUIEvents() {
   // Export / Import de tema actual
   document.getElementById("btn-export-theme")
     ?.addEventListener("click", () => exportCurrentTheme());
+  document.getElementById("btn-export-theme-template")
+    ?.addEventListener("click", () => exportThemeTemplate());
   document.getElementById("btn-import-theme")
     ?.addEventListener("click", () => importTheme());
 
@@ -5776,26 +6317,14 @@ function bindUIEvents() {
   // Selector de tema de UI: sincronizar .selected con el radio + preview en vivo
   document.querySelectorAll('input[name="pref-theme"]').forEach((radio) => {
     radio.addEventListener("change", () => {
-      const theme = radio.value;
-      document.querySelectorAll('.theme-picker[data-for="ui"] .theme-option').forEach((o) =>
-        o.classList.toggle("selected", o.dataset.theme === theme)
-      );
-      // Preview inmediato del tema al seleccionar (se confirma al guardar)
-      applyTheme(theme);
+      selectUiTheme(radio.value);
     });
   });
 
   // Selector de tema del terminal: preview aplica sólo a los terminales
   document.querySelectorAll('input[name="pref-terminal-theme"]').forEach((radio) => {
     radio.addEventListener("change", () => {
-      const val = radio.value;
-      document.querySelectorAll('.theme-picker[data-for="terminal"] .theme-option').forEach((o) =>
-        o.classList.toggle("selected", o.dataset.theme === val)
-      );
-      // Preview no destructivo: sobreescribimos prefs.terminalTheme temporalmente
-      // para que getTerminalTheme() use el nuevo valor; se confirma en save.
-      prefs.terminalTheme = (val === "inherit") ? null : val;
-      applyPrefsToAllTerminals();
+      selectTerminalTheme(radio.value);
     });
   });
 
@@ -5846,6 +6375,13 @@ function bindUIEvents() {
   document.getElementById("f-use-keepass").addEventListener("change", () =>
     updateAuthFields(document.getElementById("f-auth-type").value)
   );
+
+  document.getElementById("btn-toggle-password").addEventListener("click", () => {
+    const input = document.getElementById("f-password");
+    setPasswordVisible(input.type === "password");
+    input.focus();
+  });
+  initConnectionModalResizePersistence();
 
   // Selector de carpeta → mostrar/ocultar input manual
   document.getElementById("f-folder-select").addEventListener("change", (e) => {
@@ -6226,12 +6762,7 @@ function runTerminalSearch(sessionId, direction) {
 async function pasteIntoActiveTerminal() {
   if (!activeSessionId) return;
   const s = sessions.get(activeSessionId);
-  if (!s || s.status === "closed" || s.type === "rdp") return;
-  const text = await navigator.clipboard.readText().catch(() => null);
-  if (!text) return;
-  const data = Array.from(new TextEncoder().encode(text));
-  const cmd = s._closeOverride ? "local_shell_send_input" : "ssh_send_input";
-  invoke(cmd, { sessionId: activeSessionId, data }).catch(() => {});
+  await pasteClipboardIntoSession(s);
 }
 
 /**
@@ -6267,7 +6798,7 @@ function copyActiveSelection() {
   const s = sessions.get(activeSessionId);
   if (!s?.terminal) return;
   const sel = s.terminal.getSelection();
-  if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+  if (sel) writeSystemClipboardText(sel);
 }
 
 /**
@@ -6372,6 +6903,7 @@ async function initWindowControls() {
   try {
     const mod = await import("@tauri-apps/api/window");
     win = mod.getCurrentWindow();
+    await restoreWindowStateNow(win);
     initWindowResizeHandles(win);
   } catch {
     return; // fuera de Tauri (p. ej. vite dev puro): no hay ventana
@@ -6408,6 +6940,12 @@ async function initWindowControls() {
       scheduleWindowStateSave();
     });
   } catch {}
+  try {
+    win.onMoved(() => scheduleWindowStateSave());
+  } catch {}
+  try {
+    win.onCloseRequested(() => saveWindowStateNow());
+  } catch {}
 }
 
 let _windowStateSaveTimer = null;
@@ -6420,6 +6958,15 @@ function scheduleWindowStateSave() {
 async function saveWindowStateNow() {
   try {
     await invoke("plugin:window-state|save_window_state", {
+      flags: WINDOW_STATE_FLAGS_SIZE_POSITION_MAXIMIZED,
+    });
+  } catch {}
+}
+
+async function restoreWindowStateNow(win) {
+  try {
+    await invoke("plugin:window-state|restore_state", {
+      label: win?.label || "main",
       flags: WINDOW_STATE_FLAGS_SIZE_POSITION_MAXIMIZED,
     });
   } catch {}
