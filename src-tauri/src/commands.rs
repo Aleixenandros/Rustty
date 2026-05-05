@@ -14,6 +14,24 @@ use crate::sync::{
 };
 use crate::DataDir;
 
+// ─── Comandos de aplicación ─────────────────────────────────────────────────
+
+/// Cierra la aplicación de forma explícita desde los controles CSD.
+#[tauri::command]
+pub fn close_app(
+    app: AppHandle,
+    ssh_state: State<SshManager>,
+    sftp_state: State<SftpManager>,
+    shell_state: State<LocalShellManager>,
+    rdp_state: State<RdpManager>,
+) {
+    ssh_state.disconnect_all();
+    sftp_state.disconnect_all();
+    shell_state.close_all();
+    rdp_state.disconnect_all();
+    app.exit(0);
+}
+
 // ─── Comandos de gestión de perfiles ─────────────────────────────────────────
 
 /// Devuelve todos los perfiles de conexión guardados

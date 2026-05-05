@@ -2,6 +2,14 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [0.4.1] – 2026-05-05
+
+### Corregido
+- **Cierre de ventana en controles CSD**: el botón de cerrar ya no puede
+  quedarse bloqueado esperando al guardado del estado de ventana. Ahora usa
+  un timeout corto y un cierre backend de respaldo que limpia sesiones SSH,
+  SFTP, shell local y RDP antes de salir.
+
 ## [0.4.0] – 2026-05-05
 
 ### Añadido

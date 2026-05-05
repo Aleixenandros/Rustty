@@ -87,6 +87,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            // ── Aplicación
+            commands::close_app,
             // ── Perfiles de conexión
             commands::get_profiles,
             commands::save_profile,

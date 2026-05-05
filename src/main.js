@@ -75,6 +75,8 @@ const RELEASES_API_URL = "https://api.github.com/repos/Aleixenandros/Rustty/rele
 const RELEASES_PAGE_URL = "https://github.com/Aleixenandros/Rustty/releases/latest";
 const DEFAULT_SYNC_HISTORY_KEEP = 30;
 const WINDOW_STATE_FLAGS_SIZE_POSITION_MAXIMIZED = 1 | 2 | 4;
+const WINDOW_CLOSE_FALLBACK_MS = 700;
+const WINDOW_STATE_CLOSE_SAVE_TIMEOUT_MS = 250;
 
 let bellAudioContext = null;
 
@@ -6918,9 +6920,23 @@ async function initWindowControls() {
     await win.toggleMaximize();
     scheduleWindowStateSave();
   });
+  let closeRequested = false;
   btnClose?.addEventListener("click", async () => {
-    await saveWindowStateNow();
-    await win.close().catch(() => win.destroy());
+    if (closeRequested) return;
+    closeRequested = true;
+    btnClose.disabled = true;
+
+    const fallbackTimer = setTimeout(() => {
+      forceCloseApp(win);
+    }, WINDOW_CLOSE_FALLBACK_MS);
+
+    try {
+      await settleWithin(saveWindowStateNow(), WINDOW_STATE_CLOSE_SAVE_TIMEOUT_MS);
+      await win.close();
+    } catch {
+      clearTimeout(fallbackTimer);
+      await forceCloseApp(win);
+    }
   });
 
   // El doble clic en data-tauri-drag-region ya maximiza/restaura nativamente;
@@ -6953,6 +6969,27 @@ let _windowStateSaveTimer = null;
 function scheduleWindowStateSave() {
   clearTimeout(_windowStateSaveTimer);
   _windowStateSaveTimer = setTimeout(() => saveWindowStateNow(), 400);
+}
+
+function settleWithin(promise, timeoutMs) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      timer = setTimeout(resolve, timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function forceCloseApp(win) {
+  try {
+    await invoke("close_app");
+    return;
+  } catch {}
+
+  try {
+    await win.destroy();
+  } catch {}
 }
 
 async function saveWindowStateNow() {
