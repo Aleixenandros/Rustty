@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run sync-version && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run sync-version && npm run build",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {

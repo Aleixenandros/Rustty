@@ -2,9 +2,10 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
-## [Sin publicar]
+## [0.4.5] - 2026-05-06
 
 ### Añadido
+
 - **Túneles SSH globales**: nuevo acceso rápido `⇄` en el rail para crear,
   arrancar, detener y borrar túneles guardados sin tener que abrir primero el
   panel de túneles de una pestaña concreta. Si ya existe una sesión SSH activa
@@ -15,6 +16,7 @@ Todas las novedades reseñables del proyecto Rustty.
   carpeta y cambia al workspace correspondiente cuando hace falta.
 
 ### Cambiado
+
 - **Acciones SFTP integradas con el tema**: crear carpeta, renombrar y borrar
   usan ahora el modal propio de Rustty en lugar de `prompt`/`confirm` nativos.
 - **RDP en "Guardar y conectar"**: las conexiones RDP usan el flujo RDP real
@@ -22,6 +24,7 @@ Todas las novedades reseñables del proyecto Rustty.
   el keyring.
 
 ### Corregido
+
 - **RDP externo**: en Windows se elimina el fichero `.rdp` temporal al cerrar
   o fallar la sesión, y en Linux el fallback `rdesktop` usa ahora argumentos
   compatibles con `rdesktop` en vez de opciones de FreeRDP.
@@ -29,6 +32,7 @@ Todas las novedades reseñables del proyecto Rustty.
 ## [0.4.2] – 2026-05-05
 
 ### Corregido
+
 - **Credenciales bajo demanda**: los diálogos de contraseña y passphrase para
   SSH, RDP y SFTP usan ahora un modal propio integrado con el tema, eliminando
   el emergente nativo con título `JavaScript - tauri://localhost`.
@@ -38,6 +42,7 @@ Todas las novedades reseñables del proyecto Rustty.
 ## [0.4.1] – 2026-05-05
 
 ### Corregido
+
 - **Cierre de ventana en controles CSD**: el botón de cerrar ya no puede
   quedarse bloqueado esperando al guardado del estado de ventana. Ahora usa
   un timeout corto y un cierre backend de respaldo que limpia sesiones SSH,
@@ -46,6 +51,7 @@ Todas las novedades reseñables del proyecto Rustty.
 ## [0.4.0] – 2026-05-05
 
 ### Añadido
+
 - **Túneles SSH con redirección de puertos** sobre sesiones activas:
   locales (`-L`), remotos (`-R`) y dinámicos / SOCKS (`-D`). Incluye panel
   por sesión con estado, tráfico y cierre individual, botón `⇄` en pestañas
@@ -61,12 +67,14 @@ Todas las novedades reseñables del proyecto Rustty.
   copiado fuera de Rustty.
 
 ### Cambiado
+
 - El modal de conexión ahora es **redimensionable** y recuerda su tamaño,
   pensado para rutas KeePass largas o formularios con muchas opciones.
 - Los temas personalizados antiguos se sustituyen por el formato v2 sin capa
   de compatibilidad.
 
 ### Corregido
+
 - **Restauración de tamaño y posición de ventana** al arrancar: el estado
   guardado por `tauri-plugin-window-state` se aplica explícitamente al abrir
   la ventana principal.
@@ -76,6 +84,7 @@ Todas las novedades reseñables del proyecto Rustty.
 ## [0.3.0] – 2026-05-03
 
 ### Añadido
+
 - **Barra lateral vertical de iconos** (`#rail`): franja izquierda fija de
   44 px con dos secciones — arriba 📁 Perfiles, ★ Favoritos, ⇅
   Sincronización y ⚙ Preferencias; abajo $_ Consola local y ＋ Nueva
@@ -106,6 +115,7 @@ Todas las novedades reseñables del proyecto Rustty.
   (o a `session_log_dir` si se indica).
 
 ### Cambiado
+
 - **Cabecera de la sidebar simplificada**: los botones ⚙, $_ y ＋ se
   mueven al rail vertical. La cabecera queda con logo + ≡ (popover de
   filtros y switcher de workspaces).
@@ -116,6 +126,7 @@ Todas las novedades reseñables del proyecto Rustty.
   el botón con flip horizontal/vertical si no cabe en el viewport.
 
 ### Corregido
+
 - **Detección de host key cambiada**: ya estaba cubierta por la
   verificación TOFU + `known_hosts` real introducida en versiones
   anteriores. Marcado como completado en `tareas.md`.
@@ -123,6 +134,7 @@ Todas las novedades reseñables del proyecto Rustty.
 ## [0.2.7] – 2026-05-02
 
 ### Añadido
+
 - **Conexiones favoritas**: cada conexión puede marcarse como favorita con
   el botón estrella (☆/★) o desde el menú contextual, y se sincronizan en
   la nube con el resto de preferencias.
@@ -134,6 +146,7 @@ Todas las novedades reseñables del proyecto Rustty.
   antes.
 
 ### Cambiado
+
 - **Cabecera de la sidebar unificada**: el switcher de workspaces se
   sustituye por un único botón **≡** que abre un popover compacto con la
   vista activa, el switcher de workspaces y la búsqueda. La cabecera ya no
@@ -150,6 +163,7 @@ Todas las novedades reseñables del proyecto Rustty.
 ## [0.2.6] – 2026-05-02
 
 ### Añadido
+
 - **Perfiles-contenedor (workspaces)**: cada conexión guarda su `workspace_id`.
   El sidebar incluye un selector con las acciones Nuevo / Renombrar /
   Eliminar; la lista de perfiles, el dashboard y la búsqueda se filtran
@@ -158,6 +172,7 @@ Todas las novedades reseñables del proyecto Rustty.
   sincronización en la nube como parte del bundle de preferencias.
 
 ### Cambiado
+
 - **Panel SFTP**: el panel remoto pasa a la izquierda y el local a la
   derecha; las flechas centrales se reordenan para apuntar visualmente al
   destino.
@@ -168,11 +183,13 @@ Todas las novedades reseñables del proyecto Rustty.
   y de las tarjetas para una apariencia más plana.
 
 ### Corregido
+
 - **Doble clic en la topbar**: ya no se maximiza y restaura en cascada. Se
   delega completamente en el comportamiento nativo de
   `data-tauri-drag-region`, que ahora maximiza/restaura una sola vez.
 
 ### Traducciones
+
 - Añadidas las cadenas del switcher de workspaces en español, inglés,
   francés y portugués.
 - Completadas en francés y portugués las cadenas `search_placeholder` y
@@ -181,6 +198,7 @@ Todas las novedades reseñables del proyecto Rustty.
 ## [0.2.5] – 2026-05-02
 
 ### Añadido
+
 - **Opciones avanzadas por perfil SSH**: keep-alive configurable, agent
   forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC
   legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) al conectar con servidores
@@ -199,6 +217,7 @@ Todas las novedades reseñables del proyecto Rustty.
   `importFromFile`.
 
 ### Cambiado
+
 - **Auto-sync sin temporizador**: la sincronización en la nube se dispara al
   iniciar y al detectar cambios locales (debounce 1.2 s); se elimina el
   intervalo periódico y la opción "Auto-sync Sí/No" de la UI.
@@ -206,6 +225,7 @@ Todas las novedades reseñables del proyecto Rustty.
   sincronización y de copias históricas.
 
 ### Seguridad
+
 - Las opciones de algoritmos legacy y de forwarding son **opt-in por perfil**
   con avisos explícitos en la UI.
 - El identificador de snapshot se valida contra el directorio histórico para

@@ -7,7 +7,7 @@
   "scripts": {
     "sync-version": "node scripts/sync-version.mjs",
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run sync-version && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
