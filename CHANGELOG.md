@@ -2,6 +2,30 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [Sin publicar]
+
+### Añadido
+- **Túneles SSH globales**: nuevo acceso rápido `⇄` en el rail para crear,
+  arrancar, detener y borrar túneles guardados sin tener que abrir primero el
+  panel de túneles de una pestaña concreta. Si ya existe una sesión SSH activa
+  del perfil, se reutiliza; si no, Rustty abre la conexión y arranca el túnel
+  tras conectar.
+- **Sincronización visual sidebar ↔ pestaña activa**: al cambiar de pestaña,
+  la barra lateral selecciona automáticamente la conexión asociada, abre su
+  carpeta y cambia al workspace correspondiente cuando hace falta.
+
+### Cambiado
+- **Acciones SFTP integradas con el tema**: crear carpeta, renombrar y borrar
+  usan ahora el modal propio de Rustty en lugar de `prompt`/`confirm` nativos.
+- **RDP en "Guardar y conectar"**: las conexiones RDP usan el flujo RDP real
+  y reutilizan la contraseña escrita en el formulario aunque no se guarde en
+  el keyring.
+
+### Corregido
+- **RDP externo**: en Windows se elimina el fichero `.rdp` temporal al cerrar
+  o fallar la sesión, y en Linux el fallback `rdesktop` usa ahora argumentos
+  compatibles con `rdesktop` en vez de opciones de FreeRDP.
+
 ## [0.4.2] – 2026-05-05
 
 ### Corregido

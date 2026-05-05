@@ -1903,6 +1903,88 @@ function renderConnectionList() {
   renderDashboard();
 }
 
+function activeProfileId() {
+  const s = activeSessionId ? sessions.get(activeSessionId) : null;
+  return s?.profileId || null;
+}
+
+function openFolderPath(path) {
+  if (!path) return false;
+  let changed = false;
+  const parts = path.split("/").filter(Boolean);
+  for (let i = 1; i <= parts.length; i++) {
+    const partial = parts.slice(0, i).join("/");
+    if (!openFolders.has(partial)) {
+      openFolders.add(partial);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function markSidebarProfile(profileId, { scroll = false } = {}) {
+  const container = document.getElementById("connection-list");
+  if (!container) return;
+  container.querySelectorAll(".conn-item.selected")
+    .forEach((el) => el.classList.remove("selected"));
+  if (!profileId) return;
+
+  const item = container.querySelector(`.conn-item[data-id="${CSS.escape(profileId)}"]`);
+  if (!item) return;
+  item.classList.add("selected");
+  if (scroll) {
+    item.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+}
+
+function syncSidebarToActiveSession({ scroll = false } = {}) {
+  const profileId = activeProfileId();
+  if (!profileId) {
+    markSidebarProfile(null);
+    return;
+  }
+
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) {
+    markSidebarProfile(null);
+    return;
+  }
+
+  const workspaceId = profile.workspace_id || "default";
+  let needsRender = false;
+
+  if (prefs.sidebarViewMode === "favorites") {
+    prefs.sidebarViewMode = "current";
+    needsRender = true;
+  }
+
+  if (prefs.sidebarViewMode === "current" && getActiveWorkspaceId() !== workspaceId) {
+    prefs.activeWorkspaceId = workspaceId;
+    userFolders = new Set(getWorkspaceFolders(workspaceId));
+    needsRender = true;
+  }
+
+  if (prefs.sidebarViewMode === "all" && !openFolders.has(`__ws__/${workspaceId}`)) {
+    openFolders.add(`__ws__/${workspaceId}`);
+    needsRender = true;
+  }
+
+  if (openFolderPath(profile.group || "")) {
+    needsRender = true;
+  }
+
+  if (needsRender) {
+    savePrefs();
+    renderConnectionList();
+  } else {
+    markSidebarProfile(profileId);
+  }
+
+  if (scroll) {
+    requestAnimationFrame(() => markSidebarProfile(profileId, { scroll: true }));
+  }
+}
+
 function renderAllWorkspacesTree() {
   if (!prefs.workspaces.length) return `<div class="empty-state"><p>—</p></div>`;
   return prefs.workspaces.map((w) => {
@@ -2394,11 +2476,12 @@ function renderConnectionItem(p, depth) {
   const isConnected = [...sessions.values()].some(
     (s) => s.profileId === p.id && s.status === "connected"
   );
+  const isSelected = activeProfileId() === p.id;
   const connType = p.connection_type || "ssh";
   const proto = connectionProtocolMeta(connType);
   const indent = 14 + depth * 12;
   return `
-    <div class="conn-item${isConnected ? " active" : ""}"
+    <div class="conn-item${isConnected ? " active" : ""}${isSelected ? " selected" : ""}"
          data-id="${p.id}"
          draggable="true"
          style="padding-left:${indent}px">
@@ -3416,10 +3499,14 @@ function closeCredentialPrompt(result = null) {
   const overlay = document.getElementById("credential-modal-overlay");
   if (overlay) overlay.classList.add("hidden");
 
+  const inputRow = document.getElementById("credential-modal-input-row");
   const input = document.getElementById("credential-modal-input");
   const remember = document.getElementById("credential-modal-remember");
+  const submitBtn = document.getElementById("btn-credential-submit");
+  if (inputRow) inputRow.classList.remove("hidden");
   if (input) input.value = "";
   if (remember) remember.checked = false;
+  if (submitBtn) submitBtn.classList.remove("danger");
 
   const resolve = credentialPromptResolve;
   credentialPromptResolve = null;
@@ -3433,17 +3520,21 @@ function promptCredential({
   rememberLabel,
   submitLabel = t("modal_credential.submit"),
   inputType = "password",
+  initialValue = "",
+  hideInput = false,
+  danger = false,
 }) {
   const overlay = document.getElementById("credential-modal-overlay");
   const titleEl = document.getElementById("credential-modal-title");
   const messageEl = document.getElementById("credential-modal-message");
   const labelEl = document.getElementById("credential-modal-label");
+  const inputRow = document.getElementById("credential-modal-input-row");
   const input = document.getElementById("credential-modal-input");
   const rememberRow = document.getElementById("credential-modal-remember-row");
   const rememberLabelEl = document.getElementById("credential-modal-remember-label");
   const submitBtn = document.getElementById("btn-credential-submit");
 
-  if (!overlay || !titleEl || !messageEl || !labelEl || !input || !rememberRow || !submitBtn) {
+  if (!overlay || !titleEl || !messageEl || !labelEl || !inputRow || !input || !rememberRow || !submitBtn) {
     console.warn("[credentials] modal is not available");
     return Promise.resolve(null);
   }
@@ -3454,8 +3545,10 @@ function promptCredential({
   messageEl.textContent = message || "";
   labelEl.textContent = label || t("modal_credential.password_label");
   input.type = inputType;
-  input.value = "";
+  input.value = initialValue;
+  inputRow.classList.toggle("hidden", hideInput);
   submitBtn.textContent = submitLabel;
+  submitBtn.classList.toggle("danger", danger);
 
   if (rememberLabel) {
     rememberRow.classList.remove("hidden");
@@ -3465,11 +3558,42 @@ function promptCredential({
   }
 
   overlay.classList.remove("hidden");
-  setTimeout(() => input.focus(), 0);
+  setTimeout(() => {
+    if (hideInput) submitBtn.focus();
+    else {
+      input.focus();
+      if (inputType === "text") input.select();
+    }
+  }, 0);
 
   return new Promise((resolve) => {
     credentialPromptResolve = resolve;
   });
+}
+
+async function promptTextValue({ title, message, label, initialValue = "", submitLabel = "Aceptar" }) {
+  const result = await promptCredential({
+    title,
+    message,
+    label,
+    submitLabel,
+    inputType: "text",
+    initialValue,
+  });
+  if (!result) return null;
+  const value = result.value.trim();
+  return value || null;
+}
+
+async function confirmThemed({ title, message, submitLabel = "Aceptar", danger = false }) {
+  const result = await promptCredential({
+    title,
+    message,
+    submitLabel,
+    hideInput: true,
+    danger,
+  });
+  return !!result;
 }
 
 async function promptProfileSecret(profile, {
@@ -3599,7 +3723,11 @@ async function saveAndClose(shouldConnect) {
     closeModal();
 
     if (shouldConnect) {
-      await connectProfileWithCredentials(profile.id, password, passphrase, savePassphrase);
+      if (connType === "rdp") {
+        await connectRdp(profile.id, { passwordOverride: password });
+      } else {
+        await connectProfileWithCredentials(profile.id, password, passphrase, savePassphrase);
+      }
     } else {
       toast("Perfil guardado", "success");
     }
@@ -3715,7 +3843,7 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
 // CONEXIÓN RDP
 // ═══════════════════════════════════════════════════════════════
 
-async function connectRdp(profileId) {
+async function connectRdp(profileId, { passwordOverride = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
@@ -3728,13 +3856,13 @@ async function connectRdp(profileId) {
   }
 
   // Obtener contraseña: KeePass (si aplica), si no keyring, si no prompt
-  let password = null;
+  let password = passwordOverride;
   if (profile.keepass_entry_uuid) {
     if (!keepassUnlocked) {
       toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
       return;
     }
-  } else {
+  } else if (!password) {
     password = await getStoredSecret(passwordKey(profileId));
     if (!password) {
       password = await promptProfileSecret(profile, {
@@ -4276,6 +4404,7 @@ function selectSession(sid, additive = false) {
   activeSessionId = sid;
   renderView();
   updateStatusBar();
+  syncSidebarToActiveSession({ scroll: true });
 }
 
 function selectHomeTab() {
@@ -4283,6 +4412,7 @@ function selectHomeTab() {
   activeSessionId = null;
   renderView();
   updateStatusBar();
+  syncSidebarToActiveSession();
 }
 
 let _statusLatencyTimer = null;
@@ -4509,6 +4639,8 @@ function wirePaneFocusOnClick(pane, sessionId) {
     if (activeSessionId === sessionId) return;
     activeSessionId = sessionId;
     updateTabSelectionClasses();
+    updateStatusBar();
+    syncSidebarToActiveSession({ scroll: true });
   }, true);
 }
 
@@ -4681,6 +4813,7 @@ async function registerSshListeners(sessionId, terminal) {
     tunnel.bytesUp = payload.bytesUp || 0;
     tunnel.bytesDown = payload.bytesDown || 0;
     renderTunnelList(sessionId);
+    if (isGlobalTunnelsModalOpen()) renderGlobalTunnelLists();
   }));
 
   return ul;
@@ -4749,6 +4882,7 @@ function removeTab(sessionId) {
   }
   renderView();
   updateStatusBar();
+  syncSidebarToActiveSession({ scroll: true });
 }
 
 function notifyResize(sessionId, terminal) {
@@ -4874,6 +5008,13 @@ function findOpenSessionForProfile(profileId) {
   return null;
 }
 
+function findConnectedSessionForProfile(profileId) {
+  for (const [sid, s] of sessions) {
+    if (s.profileId === profileId && s.status === "connected" && s.type !== "rdp") return sid;
+  }
+  return null;
+}
+
 async function openTunnelForProfile(profileId) {
   if (!profileId) return;
   let sessionId = findOpenSessionForProfile(profileId);
@@ -4886,6 +5027,223 @@ async function openTunnelForProfile(profileId) {
     return;
   }
   await openTunnelPanel(sessionId, { focusForm: true });
+}
+
+function isSshProfile(profile) {
+  return (profile?.connection_type || "ssh") === "ssh";
+}
+
+function profileTunnelLabel(profile) {
+  const workspace = prefs.workspaces.find((w) => w.id === (profile.workspace_id || "default"))?.name || "Default";
+  const folder = profile.group ? ` / ${profile.group}` : "";
+  return `${profile.name} · ${workspace}${folder}`;
+}
+
+function populateGlobalTunnelProfileSelect(selectedId = null) {
+  const select = document.getElementById("global-tunnel-profile");
+  if (!select) return;
+  const sshProfiles = profiles.filter(isSshProfile).sort((a, b) => a.name.localeCompare(b.name));
+  select.innerHTML = sshProfiles.length
+    ? sshProfiles.map((p) =>
+        `<option value="${escHtml(p.id)}"${p.id === selectedId ? " selected" : ""}>${escHtml(profileTunnelLabel(p))}</option>`
+      ).join("")
+    : `<option value="">Sin conexiones SSH</option>`;
+  select.disabled = sshProfiles.length === 0;
+}
+
+function openGlobalTunnelsModal() {
+  const overlay = document.getElementById("global-tunnels-overlay");
+  if (!overlay) return;
+  const currentProfileId = activeProfileId();
+  populateGlobalTunnelProfileSelect(currentProfileId);
+  updateGlobalTunnelFields();
+  renderGlobalTunnelLists();
+  overlay.classList.remove("hidden");
+  document.querySelector('[data-rail-action="tunnels"]')?.classList.add("active");
+}
+
+function closeGlobalTunnelsModal() {
+  document.getElementById("global-tunnels-overlay")?.classList.add("hidden");
+  document.querySelector('[data-rail-action="tunnels"]')?.classList.remove("active");
+}
+
+function isGlobalTunnelsModalOpen() {
+  const overlay = document.getElementById("global-tunnels-overlay");
+  return !!overlay && !overlay.classList.contains("hidden");
+}
+
+function updateGlobalTunnelFields() {
+  const form = document.getElementById("global-tunnel-form");
+  if (!form) return;
+  const type = form.elements.type?.value || "local";
+  const remoteHost = form.elements.remoteHost;
+  const remotePort = form.elements.remotePort;
+  if (!remoteHost || !remotePort) return;
+  remoteHost.placeholder = type === "remote" ? "Host local destino" : "Host remoto destino";
+  remotePort.placeholder = type === "remote" ? "Puerto remoto" : "Puerto destino";
+  remoteHost.disabled = type === "dynamic";
+  remotePort.disabled = type === "dynamic";
+  remotePort.required = type !== "dynamic";
+  if (type === "dynamic") {
+    remoteHost.value = "";
+    remotePort.value = "";
+  }
+}
+
+function readGlobalTunnelForm() {
+  const form = document.getElementById("global-tunnel-form");
+  const type = form.elements.type.value;
+  return {
+    profileId: form.elements.profileId.value,
+    tunnel: {
+      id: crypto.randomUUID(),
+      name: form.elements.name.value.trim() || null,
+      tunnelType: type,
+      bindHost: form.elements.bindHost.value.trim() || "127.0.0.1",
+      localPort: Number(form.elements.localPort.value || 0),
+      remoteHost: type === "dynamic" ? null : (form.elements.remoteHost.value.trim() || "127.0.0.1"),
+      remotePort: type === "dynamic" ? null : Number(form.elements.remotePort.value || 0),
+      autoStart: form.elements.autoStart.checked,
+    },
+    persist: form.elements.save.checked || form.elements.autoStart.checked,
+  };
+}
+
+async function waitForConnectedProfileSession(profileId, timeoutMs = 20000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const connected = findConnectedSessionForProfile(profileId);
+    if (connected) return connected;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return null;
+}
+
+async function ensureConnectedSshSessionForProfile(profileId) {
+  const connected = findConnectedSessionForProfile(profileId);
+  if (connected) return connected;
+
+  const existing = findOpenSessionForProfile(profileId);
+  if (existing) {
+    setActiveTab(existing);
+    const waited = await waitForConnectedProfileSession(profileId, 6000);
+    if (waited) return waited;
+  }
+
+  await connectProfile(profileId, { force: true });
+  return waitForConnectedProfileSession(profileId);
+}
+
+async function startGlobalTunnelFromForm() {
+  const { profileId, tunnel, persist } = readGlobalTunnelForm();
+  if (!profileId) {
+    toast("Selecciona una conexión SSH", "warning");
+    return;
+  }
+  try {
+    const sessionId = await ensureConnectedSshSessionForProfile(profileId);
+    if (!sessionId) {
+      toast("No se pudo abrir una sesión SSH para el túnel", "error", 8000);
+      return;
+    }
+    await startSshTunnel(sessionId, tunnel, { persist });
+    const form = document.getElementById("global-tunnel-form");
+    form?.reset();
+    if (form?.elements.bindHost) form.elements.bindHost.value = "127.0.0.1";
+    populateGlobalTunnelProfileSelect(profileId);
+    updateGlobalTunnelFields();
+    renderGlobalTunnelLists();
+  } catch (err) {
+    toast(`No se pudo abrir el túnel: ${err}`, "error", 8000);
+  }
+}
+
+function activeTunnelEntries() {
+  const rows = [];
+  for (const [sessionId, session] of sessions) {
+    if (!session.profileId || session.type === "rdp") continue;
+    const profile = profiles.find((p) => p.id === session.profileId);
+    for (const tunnel of session.tunnels?.values?.() || []) {
+      rows.push({ sessionId, profile, tunnel });
+    }
+  }
+  return rows;
+}
+
+function activeTunnelKey(profileId, tunnelId) {
+  return `${profileId || ""}:${tunnelId || ""}`;
+}
+
+function renderGlobalTunnelLists() {
+  const activeList = document.getElementById("global-active-tunnels");
+  const savedList = document.getElementById("global-saved-tunnels");
+  if (!activeList || !savedList) return;
+
+  const active = activeTunnelEntries();
+  activeList.innerHTML = active.length
+    ? active.map(({ sessionId, profile, tunnel }) => `
+        <div class="global-tunnel-row" data-session-id="${escHtml(sessionId)}" data-tunnel-id="${escHtml(tunnel.id)}">
+          <span class="tunnel-kind">${tunnel.tunnelType === "dynamic" ? "SOCKS" : tunnel.tunnelType.toUpperCase()}</span>
+          <span class="global-tunnel-profile">${escHtml(profile?.name || "SSH")}</span>
+          <span class="global-tunnel-desc">${escHtml(describeTunnel(tunnel))}</span>
+          <span class="global-tunnel-meta">↑ ${formatSize(tunnel.bytesUp || 0)} · ↓ ${formatSize(tunnel.bytesDown || 0)}</span>
+          <span class="global-tunnel-row-actions">
+            <button type="button" class="global-tunnel-action danger" data-global-tunnel-action="stop-active">Parar</button>
+          </span>
+        </div>`)
+      .join("")
+    : `<div class="tunnel-empty">Sin túneles activos</div>`;
+
+  const activeKeys = new Set(active.map(({ profile, tunnel }) => activeTunnelKey(profile?.id, tunnel.id)));
+  const saved = profiles
+    .filter(isSshProfile)
+    .flatMap((profile) => (profile.ssh_tunnels || []).map((raw) => ({ profile, tunnel: normalizeTunnelConfig(raw) })));
+
+  savedList.innerHTML = saved.length
+    ? saved.map(({ profile, tunnel }) => {
+        const isActive = activeKeys.has(activeTunnelKey(profile.id, tunnel.id));
+        return `
+          <div class="global-tunnel-row" data-profile-id="${escHtml(profile.id)}" data-tunnel-id="${escHtml(tunnel.id)}">
+            <span class="tunnel-kind">${tunnel.tunnelType === "dynamic" ? "SOCKS" : tunnel.tunnelType.toUpperCase()}</span>
+            <span class="global-tunnel-profile">${escHtml(profile.name)}</span>
+            <span class="global-tunnel-desc">${escHtml(tunnel.name || describeTunnel(tunnel))}</span>
+            <span class="global-tunnel-meta">${escHtml(describeTunnel(tunnel))}${tunnel.autoStart ? " · Auto" : ""}</span>
+            <span class="global-tunnel-row-actions">
+              <button type="button" class="global-tunnel-action" data-global-tunnel-action="start-saved" ${isActive ? "disabled" : ""}>${isActive ? "Activo" : "Abrir"}</button>
+              <button type="button" class="global-tunnel-action danger" data-global-tunnel-action="delete-saved">Borrar</button>
+            </span>
+          </div>`;
+      }).join("")
+    : `<div class="tunnel-empty">Sin túneles guardados</div>`;
+}
+
+async function startSavedGlobalTunnel(profileId, tunnelId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  const tunnel = (profile?.ssh_tunnels || []).map(normalizeTunnelConfig).find((t) => t.id === tunnelId);
+  if (!profile || !tunnel) return;
+  try {
+    const sessionId = await ensureConnectedSshSessionForProfile(profileId);
+    if (!sessionId) {
+      toast("No se pudo abrir una sesión SSH para el túnel", "error", 8000);
+      return;
+    }
+    await startSshTunnel(sessionId, tunnel, { persist: false });
+    renderGlobalTunnelLists();
+  } catch (err) {
+    toast(`No se pudo abrir el túnel: ${err}`, "error", 8000);
+  }
+}
+
+async function deleteSavedGlobalTunnel(profileId, tunnelId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+  const ok = await ask("¿Borrar este túnel guardado?", { title: "Túneles SSH", kind: "warning" });
+  if (!ok) return;
+  profile.ssh_tunnels = (profile.ssh_tunnels || []).filter((raw) => normalizeTunnelConfig(raw).id !== tunnelId);
+  profile.updated_at = new Date().toISOString();
+  await invoke("save_profile", { profile });
+  scheduleProfileAutoSync();
+  renderGlobalTunnelLists();
 }
 
 async function toggleTunnelPanel(sessionId) {
@@ -5026,6 +5384,7 @@ async function startSshTunnel(sessionId, cfg, opts = {}) {
   s.tunnels.set(tunnel.id, tunnel);
   renderTunnelList(sessionId);
   if (opts.persist && s.profileId) await persistTunnelForProfile(s.profileId, tunnel);
+  renderGlobalTunnelLists();
   toast(`Túnel abierto: ${describeTunnel(tunnel)}`, "success");
   return tunnel;
 }
@@ -5039,6 +5398,7 @@ async function stopSshTunnel(sessionId, tunnelId) {
   if (tunnel) tunnel.status = "closed";
   s?.tunnels?.delete(tunnelId);
   renderTunnelList(sessionId);
+  renderGlobalTunnelLists();
 }
 
 async function persistTunnelForProfile(profileId, tunnel) {
@@ -5052,6 +5412,7 @@ async function persistTunnelForProfile(profileId, tunnel) {
   profile.updated_at = new Date().toISOString();
   await invoke("save_profile", { profile });
   scheduleProfileAutoSync();
+  renderGlobalTunnelLists();
 }
 
 async function startProfileAutoTunnels(sessionId) {
@@ -5688,7 +6049,12 @@ async function transferOne(sessionId, direction, srcPath, name, isDir) {
 async function promptMkdir(sessionId, side) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
-  const name = window.prompt("Nombre de la nueva carpeta:");
+  const name = await promptTextValue({
+    title: "Nueva carpeta",
+    message: `Crear carpeta en ${side === "local" ? "Local" : "Remoto"}.`,
+    label: "Nombre",
+    submitLabel: "Crear",
+  });
   if (!name) return;
   try {
     if (side === "local") {
@@ -5707,7 +6073,13 @@ async function promptMkdir(sessionId, side) {
 async function promptRename(sessionId, side, oldPath, oldName) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
-  const newName = window.prompt("Nuevo nombre:", oldName);
+  const newName = await promptTextValue({
+    title: "Renombrar",
+    message: `Cambiar nombre en ${side === "local" ? "Local" : "Remoto"}.`,
+    label: "Nuevo nombre",
+    initialValue: oldName,
+    submitLabel: "Renombrar",
+  });
   if (!newName || newName === oldName) return;
   try {
     if (side === "local") {
@@ -5732,7 +6104,13 @@ async function confirmDelete(sessionId, side, path, name, isDir) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
   const kind = isDir ? "la carpeta" : "el fichero";
-  if (!window.confirm(`¿Eliminar ${kind} "${name}"?`)) return;
+  const ok = await confirmThemed({
+    title: "Eliminar",
+    message: `¿Eliminar ${kind} "${name}" de ${side === "local" ? "Local" : "Remoto"}?`,
+    submitLabel: "Eliminar",
+    danger: true,
+  });
+  if (!ok) return;
   try {
     if (side === "local") {
       await invoke("local_remove", { path });
@@ -6292,6 +6670,7 @@ function bindUIEvents() {
       const action = btn.dataset.railAction;
       if (action === "new-connection") openNewConnectionModal();
       else if (action === "local-shell") openLocalShell();
+      else if (action === "tunnels") openGlobalTunnelsModal();
       else if (action === "settings") openSettingsModal();
       else if (action === "sync") {
         prefsActiveTab = "data";
@@ -6439,6 +6818,39 @@ function bindUIEvents() {
     .addEventListener("click", () => importConnections());
   document.getElementById("btn-import-ssh-config")
     ?.addEventListener("click", () => importFromSshConfig());
+
+  // Panel global de túneles SSH
+  document.getElementById("btn-global-tunnels-close")
+    ?.addEventListener("click", closeGlobalTunnelsModal);
+  document.getElementById("global-tunnels-overlay")
+    ?.addEventListener("mousedown", (e) => {
+      if (e.target.id === "global-tunnels-overlay") closeGlobalTunnelsModal();
+    });
+  document.getElementById("global-tunnel-type")
+    ?.addEventListener("change", updateGlobalTunnelFields);
+  document.getElementById("global-tunnel-form")
+    ?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      if (!e.currentTarget.checkValidity()) {
+        e.currentTarget.reportValidity();
+        return;
+      }
+      startGlobalTunnelFromForm();
+    });
+  document.getElementById("global-tunnels-modal")
+    ?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-global-tunnel-action]");
+      if (!btn) return;
+      const row = btn.closest(".global-tunnel-row");
+      const action = btn.dataset.globalTunnelAction;
+      if (action === "stop-active") {
+        stopSshTunnel(row.dataset.sessionId, row.dataset.tunnelId);
+      } else if (action === "start-saved") {
+        startSavedGlobalTunnel(row.dataset.profileId, row.dataset.tunnelId);
+      } else if (action === "delete-saved") {
+        deleteSavedGlobalTunnel(row.dataset.profileId, row.dataset.tunnelId);
+      }
+    });
 
   // Selector de tema de UI: sincronizar .selected con el radio + preview en vivo
   document.querySelectorAll('input[name="pref-theme"]').forEach((radio) => {
@@ -6604,6 +7016,11 @@ function bindUIEvents() {
       const credentialOverlay = document.getElementById("credential-modal-overlay");
       if (credentialOverlay && !credentialOverlay.classList.contains("hidden")) {
         closeCredentialPrompt(null);
+        e.preventDefault();
+        return;
+      }
+      if (isGlobalTunnelsModalOpen()) {
+        closeGlobalTunnelsModal();
         e.preventDefault();
         return;
       }

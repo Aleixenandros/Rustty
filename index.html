@@ -26,6 +26,7 @@
         <div class="rail-section rail-top">
           <button class="rail-btn" data-rail-view="profiles" data-i18n-title="rail.view_profiles" title="Perfiles" aria-label="Perfiles">📁</button>
           <button class="rail-btn" data-rail-view="favorites" data-i18n-title="rail.view_favorites" title="Favoritos" aria-label="Favoritos">★</button>
+          <button class="rail-btn" data-rail-action="tunnels" data-i18n-title="rail.tunnels" title="Túneles SSH" aria-label="Túneles SSH">⇄</button>
           <button class="rail-btn" data-rail-action="sync" data-i18n-title="rail.sync" title="Sincronización" aria-label="Sincronización">⇅</button>
           <button class="rail-btn" id="rail-btn-settings" data-rail-action="settings" data-i18n-title="sidebar.prefs_title" title="Preferencias" aria-label="Preferencias">⚙</button>
         </div>
@@ -525,6 +526,71 @@
     </div>
 
     <!-- ══════════════════════════════════════════════════════
+         MODAL: Túneles SSH globales
+    ══════════════════════════════════════════════════════ -->
+    <div id="global-tunnels-overlay" class="hidden">
+      <div id="global-tunnels-modal" role="dialog" aria-modal="true" aria-labelledby="global-tunnels-title">
+        <div class="modal-header">
+          <h2 id="global-tunnels-title">Túneles SSH</h2>
+          <button class="btn-icon" id="btn-global-tunnels-close" aria-label="Cerrar">✕</button>
+        </div>
+
+        <div class="global-tunnels-body">
+          <form id="global-tunnel-form" class="global-tunnel-form" autocomplete="off">
+            <div class="form-row">
+              <label for="global-tunnel-profile">Conexión SSH</label>
+              <select id="global-tunnel-profile" name="profileId"></select>
+            </div>
+            <div class="global-tunnel-grid">
+              <div class="form-row">
+                <label for="global-tunnel-type">Tipo</label>
+                <select id="global-tunnel-type" name="type">
+                  <option value="local">Local (-L)</option>
+                  <option value="remote">Remoto (-R)</option>
+                  <option value="dynamic">SOCKS (-D)</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <label for="global-tunnel-bind">Escucha</label>
+                <input id="global-tunnel-bind" name="bindHost" type="text" value="127.0.0.1" />
+              </div>
+              <div class="form-row">
+                <label for="global-tunnel-local-port">Puerto local</label>
+                <input id="global-tunnel-local-port" name="localPort" type="number" min="1" max="65535" required />
+              </div>
+              <div class="form-row">
+                <label for="global-tunnel-remote-host">Destino</label>
+                <input id="global-tunnel-remote-host" name="remoteHost" type="text" placeholder="127.0.0.1" />
+              </div>
+              <div class="form-row">
+                <label for="global-tunnel-remote-port">Puerto destino</label>
+                <input id="global-tunnel-remote-port" name="remotePort" type="number" min="1" max="65535" />
+              </div>
+              <div class="form-row">
+                <label for="global-tunnel-name">Nombre</label>
+                <input id="global-tunnel-name" name="name" type="text" placeholder="Opcional" />
+              </div>
+            </div>
+            <div class="global-tunnel-actions">
+              <label class="checkbox-label"><input name="save" type="checkbox" /> Guardar en la conexión</label>
+              <label class="checkbox-label"><input name="autoStart" type="checkbox" /> Autoarrancar</label>
+              <button type="submit" class="btn-primary">Abrir túnel</button>
+            </div>
+          </form>
+
+          <div class="global-tunnels-section">
+            <div class="global-tunnels-section-title">Activos</div>
+            <div id="global-active-tunnels" class="global-tunnel-list"></div>
+          </div>
+          <div class="global-tunnels-section">
+            <div class="global-tunnels-section-title">Guardados</div>
+            <div id="global-saved-tunnels" class="global-tunnel-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
          MODAL: Credenciales bajo demanda
     ══════════════════════════════════════════════════════ -->
     <div id="credential-modal-overlay" class="hidden">
@@ -536,7 +602,7 @@
 
         <form id="credential-modal-form" autocomplete="off">
           <p id="credential-modal-message" class="credential-message"></p>
-          <div class="form-row">
+          <div class="form-row" id="credential-modal-input-row">
             <label for="credential-modal-input" id="credential-modal-label" data-i18n="modal_credential.password_label">Contraseña</label>
             <input id="credential-modal-input" type="password" placeholder="••••••••" />
           </div>

@@ -1,12 +1,19 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
 /// Información de una sesión RDP activa
 pub struct RdpHandle {
     pub child: std::process::Child,
+    pub cleanup_path: Option<PathBuf>,
     #[allow(dead_code)]
     pub profile_id: String,
+}
+
+struct SpawnedRdpClient {
+    child: std::process::Child,
+    cleanup_path: Option<PathBuf>,
 }
 
 /// Gestor de sesiones RDP.
@@ -35,12 +42,16 @@ impl RdpManager {
         password: Option<&str>,
         app_handle: AppHandle,
     ) -> Result<(), String> {
-        let child = spawn_rdp_client(host, port, username, domain, password)?;
+        let spawned = spawn_rdp_client(host, port, username, domain, password)?;
 
-        self.sessions
-            .lock()
-            .unwrap()
-            .insert(session_id.clone(), RdpHandle { child, profile_id });
+        self.sessions.lock().unwrap().insert(
+            session_id.clone(),
+            RdpHandle {
+                child: spawned.child,
+                cleanup_path: spawned.cleanup_path,
+                profile_id,
+            },
+        );
 
         // Hilo vigilante: detecta cuándo el proceso externo termina
         let sessions = Arc::clone(&self.sessions);
@@ -53,7 +64,10 @@ impl RdpManager {
                 if let Some(handle) = map.get_mut(&sid) {
                     match handle.child.try_wait() {
                         Ok(Some(_)) | Err(_) => {
-                            map.remove(&sid);
+                            let handle = map.remove(&sid);
+                            if let Some(path) = handle.and_then(|h| h.cleanup_path) {
+                                let _ = std::fs::remove_file(path);
+                            }
                             true
                         }
                         Ok(None) => false,
@@ -76,6 +90,9 @@ impl RdpManager {
     pub fn disconnect(&self, session_id: &str) -> Result<(), String> {
         if let Some(mut handle) = self.sessions.lock().unwrap().remove(session_id) {
             let _ = handle.child.kill();
+            if let Some(path) = handle.cleanup_path.take() {
+                let _ = std::fs::remove_file(path);
+            }
         }
         Ok(())
     }
@@ -90,13 +107,16 @@ impl RdpManager {
             .collect();
         for mut handle in handles {
             let _ = handle.child.kill();
+            if let Some(path) = handle.cleanup_path.take() {
+                let _ = std::fs::remove_file(path);
+            }
         }
     }
 }
 
 // ─── Lanzadores por plataforma ────────────────────────────────────────────────
 
-/// Linux: usa xfreerdp3 (preferido) o xfreerdp como fallback
+/// Linux: usa xfreerdp3/xfreerdp (preferido) o rdesktop como fallback.
 #[cfg(target_os = "linux")]
 fn spawn_rdp_client(
     host: &str,
@@ -104,7 +124,7 @@ fn spawn_rdp_client(
     username: &str,
     domain: Option<&str>,
     password: Option<&str>,
-) -> Result<std::process::Child, String> {
+) -> Result<SpawnedRdpClient, String> {
     // Detectar qué binario está disponible
     let binary = ["xfreerdp3", "xfreerdp", "rdesktop"]
         .iter()
@@ -121,22 +141,40 @@ fn spawn_rdp_client(
         })?;
 
     let mut cmd = std::process::Command::new(binary);
-    cmd.arg(format!("/v:{host}:{port}"));
-    cmd.arg(format!("/u:{username}"));
-    if let Some(d) = domain.filter(|d| !d.is_empty()) {
-        cmd.arg(format!("/d:{d}"));
+    if binary == "rdesktop" {
+        cmd.arg("-u").arg(username);
+        if let Some(d) = domain.filter(|d| !d.is_empty()) {
+            cmd.arg("-d").arg(d);
+        }
+        if let Some(p) = password.filter(|p| !p.is_empty()) {
+            cmd.arg("-p").arg(p);
+        }
+        cmd.arg("-g").arg("1280x800");
+        cmd.arg("-r").arg("clipboard:CLIPBOARD");
+        cmd.arg(format!("{host}:{port}"));
+    } else {
+        cmd.arg(format!("/v:{host}:{port}"));
+        cmd.arg(format!("/u:{username}"));
+        if let Some(d) = domain.filter(|d| !d.is_empty()) {
+            cmd.arg(format!("/d:{d}"));
+        }
+        if let Some(p) = password.filter(|p| !p.is_empty()) {
+            cmd.arg(format!("/p:{p}"));
+        }
+        cmd.arg("+clipboard");
+        cmd.arg("/cert:ignore");
+        // Arrancar en ventana normal (sin fullscreen forzado)
+        cmd.arg("/w:1280");
+        cmd.arg("/h:800");
     }
-    if let Some(p) = password.filter(|p| !p.is_empty()) {
-        cmd.arg(format!("/p:{p}"));
-    }
-    cmd.arg("+clipboard");
-    cmd.arg("/cert:ignore");
-    // Arrancar en ventana normal (sin fullscreen forzado)
-    cmd.arg("/w:1280");
-    cmd.arg("/h:800");
 
-    cmd.spawn()
-        .map_err(|e| format!("Error al lanzar {binary}: {e}"))
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("Error al lanzar {binary}: {e}"))?;
+    Ok(SpawnedRdpClient {
+        child,
+        cleanup_path: None,
+    })
 }
 
 /// Windows: escribe un archivo .rdp temporal y lo abre con mstsc.exe
@@ -147,7 +185,7 @@ fn spawn_rdp_client(
     username: &str,
     domain: Option<&str>,
     _password: Option<&str>, // mstsc no acepta contraseñas por línea de comandos
-) -> Result<std::process::Child, String> {
+) -> Result<SpawnedRdpClient, String> {
     let rdp_content = format!(
         "full address:s:{host}:{port}\r\nusername:s:{username}\r\ndomain:s:{domain}\r\npromptcredentialonce:i:1\r\n",
         domain = domain.unwrap_or("")
@@ -157,10 +195,21 @@ fn spawn_rdp_client(
     std::fs::write(&rdp_path, rdp_content)
         .map_err(|e| format!("Error al crear fichero RDP temporal: {e}"))?;
 
-    std::process::Command::new("mstsc")
+    let child = match std::process::Command::new("mstsc")
         .arg(rdp_path.to_string_lossy().as_ref())
         .spawn()
-        .map_err(|e| format!("Error al lanzar mstsc.exe: {e}"))
+    {
+        Ok(child) => child,
+        Err(e) => {
+            let _ = std::fs::remove_file(&rdp_path);
+            return Err(format!("Error al lanzar mstsc.exe: {e}"));
+        }
+    };
+
+    Ok(SpawnedRdpClient {
+        child,
+        cleanup_path: Some(rdp_path),
+    })
 }
 
 /// macOS: abre la URL rdp:// con el cliente registrado (Microsoft Remote Desktop)
@@ -171,10 +220,14 @@ fn spawn_rdp_client(
     username: &str,
     _domain: Option<&str>,
     _password: Option<&str>,
-) -> Result<std::process::Child, String> {
+) -> Result<SpawnedRdpClient, String> {
     let url = format!("rdp://full%20address=s:{host}:{port}&username=s:{username}");
-    std::process::Command::new("open")
+    let child = std::process::Command::new("open")
         .arg(&url)
         .spawn()
-        .map_err(|e| format!("Error al abrir cliente RDP: {e}"))
+        .map_err(|e| format!("Error al abrir cliente RDP: {e}"))?;
+    Ok(SpawnedRdpClient {
+        child,
+        cleanup_path: None,
+    })
 }

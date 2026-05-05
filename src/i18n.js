@@ -45,6 +45,7 @@ const DICTIONARIES = {
     rail: {
       view_profiles: "Perfiles",
       view_favorites: "Favoritos",
+      tunnels: "Túneles SSH",
       sync: "Sincronización",
     },
     welcome: {
@@ -441,6 +442,7 @@ const DICTIONARIES = {
     rail: {
       view_profiles: "Profiles",
       view_favorites: "Favorites",
+      tunnels: "SSH tunnels",
       sync: "Sync",
     },
     welcome: {
@@ -837,6 +839,7 @@ const DICTIONARIES = {
     rail: {
       view_profiles: "Profils",
       view_favorites: "Favoris",
+      tunnels: "Tunnels SSH",
       sync: "Synchronisation",
     },
     welcome: {
@@ -1164,6 +1167,7 @@ const DICTIONARIES = {
     rail: {
       view_profiles: "Perfis",
       view_favorites: "Favoritos",
+      tunnels: "Túneis SSH",
       sync: "Sincronização",
     },
     welcome: {

@@ -5,17 +5,17 @@
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
 
-> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Última versión: **0.4.0**. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
+> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Última versión publicada: **0.4.2**. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
 
 ## Características principales
 
 - **Multi-protocolo**: conexiones SSH, SFTP y RDP (este último mediante `xfreerdp` / `mstsc` externos).
 - **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F) y soporte de OSC 7 (seguimiento del `cwd` remoto).
 - **Panel SFTP integrado**: explorador de ficheros con **vista dividida remoto / local**, transferencia recursiva de carpetas, drag & drop, seguimiento automático del directorio del terminal y modo elevado a **sudo** cuando el servidor lo permita.
-- **Túneles SSH integrados**: redirección de puertos **local** (`-L`), **remota** (`-R`) y **dinámica / SOCKS** (`-D`) sobre una sesión activa, con panel de estado, tráfico y autoconexión opcional por perfil.
+- **Túneles SSH integrados**: redirección de puertos **local** (`-L`), **remota** (`-R`) y **dinámica / SOCKS** (`-D`) sobre una sesión activa o desde acceso rápido global, con panel de estado, tráfico, túneles guardados y autoconexión opcional por perfil.
 - **Opciones avanzadas SSH por perfil**: keep-alive configurable, **reconexión automática con backoff** ante caídas, **grabación de sesión** a fichero, bastion / ProxyJump, agent forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) en servidores antiguos.
 - **Multi-pestaña y vistas divididas**: trabaja con varias sesiones simultáneas, distribúyelas en *split* horizontal / vertical / grid y activa el *broadcast* para teclear en varias a la vez.
-- **Sidebar pulida**: rail vertical de iconos (Perfiles, Favoritos, Sync, Preferencias y acciones rápidas), **drag & drop** entre carpetas y workspaces, y **colores por carpeta** desde el menú contextual.
+- **Sidebar pulida**: rail vertical de iconos (Perfiles, Favoritos, Túneles, Sync, Preferencias y acciones rápidas), **drag & drop** entre carpetas y workspaces, colores por carpeta y selección automática de la conexión asociada a la pestaña activa.
 - **Exportación granular**: exporta todos los perfiles, los de una carpeta o los de un workspace a JSON desde el menú contextual.
 - **Seguridad**:
   - Integración nativa con el keyring del sistema (KWallet, GNOME Keyring, macOS Keychain, Windows Credential Store).
