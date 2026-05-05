@@ -2,6 +2,15 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [0.4.2] – 2026-05-05
+
+### Corregido
+- **Credenciales bajo demanda**: los diálogos de contraseña y passphrase para
+  SSH, RDP y SFTP usan ahora un modal propio integrado con el tema, eliminando
+  el emergente nativo con título `JavaScript - tauri://localhost`.
+- **Barra de estado de sesión**: al cerrar una pestaña se limpian el destino,
+  la latencia y el indicador de estado si no queda una sesión SSH activa.
+
 ## [0.4.1] – 2026-05-05
 
 ### Corregido

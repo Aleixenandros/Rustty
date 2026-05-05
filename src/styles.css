@@ -1744,6 +1744,42 @@ body.terminal-bell-visual::after {
   opacity: 0.75;
 }
 
+#credential-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.58);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 11000;
+  backdrop-filter: blur(4px);
+}
+
+#credential-modal {
+  width: 430px;
+  max-width: calc(100vw - 40px);
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.52);
+  display: flex;
+  flex-direction: column;
+}
+
+#credential-modal-form {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.credential-message {
+  margin: 0;
+  color: var(--subtext1);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .modal-header {
   display: flex;
   align-items: center;

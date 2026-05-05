@@ -3384,12 +3384,113 @@ async function saveStoredSecret(key, secret, label = "credencial") {
   }
 }
 
-async function maybeRememberPromptedSecret(profile, key, secret, label) {
-  if (!secret) return;
-  const shouldSave = window.confirm(
-    `¿Guardar la ${label} de ${profile.username}@${profile.host} en el keyring del sistema?`
-  );
-  if (shouldSave) await saveStoredSecret(key, secret, label);
+let credentialPromptResolve = null;
+
+function credentialTarget(profile) {
+  const user = String(profile?.username || "").trim();
+  const host = String(profile?.host || "").trim();
+  return user && host ? `${user}@${host}` : (host || user || profile?.name || "");
+}
+
+function initCredentialModalEvents() {
+  const overlay = document.getElementById("credential-modal-overlay");
+  const form = document.getElementById("credential-modal-form");
+  const cancelBtn = document.getElementById("btn-credential-cancel");
+  const closeBtn = document.getElementById("btn-credential-close");
+  if (!overlay || !form || !cancelBtn || !closeBtn) return;
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = document.getElementById("credential-modal-input");
+    const remember = document.getElementById("credential-modal-remember");
+    closeCredentialPrompt({
+      value: input?.value ?? "",
+      remember: !!remember?.checked,
+    });
+  });
+  cancelBtn.addEventListener("click", () => closeCredentialPrompt(null));
+  closeBtn.addEventListener("click", () => closeCredentialPrompt(null));
+}
+
+function closeCredentialPrompt(result = null) {
+  const overlay = document.getElementById("credential-modal-overlay");
+  if (overlay) overlay.classList.add("hidden");
+
+  const input = document.getElementById("credential-modal-input");
+  const remember = document.getElementById("credential-modal-remember");
+  if (input) input.value = "";
+  if (remember) remember.checked = false;
+
+  const resolve = credentialPromptResolve;
+  credentialPromptResolve = null;
+  if (resolve) resolve(result);
+}
+
+function promptCredential({
+  title,
+  message,
+  label,
+  rememberLabel,
+  submitLabel = t("modal_credential.submit"),
+  inputType = "password",
+}) {
+  const overlay = document.getElementById("credential-modal-overlay");
+  const titleEl = document.getElementById("credential-modal-title");
+  const messageEl = document.getElementById("credential-modal-message");
+  const labelEl = document.getElementById("credential-modal-label");
+  const input = document.getElementById("credential-modal-input");
+  const rememberRow = document.getElementById("credential-modal-remember-row");
+  const rememberLabelEl = document.getElementById("credential-modal-remember-label");
+  const submitBtn = document.getElementById("btn-credential-submit");
+
+  if (!overlay || !titleEl || !messageEl || !labelEl || !input || !rememberRow || !submitBtn) {
+    console.warn("[credentials] modal is not available");
+    return Promise.resolve(null);
+  }
+
+  if (credentialPromptResolve) closeCredentialPrompt(null);
+
+  titleEl.textContent = title || t("modal_credential.password_title");
+  messageEl.textContent = message || "";
+  labelEl.textContent = label || t("modal_credential.password_label");
+  input.type = inputType;
+  input.value = "";
+  submitBtn.textContent = submitLabel;
+
+  if (rememberLabel) {
+    rememberRow.classList.remove("hidden");
+    rememberLabelEl.textContent = rememberLabel;
+  } else {
+    rememberRow.classList.add("hidden");
+  }
+
+  overlay.classList.remove("hidden");
+  setTimeout(() => input.focus(), 0);
+
+  return new Promise((resolve) => {
+    credentialPromptResolve = resolve;
+  });
+}
+
+async function promptProfileSecret(profile, {
+  titleKey,
+  messageKey,
+  labelKey,
+  rememberKey,
+  secretKey,
+  secretLabel,
+  submitKey = "modal_credential.submit",
+}) {
+  const result = await promptCredential({
+    title: t(titleKey),
+    message: t(messageKey, { target: credentialTarget(profile) }),
+    label: t(labelKey),
+    rememberLabel: rememberKey ? t(rememberKey) : null,
+    submitLabel: t(submitKey),
+  });
+  if (!result) return null;
+  if (result.remember) await saveStoredSecret(secretKey, result.value, secretLabel);
+  return result.value;
 }
 
 async function refreshStoredCredentialCheckboxes(profile) {
@@ -3526,28 +3627,30 @@ async function resolveSshCredentials(profile) {
     } else {
       password = await getStoredSecret(passwordKey(profile.id));
       if (!password) {
-        password = window.prompt(`Contraseña para ${profile.username}@${profile.host}:`);
+        password = await promptProfileSecret(profile, {
+          titleKey: "modal_credential.password_title",
+          messageKey: "modal_credential.ssh_message",
+          labelKey: "modal_credential.password_label",
+          rememberKey: "modal_credential.remember_password",
+          secretKey: passwordKey(profile.id),
+          secretLabel: "contraseña",
+        });
         if (password === null) return null;
-        await maybeRememberPromptedSecret(
-          profile,
-          passwordKey(profile.id),
-          password,
-          "contraseña"
-        );
       }
     }
   } else if (profile.auth_type === "public_key") {
     passphrase = await getStoredSecret(passphraseKey(profile.id));
     if (!passphrase && profile.key_path) {
-      passphrase = window.prompt("Passphrase de la clave privada (vacío si no tiene):") ?? null;
-      if (passphrase) {
-        await maybeRememberPromptedSecret(
-          profile,
-          passphraseKey(profile.id),
-          passphrase,
-          "passphrase"
-        );
-      }
+      passphrase = await promptProfileSecret(profile, {
+        titleKey: "modal_credential.passphrase_title",
+        messageKey: "modal_credential.passphrase_message",
+        labelKey: "modal_credential.passphrase_label",
+        rememberKey: "modal_credential.remember_passphrase",
+        secretKey: passphraseKey(profile.id),
+        secretLabel: "passphrase",
+        submitKey: "modal_credential.accept",
+      });
+      if (passphrase === null) return null;
     }
   }
   return { password, passphrase };
@@ -3634,16 +3737,15 @@ async function connectRdp(profileId) {
   } else {
     password = await getStoredSecret(passwordKey(profileId));
     if (!password) {
-      password = window.prompt(
-        `Contraseña RDP para ${profile.username}@${profile.host}:`
-      );
+      password = await promptProfileSecret(profile, {
+        titleKey: "modal_credential.rdp_password_title",
+        messageKey: "modal_credential.rdp_message",
+        labelKey: "modal_credential.password_label",
+        rememberKey: "modal_credential.remember_password",
+        secretKey: passwordKey(profileId),
+        secretLabel: "contraseña",
+      });
       if (password === null) return; // usuario canceló
-      await maybeRememberPromptedSecret(
-        profile,
-        passwordKey(profileId),
-        password,
-        "contraseña"
-      );
     }
   }
 
@@ -4185,6 +4287,24 @@ function selectHomeTab() {
 
 let _statusLatencyTimer = null;
 
+function clearStatusBar() {
+  const bar = document.getElementById("status-bar");
+  if (bar) {
+    bar.classList.add("hidden");
+    bar.setAttribute("aria-hidden", "true");
+  }
+  const userHostEl = document.getElementById("status-user-host");
+  if (userHostEl) userHostEl.textContent = "—";
+  const latEl = document.getElementById("status-latency");
+  if (latEl) latEl.textContent = "—";
+  const dot = document.getElementById("status-dot");
+  if (dot) dot.classList.remove("connected", "error", "reconnecting");
+  if (_statusLatencyTimer) {
+    clearInterval(_statusLatencyTimer);
+    _statusLatencyTimer = null;
+  }
+}
+
 function updateStatusBar() {
   const bar = document.getElementById("status-bar");
   if (!bar) return;
@@ -4193,11 +4313,11 @@ function updateStatusBar() {
   // Solo mostramos status bar para sesiones SSH (RDP no es interactivo;
   // shell local no tiene host remoto).
   if (!profile || (profile.connection_type || "ssh") !== "ssh") {
-    bar.classList.add("hidden");
-    if (_statusLatencyTimer) { clearInterval(_statusLatencyTimer); _statusLatencyTimer = null; }
+    clearStatusBar();
     return;
   }
   bar.classList.remove("hidden");
+  bar.setAttribute("aria-hidden", "false");
 
   const userHost = `${profile.username}@${profile.host}:${profile.port}`;
   const userHostEl = document.getElementById("status-user-host");
@@ -4628,6 +4748,7 @@ function removeTab(sessionId) {
     }
   }
   renderView();
+  updateStatusBar();
 }
 
 function notifyResize(sessionId, terminal) {
@@ -5084,14 +5205,15 @@ async function openSftpPanel(sessionId) {
     } else {
       password = await getStoredSecret(passwordKey(profile.id));
       if (!password) {
-        password = window.prompt(`Contraseña SFTP para ${profile.username}@${profile.host}:`);
+        password = await promptProfileSecret(profile, {
+          titleKey: "modal_credential.sftp_password_title",
+          messageKey: "modal_credential.sftp_message",
+          labelKey: "modal_credential.password_label",
+          rememberKey: "modal_credential.remember_password",
+          secretKey: passwordKey(profile.id),
+          secretLabel: "contraseña",
+        });
         if (password === null) return;
-        await maybeRememberPromptedSecret(
-          profile,
-          passwordKey(profile.id),
-          password,
-          "contraseña"
-        );
       }
     }
   } else if (profile.auth_type === "public_key") {
@@ -5164,14 +5286,15 @@ async function toggleSftpElevated(sessionId) {
     if (!profile.keepass_entry_uuid) {
       password = await getStoredSecret(passwordKey(profile.id));
       if (!password) {
-        password = window.prompt(`Contraseña SFTP para ${profile.username}@${profile.host}:`);
+        password = await promptProfileSecret(profile, {
+          titleKey: "modal_credential.sftp_password_title",
+          messageKey: "modal_credential.sftp_message",
+          labelKey: "modal_credential.password_label",
+          rememberKey: "modal_credential.remember_password",
+          secretKey: passwordKey(profile.id),
+          secretLabel: "contraseña",
+        });
         if (password === null) return;
-        await maybeRememberPromptedSecret(
-          profile,
-          passwordKey(profile.id),
-          password,
-          "contraseña"
-        );
       }
     }
   } else if (profile.auth_type === "public_key") {
@@ -6192,6 +6315,7 @@ function bindUIEvents() {
 
   // Controles de ventana (CSD): min / max / close + detección de plataforma
   initWindowControls();
+  initCredentialModalEvents();
 
   // ── Modal de preferencias ────────────────────────────────────
   document.getElementById("btn-prefs-close")
@@ -6477,6 +6601,12 @@ function bindUIEvents() {
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+      const credentialOverlay = document.getElementById("credential-modal-overlay");
+      if (credentialOverlay && !credentialOverlay.classList.contains("hidden")) {
+        closeCredentialPrompt(null);
+        e.preventDefault();
+        return;
+      }
       closeModal();
       closeSettingsModal();
       hideContextMenu();
@@ -7319,6 +7449,7 @@ async function handleTabContextAction(action) {
       viewSelection.splice(idx, 1);
       if (activeSessionId === targetId) activeSessionId = viewSelection[0];
       renderView();
+      updateStatusBar();
     }
     return;
   }

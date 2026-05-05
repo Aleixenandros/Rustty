@@ -525,6 +525,36 @@
     </div>
 
     <!-- ══════════════════════════════════════════════════════
+         MODAL: Credenciales bajo demanda
+    ══════════════════════════════════════════════════════ -->
+    <div id="credential-modal-overlay" class="hidden">
+      <div id="credential-modal" role="dialog" aria-modal="true" aria-labelledby="credential-modal-title">
+        <div class="modal-header">
+          <h2 id="credential-modal-title" data-i18n="modal_credential.password_title">Contraseña requerida</h2>
+          <button class="btn-icon" id="btn-credential-close" data-i18n-aria-label="modal_credential.close" aria-label="Cerrar">✕</button>
+        </div>
+
+        <form id="credential-modal-form" autocomplete="off">
+          <p id="credential-modal-message" class="credential-message"></p>
+          <div class="form-row">
+            <label for="credential-modal-input" id="credential-modal-label" data-i18n="modal_credential.password_label">Contraseña</label>
+            <input id="credential-modal-input" type="password" placeholder="••••••••" />
+          </div>
+          <div class="form-row" id="credential-modal-remember-row">
+            <label class="checkbox-label">
+              <input id="credential-modal-remember" type="checkbox" />
+              <span id="credential-modal-remember-label" data-i18n="modal_credential.remember_password">Guardar contraseña en el keyring del sistema</span>
+            </label>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="btn-credential-cancel" data-i18n="modal_credential.cancel">Cancelar</button>
+            <button type="submit" class="btn-primary" id="btn-credential-submit" data-i18n="modal_credential.submit">Conectar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
          MODAL: Preferencias
     ══════════════════════════════════════════════════════ -->
     <div id="modal-prefs-overlay" class="hidden">
