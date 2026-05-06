@@ -42,7 +42,11 @@ let userFolders = new Set(
 const openFolders = new Set();
 
 /** Contexto del menú contextual activo */
-let ctxTarget = { type: null, id: null, folderPath: null };
+let ctxTarget = { type: null, id: null, folderPath: null, workspaceId: null };
+
+/** Selección múltiple de conexiones en la sidebar */
+const sidebarSelectedConnectionIds = new Set();
+let sidebarLastSelectedConnectionId = null;
 
 /**
  * Sesiones SSH activas.
@@ -390,8 +394,11 @@ function getActiveWorkspaceId() {
 }
 
 function profileBelongsToActiveWorkspace(p) {
-  const wid = p.workspace_id || "default";
-  return wid === getActiveWorkspaceId();
+  return profileWorkspaceId(p) === getActiveWorkspaceId();
+}
+
+function profileWorkspaceId(p) {
+  return p?.workspace_id || "default";
 }
 
 function getWorkspaceFolders(wsId) {
@@ -954,6 +961,7 @@ let _syncSidebarTextKey = "prefs_sync.status_idle";
 let _syncProfileAutoTimer = null;
 let _syncInFlight = false;
 let _syncPending = false;
+const SYNC_AUTO_DEBOUNCE_MS = 5000;
 async function populateSyncTab() {
   const config = await sync.getConfig().catch(() => ({
     enabled: false, backend: "none",
@@ -1195,12 +1203,17 @@ function scheduleProfileAutoSync() {
   if (!shouldAutoSyncProfiles()) return;
   clearTimeout(_syncProfileAutoTimer);
   _syncProfileAutoTimer = setTimeout(() => {
+    _syncProfileAutoTimer = null;
     runSyncWithCurrentState({ persistConfig: false, announce: false })
       .catch((err) => console.error("[sync] auto", err));
-  }, 1200);
+  }, SYNC_AUTO_DEBOUNCE_MS);
 }
 
 async function runSyncWithCurrentState({ persistConfig = false, announce = false } = {}) {
+  if (persistConfig && _syncProfileAutoTimer) {
+    clearTimeout(_syncProfileAutoTimer);
+    _syncProfileAutoTimer = null;
+  }
   if (_syncInFlight) {
     _syncPending = true;
     return null;
@@ -1816,9 +1829,10 @@ function countConnections(node) {
 }
 
 /** Devuelve todos los paths de carpeta existentes (de perfiles + userFolders) */
-function getAllFolderPaths() {
-  const paths = new Set(userFolders);
+function getAllFolderPaths(workspaceId = getActiveWorkspaceId()) {
+  const paths = new Set(getWorkspaceFolders(workspaceId));
   for (const p of profiles) {
+    if (profileWorkspaceId(p) !== workspaceId) continue;
     if (!p.group) continue;
     const parts = p.group.split("/").filter(Boolean);
     let cur = "";
@@ -1948,13 +1962,11 @@ function openFolderPath(path) {
 function markSidebarProfile(profileId, { scroll = false } = {}) {
   const container = document.getElementById("connection-list");
   if (!container) return;
-  container.querySelectorAll(".conn-item.selected")
-    .forEach((el) => el.classList.remove("selected"));
+  updateSidebarSelectionDom(container);
   if (!profileId) return;
 
   const item = container.querySelector(`.conn-item[data-id="${CSS.escape(profileId)}"]`);
   if (!item) return;
-  item.classList.add("selected");
   if (scroll) {
     item.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
@@ -2499,7 +2511,7 @@ function renderConnectionItem(p, depth) {
   const isConnected = [...sessions.values()].some(
     (s) => s.profileId === p.id && s.status === "connected"
   );
-  const isSelected = activeProfileId() === p.id;
+  const isSelected = activeProfileId() === p.id || sidebarSelectedConnectionIds.has(p.id);
   const connType = p.connection_type || "ssh";
   const proto = connectionProtocolMeta(connType);
   const indent = 14 + depth * 12;
@@ -2531,6 +2543,63 @@ function renderConnectionItem(p, depth) {
     </div>`;
 }
 
+function getVisibleSidebarConnectionIds(container) {
+  return [...container.querySelectorAll(".conn-item")]
+    .filter((el) => !el.classList.contains("dimmed"))
+    .map((el) => el.dataset.id)
+    .filter(Boolean);
+}
+
+function updateSidebarSelectionDom(container = document.getElementById("connection-list")) {
+  if (!container) return;
+  const activeId = activeProfileId();
+  container.querySelectorAll(".conn-item").forEach((el) => {
+    const id = el.dataset.id;
+    el.classList.toggle(
+      "selected",
+      sidebarSelectedConnectionIds.has(id) || id === activeId
+    );
+  });
+}
+
+function setSidebarConnectionSelection(ids, container = document.getElementById("connection-list")) {
+  sidebarSelectedConnectionIds.clear();
+  for (const id of ids) {
+    if (id) sidebarSelectedConnectionIds.add(id);
+  }
+  updateSidebarSelectionDom(container);
+}
+
+function handleSidebarConnectionClick(e, el, container) {
+  const id = el.dataset.id;
+  if (!id) return;
+
+  if (e.shiftKey && sidebarLastSelectedConnectionId) {
+    const visibleIds = getVisibleSidebarConnectionIds(container);
+    const from = visibleIds.indexOf(sidebarLastSelectedConnectionId);
+    const to = visibleIds.indexOf(id);
+    if (from >= 0 && to >= 0) {
+      const [start, end] = from < to ? [from, to] : [to, from];
+      setSidebarConnectionSelection(visibleIds.slice(start, end + 1), container);
+      return;
+    }
+  }
+
+  if (e.ctrlKey || e.metaKey) {
+    if (sidebarSelectedConnectionIds.has(id)) {
+      sidebarSelectedConnectionIds.delete(id);
+    } else {
+      sidebarSelectedConnectionIds.add(id);
+    }
+    sidebarLastSelectedConnectionId = id;
+    updateSidebarSelectionDom(container);
+    return;
+  }
+
+  sidebarLastSelectedConnectionId = id;
+  setSidebarConnectionSelection([id], container);
+}
+
 function connectionProtocolMeta(type) {
   switch (type) {
     case "rdp":
@@ -2546,9 +2615,7 @@ function bindTreeEvents(container) {
   container.querySelectorAll(".conn-item").forEach((el) => {
     el.addEventListener("click", (e) => {
       if (e.target.closest("[data-action]")) return;
-      container.querySelectorAll(".conn-item.selected")
-        .forEach((it) => it.classList.remove("selected"));
-      el.classList.add("selected");
+      handleSidebarConnectionClick(e, el, container);
     });
     el.addEventListener("dblclick", (e) => {
       if (e.target.closest("[data-action]")) return;
@@ -2610,6 +2677,19 @@ function workspaceForElement(el) {
   return getActiveWorkspaceId();
 }
 
+function folderContainsPath(path, folderPath) {
+  return path === folderPath || path?.startsWith(folderPath + "/");
+}
+
+function findSidebarFolderItem(container, folderPath, workspaceId = null) {
+  if (!container || !folderPath) return null;
+  return [...container.querySelectorAll(".folder-item:not(.ws-folder-item)")]
+    .find((el) =>
+      el.dataset.folderPath === folderPath
+      && (!workspaceId || workspaceForElement(el) === workspaceId)
+    ) || null;
+}
+
 function bindSidebarDragAndDrop(container) {
   // Favoritos: solo lectura, no permitir reordenar/mover
   if (prefs.sidebarViewMode === "favorites") return;
@@ -2619,17 +2699,30 @@ function bindSidebarDragAndDrop(container) {
     el.addEventListener("dragstart", (e) => {
       const profile = profiles.find((p) => p.id === el.dataset.id);
       if (!profile) { e.preventDefault(); return; }
+      const sourceWs = profileWorkspaceId(profile);
+      if (!sidebarSelectedConnectionIds.has(profile.id)) {
+        setSidebarConnectionSelection([profile.id], container);
+      }
+      const ids = [...sidebarSelectedConnectionIds].filter((id) => {
+        const p = profiles.find((x) => x.id === id);
+        return p && profileWorkspaceId(p) === sourceWs;
+      });
+      if (!ids.includes(profile.id)) ids.unshift(profile.id);
       _dragState = {
         kind: "conn",
         id: profile.id,
-        sourceWs: profile.workspace_id || "default",
+        ids,
+        sourceWs,
       };
-      el.classList.add("dragging");
+      container.querySelectorAll(".conn-item").forEach((item) => {
+        item.classList.toggle("dragging", ids.includes(item.dataset.id));
+      });
       e.dataTransfer.effectAllowed = "move";
-      try { e.dataTransfer.setData("text/plain", profile.id); } catch {}
+      try { e.dataTransfer.setData("text/plain", ids.join(",")); } catch {}
     });
     el.addEventListener("dragend", () => {
-      el.classList.remove("dragging");
+      container.querySelectorAll(".conn-item.dragging")
+        .forEach((item) => item.classList.remove("dragging"));
       clearDropTargets(container);
       _dragState = null;
     });
@@ -2733,9 +2826,14 @@ function clearDropTargets(container) {
 function isValidDropTarget(drag, targetFolder, targetWs) {
   if (!drag) return false;
   if (drag.kind === "conn") {
-    const p = profiles.find((x) => x.id === drag.id);
-    if (!p) return false;
-    return !((p.group || "") === targetFolder && (p.workspace_id || "default") === targetWs);
+    const ids = drag.ids?.length ? drag.ids : [drag.id];
+    const selectedProfiles = ids
+      .map((id) => profiles.find((x) => x.id === id))
+      .filter((p) => p && profileWorkspaceId(p) === drag.sourceWs);
+    if (!selectedProfiles.length) return false;
+    return selectedProfiles.some(
+      (p) => (p.group || "") !== targetFolder || profileWorkspaceId(p) !== targetWs
+    );
   }
   if (drag.kind === "folder") {
     if (!drag.path) return false;
@@ -2756,7 +2854,7 @@ function isValidDropTarget(drag, targetFolder, targetWs) {
 async function applyDrop(drag, targetFolder, targetWs) {
   try {
     if (drag.kind === "conn") {
-      await moveConnectionTo(drag.id, targetFolder, targetWs);
+      await moveConnectionsTo(drag.ids?.length ? drag.ids : [drag.id], targetFolder, targetWs);
     } else if (drag.kind === "folder") {
       await moveFolderTo(drag.path, drag.sourceWs, targetFolder, targetWs);
     }
@@ -2778,17 +2876,28 @@ function saveWorkspaceFolders(wsId, folders) {
 }
 
 async function moveConnectionTo(profileId, targetFolder, targetWs) {
-  const p = profiles.find((x) => x.id === profileId);
-  if (!p) return;
-  if ((p.group || "") === targetFolder && (p.workspace_id || "default") === targetWs) return;
-  const updated = {
-    ...p,
-    group: targetFolder || null,
-    workspace_id: targetWs,
-    updated_at: new Date().toISOString(),
-  };
-  await invoke("save_profile", { profile: updated });
-  profiles[profiles.findIndex((x) => x.id === p.id)] = updated;
+  await moveConnectionsTo([profileId], targetFolder, targetWs);
+}
+
+async function moveConnectionsTo(profileIds, targetFolder, targetWs) {
+  const uniqueIds = [...new Set(profileIds.filter(Boolean))];
+  const updatedAt = new Date().toISOString();
+  let moved = 0;
+  for (const profileId of uniqueIds) {
+    const p = profiles.find((x) => x.id === profileId);
+    if (!p) continue;
+    if ((p.group || "") === targetFolder && profileWorkspaceId(p) === targetWs) continue;
+    const updated = {
+      ...p,
+      group: targetFolder || null,
+      workspace_id: targetWs,
+      updated_at: updatedAt,
+    };
+    await invoke("save_profile", { profile: updated });
+    profiles[profiles.findIndex((x) => x.id === p.id)] = updated;
+    moved++;
+  }
+  if (!moved) return;
   scheduleProfileAutoSync();
   renderConnectionList();
 }
@@ -2906,26 +3015,27 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
 
 function hideContextMenu() {
   document.getElementById("context-menu").classList.add("hidden");
-  ctxTarget = { type: null, id: null, folderPath: null };
+  ctxTarget = { type: null, id: null, folderPath: null, workspaceId: null };
 }
 
 function handleContextMenuAction(action) {
-  const { id, folderPath } = ctxTarget;
+  const { id, folderPath, workspaceId } = ctxTarget;
+  const targetWs = workspaceId || getActiveWorkspaceId();
   hideContextMenu();
 
   switch (action) {
     case "new-connection":
       // La carpeta contextual se pasa como prefijo
-      openNewConnectionModal(folderPath);
+      openNewConnectionModal(folderPath, targetWs);
       break;
     case "new-folder":
-      startInlineFolderCreation(folderPath);
+      startInlineFolderCreation(folderPath, targetWs);
       break;
     case "rename-folder":
-      renameFolder(folderPath);
+      renameFolder(folderPath, targetWs);
       break;
     case "delete-folder":
-      deleteFolderAndMoveConnections(folderPath);
+      deleteFolderAndMoveConnections(folderPath, targetWs);
       break;
     case "connect":
       connectProfile(id);
@@ -2955,7 +3065,7 @@ function handleContextMenuAction(action) {
       deleteWorkspaceById(ctxTarget.workspaceId);
       break;
     case "export-folder":
-      if (folderPath) exportConnections(folderPath);
+      if (folderPath) exportConnections(folderPath, targetWs);
       break;
     case "export-ws":
       if (ctxTarget.workspaceId) exportConnectionsByWorkspace(ctxTarget.workspaceId);
@@ -3015,8 +3125,9 @@ function deleteWorkspaceById(wsId) {
 /**
  * Inserta un input inline en el árbol para crear una nueva carpeta.
  * @param {string|null} parentPath  Carpeta padre (null = raíz)
+ * @param {string|null} workspaceId Workspace donde se crea la carpeta
  */
-function startInlineFolderCreation(parentPath = null) {
+function startInlineFolderCreation(parentPath = null, workspaceId = getActiveWorkspaceId()) {
   const container = document.getElementById("connection-list");
 
   // Eliminar cualquier input inline previo
@@ -3034,9 +3145,7 @@ function startInlineFolderCreation(parentPath = null) {
 
   // Si hay carpeta padre, abrir la carpeta padre e insertar al principio de sus hijos
   if (parentPath) {
-    const folderEl = container.querySelector(
-      `.folder-item[data-folder-path="${CSS.escape(parentPath)}"]`
-    );
+    const folderEl = findSidebarFolderItem(container, parentPath, workspaceId);
     if (folderEl) {
       openFolders.add(parentPath);
       const children = folderEl.querySelector(".folder-children");
@@ -3060,8 +3169,9 @@ function startInlineFolderCreation(parentPath = null) {
       wrapper.remove();
       if (!name) return;
       const fullPath = prefix + name;
-      userFolders.add(fullPath);
-      saveUserFolders();
+      const folders = new Set(getWorkspaceFolders(workspaceId));
+      folders.add(fullPath);
+      saveWorkspaceFolders(workspaceId, [...folders]);
       openFolders.add(fullPath);
       renderConnectionList();
       scheduleProfileAutoSync();
@@ -3075,7 +3185,7 @@ function startInlineFolderCreation(parentPath = null) {
   input.addEventListener("blur", () => setTimeout(() => wrapper.remove(), 200));
 }
 
-async function renameFolder(folderPath) {
+async function renameFolder(folderPath, workspaceId = getActiveWorkspaceId()) {
   const parts = folderPath.split("/");
   const currentName = parts.at(-1);
   const newName = window.prompt("Nuevo nombre de carpeta:", currentName);
@@ -3088,6 +3198,7 @@ async function renameFolder(folderPath) {
 
   // Actualizar perfiles que estén en esta carpeta o subcarpetas
   for (const p of profiles) {
+    if (profileWorkspaceId(p) !== workspaceId) continue;
     if (!p.group) continue;
     let newGroup = null;
     if (p.group === folderPath) {
@@ -3104,12 +3215,13 @@ async function renameFolder(folderPath) {
 
   // Actualizar userFolders
   const toAdd = [];
-  for (const f of [...userFolders]) {
-    if (f === folderPath) { userFolders.delete(f); toAdd.push(newPath); }
-    else if (f.startsWith(prefix)) { userFolders.delete(f); toAdd.push(newPrefix + f.slice(prefix.length)); }
+  const folders = new Set(getWorkspaceFolders(workspaceId));
+  for (const f of [...folders]) {
+    if (f === folderPath) { folders.delete(f); toAdd.push(newPath); }
+    else if (f.startsWith(prefix)) { folders.delete(f); toAdd.push(newPrefix + f.slice(prefix.length)); }
   }
-  toAdd.forEach((f) => userFolders.add(f));
-  saveUserFolders();
+  toAdd.forEach((f) => folders.add(f));
+  saveWorkspaceFolders(workspaceId, [...folders]);
 
   // Remapear colores asignados a la carpeta o sus descendientes
   if (prefs.folderColors) {
@@ -3131,9 +3243,9 @@ async function renameFolder(folderPath) {
   toast(`Carpeta renombrada a "${newName.trim()}"`, "success");
 }
 
-async function deleteFolderAndMoveConnections(folderPath) {
+async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiveWorkspaceId()) {
   const count = profiles.filter(
-    (p) => p.group === folderPath || p.group?.startsWith(folderPath + "/")
+    (p) => profileWorkspaceId(p) === workspaceId && folderContainsPath(p.group, folderPath)
   ).length;
 
   const msg = count > 0
@@ -3145,17 +3257,18 @@ async function deleteFolderAndMoveConnections(folderPath) {
   const prefix = folderPath + "/";
   const updatedAt = new Date().toISOString();
   for (const p of profiles) {
-    if (p.group !== folderPath && !p.group?.startsWith(prefix)) continue;
+    if (profileWorkspaceId(p) !== workspaceId || !folderContainsPath(p.group, folderPath)) continue;
     const updated = { ...p, group: null, updated_at: updatedAt };
     await invoke("save_profile", { profile: updated }).catch(() => {});
     profiles[profiles.findIndex((x) => x.id === p.id)] = updated;
   }
 
   // Eliminar la carpeta y todas sus subcarpetas de userFolders
-  for (const f of [...userFolders]) {
-    if (f === folderPath || f.startsWith(prefix)) userFolders.delete(f);
+  const folders = new Set(getWorkspaceFolders(workspaceId));
+  for (const f of [...folders]) {
+    if (folderContainsPath(f, folderPath)) folders.delete(f);
   }
-  saveUserFolders();
+  saveWorkspaceFolders(workspaceId, [...folders]);
   openFolders.delete(folderPath);
 
   // Limpiar colores asignados a la carpeta y sus descendientes
@@ -3223,8 +3336,9 @@ function setPasswordVisible(visible) {
 /**
  * Abre el modal para nueva conexión.
  * @param {string|null} preselectedFolder  Carpeta a preseleccionar en el picker
+ * @param {string|null} workspaceId Workspace inicial
  */
-function openNewConnectionModal(preselectedFolder = null) {
+function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiveWorkspaceId()) {
   editingProfileId = null;
   document.getElementById("modal-title").textContent = "Nueva conexión";
   document.getElementById("form-connection").reset();
@@ -3237,8 +3351,8 @@ function openNewConnectionModal(preselectedFolder = null) {
     populateKeepassEntrySelect(null);
     updateConnTypeFields("ssh");
   });
-  populateFolderSelect(preselectedFolder);
-  populateWorkspaceFormSelect(getActiveWorkspaceId());
+  populateFolderSelect(preselectedFolder, workspaceId);
+  populateWorkspaceFormSelect(workspaceId);
   applyConnectionModalSize();
   document.getElementById("modal-overlay").classList.remove("hidden");
   document.getElementById("f-name").focus();
@@ -3285,7 +3399,7 @@ function openEditConnectionModal(profileId) {
   refreshStoredCredentialCheckboxes(profile);
   loadStoredCredentialsIntoConnectionModal(profile);
 
-  populateFolderSelect(profile.group || "");
+  populateFolderSelect(profile.group || "", profile.workspace_id || getActiveWorkspaceId());
   document.getElementById("f-keep-alive").value = profile.keep_alive_secs ?? "";
   document.getElementById("f-allow-legacy").checked = !!profile.allow_legacy_algorithms;
   document.getElementById("f-agent-forwarding").checked = !!profile.agent_forwarding;
@@ -3455,10 +3569,10 @@ function initConnectionModalResizePersistence() {
 }
 
 /** Rellena el <select> de carpetas con todos los paths existentes */
-function populateFolderSelect(selectedPath = null) {
+function populateFolderSelect(selectedPath = null, workspaceId = getActiveWorkspaceId()) {
   const select = document.getElementById("f-folder-select");
   const input  = document.getElementById("f-folder-input");
-  const paths  = getAllFolderPaths();
+  const paths  = getAllFolderPaths(workspaceId);
 
   let opts = `<option value="">Sin carpeta (raíz)</option>`;
   for (const p of paths) {
@@ -3884,8 +3998,12 @@ async function saveAndClose(shouldConnect) {
       await saveStoredSecret(passphraseKey(profile.id), passphrase, "passphrase");
     }
 
-    // Si se especificó una carpeta nueva, persiste en userFolders
-    if (group) { userFolders.add(group); saveUserFolders(); }
+    // Si se especificó una carpeta nueva, persiste en el workspace del perfil.
+    if (group) {
+      const folders = new Set(getWorkspaceFolders(workspaceId));
+      folders.add(group);
+      saveWorkspaceFolders(workspaceId, [...folders]);
+    }
 
     const idx = profiles.findIndex((p) => p.id === profile.id);
     if (idx >= 0) profiles[idx] = profile;
@@ -7099,7 +7217,11 @@ async function collectExportedSecrets(profilesToExport) {
   };
 }
 
-async function buildConnectionsExportData(profilesToExport, foldersToExport) {
+async function buildConnectionsExportData(
+  profilesToExport,
+  foldersToExport,
+  foldersByWorkspace = null
+) {
   const includeSecrets = await askExportStoredSecrets(profilesToExport.length);
   if (includeSecrets === null) return null;
 
@@ -7111,6 +7233,9 @@ async function buildConnectionsExportData(profilesToExport, foldersToExport) {
     folders: foldersToExport,
     secretsIncluded: includeSecrets,
   };
+  if (foldersByWorkspace) {
+    data.foldersByWorkspace = foldersByWorkspace;
+  }
   if (includeSecrets) {
     data.secrets = await collectExportedSecrets(profilesToExport);
   }
@@ -7153,24 +7278,31 @@ async function importExportedSecrets(data) {
  * Exporta perfiles a un archivo JSON descargable.
  * @param {string|null} folderFilter  Si se indica, exporta solo esa carpeta (y subcarpetas).
  */
-async function exportConnections(folderFilter) {
-  const activeWs = getActiveWorkspaceId();
+async function exportConnections(folderFilter, workspaceId = getActiveWorkspaceId()) {
   let profilesToExport = profiles;
-  let foldersToExport = [...userFolders];
+  let foldersByWorkspace = Object.fromEntries(
+    Object.entries(prefs.userFoldersByWorkspace || {})
+      .map(([wsId, folders]) => [wsId, Array.isArray(folders) ? folders : []])
+  );
+  let foldersToExport = Object.values(foldersByWorkspace).flat();
 
   if (folderFilter) {
-    const prefix = folderFilter + "/";
     profilesToExport = profiles.filter(
       (p) =>
-        (p.workspace_id || "default") === activeWs &&
-        (p.group === folderFilter || p.group?.startsWith(prefix))
+        profileWorkspaceId(p) === workspaceId &&
+        folderContainsPath(p.group, folderFilter)
     );
-    foldersToExport = foldersToExport.filter(
-      (f) => f === folderFilter || f.startsWith(prefix)
+    foldersToExport = [...getWorkspaceFolders(workspaceId)].filter(
+      (f) => folderContainsPath(f, folderFilter)
     );
+    foldersByWorkspace = { [workspaceId]: foldersToExport };
   }
 
-  const data = await buildConnectionsExportData(profilesToExport, foldersToExport);
+  const data = await buildConnectionsExportData(
+    profilesToExport,
+    foldersToExport,
+    foldersByWorkspace
+  );
   if (!data) return;
 
   const suffix = folderFilter ? `-${folderFilter.replace(/\//g, "_")}` : "";
@@ -7214,7 +7346,11 @@ async function exportConnectionsByWorkspace(workspaceId) {
   );
   const foldersToExport = getWorkspaceFolders(workspaceId);
 
-  const data = await buildConnectionsExportData(profilesToExport, foldersToExport);
+  const data = await buildConnectionsExportData(
+    profilesToExport,
+    foldersToExport,
+    { [workspaceId]: foldersToExport }
+  );
   if (!data) return;
 
   const safeName = wsName.replace(/[^\w\-]+/g, "_");
@@ -7278,9 +7414,23 @@ async function importConnections() {
       else { profiles.push(profile); added++; }
     }
 
-    if (Array.isArray(data.folders)) {
-      for (const f of data.folders) userFolders.add(f);
-      saveUserFolders();
+    if (data.foldersByWorkspace && typeof data.foldersByWorkspace === "object" && !Array.isArray(data.foldersByWorkspace)) {
+      for (const [wsId, folders] of Object.entries(data.foldersByWorkspace)) {
+        if (!wsId || !Array.isArray(folders)) continue;
+        saveWorkspaceFolders(wsId, [
+          ...getWorkspaceFolders(wsId),
+          ...folders.filter((f) => typeof f === "string" && f.trim()),
+        ]);
+      }
+    } else if (Array.isArray(data.folders)) {
+      const workspaceIds = [...new Set(
+        data.profiles.map((p) => profileWorkspaceId(p)).filter(Boolean)
+      )];
+      const targetWs = workspaceIds.length === 1 ? workspaceIds[0] : getActiveWorkspaceId();
+      saveWorkspaceFolders(targetWs, [
+        ...getWorkspaceFolders(targetWs),
+        ...data.folders.filter((f) => typeof f === "string" && f.trim()),
+      ]);
     }
 
     const importedSecrets = await importExportedSecrets(data);
@@ -7378,8 +7528,7 @@ async function importFromSshConfig() {
 
   const wsId = getActiveWorkspaceId();
   const folder = "SSH Config";
-  userFolders.add(folder);
-  saveUserFolders();
+  saveWorkspaceFolders(wsId, [...getWorkspaceFolders(wsId), folder]);
 
   const existing = new Set(
     profiles
@@ -7812,6 +7961,9 @@ function bindUIEvents() {
     input.classList.toggle("hidden", e.target.value !== "__new__");
     if (e.target.value === "__new__") input.focus();
   });
+  document.getElementById("f-workspace")?.addEventListener("change", (e) => {
+    populateFolderSelect(readFolderValue(), e.target.value || getActiveWorkspaceId());
+  });
 
   // Botones del modal
   document.getElementById("btn-modal-save-only").addEventListener("click", () => {
@@ -7843,7 +7995,9 @@ function bindUIEvents() {
       if (wsRoot) {
         showContextMenu(e.clientX, e.clientY, "workspace", null, null, { workspaceId: wsRoot });
       } else {
-        showContextMenu(e.clientX, e.clientY, "folder", null, folderItem.dataset.folderPath);
+        showContextMenu(e.clientX, e.clientY, "folder", null, folderItem.dataset.folderPath, {
+          workspaceId: workspaceForElement(folderItem),
+        });
       }
     } else {
       showContextMenu(e.clientX, e.clientY, "sidebar");

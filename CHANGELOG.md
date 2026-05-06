@@ -2,6 +2,28 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [0.6.2] - 2026-05-06
+
+### Añadido
+
+- Selección múltiple de conexiones en la sidebar con Ctrl/Cmd y rangos con
+  Shift, con movimiento en lote mediante drag and drop.
+
+### Cambiado
+
+- La autosincronización agrupa cambios durante 5 segundos antes de arrancar,
+  evitando sincronizaciones intermedias al renombrar, mover o borrar varias
+  carpetas seguidas.
+- Los exports de conexiones incluyen `foldersByWorkspace` para conservar la
+  pertenencia de carpetas al importar.
+
+### Corregido
+
+- Las acciones de carpeta preservan el workspace real del nodo seleccionado y
+  solo modifican perfiles/conexiones de ese workspace.
+- Crear, renombrar, mover, borrar, importar y exportar carpetas evita mezclar
+  subcarpetas con el mismo nombre en otros perfiles/workspaces.
+
 ## [0.6.1] - 2026-05-06
 
 ### Corregido
