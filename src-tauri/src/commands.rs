@@ -922,8 +922,15 @@ pub async fn sync_run(
     let bytes = pack_state(&passphrase, &merged).map_err(|e| e.to_string())?;
     backend.write(&bytes).await.map_err(|e| e.to_string())?;
 
-    // 4. Cache local (snapshot del último merge)
-    state.save_local_state(&merged).map_err(|e| e.to_string())?;
+    // 4. Cache local (snapshot del último merge). No persistimos secretos en
+    // sync_state.json: solo deben vivir en keyring local o en el blob E2E.
+    let mut local_cache = merged.clone();
+    local_cache
+        .items
+        .retain(|key, _| !key.starts_with("secret:"));
+    state
+        .save_local_state(&local_cache)
+        .map_err(|e| e.to_string())?;
     config.last_sync_at = Some(chrono::Utc::now());
     state.save_config(&config).map_err(|e| e.to_string())?;
 

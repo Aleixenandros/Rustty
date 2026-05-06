@@ -2,6 +2,39 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [0.6.0] - 2026-05-06
+
+### Añadido
+
+- **Sincronización opcional de contraseñas guardadas**: la pestaña
+  **Copias de seguridad** permite incluir contraseñas y passphrases del
+  keyring en el `SyncState`. Viajan como items `secret:*` dentro del blob
+  cifrado E2E con `age` y se restauran en el keyring local de otros equipos.
+- **Exports con secretos bajo confirmación**: los exports JSON de conexiones,
+  carpetas y workspaces preguntan antes de incluir contraseñas/passphrases.
+  Al importar un JSON con `secrets`, Rustty pregunta si debe guardarlos en el
+  keyring local.
+- **Backups cifrados con secretos opcionales**: el export `.rustty-sync.bin`
+  también pregunta si debe incluir credenciales guardadas.
+- **Wake On LAN parcial por perfil**: campos MAC/broadcast/puerto, acción
+  "Despertar equipo" desde el menú contextual y toasts con conectar/reintentar.
+- **Validación de KeePass en el formulario**: el selector avisa si la base está
+  bloqueada, si la entrada existe, qué usuario/título se usará y si contiene
+  contraseña usable.
+
+### Cambiado
+
+- El formulario de conexión coloca **usuario y contraseña juntos** para reducir
+  saltos visuales al crear perfiles SSH/RDP.
+- Los checks de guardar contraseña/passphrase quedan marcados por defecto; el
+  usuario puede desmarcarlos en cada caso.
+- Los toasts de error genéricos incluyen la acción **Copiar error**; los casos
+  específicos conservan acciones como "Ver log", "Reintentar" o "Conectar".
+- SFTP gana cola visible, políticas de conflictos, logs de actividad, drag &
+  drop local/remoto y verificación opcional de tamaño al terminar.
+- Los atajos incorporan import/export, selección de pane, limpiar terminal y
+  acciones configurables para abrir/cerrar SFTP, seguir CWD y alternar sudo.
+
 ## [0.4.5] - 2026-05-06
 
 ### Añadido

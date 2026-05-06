@@ -164,6 +164,8 @@ pub struct SyncSelective {
     pub themes: bool,
     pub shortcuts: bool,
     pub snippets: bool,
+    #[serde(default)]
+    pub secrets: bool,
 }
 
 impl Default for SyncSelective {
@@ -174,6 +176,7 @@ impl Default for SyncSelective {
             themes: true,
             shortcuts: true,
             snippets: true,
+            secrets: false,
         }
     }
 }

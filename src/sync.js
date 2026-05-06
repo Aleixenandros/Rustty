@@ -12,7 +12,8 @@
 //  Las claves del estado siguen el patrón:
 //    profile:<uuid>, prefs:bundle, theme:<id>, shortcut:<actionId>
 //
-//  Las contraseñas del keyring del SO **nunca** se incluyen en el state.
+//  Las contraseñas del keyring del SO solo se incluyen en exports/backups
+//  cuando el usuario lo confirma explícitamente.
 // ═══════════════════════════════════════════════════════════════════
 
 import { invoke } from "@tauri-apps/api/core";
@@ -22,7 +23,8 @@ const KEYRING_SERVICE = "rustty";
 const KEY_PASSPHRASE = "sync:passphrase";
 const KEY_WEBDAV_PASS = "sync:webdav_password";
 
-// Subset de prefs que se sincroniza (excluimos rutas locales y secretos)
+// Subset de prefs que se sincroniza (excluimos rutas locales; los secretos
+// viajan como items `secret:*` solo si el usuario activa esa opción).
 const SYNCED_PREF_KEYS = [
   "theme", "terminalTheme", "copyOnSelect", "rightClickPaste",
   "fontFamily", "fontSize", "lineHeight", "letterSpacing",
@@ -38,7 +40,37 @@ const SYNCED_PREF_KEYS = [
  * Construye el SyncState a partir del estado local actual del frontend.
  * @param {object} ctx { profiles, prefs, snippets, deviceId, selective }
  */
-export function buildSyncState(ctx) {
+async function readProfileSecret(key) {
+  try {
+    return await invoke("keyring_get", {
+      service: KEYRING_SERVICE,
+      key,
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function addProfileSecretItems(items, profiles, prefs, deviceId, now) {
+  const secretTs = prefs._secretsTs || {};
+  for (const profile of profiles || []) {
+    const pairs = [
+      [`password:${profile.id}`, `secret:password:${profile.id}`],
+      [`passphrase:${profile.id}`, `secret:passphrase:${profile.id}`],
+    ];
+    for (const [key, itemKey] of pairs) {
+      const secret = await readProfileSecret(key);
+      if (!secret) continue;
+      items[itemKey] = {
+        data: { key, secret },
+        updated_at: secretTs[key] || profile.updated_at || profile.created_at || now,
+        device_id: deviceId,
+      };
+    }
+  }
+}
+
+export async function buildSyncState(ctx) {
   const { profiles, prefs, deviceId, selective } = ctx;
   const items = {};
   const tombstones = {};
@@ -109,6 +141,32 @@ export function buildSyncState(ctx) {
     });
   }
 
+  if (selective.secrets) {
+    await addProfileSecretItems(items, profiles, prefs, deviceId, now);
+  }
+
+  const exportedSecrets = ctx.exportedSecrets?.entries;
+  if (exportedSecrets && typeof exportedSecrets === "object" && !Array.isArray(exportedSecrets)) {
+    const exportedAt = ctx.exportedSecrets.exportedAt || now;
+    for (const [profileId, secrets] of Object.entries(exportedSecrets)) {
+      if (!secrets || typeof secrets !== "object") continue;
+      if (secrets.password) {
+        items[`secret:password:${profileId}`] = {
+          data: { key: `password:${profileId}`, secret: secrets.password },
+          updated_at: ctx.exportedSecrets.timestamps?.[`password:${profileId}`] || exportedAt,
+          device_id: deviceId,
+        };
+      }
+      if (secrets.passphrase) {
+        items[`secret:passphrase:${profileId}`] = {
+          data: { key: `passphrase:${profileId}`, secret: secrets.passphrase },
+          updated_at: ctx.exportedSecrets.timestamps?.[`passphrase:${profileId}`] || exportedAt,
+          device_id: deviceId,
+        };
+      }
+    }
+  }
+
   return { version: 1, items, tombstones };
 }
 
@@ -121,8 +179,10 @@ export function buildSyncState(ctx) {
  */
 export async function applyMergedState(merged, ctx) {
   const { profiles, prefs } = ctx;
+  const allowSecrets = !!ctx.allowSecrets;
   let addedProfiles = 0, deletedProfiles = 0, prefsChanged = false;
   let themesChanged = 0, shortcutsChanged = 0;
+  let secretsChanged = 0;
 
   const localProfileIds = new Set(profiles.map((p) => p.id));
 
@@ -166,6 +226,23 @@ export async function applyMergedState(merged, ctx) {
       snippet.id = snippet.id || id;
       snippet.updated_at = item.updated_at;
       upsertLocalSnippet(snippet);
+    } else if (key.startsWith("secret:") && allowSecrets) {
+      const secretKey = item.data?.key || key.slice(7);
+      const secret = item.data?.secret;
+      if (secretKey && secret) {
+        try {
+          await invoke("keyring_set", {
+            service: KEYRING_SERVICE,
+            key: secretKey,
+            secret,
+          });
+          prefs._secretsTs = prefs._secretsTs || {};
+          prefs._secretsTs[secretKey] = item.updated_at;
+          secretsChanged++;
+        } catch (err) {
+          console.error("[sync] keyring_set", secretKey, err);
+        }
+      }
     }
   }
 
@@ -198,7 +275,11 @@ export async function applyMergedState(merged, ctx) {
     }
   }
 
-  return { addedProfiles, deletedProfiles, prefsChanged, themesChanged, shortcutsChanged };
+  return { addedProfiles, deletedProfiles, prefsChanged, themesChanged, shortcutsChanged, secretsChanged };
+}
+
+function stateHasSecrets(state) {
+  return Object.keys(state?.items || {}).some((key) => key.startsWith("secret:"));
 }
 
 const SNIPPETS_STORAGE_KEY = "rustty-snippets";
@@ -322,7 +403,7 @@ export async function runSync(ctx) {
   const webdavPassword =
     config.backend === "webdav" ? await getStoredWebDavPassword() : null;
 
-  const current = buildSyncState({
+  const current = await buildSyncState({
     profiles: ctx.profiles,
     prefs: ctx.prefs,
     deviceId: ctx.deviceId,
@@ -332,6 +413,7 @@ export async function runSync(ctx) {
       themes: !!config.selective?.themes,
       shortcuts: !!config.selective?.shortcuts,
       snippets: !!config.selective?.snippets,
+      secrets: !!config.selective?.secrets,
     },
     snippets: loadLocalSnippets(),
   });
@@ -342,7 +424,10 @@ export async function runSync(ctx) {
     webdavPassword,
   });
 
-  const summary = await applyMergedState(merged, ctx);
+  const summary = await applyMergedState(merged, {
+    ...ctx,
+    allowSecrets: !!config.selective?.secrets,
+  });
   return summary;
 }
 
@@ -362,12 +447,13 @@ export async function exportToFile(ctx) {
   );
   if (!passphrase) return null;
 
-  const state = buildSyncState({
+  const state = await buildSyncState({
     profiles: ctx.profiles,
     prefs: ctx.prefs,
     deviceId: ctx.deviceId,
     selective: { profiles: true, prefs: true, themes: true, shortcuts: true, snippets: true },
     snippets: loadLocalSnippets(),
+    exportedSecrets: ctx.exportedSecrets,
   });
 
   await invoke("sync_export_file", { path, passphrase, state });
@@ -391,7 +477,10 @@ export async function importFromFile(ctx) {
   )) {
     return null;
   }
-  const summary = await applyMergedState(state, ctx);
+  const allowSecrets = stateHasSecrets(state)
+    ? window.confirm("El backup contiene contraseñas/passphrases cifradas. ¿Guardarlas en el keyring local?")
+    : false;
+  const summary = await applyMergedState(state, { ...ctx, allowSecrets });
   return summary;
 }
 
@@ -413,7 +502,10 @@ export async function restoreSnapshot(snapshotId, ctx) {
     passphrase,
     webdavPassword,
   });
-  return await applyMergedState(state, ctx);
+  const allowSecrets = stateHasSecrets(state)
+    ? window.confirm("La copia contiene contraseñas/passphrases cifradas. ¿Guardarlas en el keyring local?")
+    : false;
+  return await applyMergedState(state, { ...ctx, allowSecrets });
 }
 
 /* ─────────────────────────── Tracking de tombstones ──────────────── */

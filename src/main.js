@@ -976,6 +976,7 @@ async function populateSyncTab() {
   document.getElementById("sync-sel-prefs").checked     = config.selective?.prefs ?? true;
   document.getElementById("sync-sel-themes").checked    = config.selective?.themes ?? true;
   document.getElementById("sync-sel-shortcuts").checked = config.selective?.shortcuts ?? true;
+  document.getElementById("sync-sel-secrets").checked   = config.selective?.secrets ?? false;
   document.getElementById("sync-history-keep").value =
     String(Math.max(1, parseInt(config.history_keep, 10) || DEFAULT_SYNC_HISTORY_KEEP));
 
@@ -1124,6 +1125,7 @@ async function persistSyncConfig() {
       prefs:     document.getElementById("sync-sel-prefs").checked,
       themes:    document.getElementById("sync-sel-themes").checked,
       shortcuts: document.getElementById("sync-sel-shortcuts").checked,
+      secrets:   document.getElementById("sync-sel-secrets").checked,
       snippets:  true,
     },
     history_keep: Math.max(
@@ -1185,6 +1187,7 @@ function shouldAutoSyncProfiles() {
     && (
       (_syncConfigCache.selective?.profiles ?? true)
       || (_syncConfigCache.selective?.prefs ?? true)
+      || (_syncConfigCache.selective?.secrets ?? false)
     );
 }
 
@@ -1232,6 +1235,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     setSyncStatus("success", "prefs_sync.status_success");
     const total = summary.addedProfiles + summary.deletedProfiles
       + summary.themesChanged + summary.shortcutsChanged
+      + (summary.secretsChanged || 0)
       + (summary.prefsChanged ? 1 : 0);
     if (announce) {
       toast(t("prefs_sync.done_sync").replace("{n}", total), "success");
@@ -1306,8 +1310,13 @@ async function syncOpenBackendFolder() {
 
 async function syncExportFile() {
   try {
+    const includeSecrets = await askExportStoredSecrets(profiles.length);
+    if (includeSecrets === null) return;
     const path = await sync.exportToFile({
-      profiles, prefs, deviceId: _syncDeviceIdCache,
+      profiles,
+      prefs,
+      deviceId: _syncDeviceIdCache,
+      exportedSecrets: includeSecrets ? await collectExportedSecrets(profiles) : null,
     });
     if (path) toast(t("prefs_sync.done_export").replace("{path}", path), "success");
   } catch (err) {
@@ -1330,6 +1339,7 @@ async function syncImportFile() {
     savePrefs();
     const total = summary.addedProfiles + summary.deletedProfiles
       + summary.themesChanged + summary.shortcutsChanged
+      + (summary.secretsChanged || 0)
       + (summary.prefsChanged ? 1 : 0);
     toast(t("prefs_sync.done_import").replace("{n}", total), "success");
   } catch (err) {
@@ -1383,6 +1393,7 @@ async function syncRestoreSnapshot() {
     setSyncStatus("success", "prefs_sync.status_success");
     const total = (summary?.addedProfiles ?? 0) + (summary?.deletedProfiles ?? 0)
       + (summary?.themesChanged ?? 0) + (summary?.shortcutsChanged ?? 0)
+      + (summary?.secretsChanged ?? 0)
       + (summary?.prefsChanged ? 1 : 0);
     toast(`${t("prefs_sync.snapshots_restored")} (${total})`, "success");
   } catch (err) {
@@ -3269,8 +3280,8 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-password").value = "";
   setPasswordVisible(false);
   document.getElementById("f-passphrase").value = "";
-  document.getElementById("f-save-password").checked = false;
-  document.getElementById("f-save-passphrase").checked = false;
+  document.getElementById("f-save-password").checked = true;
+  document.getElementById("f-save-passphrase").checked = true;
   refreshStoredCredentialCheckboxes(profile);
 
   populateFolderSelect(profile.group || "");
@@ -3547,6 +3558,10 @@ async function saveStoredSecret(key, secret, label = "credencial") {
       key,
       secret,
     });
+    prefs._secretsTs = prefs._secretsTs || {};
+    prefs._secretsTs[key] = new Date().toISOString();
+    savePrefs();
+    if (_syncConfigCache?.selective?.secrets) scheduleProfileAutoSync();
     return true;
   } catch (err) {
     console.warn("[keyring] set failed", key, err);
@@ -3615,6 +3630,7 @@ function promptCredential({
   initialValue = "",
   hideInput = false,
   danger = false,
+  rememberDefault = false,
   extraActions = [],
 }) {
   const overlay = document.getElementById("credential-modal-overlay");
@@ -3668,6 +3684,8 @@ function promptCredential({
   if (rememberLabel) {
     rememberRow.classList.remove("hidden");
     rememberLabelEl.textContent = rememberLabel;
+    const remember = document.getElementById("credential-modal-remember");
+    if (remember) remember.checked = !!rememberDefault;
   } else {
     rememberRow.classList.add("hidden");
   }
@@ -3749,6 +3767,7 @@ async function promptProfileSecret(profile, {
     message: t(messageKey, { target: credentialTarget(profile) }),
     label: t(labelKey),
     rememberLabel: rememberKey ? t(rememberKey) : null,
+    rememberDefault: !!rememberKey,
     submitLabel: t(submitKey),
   });
   if (!result) return null;
@@ -3759,17 +3778,8 @@ async function promptProfileSecret(profile, {
 async function refreshStoredCredentialCheckboxes(profile) {
   const passwordCb = document.getElementById("f-save-password");
   const passphraseCb = document.getElementById("f-save-passphrase");
-  const profileId = profile.id;
-
-  if (!profile.keepass_entry_uuid) {
-    const storedPassword = await getStoredSecret(passwordKey(profileId));
-    if (editingProfileId === profileId) passwordCb.checked = !!storedPassword;
-  }
-
-  if (profile.auth_type === "public_key") {
-    const storedPassphrase = await getStoredSecret(passphraseKey(profileId));
-    if (editingProfileId === profileId) passphraseCb.checked = !!storedPassphrase;
-  }
+  if (passwordCb) passwordCb.checked = true;
+  if (passphraseCb) passphraseCb.checked = true;
 }
 
 /** Lee el valor de carpeta del selector (select + input manual) */
@@ -7037,6 +7047,88 @@ function formatTime(secs) {
 // EXPORTAR / IMPORTAR CONEXIONES
 // ═══════════════════════════════════════════════════════════════
 
+async function askExportStoredSecrets(count) {
+  const choice = await chooseThemed({
+    title: "Exportar contraseñas",
+    message: `Vas a exportar ${count} conexión(es). ¿Quieres incluir también las contraseñas/passphrases guardadas en este equipo? Si las incluyes, el JSON contendrá secretos legibles: guárdalo cifrado o en un lugar seguro.`,
+    submitLabel: "Incluir contraseñas",
+    danger: true,
+    actions: [
+      { value: "without-secrets", label: "Sin contraseñas" },
+    ],
+  });
+  if (!choice) return null;
+  return choice.action === "submit";
+}
+
+async function collectExportedSecrets(profilesToExport) {
+  const entries = {};
+  for (const profile of profilesToExport) {
+    const secrets = {};
+    const password = await getStoredSecret(passwordKey(profile.id));
+    const passphrase = await getStoredSecret(passphraseKey(profile.id));
+    if (password) secrets.password = password;
+    if (passphrase) secrets.passphrase = passphrase;
+    if (Object.keys(secrets).length > 0) entries[profile.id] = secrets;
+  }
+  return {
+    version: 1,
+    storage: "keyring",
+    exportedAt: new Date().toISOString(),
+    entries,
+  };
+}
+
+async function buildConnectionsExportData(profilesToExport, foldersToExport) {
+  const includeSecrets = await askExportStoredSecrets(profilesToExport.length);
+  if (includeSecrets === null) return null;
+
+  const data = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    source: "Rustty",
+    profiles: profilesToExport,
+    folders: foldersToExport,
+    secretsIncluded: includeSecrets,
+  };
+  if (includeSecrets) {
+    data.secrets = await collectExportedSecrets(profilesToExport);
+  }
+  return data;
+}
+
+async function importExportedSecrets(data) {
+  const entries = data?.secrets?.entries;
+  if (!entries || typeof entries !== "object" || Array.isArray(entries)) return 0;
+
+  const choice = await chooseThemed({
+    title: "Importar contraseñas",
+    message: "El archivo contiene contraseñas o passphrases exportadas. ¿Quieres guardarlas en el keyring local de este equipo?",
+    submitLabel: "Guardar en keyring",
+    danger: true,
+    actions: [
+      { value: "skip-secrets", label: "No importar" },
+    ],
+  });
+  if (!choice || choice.action !== "submit") return 0;
+
+  let imported = 0;
+  for (const [profileId, secrets] of Object.entries(entries)) {
+    if (!secrets || typeof secrets !== "object") continue;
+    if (secrets.password) {
+      if (await saveStoredSecret(passwordKey(profileId), secrets.password, "contraseña importada")) {
+        imported++;
+      }
+    }
+    if (secrets.passphrase) {
+      if (await saveStoredSecret(passphraseKey(profileId), secrets.passphrase, "passphrase importada")) {
+        imported++;
+      }
+    }
+  }
+  return imported;
+}
+
 /**
  * Exporta perfiles a un archivo JSON descargable.
  * @param {string|null} folderFilter  Si se indica, exporta solo esa carpeta (y subcarpetas).
@@ -7058,13 +7150,8 @@ async function exportConnections(folderFilter) {
     );
   }
 
-  const data = {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    source: "Rustty",
-    profiles: profilesToExport,
-    folders: foldersToExport,
-  };
+  const data = await buildConnectionsExportData(profilesToExport, foldersToExport);
+  if (!data) return;
 
   const suffix = folderFilter ? `-${folderFilter.replace(/\//g, "_")}` : "";
   const defaultName = `rustty-connections${suffix}-${new Date().toISOString().slice(0, 10)}.json`;
@@ -7107,13 +7194,8 @@ async function exportConnectionsByWorkspace(workspaceId) {
   );
   const foldersToExport = getWorkspaceFolders(workspaceId);
 
-  const data = {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    source: "Rustty",
-    profiles: profilesToExport,
-    folders: foldersToExport,
-  };
+  const data = await buildConnectionsExportData(profilesToExport, foldersToExport);
+  if (!data) return;
 
   const safeName = wsName.replace(/[^\w\-]+/g, "_");
   const defaultName = `rustty-connections-${safeName}-${new Date().toISOString().slice(0, 10)}.json`;
@@ -7181,9 +7263,14 @@ async function importConnections() {
       saveUserFolders();
     }
 
+    const importedSecrets = await importExportedSecrets(data);
+
     renderConnectionList();
     scheduleProfileAutoSync();
-    toast(`Importadas: ${added} nuevas, ${updated} actualizadas`, "success");
+    toast(
+      `Importadas: ${added} nuevas, ${updated} actualizadas${importedSecrets ? `, ${importedSecrets} secretos` : ""}`,
+      "success",
+    );
   } catch (err) {
     toast(`Error al importar: ${err}`, "error");
   }

@@ -354,9 +354,36 @@
             </div>
           </div>
 
-          <div class="form-row">
-            <label for="f-user" data-i18n="modal_conn.user">Usuario</label>
-            <input id="f-user" type="text" data-i18n-placeholder="modal_conn.user_ph" placeholder="Administrador" required />
+          <div class="form-row" id="field-auth-type">
+            <label for="f-auth-type" data-i18n="modal_conn.auth">Autenticación</label>
+            <select id="f-auth-type">
+              <option value="password" data-i18n="modal_conn.auth_password">Contraseña</option>
+              <option value="public_key" data-i18n="modal_conn.auth_publickey">Clave pública / privada</option>
+              <option value="agent" data-i18n="modal_conn.auth_agent">Agente SSH</option>
+            </select>
+          </div>
+
+          <div class="form-row form-row-split">
+            <div class="form-group">
+              <label for="f-user" data-i18n="modal_conn.user">Usuario</label>
+              <input id="f-user" type="text" data-i18n-placeholder="modal_conn.user_ph" placeholder="Administrador" required />
+            </div>
+            <div class="form-group auth-field" id="field-password">
+              <label for="f-password" data-i18n="modal_conn.password">Contraseña</label>
+              <div class="password-field">
+                <input id="f-password" type="password" placeholder="••••••••" />
+                <button
+                  type="button"
+                  class="btn-icon password-toggle"
+                  id="btn-toggle-password"
+                  data-i18n-title="modal_conn.show_password"
+                  data-i18n-aria-label="modal_conn.show_password"
+                  title="Ver contraseña"
+                  aria-label="Ver contraseña"
+                  aria-pressed="false"
+                >◉</button>
+              </div>
+            </div>
           </div>
 
           <div class="form-row hidden" id="field-domain">
@@ -390,15 +417,6 @@
             <p class="form-hint" data-i18n="modal_conn.notes_hint">Texto local para recordatorios del perfil. Evita guardar secretos aquí.</p>
           </div>
 
-          <div class="form-row" id="field-auth-type">
-            <label for="f-auth-type" data-i18n="modal_conn.auth">Autenticación</label>
-            <select id="f-auth-type">
-              <option value="password" data-i18n="modal_conn.auth_password">Contraseña</option>
-              <option value="public_key" data-i18n="modal_conn.auth_publickey">Clave pública / privada</option>
-              <option value="agent" data-i18n="modal_conn.auth_agent">Agente SSH</option>
-            </select>
-          </div>
-
           <div class="form-row auth-field" id="field-keepass-toggle">
             <label class="checkbox-label">
               <input id="f-use-keepass" type="checkbox" />
@@ -417,25 +435,9 @@
             <p class="form-hint keepass-entry-status hidden" id="keepass-entry-status"></p>
           </div>
 
-          <div class="form-row auth-field" id="field-password">
-            <label for="f-password" data-i18n="modal_conn.password">Contraseña</label>
-            <div class="password-field">
-              <input id="f-password" type="password" placeholder="••••••••" />
-              <button
-                type="button"
-                class="btn-icon password-toggle"
-                id="btn-toggle-password"
-                data-i18n-title="modal_conn.show_password"
-                data-i18n-aria-label="modal_conn.show_password"
-                title="Ver contraseña"
-                aria-label="Ver contraseña"
-                aria-pressed="false"
-              >◉</button>
-            </div>
-          </div>
           <div class="form-row auth-field" id="field-save-password">
             <label class="checkbox-label">
-              <input id="f-save-password" type="checkbox" />
+              <input id="f-save-password" type="checkbox" checked />
               <span data-i18n="modal_conn.save_password">Recordar contraseña en el keyring del sistema</span>
             </label>
           </div>
@@ -452,7 +454,7 @@
 
           <div class="form-row auth-field hidden" id="field-save-passphrase">
             <label class="checkbox-label">
-              <input id="f-save-passphrase" type="checkbox" />
+              <input id="f-save-passphrase" type="checkbox" checked />
               <span data-i18n="modal_conn.save_passphrase">Guardar passphrase en el keyring del sistema</span>
             </label>
           </div>
@@ -1229,9 +1231,13 @@
                     <input type="checkbox" id="sync-sel-shortcuts" checked />
                     <span data-i18n="prefs_sync.sel_shortcuts">Atajos de teclado</span>
                   </label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="sync-sel-secrets" />
+                    <span data-i18n="prefs_sync.sel_secrets">Contraseñas guardadas (cifradas E2E)</span>
+                  </label>
                 </div>
-                <p class="settings-hint" data-i18n="prefs_sync.never_synced">
-                  Nunca se sincroniza el keyring del SO ni la base KeePass desbloqueada.
+                <p class="settings-hint" data-i18n="prefs_sync.secrets_hint">
+                  Si activas contraseñas guardadas, Rustty las lee del keyring local, las cifra con la passphrase de sync y las restaura en el keyring de otros equipos. La base KeePass desbloqueada nunca se sincroniza.
                 </p>
               </div>
 
