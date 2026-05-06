@@ -3283,6 +3283,7 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-save-password").checked = true;
   document.getElementById("f-save-passphrase").checked = true;
   refreshStoredCredentialCheckboxes(profile);
+  loadStoredCredentialsIntoConnectionModal(profile);
 
   populateFolderSelect(profile.group || "");
   document.getElementById("f-keep-alive").value = profile.keep_alive_secs ?? "";
@@ -3780,6 +3781,25 @@ async function refreshStoredCredentialCheckboxes(profile) {
   const passphraseCb = document.getElementById("f-save-passphrase");
   if (passwordCb) passwordCb.checked = true;
   if (passphraseCb) passphraseCb.checked = true;
+}
+
+async function loadStoredCredentialsIntoConnectionModal(profile) {
+  const profileId = profile?.id;
+  if (!profileId) return;
+
+  if (!profile.keepass_entry_uuid) {
+    const password = await getStoredSecret(passwordKey(profileId));
+    if (editingProfileId === profileId && password) {
+      document.getElementById("f-password").value = password;
+    }
+  }
+
+  if (profile.auth_type === "public_key") {
+    const passphrase = await getStoredSecret(passphraseKey(profileId));
+    if (editingProfileId === profileId && passphrase) {
+      document.getElementById("f-passphrase").value = passphrase;
+    }
+  }
 }
 
 /** Lee el valor de carpeta del selector (select + input manual) */

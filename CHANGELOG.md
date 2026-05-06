@@ -2,6 +2,14 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [0.6.1] - 2026-05-06
+
+### Corregido
+
+- Al editar una conexión, Rustty recupera del keyring la contraseña o
+  passphrase guardada y rellena el campo correspondiente, de modo que el botón
+  de ver contraseña muestra el valor almacenado.
+
 ## [0.6.0] - 2026-05-06
 
 ### Añadido
