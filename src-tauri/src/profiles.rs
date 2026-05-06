@@ -83,6 +83,10 @@ pub struct ConnectionProfile {
     pub key_path: Option<String>,
     /// Grupo o etiqueta para organizar conexiones
     pub group: Option<String>,
+    /// Notas libres del usuario sobre el perfil (comandos frecuentes,
+    /// responsables, rutas, recordatorios). No debe contener secretos.
+    #[serde(default)]
+    pub notes: Option<String>,
     /// Identificador del perfil-contenedor (workspace) al que pertenece.
     /// Por defecto "default" para no romper perfiles previos a la feature.
     #[serde(default = "default_workspace_id")]
@@ -125,6 +129,13 @@ pub struct ConnectionProfile {
     /// usan la misma clave en bastion y destino.
     #[serde(default)]
     pub proxy_jump: Option<String>,
+    /// Wake On LAN opcional: MAC destino y parámetros UDP.
+    #[serde(default)]
+    pub mac_address: Option<String>,
+    #[serde(default)]
+    pub wol_broadcast: Option<String>,
+    #[serde(default)]
+    pub wol_port: Option<u16>,
     /// Si true, vuelca toda la salida del shell SSH a un fichero de log
     /// dentro de `session_log_dir` (o, si no se indica, en
     /// `<data_dir>/session_logs/`). Útil para auditoría y depuración.

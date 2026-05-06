@@ -238,6 +238,9 @@
       <button class="ctx-item ctx-conn-only hidden" data-ctx="connect">
         <span class="ctx-icon">▶</span><span data-i18n="ctx.connect">Conectar</span>
       </button>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="wake-on-lan">
+        <span class="ctx-icon">⏻</span><span data-i18n="ctx.wake_on_lan">Despertar equipo</span>
+      </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="new-tunnel">
         <span class="ctx-icon">⇄</span><span data-i18n="ctx.new_tunnel">Nuevo túnel…</span>
       </button>
@@ -381,6 +384,12 @@
             </div>
           </div>
 
+          <div class="form-row">
+            <label for="f-notes"><span data-i18n="modal_conn.notes">Notas</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+            <textarea id="f-notes" rows="4" data-i18n-placeholder="modal_conn.notes_ph" placeholder="Comandos frecuentes, rutas, responsables…"></textarea>
+            <p class="form-hint" data-i18n="modal_conn.notes_hint">Texto local para recordatorios del perfil. Evita guardar secretos aquí.</p>
+          </div>
+
           <div class="form-row" id="field-auth-type">
             <label for="f-auth-type" data-i18n="modal_conn.auth">Autenticación</label>
             <select id="f-auth-type">
@@ -405,6 +414,7 @@
             <select id="f-keepass-entry">
               <option value="" data-i18n="modal_conn.keepass_entry_pick">— Selecciona una entrada —</option>
             </select>
+            <p class="form-hint keepass-entry-status hidden" id="keepass-entry-status"></p>
           </div>
 
           <div class="form-row auth-field" id="field-password">
@@ -502,6 +512,21 @@
               <p class="form-hint" data-i18n="modal_conn.proxy_jump_hint">
                 Conecta primero a este host bastión y abre un canal SSH al destino real a través suyo (ProxyJump). Reutiliza las credenciales del perfil.
               </p>
+            </div>
+
+            <div class="form-row form-row-split">
+              <div class="form-group">
+                <label for="f-mac-address"><span data-i18n="modal_conn.mac_address">MAC Wake On LAN</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+                <input id="f-mac-address" type="text" placeholder="00:11:22:33:44:55" />
+              </div>
+              <div class="form-group">
+                <label for="f-wol-broadcast" data-i18n="modal_conn.wol_broadcast">Broadcast</label>
+                <input id="f-wol-broadcast" type="text" placeholder="255.255.255.255" />
+              </div>
+              <div class="form-group form-group-sm">
+                <label for="f-wol-port" data-i18n="modal_conn.wol_port">Puerto WOL</label>
+                <input id="f-wol-port" type="number" min="1" max="65535" placeholder="9" />
+              </div>
             </div>
 
             <div class="form-row">
@@ -684,6 +709,24 @@
                   <span data-i18n="prefs_terminal.right_click_paste">Pegar con botón derecho</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_terminal.right_click_paste_hint">Clic derecho en el terminal pega el contenido del portapapeles</p>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-sftp-conflict-policy" data-i18n="prefs_terminal.sftp_conflict_policy">Conflictos SFTP</label>
+                <select id="pref-sftp-conflict-policy">
+                  <option value="ask" data-i18n="prefs_terminal.sftp_conflict_ask">Preguntar siempre</option>
+                  <option value="overwrite" data-i18n="prefs_terminal.sftp_conflict_overwrite">Sobrescribir siempre</option>
+                  <option value="skip" data-i18n="prefs_terminal.sftp_conflict_skip">Omitir existentes</option>
+                  <option value="rename" data-i18n="prefs_terminal.sftp_conflict_rename">Renombrar automáticamente</option>
+                </select>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-sftp-verify-size" />
+                  <span data-i18n="prefs_terminal.sftp_verify_size">Verificar tamaño al terminar transferencias SFTP</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.sftp_verify_size_hint">Comprueba el tamaño final del fichero copiado para detectar transferencias incompletas.</p>
               </div>
 
               <div class="settings-row settings-row-inline">
@@ -1063,6 +1106,14 @@
             <section class="prefs-panel" role="tabpanel" data-prefs-panel="shortcuts">
               <h3 class="prefs-panel-title" data-i18n="prefs_shortcuts.title">Atajos de teclado</h3>
               <p class="prefs-panel-hint" data-i18n="prefs_shortcuts.hint">Pulsa "Editar" y la nueva combinación de teclas. Escape cancela la captura.</p>
+
+              <div class="settings-row settings-row-inline">
+                <label data-i18n="prefs_shortcuts.import_export">Importar / exportar</label>
+                <div class="settings-control">
+                  <button type="button" class="btn-secondary" id="btn-shortcuts-export" data-i18n="prefs_shortcuts.export">Exportar…</button>
+                  <button type="button" class="btn-secondary" id="btn-shortcuts-import" data-i18n="prefs_shortcuts.import">Importar…</button>
+                </div>
+              </div>
 
               <div class="shortcuts-list" id="shortcuts-list"></div>
             </section>

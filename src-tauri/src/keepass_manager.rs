@@ -21,6 +21,7 @@ pub struct EntrySummary {
     pub username: String,
     pub url: String,
     pub group: String,
+    pub has_password: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,6 +117,7 @@ fn walk(group: &Group, path: &str, out: &mut Vec<EntrySummary>) {
             username: e.get_username().unwrap_or("").to_string(),
             url: e.get_url().unwrap_or("").to_string(),
             group: path.to_string(),
+            has_password: !e.get_password().unwrap_or("").is_empty(),
         });
     }
     for g in &group.groups {

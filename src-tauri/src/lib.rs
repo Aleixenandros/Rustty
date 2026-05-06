@@ -93,6 +93,7 @@ pub fn run() {
             commands::get_profiles,
             commands::save_profile,
             commands::delete_profile,
+            commands::wake_on_lan,
             // ── Sesiones SSH
             commands::ssh_connect,
             commands::ssh_disconnect,
@@ -132,6 +133,7 @@ pub fn run() {
             commands::sftp_upload,
             commands::sftp_download_dir,
             commands::sftp_upload_dir,
+            commands::sftp_cancel_transfer,
             // ── FS local (panel SFTP partido)
             commands::local_list_dir,
             commands::local_home_dir,

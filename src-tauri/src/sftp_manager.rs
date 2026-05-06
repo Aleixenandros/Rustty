@@ -11,7 +11,7 @@
 //! (que sigue usando `ssh2` síncrono para el shell interactivo y `std`
 //! para todo lo demás) sin forzar una migración general.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -76,31 +76,55 @@ enum SftpCommand {
         remote: String,
         local: PathBuf,
         transfer_id: String,
+        verify_size: bool,
         reply: Reply<()>,
     },
     Upload {
         local: PathBuf,
         remote: String,
         transfer_id: String,
+        verify_size: bool,
         reply: Reply<()>,
     },
     DownloadDir {
         remote: String,
         local: PathBuf,
         transfer_id: String,
+        conflict_policy: TransferConflictPolicy,
+        verify_size: bool,
         reply: Reply<()>,
     },
     UploadDir {
         local: PathBuf,
         remote: String,
         transfer_id: String,
+        conflict_policy: TransferConflictPolicy,
+        verify_size: bool,
         reply: Reply<()>,
     },
     Close,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferConflictPolicy {
+    Overwrite,
+    Skip,
+    Rename,
+}
+
+impl TransferConflictPolicy {
+    pub fn from_str(policy: &str) -> Self {
+        match policy {
+            "skip" => Self::Skip,
+            "rename" => Self::Rename,
+            _ => Self::Overwrite,
+        }
+    }
+}
+
 struct SftpHandle {
     tx: mpsc::Sender<SftpCommand>,
+    canceled_transfers: Arc<Mutex<HashSet<String>>>,
 }
 
 pub struct SftpManager {
@@ -131,8 +155,10 @@ impl SftpManager {
     ) -> Result<(), String> {
         let (tx, rx) = mpsc::channel::<SftpCommand>();
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
+        let canceled_transfers = Arc::new(Mutex::new(HashSet::<String>::new()));
 
         let sid = session_id.clone();
+        let worker_canceled_transfers = Arc::clone(&canceled_transfers);
         thread::spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -145,17 +171,28 @@ impl SftpManager {
                 }
             };
             rt.block_on(run_sftp_worker(
-                sid, profile, password, passphrase, elevated, rx, ready_tx, app_handle,
+                sid,
+                profile,
+                password,
+                passphrase,
+                elevated,
+                rx,
+                ready_tx,
+                app_handle,
+                worker_canceled_transfers,
             ));
         });
 
         // Esperar a que la autenticación + apertura SFTP terminen
         match ready_rx.recv() {
             Ok(Ok(())) => {
-                self.sessions
-                    .lock()
-                    .unwrap()
-                    .insert(session_id, SftpHandle { tx });
+                self.sessions.lock().unwrap().insert(
+                    session_id,
+                    SftpHandle {
+                        tx,
+                        canceled_transfers,
+                    },
+                );
                 Ok(())
             }
             Ok(Err(e)) => Err(e),
@@ -216,11 +253,13 @@ impl SftpManager {
         remote: String,
         local: PathBuf,
         transfer_id: String,
+        verify_size: bool,
     ) -> Result<(), String> {
         self.send(session_id, |reply| SftpCommand::Download {
             remote,
             local,
             transfer_id,
+            verify_size,
             reply,
         })
     }
@@ -231,11 +270,13 @@ impl SftpManager {
         local: PathBuf,
         remote: String,
         transfer_id: String,
+        verify_size: bool,
     ) -> Result<(), String> {
         self.send(session_id, |reply| SftpCommand::Upload {
             local,
             remote,
             transfer_id,
+            verify_size,
             reply,
         })
     }
@@ -246,11 +287,15 @@ impl SftpManager {
         remote: String,
         local: PathBuf,
         transfer_id: String,
+        conflict_policy: TransferConflictPolicy,
+        verify_size: bool,
     ) -> Result<(), String> {
         self.send(session_id, |reply| SftpCommand::DownloadDir {
             remote,
             local,
             transfer_id,
+            conflict_policy,
+            verify_size,
             reply,
         })
     }
@@ -261,13 +306,30 @@ impl SftpManager {
         local: PathBuf,
         remote: String,
         transfer_id: String,
+        conflict_policy: TransferConflictPolicy,
+        verify_size: bool,
     ) -> Result<(), String> {
         self.send(session_id, |reply| SftpCommand::UploadDir {
             local,
             remote,
             transfer_id,
+            conflict_policy,
+            verify_size,
             reply,
         })
+    }
+
+    pub fn cancel_transfer(&self, session_id: &str, transfer_id: String) -> Result<(), String> {
+        let sessions = self.sessions.lock().unwrap();
+        let Some(handle) = sessions.get(session_id) else {
+            return Err("Sesión SFTP no encontrada".to_string());
+        };
+        handle
+            .canceled_transfers
+            .lock()
+            .unwrap()
+            .insert(transfer_id);
+        Ok(())
     }
 
     pub fn disconnect(&self, session_id: &str) -> Result<(), String> {
@@ -302,6 +364,7 @@ async fn run_sftp_worker(
     rx: mpsc::Receiver<SftpCommand>,
     ready: mpsc::SyncSender<Result<(), String>>,
     app_handle: AppHandle,
+    canceled_transfers: Arc<Mutex<HashSet<String>>>,
 ) {
     let sftp = match connect_and_open_sftp(
         &profile,
@@ -359,36 +422,80 @@ async fn run_sftp_worker(
                 remote,
                 local,
                 transfer_id,
+                verify_size,
                 reply,
             } => {
-                let res = do_download(&sftp, &remote, &local, &transfer_id, &app_handle).await;
+                let res = do_download(
+                    &sftp,
+                    &remote,
+                    &local,
+                    &transfer_id,
+                    verify_size,
+                    &app_handle,
+                    &canceled_transfers,
+                )
+                .await;
                 let _ = reply.send(res);
             }
             SftpCommand::Upload {
                 local,
                 remote,
                 transfer_id,
+                verify_size,
                 reply,
             } => {
-                let res = do_upload(&sftp, &local, &remote, &transfer_id, &app_handle).await;
+                let res = do_upload(
+                    &sftp,
+                    &local,
+                    &remote,
+                    &transfer_id,
+                    verify_size,
+                    &app_handle,
+                    &canceled_transfers,
+                )
+                .await;
                 let _ = reply.send(res);
             }
             SftpCommand::DownloadDir {
                 remote,
                 local,
                 transfer_id,
+                conflict_policy,
+                verify_size,
                 reply,
             } => {
-                let res = do_download_dir(&sftp, &remote, &local, &transfer_id, &app_handle).await;
+                let res = do_download_dir(
+                    &sftp,
+                    &remote,
+                    &local,
+                    &transfer_id,
+                    conflict_policy,
+                    verify_size,
+                    &app_handle,
+                    &canceled_transfers,
+                )
+                .await;
                 let _ = reply.send(res);
             }
             SftpCommand::UploadDir {
                 local,
                 remote,
                 transfer_id,
+                conflict_policy,
+                verify_size,
                 reply,
             } => {
-                let res = do_upload_dir(&sftp, &local, &remote, &transfer_id, &app_handle).await;
+                let res = do_upload_dir(
+                    &sftp,
+                    &local,
+                    &remote,
+                    &transfer_id,
+                    conflict_policy,
+                    verify_size,
+                    &app_handle,
+                    &canceled_transfers,
+                )
+                .await;
                 let _ = reply.send(res);
             }
             SftpCommand::Close => break,
@@ -623,7 +730,9 @@ async fn do_download(
     remote: &str,
     local: &Path,
     transfer_id: &str,
+    verify_size: bool,
     app: &AppHandle,
+    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
 ) -> Result<(), String> {
     let meta = sftp
         .metadata(remote.to_string())
@@ -644,7 +753,30 @@ async fn do_download(
         .await
         .map_err(|e| e.to_string())?;
 
-    transfer_copy(&mut remote_file, &mut local_file, total, transfer_id, app).await
+    transfer_copy(
+        &mut remote_file,
+        &mut local_file,
+        total,
+        transfer_id,
+        app,
+        canceled_transfers,
+    )
+    .await?;
+    drop(local_file);
+
+    if verify_size {
+        let written = tokio::fs::metadata(local)
+            .await
+            .map_err(|e| format!("verificación local: {e}"))?
+            .len();
+        if written != total {
+            return Err(format!(
+                "verificación fallida: tamaño local {written} B, esperado {total} B"
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 async fn do_upload(
@@ -652,7 +784,9 @@ async fn do_upload(
     local: &Path,
     remote: &str,
     transfer_id: &str,
+    verify_size: bool,
     app: &AppHandle,
+    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
 ) -> Result<(), String> {
     let meta = tokio::fs::metadata(local)
         .await
@@ -670,7 +804,31 @@ async fn do_upload(
         .await
         .map_err(|e| e.to_string())?;
 
-    transfer_copy(&mut local_file, &mut remote_file, total, transfer_id, app).await
+    transfer_copy(
+        &mut local_file,
+        &mut remote_file,
+        total,
+        transfer_id,
+        app,
+        canceled_transfers,
+    )
+    .await?;
+    drop(remote_file);
+
+    if verify_size {
+        let written = sftp
+            .metadata(remote.to_string())
+            .await
+            .map_err(|e| format!("verificación remota: {e}"))?
+            .len();
+        if written != total {
+            return Err(format!(
+                "verificación fallida: tamaño remoto {written} B, esperado {total} B"
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Copia con emisión de progreso. Buffer de 64 KiB; emite cada ~256 KiB o al EOF.
@@ -680,6 +838,7 @@ async fn transfer_copy<R, W>(
     total: u64,
     transfer_id: &str,
     app: &AppHandle,
+    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
 ) -> Result<(), String>
 where
     R: AsyncReadExt + Unpin,
@@ -699,6 +858,15 @@ where
     );
 
     loop {
+        if canceled_transfers.lock().unwrap().remove(transfer_id) {
+            let _ = app.emit(
+                &event,
+                serde_json::json!({
+                    "transferred": transferred, "total": total, "done": true, "canceled": true,
+                }),
+            );
+            return Err("transferencia cancelada".to_string());
+        }
         let n = src.read(&mut buf).await.map_err(|e| e.to_string())?;
         if n == 0 {
             break;
@@ -736,6 +904,61 @@ fn join_remote(base: &str, name: &str) -> String {
     }
 }
 
+async fn auto_rename_local_path(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "archivo".to_string());
+    let ext = path.extension().map(|e| e.to_string_lossy().into_owned());
+
+    for i in 1..10_000 {
+        let name = match &ext {
+            Some(ext) if !ext.is_empty() => format!("{stem} ({i}).{ext}"),
+            _ => format!("{stem} ({i})"),
+        };
+        let candidate = parent.join(name);
+        if tokio::fs::metadata(&candidate).await.is_err() {
+            return candidate;
+        }
+    }
+
+    parent.join(format!(
+        "{stem} ({})",
+        chrono::Utc::now().timestamp_millis()
+    ))
+}
+
+async fn auto_rename_remote_path(sftp: &SftpSession, remote: &str) -> String {
+    let (parent, name) = remote.rsplit_once('/').unwrap_or(("", remote));
+    let dot = name
+        .rfind('.')
+        .filter(|idx| *idx > 0 && *idx < name.len() - 1);
+    let (stem, ext) = match dot {
+        Some(idx) => (&name[..idx], &name[idx..]),
+        None => (name, ""),
+    };
+
+    for i in 1..10_000 {
+        let candidate_name = format!("{stem} ({i}){ext}");
+        let candidate = if parent.is_empty() {
+            candidate_name
+        } else {
+            join_remote(parent, &candidate_name)
+        };
+        if sftp.metadata(candidate.clone()).await.is_err() {
+            return candidate;
+        }
+    }
+
+    let fallback = format!("{stem} ({}){ext}", chrono::Utc::now().timestamp_millis());
+    if parent.is_empty() {
+        fallback
+    } else {
+        join_remote(parent, &fallback)
+    }
+}
+
 /// Recorre un directorio remoto y descarga su contenido al `local`,
 /// preservando la estructura. Cada archivo emite progreso en su propio evento
 /// `sftp-progress-{transfer_id}-{idx}` y al final se emite el resumen en
@@ -745,7 +968,10 @@ async fn do_download_dir(
     remote: &str,
     local: &Path,
     transfer_id: &str,
+    conflict_policy: TransferConflictPolicy,
+    verify_size: bool,
     app: &AppHandle,
+    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
 ) -> Result<(), String> {
     tokio::fs::create_dir_all(local)
         .await
@@ -757,16 +983,38 @@ async fn do_download_dir(
     while let Some((rdir, ldir)) = stack.pop() {
         let entries = do_list_dir(sftp, &rdir).await?;
         for e in entries {
-            let local_target = ldir.join(&e.name);
+            let mut local_target = ldir.join(&e.name);
             if e.is_dir {
                 tokio::fs::create_dir_all(&local_target)
                     .await
                     .map_err(|err| err.to_string())?;
                 stack.push((e.path.clone(), local_target));
             } else if !e.is_symlink {
+                if let Ok(meta) = tokio::fs::metadata(&local_target).await {
+                    match conflict_policy {
+                        TransferConflictPolicy::Skip => continue,
+                        TransferConflictPolicy::Rename => {
+                            local_target = auto_rename_local_path(&local_target).await;
+                        }
+                        TransferConflictPolicy::Overwrite => {
+                            if meta.is_dir() {
+                                local_target = auto_rename_local_path(&local_target).await;
+                            }
+                        }
+                    }
+                }
                 idx += 1;
                 let sub_id = format!("{transfer_id}-{idx}");
-                do_download(sftp, &e.path, &local_target, &sub_id, app).await?;
+                do_download(
+                    sftp,
+                    &e.path,
+                    &local_target,
+                    &sub_id,
+                    verify_size,
+                    app,
+                    canceled_transfers,
+                )
+                .await?;
             }
         }
     }
@@ -786,7 +1034,10 @@ async fn do_upload_dir(
     local: &Path,
     remote: &str,
     transfer_id: &str,
+    conflict_policy: TransferConflictPolicy,
+    verify_size: bool,
     app: &AppHandle,
+    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
 ) -> Result<(), String> {
     let _ = sftp.create_dir(remote.to_string()).await; // ignorar si ya existe
     let summary_event = format!("sftp-progress-{transfer_id}");
@@ -800,15 +1051,37 @@ async fn do_upload_dir(
         while let Some(entry) = read.next_entry().await.map_err(|e| e.to_string())? {
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = entry.path();
-            let remote_target = join_remote(&rdir, &name);
+            let mut remote_target = join_remote(&rdir, &name);
             let ft = entry.file_type().await.map_err(|e| e.to_string())?;
             if ft.is_dir() {
                 let _ = sftp.create_dir(remote_target.clone()).await;
                 stack.push((path, remote_target));
             } else if ft.is_file() {
+                if let Ok(meta) = sftp.metadata(remote_target.clone()).await {
+                    match conflict_policy {
+                        TransferConflictPolicy::Skip => continue,
+                        TransferConflictPolicy::Rename => {
+                            remote_target = auto_rename_remote_path(sftp, &remote_target).await;
+                        }
+                        TransferConflictPolicy::Overwrite => {
+                            if meta.file_type().is_dir() {
+                                remote_target = auto_rename_remote_path(sftp, &remote_target).await;
+                            }
+                        }
+                    }
+                }
                 idx += 1;
                 let sub_id = format!("{transfer_id}-{idx}");
-                do_upload(sftp, &path, &remote_target, &sub_id, app).await?;
+                do_upload(
+                    sftp,
+                    &path,
+                    &remote_target,
+                    &sub_id,
+                    verify_size,
+                    app,
+                    canceled_transfers,
+                )
+                .await?;
             }
         }
     }

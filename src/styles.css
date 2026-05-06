@@ -651,6 +651,21 @@ body.sidebar-collapsed #sidebar-resize-handle {
   text-overflow: ellipsis;
 }
 
+.conn-notes-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--yellow);
+  background: color-mix(in srgb, var(--yellow) 14%, transparent);
+  vertical-align: text-bottom;
+}
+
 .conn-item-actions {
   display: none;
   gap: 4px;
@@ -911,6 +926,7 @@ body.has-session-tabs .tab-home .tab-name {
   flex: 1;
   position: relative;
   overflow: hidden;
+  --status-bar-height: 24px;
 }
 
 /* ─── Vista múltiple (split por selección de pestañas) ───────── */
@@ -920,6 +936,10 @@ body.has-session-tabs .tab-home .tab-name {
   min-height: 0;
   min-width: 0;
   padding: 4px;
+}
+
+#terminals-container.status-bar-visible .view-split {
+  bottom: var(--status-bar-height);
 }
 
 .view-split.split-columns,
@@ -971,6 +991,10 @@ body.has-session-tabs .tab-home .tab-name {
   transition: outline-color 0.12s;
 }
 
+#terminals-container.status-bar-visible > .terminal-pane {
+  bottom: var(--status-bar-height);
+}
+
 /* Cuando la pane vive dentro de un .view-part (split), no es absolute */
 .view-part > .terminal-pane {
   position: relative;
@@ -979,6 +1003,48 @@ body.has-session-tabs .tab-home .tab-name {
 
 .terminal-pane.pane-focused {
   outline-color: color-mix(in srgb, var(--blue) 55%, transparent);
+}
+
+.terminal-reconnect-overlay {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 12;
+  pointer-events: none;
+}
+
+.terminal-reconnect-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--crust) 92%, transparent);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  pointer-events: auto;
+}
+
+.terminal-reconnect-title {
+  font-size: 12px;
+  color: var(--subtext0);
+}
+
+.terminal-reconnect-btn {
+  border: 1px solid var(--blue);
+  background: color-mix(in srgb, var(--blue) 18%, transparent);
+  color: var(--blue);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.terminal-reconnect-btn:hover {
+  background: color-mix(in srgb, var(--blue) 28%, transparent);
 }
 
 .terminal-pane.terminal-bell-visual::after,
@@ -1076,6 +1142,8 @@ body.terminal-bell-visual::after {
   bottom: 0;
   left: 0;
   right: 0;
+  height: var(--status-bar-height);
+  box-sizing: border-box;
   z-index: 5;
   display: flex;
   align-items: center;
@@ -1848,6 +1916,7 @@ label {
 input[type="text"],
 input[type="password"],
 input[type="number"],
+textarea,
 select {
   background: var(--base);
   border: 1px solid var(--surface1);
@@ -1863,6 +1932,7 @@ select {
 input[type="text"]:hover,
 input[type="password"]:hover,
 input[type="number"]:hover,
+textarea:hover,
 select:hover {
   border-color: var(--surface2);
 }
@@ -2069,6 +2139,7 @@ select {
 input[type="text"]:focus,
 input[type="password"]:focus,
 input[type="number"]:focus,
+textarea:focus,
 select:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 20%, transparent);
@@ -2077,6 +2148,12 @@ select:focus {
 input::placeholder {
   color: var(--subtext0);
   opacity: 1;
+}
+
+textarea {
+  min-height: 92px;
+  resize: vertical;
+  line-height: 1.45;
 }
 
 select option {
@@ -2131,12 +2208,37 @@ input[type="checkbox"] {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
   animation: slide-in 0.2s ease;
   pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .toast.success { background: var(--green);  color: var(--crust); }
 .toast.error   { background: var(--red);    color: var(--crust); }
 .toast.info    { background: var(--blue);   color: var(--crust); }
 .toast.warning { background: var(--yellow); color: var(--crust); }
+
+.toast-message {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-action {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 4px;
+  padding: 3px 7px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toast-action:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
 
 @keyframes slide-in {
   from { transform: translateX(20px); opacity: 0; }
@@ -2719,6 +2821,22 @@ input[type="checkbox"] {
 
 .form-hint.warning {
   color: var(--red, #e57373);
+}
+
+.keepass-entry-status {
+  color: var(--subtext1);
+}
+
+.keepass-entry-status.ok {
+  color: var(--green);
+}
+
+.keepass-entry-status.warning {
+  color: var(--yellow);
+}
+
+.keepass-entry-status.error {
+  color: var(--red);
 }
 
 .form-advanced {
@@ -3642,6 +3760,10 @@ html.theme-monokai {
   background: var(--surface0);
 }
 
+.sftp-row.dragging {
+  opacity: 0.55;
+}
+
 .sftp-row.is-dir .sftp-name {
   color: var(--blue);
   font-weight: 500;
@@ -3709,7 +3831,8 @@ html.theme-monokai {
 
 .sftp-transfers-wrap.hidden { display: none; }
 
-.sftp-transfers-header {
+.sftp-transfers-header,
+.sftp-activity-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -3722,7 +3845,12 @@ html.theme-monokai {
   letter-spacing: 0.4px;
 }
 
-.sftp-transfers-clear {
+.sftp-activity-header {
+  border-top: 1px solid var(--surface0);
+}
+
+.sftp-transfers-clear,
+.sftp-activity-clear {
   background: transparent;
   border: none;
   color: var(--blue);
@@ -3731,11 +3859,17 @@ html.theme-monokai {
   padding: 2px 6px;
   border-radius: 3px;
 }
-.sftp-transfers-clear:hover { background: var(--surface0); }
+.sftp-transfers-clear:hover,
+.sftp-activity-clear:hover { background: var(--surface0); }
 
-.sftp-transfers {
+.sftp-transfers,
+.sftp-activity-log {
   overflow-y: auto;
   flex: 1;
+}
+
+.sftp-activity-log {
+  max-height: 120px;
 }
 
 .sftp-transfer {
@@ -3780,6 +3914,11 @@ html.theme-monokai {
   transition: width 150ms ease-out;
 }
 
+.sftp-transfer.queued .sftp-transfer-fill {
+  width: 100% !important;
+  background: var(--surface1);
+}
+
 .sftp-transfer-detail {
   grid-column: 1 / -1;
   font-size: 10px;
@@ -3790,10 +3929,16 @@ html.theme-monokai {
   white-space: nowrap;
 }
 
-.sftp-transfer-close {
+.sftp-transfer-actions {
   position: absolute;
   top: 4px;
   right: 4px;
+  display: flex;
+  gap: 2px;
+}
+
+.sftp-transfer-close,
+.sftp-transfer-retry {
   background: transparent;
   border: none;
   color: var(--overlay0);
@@ -3804,7 +3949,8 @@ html.theme-monokai {
   padding: 0;
   border-radius: 2px;
 }
-.sftp-transfer-close:hover { background: var(--surface0); color: var(--text); }
+.sftp-transfer-close:hover,
+.sftp-transfer-retry:hover { background: var(--surface0); color: var(--text); }
 
 .sftp-transfer.done .sftp-transfer-fill {
   background: var(--green);
@@ -3812,8 +3958,63 @@ html.theme-monokai {
 .sftp-transfer.done.error .sftp-transfer-fill {
   background: var(--red);
 }
-.sftp-transfer.done.error .sftp-transfer-detail {
+.sftp-transfer.done.skipped .sftp-transfer-fill,
+.sftp-transfer.done.canceled .sftp-transfer-fill {
+  background: var(--yellow);
+}
+.sftp-transfer.done.error .sftp-transfer-detail,
+.sftp-transfer.done.skipped .sftp-transfer-detail,
+.sftp-transfer.done.canceled .sftp-transfer-detail {
   color: var(--red);
+}
+
+.sftp-transfer.done.skipped .sftp-transfer-detail,
+.sftp-transfer.done.canceled .sftp-transfer-detail {
+  color: var(--yellow);
+}
+
+.sftp-activity-row {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--surface0);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.sftp-activity-main {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.sftp-activity-status {
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--overlay1);
+}
+
+.sftp-activity-row.running .sftp-activity-status { color: var(--blue); }
+.sftp-activity-row.ok .sftp-activity-status { color: var(--green); }
+.sftp-activity-row.overwritten .sftp-activity-status { color: var(--peach); }
+.sftp-activity-row.renamed .sftp-activity-status { color: var(--mauve); }
+.sftp-activity-row.error .sftp-activity-status { color: var(--red); }
+.sftp-activity-row.skipped .sftp-activity-status { color: var(--yellow); }
+.sftp-activity-row.canceled .sftp-activity-status { color: var(--yellow); }
+
+.sftp-activity-label,
+.sftp-activity-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-activity-label {
+  color: var(--text);
+}
+
+.sftp-activity-meta,
+.sftp-activity-detail {
+  color: var(--overlay1);
 }
 
 .sftp-follow-btn {

@@ -1,3 +1,4 @@
+use std::net::UdpSocket;
 use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager, State};
@@ -6,7 +7,7 @@ use crate::keepass_manager;
 use crate::local_shell_manager::LocalShellManager;
 use crate::profiles::{ConnectionProfile, ProfileManager};
 use crate::rdp_manager::RdpManager;
-use crate::sftp_manager::{FileEntry, SftpManager};
+use crate::sftp_manager::{FileEntry, SftpManager, TransferConflictPolicy};
 use crate::ssh_manager::{SshManager, SshTunnelConfig, SshTunnelInfo};
 use crate::sync::{
     pack_state, resolve_sync_folder, unpack_state, OAuthFinishResult, OAuthProvider,
@@ -54,6 +55,42 @@ pub fn save_profile(
 #[tauri::command]
 pub fn delete_profile(state: State<ProfileManager>, id: String) -> Result<(), String> {
     state.delete(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn wake_on_lan(
+    mac_address: String,
+    broadcast: Option<String>,
+    port: Option<u16>,
+) -> Result<(), String> {
+    let mac = parse_mac_address(&mac_address)?;
+    let mut packet = [0xffu8; 102];
+    for i in 0..16 {
+        packet[6 + i * 6..12 + i * 6].copy_from_slice(&mac);
+    }
+
+    let addr = format!(
+        "{}:{}",
+        broadcast.unwrap_or_else(|| "255.255.255.255".to_string()),
+        port.unwrap_or(9),
+    );
+    let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
+    socket.set_broadcast(true).map_err(|e| e.to_string())?;
+    socket.send_to(&packet, &addr).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn parse_mac_address(input: &str) -> Result<[u8; 6], String> {
+    let hex: String = input.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if hex.len() != 12 {
+        return Err("MAC inválida".to_string());
+    }
+    let mut out = [0u8; 6];
+    for i in 0..6 {
+        out[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+            .map_err(|_| "MAC inválida".to_string())?;
+    }
+    Ok(out)
 }
 
 // ─── Comandos SSH ─────────────────────────────────────────────────────────────
@@ -412,12 +449,14 @@ pub fn sftp_download(
     remote_path: String,
     local_path: String,
     transfer_id: String,
+    verify_size: Option<bool>,
 ) -> Result<(), String> {
     sftp_state.download(
         &session_id,
         remote_path,
         PathBuf::from(local_path),
         transfer_id,
+        verify_size.unwrap_or(false),
     )
 }
 
@@ -429,12 +468,14 @@ pub fn sftp_upload(
     local_path: String,
     remote_path: String,
     transfer_id: String,
+    verify_size: Option<bool>,
 ) -> Result<(), String> {
     sftp_state.upload(
         &session_id,
         PathBuf::from(local_path),
         remote_path,
         transfer_id,
+        verify_size.unwrap_or(false),
     )
 }
 
@@ -446,12 +487,16 @@ pub fn sftp_download_dir(
     remote_path: String,
     local_path: String,
     transfer_id: String,
+    conflict_policy: Option<String>,
+    verify_size: Option<bool>,
 ) -> Result<(), String> {
     sftp_state.download_dir(
         &session_id,
         remote_path,
         PathBuf::from(local_path),
         transfer_id,
+        TransferConflictPolicy::from_str(conflict_policy.as_deref().unwrap_or("overwrite")),
+        verify_size.unwrap_or(false),
     )
 }
 
@@ -463,13 +508,26 @@ pub fn sftp_upload_dir(
     local_path: String,
     remote_path: String,
     transfer_id: String,
+    conflict_policy: Option<String>,
+    verify_size: Option<bool>,
 ) -> Result<(), String> {
     sftp_state.upload_dir(
         &session_id,
         PathBuf::from(local_path),
         remote_path,
         transfer_id,
+        TransferConflictPolicy::from_str(conflict_policy.as_deref().unwrap_or("overwrite")),
+        verify_size.unwrap_or(false),
     )
+}
+
+#[tauri::command]
+pub fn sftp_cancel_transfer(
+    sftp_state: State<'_, SftpManager>,
+    session_id: String,
+    transfer_id: String,
+) -> Result<(), String> {
+    sftp_state.cancel_transfer(&session_id, transfer_id)
 }
 
 // ─── Comandos de FS local (panel SFTP partido) ────────────────────────────────

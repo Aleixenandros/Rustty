@@ -285,6 +285,8 @@ const DEFAULT_PREFS = {
   terminalTheme:   null,
   copyOnSelect:    false,
   rightClickPaste: false,
+  sftpConflictPolicy: "ask",   // "ask" | "overwrite" | "skip" | "rename"
+  sftpVerifySize:  false,
   fontSize:        14,
   // Tipografía fina del terminal
   fontFamily:      "",        // "" = usar cadena por defecto con fallback monospace
@@ -881,6 +883,8 @@ function openSettingsModal() {
   };
   document.getElementById("pref-copy-on-select").checked   = prefs.copyOnSelect;
   document.getElementById("pref-right-click-paste").checked = prefs.rightClickPaste;
+  document.getElementById("pref-sftp-conflict-policy").value = normalizeSftpConflictPolicy(prefs.sftpConflictPolicy);
+  document.getElementById("pref-sftp-verify-size").checked = !!prefs.sftpVerifySize;
   populateFontFamilySelect(prefs.fontFamily || "");
   document.getElementById("pref-font-size").value           = prefs.fontSize;
   document.getElementById("pref-line-height").value         = prefs.lineHeight;
@@ -1533,6 +1537,10 @@ function savePrefsFromModal() {
     terminalTheme:   selectedTerminalTheme,
     copyOnSelect:    document.getElementById("pref-copy-on-select").checked,
     rightClickPaste: document.getElementById("pref-right-click-paste").checked,
+    sftpConflictPolicy: normalizeSftpConflictPolicy(
+      document.getElementById("pref-sftp-conflict-policy")?.value,
+    ),
+    sftpVerifySize:  document.getElementById("pref-sftp-verify-size")?.checked ?? false,
     fontFamily:      (document.getElementById("pref-font-family")?.value || "").trim(),
     fontSize:        parseInt(document.getElementById("pref-font-size").value, 10) || DEFAULT_PREFS.fontSize,
     lineHeight:      (() => {
@@ -1618,7 +1626,10 @@ async function refreshKeepassStatus() {
   const label = document.getElementById("keepass-status-label");
   const btnUnlock = document.getElementById("btn-keepass-unlock");
   const btnLock = document.getElementById("btn-keepass-lock");
-  if (!label) return;
+  if (!label) {
+    updateKeepassEntryValidation();
+    return;
+  }
   if (keepassUnlocked) {
     label.textContent = "Desbloqueada";
     label.classList.remove("locked");
@@ -1634,6 +1645,7 @@ async function refreshKeepassStatus() {
     btnLock.classList.add("hidden");
     keepassEntries = [];
   }
+  updateKeepassEntryValidation();
 }
 
 async function browseKeepassPath() {
@@ -2480,6 +2492,10 @@ function renderConnectionItem(p, depth) {
   const connType = p.connection_type || "ssh";
   const proto = connectionProtocolMeta(connType);
   const indent = 14 + depth * 12;
+  const notes = String(p.notes || "").trim();
+  const notesBadge = notes
+    ? `<span class="conn-notes-badge" title="${escHtml(notes)}">ⓘ</span>`
+    : "";
   return `
     <div class="conn-item${isConnected ? " active" : ""}${isSelected ? " selected" : ""}"
          data-id="${p.id}"
@@ -2492,6 +2508,7 @@ function renderConnectionItem(p, depth) {
         <div class="conn-item-name">
           ${escHtml(p.name)}
           <span class="conn-badge conn-badge-${escHtml(proto.className)}">${escHtml(proto.label)}</span>
+          ${notesBadge}
         </div>
         <div class="conn-item-host">${escHtml(p.username)}@${escHtml(p.host)}:${p.port}</div>
       </div>
@@ -2902,6 +2919,9 @@ function handleContextMenuAction(action) {
     case "connect":
       connectProfile(id);
       break;
+    case "wake-on-lan":
+      wakeProfile(id);
+      break;
     case "new-tunnel":
       openTunnelForProfile(id);
       break;
@@ -3168,6 +3188,13 @@ function autoReconnectFromInput(value) {
   return Math.min(n, 20);
 }
 
+function wolPortFromInput(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const n = parseInt(value, 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(n, 65535);
+}
+
 function setPasswordVisible(visible) {
   const input = document.getElementById("f-password");
   const btn = document.getElementById("btn-toggle-password");
@@ -3192,6 +3219,7 @@ function openNewConnectionModal(preselectedFolder = null) {
   document.getElementById("form-connection").reset();
   setPasswordVisible(false);
   document.getElementById("f-conn-type").value = "ssh";
+  document.getElementById("f-notes").value = "";
   document.getElementById("f-save-password").checked = true;
   document.getElementById("f-save-passphrase").checked = true;
   refreshKeepassStatus().then(() => {
@@ -3235,6 +3263,7 @@ function openEditConnectionModal(profileId) {
   const connType = profile.connection_type || "ssh";
   document.getElementById("f-conn-type").value  = connType;
   document.getElementById("f-domain").value     = profile.domain || "";
+  document.getElementById("f-notes").value      = profile.notes || "";
   document.getElementById("f-auth-type").value  = profile.auth_type;
   document.getElementById("f-key-path").value   = profile.key_path || "";
   document.getElementById("f-password").value = "";
@@ -3252,6 +3281,9 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-auto-reconnect").value = profile.auto_reconnect ?? "";
   document.getElementById("f-session-log").checked = !!profile.session_log;
   document.getElementById("f-proxy-jump").value = profile.proxy_jump || "";
+  document.getElementById("f-mac-address").value = profile.mac_address || "";
+  document.getElementById("f-wol-broadcast").value = profile.wol_broadcast || "";
+  document.getElementById("f-wol-port").value = profile.wol_port ?? "";
   populateWorkspaceFormSelect(profile.workspace_id || getActiveWorkspaceId());
   refreshKeepassStatus().then(() => {
     document.getElementById("f-use-keepass").checked = !!profile.keepass_entry_uuid;
@@ -3265,7 +3297,7 @@ function openEditConnectionModal(profileId) {
 function populateKeepassEntrySelect(selectedUuid) {
   const sel = document.getElementById("f-keepass-entry");
   if (!sel) return;
-  let opts = `<option value="">— Selecciona una entrada —</option>`;
+  let opts = `<option value="">${escHtml(t("modal_conn.keepass_entry_pick"))}</option>`;
   for (const e of keepassEntries) {
     const label = e.group
       ? `${e.group} / ${e.title || "(sin título)"}`
@@ -3274,6 +3306,61 @@ function populateKeepassEntrySelect(selectedUuid) {
     opts += `<option value="${escHtml(e.uuid)}"${e.uuid === selectedUuid ? " selected" : ""}>${escHtml(label + suffix)}</option>`;
   }
   sel.innerHTML = opts;
+  updateKeepassEntryValidation();
+}
+
+function keepassEntryLabel(entry) {
+  if (!entry) return "";
+  const title = entry.title || "(sin título)";
+  return entry.group ? `${entry.group} / ${title}` : title;
+}
+
+function updateKeepassEntryValidation() {
+  const status = document.getElementById("keepass-entry-status");
+  const sel = document.getElementById("f-keepass-entry");
+  const useKp = document.getElementById("f-use-keepass")?.checked;
+  const authType = document.getElementById("f-auth-type")?.value;
+  if (!status || !sel) return;
+
+  status.classList.remove("ok", "warning", "error");
+  const visible = authType === "password" && useKp;
+  status.classList.toggle("hidden", !visible);
+  if (!visible) {
+    status.textContent = "";
+    return;
+  }
+
+  if (!keepassUnlocked) {
+    status.textContent = t("modal_conn.keepass_entry_status_locked");
+    status.classList.add("warning");
+    return;
+  }
+
+  const uuid = sel.value;
+  if (!uuid) {
+    status.textContent = t("modal_conn.keepass_entry_status_select");
+    status.classList.add("warning");
+    return;
+  }
+
+  const entry = keepassEntries.find((e) => e.uuid === uuid);
+  if (!entry) {
+    status.textContent = t("modal_conn.keepass_entry_status_not_found");
+    status.classList.add("error");
+    return;
+  }
+
+  const user = entry.username
+    ? t("modal_conn.keepass_entry_status_user", { username: entry.username })
+    : t("modal_conn.keepass_entry_status_no_user");
+  const textKey = entry.has_password
+    ? "modal_conn.keepass_entry_status_ok"
+    : "modal_conn.keepass_entry_status_no_password";
+  status.textContent = t(textKey, {
+    entry: keepassEntryLabel(entry),
+    user,
+  });
+  status.classList.add(entry.has_password ? "ok" : "error");
 }
 
 function closeModal() {
@@ -3401,6 +3488,7 @@ function updateAuthFields(authType) {
   // Hint cuando DB no está desbloqueada
   const hint = document.getElementById("keepass-hint-locked");
   if (hint) hint.style.display = (isPwd && useKp && !keepassUnlocked) ? "" : "none";
+  updateKeepassEntryValidation();
 }
 
 /**
@@ -3468,6 +3556,7 @@ async function saveStoredSecret(key, secret, label = "credencial") {
 }
 
 let credentialPromptResolve = null;
+let credentialExtraActionButtons = [];
 
 function credentialTarget(profile) {
   const user = String(profile?.username || "").trim();
@@ -3487,6 +3576,7 @@ function initCredentialModalEvents() {
     const input = document.getElementById("credential-modal-input");
     const remember = document.getElementById("credential-modal-remember");
     closeCredentialPrompt({
+      action: "submit",
       value: input?.value ?? "",
       remember: !!remember?.checked,
     });
@@ -3503,6 +3593,8 @@ function closeCredentialPrompt(result = null) {
   const input = document.getElementById("credential-modal-input");
   const remember = document.getElementById("credential-modal-remember");
   const submitBtn = document.getElementById("btn-credential-submit");
+  credentialExtraActionButtons.forEach((btn) => btn.remove());
+  credentialExtraActionButtons = [];
   if (inputRow) inputRow.classList.remove("hidden");
   if (input) input.value = "";
   if (remember) remember.checked = false;
@@ -3523,6 +3615,7 @@ function promptCredential({
   initialValue = "",
   hideInput = false,
   danger = false,
+  extraActions = [],
 }) {
   const overlay = document.getElementById("credential-modal-overlay");
   const titleEl = document.getElementById("credential-modal-title");
@@ -3533,6 +3626,7 @@ function promptCredential({
   const rememberRow = document.getElementById("credential-modal-remember-row");
   const rememberLabelEl = document.getElementById("credential-modal-remember-label");
   const submitBtn = document.getElementById("btn-credential-submit");
+  const actionsRow = submitBtn?.closest(".modal-actions");
 
   if (!overlay || !titleEl || !messageEl || !labelEl || !inputRow || !input || !rememberRow || !submitBtn) {
     console.warn("[credentials] modal is not available");
@@ -3549,6 +3643,27 @@ function promptCredential({
   inputRow.classList.toggle("hidden", hideInput);
   submitBtn.textContent = submitLabel;
   submitBtn.classList.toggle("danger", danger);
+
+  credentialExtraActionButtons.forEach((btn) => btn.remove());
+  credentialExtraActionButtons = [];
+  if (actionsRow) {
+    extraActions.forEach((action) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = action.className || "btn-secondary";
+      if (action.danger) btn.classList.add("danger");
+      btn.textContent = action.label;
+      btn.addEventListener("click", () => {
+        closeCredentialPrompt({
+          action: action.value,
+          value: input.value,
+          remember: !!remember?.checked,
+        });
+      });
+      actionsRow.insertBefore(btn, submitBtn);
+      credentialExtraActionButtons.push(btn);
+    });
+  }
 
   if (rememberLabel) {
     rememberRow.classList.remove("hidden");
@@ -3594,6 +3709,30 @@ async function confirmThemed({ title, message, submitLabel = "Aceptar", danger =
     danger,
   });
   return !!result;
+}
+
+async function chooseThemed({
+  title,
+  message,
+  submitLabel = "Aceptar",
+  rememberLabel,
+  danger = false,
+  actions = [],
+}) {
+  const result = await promptCredential({
+    title,
+    message,
+    submitLabel,
+    rememberLabel,
+    hideInput: true,
+    danger,
+    extraActions: actions,
+  });
+  if (!result) return null;
+  return {
+    action: result.action || "submit",
+    remember: !!result.remember,
+  };
 }
 
 async function promptProfileSecret(profile, {
@@ -3684,6 +3823,7 @@ async function saveAndClose(shouldConnect) {
     auth_type:           authType,
     key_path:            keyPath,
     group,
+    notes:               (document.getElementById("f-notes").value || "").trim() || null,
     workspace_id:        workspaceId,
     keepass_entry_uuid:  keepassEntryUuid,
     follow_cwd:          true,
@@ -3694,6 +3834,9 @@ async function saveAndClose(shouldConnect) {
     auto_reconnect:      autoReconnectFromInput(document.getElementById("f-auto-reconnect").value),
     session_log:         document.getElementById("f-session-log").checked,
     proxy_jump:          (document.getElementById("f-proxy-jump").value || "").trim() || null,
+    mac_address:         (document.getElementById("f-mac-address").value || "").trim() || null,
+    wol_broadcast:       (document.getElementById("f-wol-broadcast").value || "").trim() || null,
+    wol_port:            wolPortFromInput(document.getElementById("f-wol-port").value),
     ssh_tunnels:         profiles.find((p) => p.id === editingProfileId)?.ssh_tunnels || [],
     created_at: editingProfileId
       ? (profiles.find((p) => p.id === editingProfileId)?.created_at ?? new Date().toISOString())
@@ -3801,6 +3944,37 @@ async function connectProfile(profileId, { force = false } = {}) {
   const creds = await resolveSshCredentials(profile);
   if (!creds) return;
   await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false);
+}
+
+async function wakeProfile(profileId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+
+  const macAddress = (profile.mac_address || "").trim();
+  if (!macAddress) {
+    toast("Configura una MAC Wake On LAN en el perfil", "warning", 6000, {
+      actionLabel: "Editar",
+      onAction: () => openEditConnectionModal(profileId),
+    });
+    return;
+  }
+
+  try {
+    await invoke("wake_on_lan", {
+      macAddress,
+      broadcast: (profile.wol_broadcast || "").trim() || null,
+      port: profile.wol_port || null,
+    });
+    toast(`Magic packet enviado a ${profile.name}`, "success", 7000, {
+      actionLabel: "Conectar",
+      onAction: () => connectProfile(profileId, { force: true }),
+    });
+  } catch (err) {
+    toast(`Wake On LAN falló: ${err}`, "error", 7000, {
+      actionLabel: "Reintentar",
+      onAction: () => wakeProfile(profileId),
+    });
+  }
 }
 
 async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase) {
@@ -4286,7 +4460,8 @@ function injectOsc7Setup(sessionId) {
  */
 async function reconnectSession(sessionId) {
   const s = sessions.get(sessionId);
-  if (!s || s.status !== "closed") return;
+  if (!s || !["closed", "error"].includes(s.status)) return;
+  hideReconnectOverlay(sessionId);
   if (s._closeOverride) {
     await reconnectLocalInPlace(s);
   } else if (s.profileId) {
@@ -4308,6 +4483,7 @@ async function reconnectLocalInPlace(s) {
       rows: s.terminal.rows,
     });
     s.status = "connected";
+    hideReconnectOverlay(sessionId);
     updateTabStatus(sessionId, "connected");
     renderDashboard();
 
@@ -4319,12 +4495,14 @@ async function reconnectLocalInPlace(s) {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
       renderDashboard();
+      showReconnectOverlay(sessionId, "Consola cerrada");
       s.terminal.writeln(`\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
     });
     s.unlisteners.push(ul, ulClose);
   } catch (err) {
     s.status = "error";
     updateTabStatus(sessionId, "error");
+    showReconnectOverlay(sessionId, "Error al reabrir");
     toast(`Error al reabrir la consola: ${err}`, "error");
   }
 }
@@ -4368,6 +4546,7 @@ async function reconnectSshInPlace(s) {
   } catch (err) {
     s.status = "error";
     updateTabStatus(oldSessionId, "error");
+    showReconnectOverlay(oldSessionId, "Error al reconectar");
     toast(`No se pudo reconectar: ${err}`, "error");
   }
 }
@@ -4407,6 +4586,17 @@ function selectSession(sid, additive = false) {
   syncSidebarToActiveSession({ scroll: true });
 }
 
+function focusPaneByOffset(delta) {
+  if (viewSelection.length < 2) return;
+  const currentIdx = Math.max(0, viewSelection.indexOf(activeSessionId));
+  const nextIdx = (currentIdx + delta + viewSelection.length) % viewSelection.length;
+  activeSessionId = viewSelection[nextIdx];
+  updateTabSelectionClasses();
+  updateStatusBar();
+  syncSidebarToActiveSession({ scroll: true });
+  sessions.get(activeSessionId)?.terminal?.focus();
+}
+
 function selectHomeTab() {
   viewSelection = [];
   activeSessionId = null;
@@ -4417,12 +4607,34 @@ function selectHomeTab() {
 
 let _statusLatencyTimer = null;
 
-function clearStatusBar() {
+function refitVisibleTerminals() {
+  requestAnimationFrame(() => {
+    viewSelection.forEach((sid) => {
+      const s = sessions.get(sid);
+      if (s?.fitAddon) {
+        try {
+          s.fitAddon.fit();
+          notifyResize(sid, s.terminal);
+        } catch {}
+      }
+    });
+  });
+}
+
+function setStatusBarVisible(visible) {
   const bar = document.getElementById("status-bar");
-  if (bar) {
-    bar.classList.add("hidden");
-    bar.setAttribute("aria-hidden", "true");
-  }
+  const container = document.getElementById("terminals-container");
+  if (!bar || !container) return;
+
+  const changed = container.classList.contains("status-bar-visible") !== visible;
+  bar.classList.toggle("hidden", !visible);
+  bar.setAttribute("aria-hidden", visible ? "false" : "true");
+  container.classList.toggle("status-bar-visible", visible);
+  if (changed) refitVisibleTerminals();
+}
+
+function clearStatusBar() {
+  setStatusBarVisible(false);
   const userHostEl = document.getElementById("status-user-host");
   if (userHostEl) userHostEl.textContent = "—";
   const latEl = document.getElementById("status-latency");
@@ -4446,8 +4658,7 @@ function updateStatusBar() {
     clearStatusBar();
     return;
   }
-  bar.classList.remove("hidden");
-  bar.setAttribute("aria-hidden", "false");
+  setStatusBarVisible(true);
 
   const userHost = `${profile.username}@${profile.host}:${profile.port}`;
   const userHostEl = document.getElementById("status-user-host");
@@ -4648,6 +4859,35 @@ function wirePaneFocusOnClick(pane, sessionId) {
 // TERMINAL
 // ═══════════════════════════════════════════════════════════════
 
+function buildReconnectOverlay(sessionId) {
+  const overlay = document.createElement("div");
+  overlay.className = "terminal-reconnect-overlay hidden";
+  overlay.innerHTML = `
+    <div class="terminal-reconnect-box">
+      <div class="terminal-reconnect-title">Sesión cerrada</div>
+      <button type="button" class="terminal-reconnect-btn">Reconectar</button>
+    </div>
+  `;
+  overlay.querySelector(".terminal-reconnect-btn").addEventListener("click", () => {
+    reconnectSession(overlay.closest(".terminal-pane")?.dataset.session || sessionId);
+  });
+  return overlay;
+}
+
+function showReconnectOverlay(sessionId, title = "Sesión cerrada") {
+  const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
+  const overlay = pane?.querySelector(".terminal-reconnect-overlay");
+  if (!overlay) return;
+  overlay.querySelector(".terminal-reconnect-title").textContent = title;
+  overlay.classList.remove("hidden");
+}
+
+function hideReconnectOverlay(sessionId) {
+  document
+    .querySelector(`.terminal-pane[data-session="${sessionId}"] .terminal-reconnect-overlay`)
+    ?.classList.add("hidden");
+}
+
 function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   const { sftp = true } = opts;
 
@@ -4663,6 +4903,7 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   termArea.appendChild(xtermDiv);
   termArea.appendChild(buildTerminalSearchBar(sessionId));
   pane.appendChild(termArea);
+  pane.appendChild(buildReconnectOverlay(sessionId));
   document.getElementById("terminals-container").appendChild(pane);
 
   // Crear pestaña
@@ -4739,7 +4980,7 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   }, true);
 
   terminal.onData((data) => {
-    if (sessionObj.status === "closed") {
+    if (sessionObj.status === "closed" || sessionObj.status === "error") {
       if (data === "\r" || data === "\n") reconnectSession(sessionObj.id);
       return;
     }
@@ -4768,6 +5009,7 @@ async function registerSshListeners(sessionId, terminal) {
   ul.push(await listen(`ssh-connected-${sessionId}`, () => {
     const s = sessions.get(sessionId);
     if (s) s.status = "connected";
+    hideReconnectOverlay(sessionId);
     updateTabStatus(sessionId, "connected");
     if (s?.profileId) recordRecentConnection(s.profileId);
     renderConnectionList();
@@ -4784,6 +5026,7 @@ async function registerSshListeners(sessionId, terminal) {
     const s = sessions.get(sessionId);
     if (s) s.status = "error";
     updateTabStatus(sessionId, "error");
+    showReconnectOverlay(sessionId, "Error de conexión");
     terminal.writeln(`\r\n\x1b[31m✗ Error: ${e.payload}\x1b[0m\r\n`);
     toast(`Error SSH: ${e.payload}`, "error");
   }));
@@ -4801,6 +5044,7 @@ async function registerSshListeners(sessionId, terminal) {
     const s = sessions.get(sessionId);
     if (s) s.status = "closed";
     updateTabStatus(sessionId, "error");
+    showReconnectOverlay(sessionId, "Sesión cerrada");
     terminal.writeln(`\r\n\x1b[33m• ${t("terminal.closed")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
     renderConnectionList();
   }));
@@ -5495,6 +5739,7 @@ async function openLocalShell() {
     const ulClose = await listen(`shell-closed-${sessionId}`, () => {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
+      showReconnectOverlay(sessionId, "Consola cerrada");
       s.terminal.writeln(`\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
     });
     s.unlisteners.push(ul, ulClose);
@@ -5593,6 +5838,8 @@ async function openSftpPanel(sessionId) {
     panel,
     unlisteners: [],
     transfers: new Map(),
+    transferQueue: [],
+    transferProcessing: false,
     follow: true,  // Seguir al terminal por defecto si emite OSC 7
     elevated: false,
   };
@@ -5712,6 +5959,44 @@ async function toggleSftpElevated(sessionId) {
   }
 }
 
+function activeSftpSession() {
+  if (!activeSessionId) return null;
+  const s = sessions.get(activeSessionId);
+  return s?.type === "ssh" ? s : null;
+}
+
+function toggleActiveSftpPanel() {
+  const s = activeSftpSession();
+  if (!s) {
+    toast("Selecciona una sesión SSH primero", "warning");
+    return;
+  }
+  toggleSftpPanel(activeSessionId);
+}
+
+function toggleActiveSftpFollow() {
+  const s = activeSftpSession();
+  if (!s?.sftp) {
+    toast("Abre primero el panel SFTP", "warning");
+    return;
+  }
+  s.sftp.follow = !s.sftp.follow;
+  const btn = s.sftp.panel.querySelector('[data-sftp-nav="follow"]');
+  btn?.classList.toggle("active", s.sftp.follow);
+  if (s.sftp.follow && s.remoteCwd && s.remoteCwd !== s.sftp.cwd) {
+    navigateSftpRemote(activeSessionId, s.remoteCwd);
+  }
+}
+
+function toggleActiveSftpElevated() {
+  const s = activeSftpSession();
+  if (!s?.sftp) {
+    toast("Abre primero el panel SFTP", "warning");
+    return;
+  }
+  toggleSftpElevated(activeSessionId);
+}
+
 function buildSftpPanel(sessionId) {
   const panel = document.createElement("div");
   panel.className = "sftp-panel sftp-panel-split";
@@ -5763,6 +6048,11 @@ function buildSftpPanel(sessionId) {
         <button class="sftp-transfers-clear" title="Limpiar completadas">Limpiar</button>
       </div>
       <div class="sftp-transfers"></div>
+      <div class="sftp-activity-header">
+        <span>Actividad</span>
+        <button class="sftp-activity-clear" title="Limpiar actividad">Limpiar log</button>
+      </div>
+      <div class="sftp-activity-log"></div>
     </div>
   `;
 
@@ -5812,9 +6102,19 @@ function buildSftpPanel(sessionId) {
   });
 
   panel.querySelector(".sftp-transfers-clear").addEventListener("click", () => {
-    panel.querySelectorAll(".sftp-transfer.done").forEach((el) => el.remove());
+    panel.querySelectorAll(".sftp-transfer.done, .sftp-transfer.canceled").forEach((el) => {
+      const transferId = el.dataset.transfer;
+      sessions.get(sessionId)?.sftp?.transfers?.delete(transferId);
+      el.remove();
+    });
     updateTransfersVisibility(panel);
   });
+  panel.querySelector(".sftp-activity-clear").addEventListener("click", () => {
+    panel.querySelector(".sftp-activity-log").innerHTML = "";
+    updateTransfersVisibility(panel);
+  });
+
+  setupSftpDropTargets(panel, sessionId);
 
   panel.querySelectorAll("[data-sftp-act]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -5923,6 +6223,7 @@ function renderSftpFiles(sessionId, side, entries) {
   }
   filesDiv.innerHTML = entries.map((e) => `
     <div class="sftp-row ${e.is_dir ? "is-dir" : "is-file"}"
+         draggable="${e.is_symlink ? "false" : "true"}"
          data-path="${escHtml(e.path)}"
          data-name="${escHtml(e.name)}"
          data-is-dir="${e.is_dir}"
@@ -5948,15 +6249,46 @@ function renderSftpFiles(sessionId, side, entries) {
       row.classList.toggle("selected");
     });
 
+    row.addEventListener("dragstart", (e) => {
+      if (row.dataset.isSymlink === "true") {
+        e.preventDefault();
+        return;
+      }
+      if (!row.classList.contains("selected")) {
+        filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => r.classList.remove("selected"));
+        row.classList.add("selected");
+      }
+      row.classList.add("dragging");
+      const rows = selectedRows(sessionId, side).filter((r) => !r.isSymlink);
+      setSftpDragPayload({ sessionId, sourceSide: side, rows });
+      e.dataTransfer.effectAllowed = side === "local" ? "copyMove" : "copy";
+      e.dataTransfer.setData("text/plain", rows.map((r) => r.name).join("\n"));
+    });
+
+    row.addEventListener("dragend", () => {
+      row.classList.remove("dragging");
+      clearSftpDragPayload();
+    });
+
     // Doble clic: entrar en carpeta. En remoto: descargar archivo al cwd local. En local: subir al cwd remoto.
     row.addEventListener("dblclick", () => {
       const isDir = row.dataset.isDir === "true";
       if (side === "remote") {
         if (isDir) navigateSftpRemote(sessionId, row.dataset.path);
-        else transferOne(sessionId, "download", row.dataset.path, row.dataset.name, false);
+        else transferRows(sessionId, "download", [{
+          path: row.dataset.path,
+          name: row.dataset.name,
+          isDir: false,
+          isSymlink: false,
+        }]);
       } else {
         if (isDir) navigateSftpLocal(sessionId, row.dataset.path);
-        else transferOne(sessionId, "upload", row.dataset.path, row.dataset.name, false);
+        else transferRows(sessionId, "upload", [{
+          path: row.dataset.path,
+          name: row.dataset.name,
+          isDir: false,
+          isSymlink: false,
+        }]);
       }
     });
 
@@ -5987,6 +6319,95 @@ function selectedRows(sessionId, side) {
   }));
 }
 
+let sftpDragPayload = null;
+
+function setSftpDragPayload(payload) {
+  sftpDragPayload = payload;
+}
+
+function clearSftpDragPayload() {
+  sftpDragPayload = null;
+  document
+    .querySelectorAll(".sftp-files.sftp-dragover")
+    .forEach((el) => el.classList.remove("sftp-dragover"));
+}
+
+function setupSftpDropTargets(panel, sessionId) {
+  panel.querySelectorAll(".sftp-files").forEach((filesDiv) => {
+    filesDiv.addEventListener("dragover", (e) => {
+      const payload = sftpDragPayload;
+      const targetSide = filesDiv.dataset.side;
+      if (!payload || payload.sessionId !== sessionId || payload.sourceSide === targetSide) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      filesDiv.classList.add("sftp-dragover");
+    });
+    filesDiv.addEventListener("dragleave", (e) => {
+      if (!filesDiv.contains(e.relatedTarget)) {
+        filesDiv.classList.remove("sftp-dragover");
+      }
+    });
+    filesDiv.addEventListener("drop", async (e) => {
+      const payload = sftpDragPayload;
+      const targetSide = filesDiv.dataset.side;
+      filesDiv.classList.remove("sftp-dragover");
+      if (!payload || payload.sessionId !== sessionId || payload.sourceSide === targetSide) return;
+      e.preventDefault();
+      const direction = targetSide === "remote" ? "upload" : "download";
+      await transferRows(sessionId, direction, payload.rows);
+      clearSftpDragPayload();
+    });
+  });
+}
+
+function appendSftpActivity(panel, { status = "info", label, detail = "", bytes = 0, startedAt = 0 }) {
+  const wrap = panel.querySelector(".sftp-transfers-wrap");
+  const log = panel.querySelector(".sftp-activity-log");
+  if (!wrap || !log) return;
+
+  wrap.classList.remove("hidden");
+  const row = document.createElement("div");
+  row.className = `sftp-activity-row ${status}`;
+  const elapsed = startedAt ? Math.max(0, Date.now() - startedAt) : 0;
+  const speed = bytes > 0 && elapsed > 0 ? ` · ${formatSize(bytes / (elapsed / 1000))}/s` : "";
+  const meta = [
+    new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+    bytes > 0 ? formatSize(bytes) : "",
+    elapsed > 0 ? `${(elapsed / 1000).toFixed(1)} s${speed}` : "",
+  ].filter(Boolean).join(" · ");
+  row.innerHTML = `
+    <div class="sftp-activity-main">
+      <span class="sftp-activity-status">${escHtml(status)}</span>
+      <span class="sftp-activity-label">${escHtml(label)}</span>
+      <span class="sftp-activity-meta">${escHtml(meta)}</span>
+    </div>
+    <div class="sftp-activity-detail">${escHtml(detail)}</div>
+  `;
+  log.prepend(row);
+  while (log.children.length > 100) log.lastElementChild?.remove();
+  updateTransfersVisibility(panel);
+}
+
+function revealSftpActivity(panel) {
+  const wrap = panel?.querySelector(".sftp-transfers-wrap");
+  const log = panel?.querySelector(".sftp-activity-log");
+  if (!wrap || !log) return;
+  wrap.classList.remove("hidden");
+  log.scrollTop = 0;
+  wrap.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function transferDirectionLabel(direction) {
+  return direction === "upload" ? "Upload" : "Download";
+}
+
+function recursiveConflictPolicyForTransfer(resolved) {
+  if (resolved?.renamed) return "overwrite";
+  if (resolved?.overwrite) return "overwrite";
+  const policy = normalizeSftpConflictPolicy(prefs.sftpConflictPolicy);
+  return policy === "ask" ? "overwrite" : policy;
+}
+
 async function transferSelected(sessionId, direction) {
   const sourceSide = direction === "upload" ? "local" : "remote";
   const rows = selectedRows(sessionId, sourceSide);
@@ -5994,56 +6415,337 @@ async function transferSelected(sessionId, direction) {
     toast(`Selecciona uno o más elementos en ${sourceSide === "local" ? "Local" : "Remoto"}`, "warning");
     return;
   }
-  for (const r of rows) {
-    if (r.isSymlink) continue;
-    await transferOne(sessionId, direction, r.path, r.name, r.isDir);
+  transferRows(sessionId, direction, rows);
+}
+
+function transferRows(sessionId, direction, rows) {
+  enqueueSftpTransfers(sessionId, direction, rows);
+}
+
+function enqueueSftpTransfers(sessionId, direction, rows) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp?.sftpSessionId) return;
+  const cleanRows = rows.filter((r) => !r.isSymlink);
+  if (cleanRows.length === 0) return;
+
+  const conflictState = createTransferConflictState();
+  for (const row of cleanRows) {
+    const transferId = crypto.randomUUID();
+    const arrow = direction === "upload" ? "⬆" : "⬇";
+    const transferEl = addTransfer(s.sftp.panel, `${arrow} ${row.name}`, transferId, "En cola");
+    setTransferState(transferEl, "queued", "En cola");
+    const job = {
+      id: transferId,
+      direction,
+      row,
+      conflictState,
+      transferEl,
+      status: "queued",
+    };
+    s.sftp.transferQueue.push(job);
+    s.sftp.transfers.set(transferId, job);
+  }
+  processSftpQueue(sessionId);
+}
+
+async function processSftpQueue(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp || s.sftp.transferProcessing) return;
+  s.sftp.transferProcessing = true;
+  try {
+    while (s.sftp.transferQueue.length > 0) {
+      const job = s.sftp.transferQueue.shift();
+      if (!job || job.status === "canceled") continue;
+      const result = await transferOne(
+        sessionId,
+        job.direction,
+        job.row.path,
+        job.row.name,
+        job.row.isDir,
+        job.conflictState,
+        job,
+      );
+      job.status = result || "done";
+      if (result === "cancel") {
+        cancelQueuedTransfersForState(sessionId, job.conflictState);
+        break;
+      }
+    }
+  } finally {
+    const current = sessions.get(sessionId);
+    if (current?.sftp) current.sftp.transferProcessing = false;
   }
 }
 
-async function transferOne(sessionId, direction, srcPath, name, isDir) {
+function cancelQueuedTransfersForState(sessionId, conflictState) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const remaining = [];
+  for (const job of s.sftp.transferQueue) {
+    if (job.conflictState === conflictState) {
+      job.status = "canceled";
+      markTransferCanceled(job.transferEl, "Cancelado");
+    } else {
+      remaining.push(job);
+    }
+  }
+  s.sftp.transferQueue = remaining;
+}
+
+function cancelQueuedSftpTransfer(sessionId, transferId) {
+  const s = sessions.get(sessionId);
+  const job = s?.sftp?.transfers?.get(transferId);
+  if (!job || job.status !== "queued") return;
+  job.status = "canceled";
+  s.sftp.transferQueue = s.sftp.transferQueue.filter((item) => item.id !== transferId);
+  markTransferCanceled(job.transferEl, "Cancelado");
+}
+
+function retrySftpTransfer(sessionId, transferId) {
+  const s = sessions.get(sessionId);
+  const oldJob = s?.sftp?.transfers?.get(transferId);
+  if (!oldJob || !["error", "skipped", "canceled"].includes(oldJob.status)) return;
+  oldJob.status = "queued";
+  oldJob.conflictState = createTransferConflictState();
+  setTransferState(oldJob.transferEl, "queued", "En cola");
+  s.sftp.transferQueue.push(oldJob);
+  processSftpQueue(sessionId);
+}
+
+function createTransferConflictState() {
+  return {
+    policy: null,
+    reservedNames: {
+      local: new Set(),
+      remote: new Set(),
+    },
+  };
+}
+
+function normalizeSftpConflictPolicy(policy) {
+  return ["ask", "overwrite", "skip", "rename"].includes(policy) ? policy : "ask";
+}
+
+function renderedSftpNames(sessionId, side) {
+  const s = sessions.get(sessionId);
+  const filesDiv = s?.sftp?.panel?.querySelector(`.sftp-files[data-side="${side}"]`);
+  if (!filesDiv) return new Set();
+  return new Set(
+    Array.from(filesDiv.querySelectorAll(".sftp-row"))
+      .map((row) => row.dataset.name)
+      .filter(Boolean),
+  );
+}
+
+function destinationNameExists(sessionId, side, name, conflictState = null) {
+  if (renderedSftpNames(sessionId, side).has(name)) return true;
+  return !!conflictState?.reservedNames?.[side]?.has(name);
+}
+
+function reserveDestinationName(side, name, conflictState = null) {
+  conflictState?.reservedNames?.[side]?.add(name);
+}
+
+function autoRenameTransferName(sessionId, side, name, isDir, conflictState = null) {
+  const dot = !isDir ? name.lastIndexOf(".") : -1;
+  const hasExt = dot > 0 && dot < name.length - 1;
+  const base = hasExt ? name.slice(0, dot) : name;
+  const ext = hasExt ? name.slice(dot) : "";
+  for (let i = 1; i < 10_000; i += 1) {
+    const candidate = `${base} (${i})${ext}`;
+    if (!destinationNameExists(sessionId, side, candidate, conflictState)) {
+      reserveDestinationName(side, candidate, conflictState);
+      return candidate;
+    }
+  }
+  return `${base} (${Date.now()})${ext}`;
+}
+
+async function promptSftpTransferConflict(name, targetSide, isDir) {
+  const kind = isDir ? "la carpeta" : "el fichero";
+  const where = targetSide === "local" ? "Local" : "Remoto";
+  const choice = await chooseThemed({
+    title: "Conflicto de transferencia",
+    message: `Ya existe ${kind} "${name}" en ${where}. Renombrar creará automáticamente una copia con sufijo numérico.`,
+    submitLabel: "Sobrescribir",
+    danger: true,
+    rememberLabel: "Aplicar a todos los conflictos de esta transferencia",
+    actions: [
+      { value: "skip", label: "Omitir" },
+      { value: "rename", label: "Renombrar" },
+    ],
+  });
+  if (!choice) return { action: "cancel", applyAll: false };
+  const action = choice.action === "submit" ? "overwrite" : choice.action;
+  return { action, applyAll: choice.remember };
+}
+
+async function resolveTransferConflict(sessionId, direction, name, isDir, conflictState = null) {
+  const targetSide = direction === "upload" ? "remote" : "local";
+  if (!destinationNameExists(sessionId, targetSide, name, conflictState)) {
+    reserveDestinationName(targetSide, name, conflictState);
+    return { action: "transfer", name };
+  }
+
+  let action = conflictState?.policy;
+  if (!action) {
+    const prefPolicy = normalizeSftpConflictPolicy(prefs.sftpConflictPolicy);
+    if (prefPolicy !== "ask") action = prefPolicy;
+  }
+  if (!action) {
+    const choice = await promptSftpTransferConflict(name, targetSide, isDir);
+    action = choice.action;
+    if (choice.applyAll && action !== "cancel") {
+      conflictState.policy = action;
+    }
+  }
+
+  if (action === "cancel") return { action: "cancel", name };
+  if (action === "skip") return { action: "skip", name };
+  if (action === "rename") {
+    return {
+      action: "transfer",
+      name: autoRenameTransferName(sessionId, targetSide, name, isDir, conflictState),
+      renamed: true,
+    };
+  }
+
+  reserveDestinationName(targetSide, name, conflictState);
+  return { action: "transfer", name, overwrite: true };
+}
+
+async function transferOne(sessionId, direction, srcPath, name, isDir, conflictState = null, job = null) {
   const s = sessions.get(sessionId);
   if (!s?.sftp?.sftpSessionId) return;
+  const resolved = await resolveTransferConflict(
+    sessionId,
+    direction,
+    name,
+    isDir,
+    conflictState || createTransferConflictState(),
+  );
+  if (resolved.action === "cancel") return "cancel";
+  if (resolved.action === "skip") {
+    if (job?.transferEl) {
+      markTransferSkipped(job.transferEl, "Omitido por política de conflictos");
+      job.status = "skipped";
+    }
+    appendSftpActivity(s.sftp.panel, {
+      status: "skipped",
+      label: `${transferDirectionLabel(direction)} ${name}`,
+      detail: "Omitido por política de conflictos",
+    });
+    toast(`Omitido: ${name}`, "info");
+    return "skip";
+  }
+
   const panel = s.sftp.panel;
-  const transferId = crypto.randomUUID();
+  const transferId = job?.id || crypto.randomUUID();
   const arrow = direction === "upload" ? "⬆" : "⬇";
-  const transferEl = addTransfer(panel, `${arrow} ${name}`, transferId);
+  const targetName = resolved.name;
+  const label = targetName === name ? `${arrow} ${name}` : `${arrow} ${name} → ${targetName}`;
+  const transferEl = job?.transferEl || addTransfer(panel, label, transferId);
+  setTransferState(transferEl, "running", "Preparando…");
+  transferEl.dataset.label = label;
+  transferEl.querySelector(".sftp-transfer-label").textContent = label;
+  if (job) job.status = "running";
+  const startedAt = Date.now();
+  const resultStatus = resolved.renamed ? "renamed" : (resolved.overwrite ? "overwritten" : "ok");
+  let finalTargetPath = "";
   const ul = await listen(`sftp-progress-${transferId}`, (ev) => {
     updateTransfer(transferEl, ev.payload);
   });
 
   try {
     if (direction === "upload") {
-      const remotePath = joinRemote(s.sftp.cwd, name);
-      const cmd = isDir ? "sftp_upload_dir" : "sftp_upload";
-      await invoke(cmd, {
+      const remotePath = joinRemote(s.sftp.cwd, targetName);
+      finalTargetPath = remotePath;
+      const invokeArgs = {
         sessionId: s.sftp.sftpSessionId,
         localPath: srcPath,
         remotePath,
         transferId,
+        verifySize: !!prefs.sftpVerifySize,
+      };
+      if (isDir) invokeArgs.conflictPolicy = recursiveConflictPolicyForTransfer(resolved);
+      appendSftpActivity(panel, {
+        status: "running",
+        label: `${transferDirectionLabel(direction)} ${label}`,
+        detail: `${srcPath} → ${remotePath}`,
+        startedAt,
       });
+      const cmd = isDir ? "sftp_upload_dir" : "sftp_upload";
+      await invoke(cmd, invokeArgs);
       markTransferSuccess(transferEl, `✓ Subido a ${remotePath}`);
-      navigateSftpRemote(sessionId, s.sftp.cwd);
+      if (job) job.status = "done";
+      appendSftpActivity(panel, {
+        status: resultStatus,
+        label: `${transferDirectionLabel(direction)} ${label}`,
+        detail: `${srcPath} → ${remotePath}`,
+        bytes: parseInt(transferEl.dataset.lastTotal || "0", 10),
+        startedAt,
+      });
+      await navigateSftpRemote(sessionId, s.sftp.cwd);
     } else {
       const localPath = await invoke("local_path_join", {
         base: s.sftp.localCwd,
-        name,
+        name: targetName,
       });
-      const cmd = isDir ? "sftp_download_dir" : "sftp_download";
-      await invoke(cmd, {
+      finalTargetPath = localPath;
+      const invokeArgs = {
         sessionId: s.sftp.sftpSessionId,
         remotePath: srcPath,
         localPath,
         transferId,
+        verifySize: !!prefs.sftpVerifySize,
+      };
+      if (isDir) invokeArgs.conflictPolicy = recursiveConflictPolicyForTransfer(resolved);
+      appendSftpActivity(panel, {
+        status: "running",
+        label: `${transferDirectionLabel(direction)} ${label}`,
+        detail: `${srcPath} → ${localPath}`,
+        startedAt,
       });
+      const cmd = isDir ? "sftp_download_dir" : "sftp_download";
+      await invoke(cmd, invokeArgs);
       markTransferSuccess(transferEl, `✓ Guardado en ${localPath}`);
-      navigateSftpLocal(sessionId, s.sftp.localCwd);
+      if (job) job.status = "done";
+      appendSftpActivity(panel, {
+        status: resultStatus,
+        label: `${transferDirectionLabel(direction)} ${label}`,
+        detail: `${srcPath} → ${localPath}`,
+        bytes: parseInt(transferEl.dataset.lastTotal || "0", 10),
+        startedAt,
+      });
+      await navigateSftpLocal(sessionId, s.sftp.localCwd);
     }
   } catch (err) {
-    markTransferError(transferEl, String(err));
-    toast(`Fallo transferencia: ${err}`, "error");
+    const canceled = /cancelad|cancel/i.test(String(err));
+    if (canceled) {
+      markTransferCanceled(transferEl, "Cancelado");
+      if (job) job.status = "canceled";
+    } else {
+      markTransferError(transferEl, String(err));
+      if (job) job.status = "error";
+    }
+    appendSftpActivity(panel, {
+      status: canceled ? "canceled" : "error",
+      label: `${transferDirectionLabel(direction)} ${label}`,
+      detail: `${srcPath}${finalTargetPath ? ` → ${finalTargetPath}` : ""}: ${String(err)}`,
+      bytes: parseInt(transferEl.dataset.lastTotal || "0", 10),
+      startedAt,
+    });
+    if (!canceled) {
+      toast(`Fallo transferencia: ${err}`, "error", 8000, {
+        actionLabel: "Ver log",
+        onAction: () => revealSftpActivity(panel),
+      });
+    }
+    return canceled ? "canceled" : "error";
   } finally {
     try { ul(); } catch {}
   }
+  return "done";
 }
 
 async function promptMkdir(sessionId, side) {
@@ -6152,9 +6854,31 @@ function addTransfer(panel, label, transferId, detail = "") {
     <div class="sftp-transfer-text">0 B / ?</div>
     <div class="sftp-transfer-bar"><div class="sftp-transfer-fill" style="width:0%"></div></div>
     <div class="sftp-transfer-detail">${escHtml(detail)}</div>
-    <button class="sftp-transfer-close" title="Descartar">✕</button>
+    <div class="sftp-transfer-actions">
+      <button class="sftp-transfer-retry hidden" title="Reintentar">↻</button>
+      <button class="sftp-transfer-close" title="Descartar / cancelar">✕</button>
+    </div>
   `;
+  el.querySelector(".sftp-transfer-retry").addEventListener("click", () => {
+    const sessionId = panel.closest(".terminal-pane")?.dataset.session;
+    if (sessionId) retrySftpTransfer(sessionId, transferId);
+  });
   el.querySelector(".sftp-transfer-close").addEventListener("click", () => {
+    const sessionId = panel.closest(".terminal-pane")?.dataset.session;
+    const job = sessionId ? sessions.get(sessionId)?.sftp?.transfers?.get(transferId) : null;
+    if (job?.status === "queued") {
+      cancelQueuedSftpTransfer(sessionId, transferId);
+      return;
+    }
+    if (job?.status === "running") {
+      setTransferState(el, "running", "Cancelando…");
+      invoke("sftp_cancel_transfer", {
+        sessionId: sessions.get(sessionId)?.sftp?.sftpSessionId,
+        transferId,
+      }).catch((err) => toast(`No se pudo cancelar: ${err}`, "error"));
+      return;
+    }
+    if (sessionId) sessions.get(sessionId)?.sftp?.transfers?.delete(transferId);
     el.remove();
     updateTransfersVisibility(panel);
   });
@@ -6162,11 +6886,33 @@ function addTransfer(panel, label, transferId, detail = "") {
   return el;
 }
 
+function setTransferState(el, state, detail = "") {
+  if (!el) return;
+  el.classList.remove("queued", "running", "done", "error", "skipped", "canceled");
+  el.classList.add(state);
+  if (["done", "error", "skipped", "canceled"].includes(state)) el.classList.add("done");
+  else el.classList.remove("done");
+  el.querySelector(".sftp-transfer-detail").textContent = detail;
+  el.querySelector(".sftp-transfer-retry")?.classList.toggle(
+    "hidden",
+    !["error", "skipped", "canceled"].includes(state),
+  );
+  if (state === "running") {
+    el.dataset.startedAt = String(Date.now());
+  }
+}
+
 function updateTransfer(el, { transferred, total, done }) {
   const pct = total > 0 ? Math.min(100, Math.round((transferred / total) * 100)) : 0;
   el.querySelector(".sftp-transfer-fill").style.width = pct + "%";
+  const startedAt = parseInt(el.dataset.startedAt || "0", 10);
+  const elapsed = Math.max(0.001, (Date.now() - startedAt) / 1000);
+  const speed = transferred > 0 ? transferred / elapsed : 0;
+  const eta = speed > 0 && total > transferred
+    ? ` · ${formatDuration((total - transferred) / speed)}`
+    : "";
   el.querySelector(".sftp-transfer-text").textContent =
-    `${formatSize(transferred)} / ${total > 0 ? formatSize(total) : "?"}${done ? " ✓" : ""}`;
+    `${formatSize(transferred)} / ${total > 0 ? formatSize(total) : "?"}${speed > 0 ? ` · ${formatSize(speed)}/s${eta}` : ""}${done ? " ✓" : ""}`;
   if (Number.isFinite(total) && total > 0) {
     el.dataset.lastTotal = String(total);
   }
@@ -6174,16 +6920,24 @@ function updateTransfer(el, { transferred, total, done }) {
 }
 
 function markTransferSuccess(el, detail) {
-  el.classList.add("done");
+  setTransferState(el, "done", detail);
   el.querySelector(".sftp-transfer-fill").style.width = "100%";
-  el.querySelector(".sftp-transfer-detail").textContent = detail;
   maybeNotifyTransfer(el, true);
 }
 
 function markTransferError(el, detail) {
-  el.classList.add("done", "error");
-  el.querySelector(".sftp-transfer-detail").textContent = `✗ ${detail}`;
+  setTransferState(el, "error", `✗ ${detail}`);
   maybeNotifyTransfer(el, false, detail);
+}
+
+function markTransferSkipped(el, detail) {
+  setTransferState(el, "skipped", detail);
+  el.querySelector(".sftp-transfer-text").textContent = "omitido";
+}
+
+function markTransferCanceled(el, detail) {
+  setTransferState(el, "canceled", detail);
+  el.querySelector(".sftp-transfer-text").textContent = "cancelado";
 }
 
 const SFTP_NOTIFY_MIN_MS = 5000;
@@ -6217,8 +6971,11 @@ function maybeNotifyTransfer(el, success, errorDetail = "") {
 
 function updateTransfersVisibility(panel) {
   const list = panel.querySelector(".sftp-transfers");
+  const activity = panel.querySelector(".sftp-activity-log");
   const wrap = panel.querySelector(".sftp-transfers-wrap");
-  wrap.classList.toggle("hidden", list.children.length === 0);
+  const hasTransfers = (list?.children.length || 0) > 0;
+  const hasActivity = (activity?.children.length || 0) > 0;
+  wrap.classList.toggle("hidden", !hasTransfers && !hasActivity);
 }
 
 function setSftpStatus(panel, msg) {
@@ -6252,6 +7009,16 @@ function formatSize(bytes) {
   let v = bytes / 1024, u = 0;
   while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
   return v.toFixed(v >= 100 ? 0 : 1) + " " + units[u];
+}
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "?";
+  if (seconds < 60) return `${Math.ceil(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.ceil(seconds % 60);
+  if (mins < 60) return `${mins}m ${secs}s`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h ${mins % 60}m`;
 }
 
 function formatTime(secs) {
@@ -6529,6 +7296,7 @@ async function importFromSshConfig() {
       auth_type: hasKey ? "public_key" : "password",
       key_path: hasKey ? b.identityFile : null,
       group: folder,
+      notes: null,
       workspace_id: wsId,
       keepass_entry_uuid: null,
       follow_cwd: true,
@@ -6540,6 +7308,9 @@ async function importFromSshConfig() {
       session_log: false,
       session_log_dir: null,
       proxy_jump: b.proxyJump || null,
+      mac_address: null,
+      wol_broadcast: null,
+      wol_port: null,
       created_at: now,
       updated_at: now,
     };
@@ -6740,6 +7511,10 @@ function bindUIEvents() {
       if (e.target.classList.contains("btn-shortcut-reset")) resetShortcut(id);
     });
   }
+  document.getElementById("btn-shortcuts-export")
+    ?.addEventListener("click", () => exportShortcuts());
+  document.getElementById("btn-shortcuts-import")
+    ?.addEventListener("click", () => importShortcuts());
 
   // Acerca de: enlaces externos (pasan por el opener del sistema)
   document.querySelectorAll(".about-link").forEach((a) => {
@@ -6913,6 +7688,9 @@ function bindUIEvents() {
   document.getElementById("f-use-keepass").addEventListener("change", () =>
     updateAuthFields(document.getElementById("f-auth-type").value)
   );
+  document.getElementById("f-keepass-entry").addEventListener("change", () =>
+    updateKeepassEntryValidation()
+  );
 
   document.getElementById("btn-toggle-password").addEventListener("click", () => {
     const input = document.getElementById("f-password");
@@ -7053,11 +7831,17 @@ const SHORTCUT_ACTIONS = {
   close_tab:         { default: "Ctrl+W",         run: () => { if (activeSessionId) closeSession(activeSessionId); } },
   next_tab:          { default: "Ctrl+Tab",       run: () => switchTab(1) },
   prev_tab:          { default: "Ctrl+Shift+Tab", run: () => switchTab(-1) },
+  next_pane:         { default: "Ctrl+Alt+ArrowRight", run: () => focusPaneByOffset(+1) },
+  prev_pane:         { default: "Ctrl+Alt+ArrowLeft",  run: () => focusPaneByOffset(-1) },
   open_preferences:  { default: "Ctrl+,",         run: () => openSettingsModal() },
   zoom_in:           { default: "Ctrl+=",         run: () => adjustTerminalFontSize(+1) },
   zoom_out:          { default: "Ctrl+-",         run: () => adjustTerminalFontSize(-1) },
   zoom_reset:        { default: "Ctrl+0",         run: () => adjustTerminalFontSize("reset") },
   find_in_terminal:  { default: "Ctrl+F",         run: () => toggleTerminalSearch() },
+  clear_terminal:    { default: null,             run: () => clearActiveTerminal() },
+  sftp_toggle_panel: { default: "Ctrl+Shift+F",   run: () => toggleActiveSftpPanel() },
+  sftp_toggle_follow:{ default: null,             run: () => toggleActiveSftpFollow() },
+  sftp_toggle_sudo:  { default: null,             run: () => toggleActiveSftpElevated() },
 };
 
 const SHORTCUT_IDS = Object.keys(SHORTCUT_ACTIONS);
@@ -7149,6 +7933,85 @@ function renderShortcutsList() {
   }
   root.innerHTML = html;
   applyTranslations(root);
+}
+
+function normalizeShortcutMap(raw) {
+  const input = raw?.shortcuts && typeof raw.shortcuts === "object" ? raw.shortcuts : raw;
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("invalid shortcut map");
+  }
+  const out = {};
+  for (const id of SHORTCUT_IDS) {
+    if (!Object.prototype.hasOwnProperty.call(input, id)) continue;
+    const value = input[id];
+    if (value === null || typeof value === "string") {
+      out[id] = value;
+    }
+  }
+  return out;
+}
+
+async function exportShortcuts() {
+  let path;
+  try {
+    path = await saveDialog({
+      title: t("prefs_shortcuts.export_title"),
+      defaultPath: "rustty-shortcuts.json",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+  } catch (err) { toast(String(err), "error"); return; }
+  if (!path) return;
+
+  try {
+    await invoke("write_text_file", {
+      path,
+      contents: JSON.stringify({
+        formatVersion: 1,
+        exportedAt: new Date().toISOString(),
+        shortcuts: prefs.shortcuts || {},
+      }, null, 2),
+    });
+    toast(t("prefs_shortcuts.export_done"), "success");
+  } catch (err) {
+    toast(String(err), "error");
+  }
+}
+
+async function importShortcuts() {
+  let path;
+  try {
+    path = await openDialog({
+      title: t("prefs_shortcuts.import_title"),
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+  } catch (err) { toast(String(err), "error"); return; }
+  if (!path) return;
+
+  let imported;
+  try {
+    const text = await invoke("read_text_file", { path });
+    imported = normalizeShortcutMap(JSON.parse(text));
+  } catch {
+    toast(t("prefs_shortcuts.import_invalid"), "error");
+    return;
+  }
+
+  const ok = await confirmThemed({
+    title: t("prefs_shortcuts.import_title"),
+    message: t("prefs_shortcuts.import_confirm"),
+    submitLabel: t("prefs_shortcuts.import"),
+  });
+  if (!ok) return;
+
+  const now = new Date().toISOString();
+  prefs.shortcuts = imported;
+  prefs._shortcutsTs = Object.fromEntries(Object.keys(imported).map((id) => [id, now]));
+  prefs._prefsUpdatedAt = now;
+  savePrefs();
+  renderShortcutsList();
+  scheduleProfileAutoSync();
+  toast(t("prefs_shortcuts.import_done"), "success");
 }
 
 let _captureState = null; // { id, row, comboEl }
@@ -7348,6 +8211,14 @@ function copyActiveSelection() {
   if (!s?.terminal) return;
   const sel = s.terminal.getSelection();
   if (sel) writeSystemClipboardText(sel);
+}
+
+function clearActiveTerminal() {
+  if (!activeSessionId) return;
+  const s = sessions.get(activeSessionId);
+  if (!s?.terminal) return;
+  s.terminal.clear();
+  s.terminal.focus();
 }
 
 /**
@@ -7890,10 +8761,35 @@ function escHtml(str) {
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function toast(message, type = "info", ms = 3500) {
+function toast(message, type = "info", ms = 3500, options = {}) {
+  if (typeof ms === "object" && ms !== null) {
+    options = ms;
+    ms = 3500;
+  }
+  if (type === "error" && !options.actionLabel) {
+    options = {
+      ...options,
+      actionLabel: t("toast.copy_error"),
+      onAction: () => writeSystemClipboardText(String(message)),
+    };
+  }
   const el = document.createElement("div");
   el.className = `toast ${type}`;
-  el.textContent = message;
+  const text = document.createElement("span");
+  text.className = "toast-message";
+  text.textContent = message;
+  el.appendChild(text);
+  if (options.actionLabel && typeof options.onAction === "function") {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "toast-action";
+    btn.textContent = options.actionLabel;
+    btn.addEventListener("click", () => {
+      options.onAction();
+      el.remove();
+    });
+    el.appendChild(btn);
+  }
   document.getElementById("toast-container").appendChild(el);
   setTimeout(() => el.remove(), ms);
 }
