@@ -3573,7 +3573,7 @@ html.theme-monokai {
 .sftp-panel {
   flex: 0 0 42%;
   min-height: 160px;
-  max-height: 70%;
+  max-height: calc(100% - 140px);
   display: flex;
   flex-direction: column;
   margin-top: 6px;
@@ -3589,17 +3589,48 @@ html.theme-monokai {
 .sftp-panel-split {
   display: grid;
   grid-template-columns: 1fr 44px 1fr;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: 7px 1fr auto;
   grid-template-areas:
+    "resize resize resize"
     "remote divider local"
     "transfers transfers transfers";
   gap: 0;
 }
 
+.sftp-panel-split > .sftp-resize-handle { grid-area: resize; }
 .sftp-panel-split > .sftp-side-local { grid-area: local; }
 .sftp-panel-split > .sftp-divider { grid-area: divider; }
 .sftp-panel-split > .sftp-side-remote { grid-area: remote; }
 .sftp-panel-split > .sftp-transfers-wrap { grid-area: transfers; }
+
+.sftp-resize-handle {
+  cursor: row-resize;
+  background: var(--crust);
+  border-bottom: 1px solid var(--surface0);
+  position: relative;
+}
+
+.sftp-resize-handle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 42px;
+  height: 2px;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  background: var(--surface2);
+}
+
+.sftp-resize-handle:hover::after,
+body.sftp-panel-resizing .sftp-resize-handle::after {
+  background: var(--blue);
+}
+
+body.sftp-panel-resizing {
+  cursor: row-resize;
+  user-select: none;
+}
 
 .sftp-side {
   display: flex;

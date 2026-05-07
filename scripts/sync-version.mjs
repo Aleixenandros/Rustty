@@ -7,7 +7,6 @@ const packagePath = resolve(root, "package.json");
 const packageLockPath = resolve(root, "package-lock.json");
 const cargoPath = resolve(root, "src-tauri", "Cargo.toml");
 const cargoLockPath = resolve(root, "src-tauri", "Cargo.lock");
-const readmePath = resolve(root, "README.md");
 
 const pkg = JSON.parse(await readFile(packagePath, "utf8"));
 const versionPattern = String.raw`\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?`;
@@ -47,13 +46,6 @@ await updateTextFile(cargoLockPath, (lock) =>
   lock.replace(
     /(\[\[package\]\]\nname = "rustty"\nversion = ")[^"]+(")/,
     `$1${version}$2`
-  )
-);
-
-await updateTextFile(readmePath, (readme) =>
-  readme.replace(
-    /Última versión publicada: \*\*[^*]+\*\*/,
-    `Última versión publicada: **${version}**`
   )
 );
 

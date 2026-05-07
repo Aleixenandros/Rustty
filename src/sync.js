@@ -30,9 +30,13 @@ const SYNCED_PREF_KEYS = [
   "fontFamily", "fontSize", "lineHeight", "letterSpacing",
   "cursorStyle", "cursorBlink", "scrollback", "bell", "lang",
   "userFolders", "userFoldersByWorkspace",
-  "workspaces", "activeWorkspaceId", "favorites", "sidebarViewMode",
+  "workspaces", "favorites",
   "folderColors", "highlightRules",
 ];
+
+// Estado local de navegación. No debe viajar ni re-aplicarse desde otra
+// máquina porque hace que la sidebar cambie o se repliegue al terminar sync.
+const LOCAL_UI_PREF_KEYS = new Set(["activeWorkspaceId", "sidebarViewMode"]);
 
 /* ───────────────────────────── Construcción del estado ─────────────────── */
 
@@ -202,7 +206,10 @@ export async function applyMergedState(merged, ctx) {
         console.error("[sync] save_profile", id, err);
       }
     } else if (key === "prefs:bundle") {
-      Object.assign(prefs, item.data);
+      for (const [prefKey, value] of Object.entries(item.data || {})) {
+        if (LOCAL_UI_PREF_KEYS.has(prefKey)) continue;
+        prefs[prefKey] = value;
+      }
       prefs._prefsUpdatedAt = item.updated_at;
       prefsChanged = true;
     } else if (key.startsWith("theme:")) {

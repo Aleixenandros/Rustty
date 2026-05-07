@@ -2,6 +2,32 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [0.6.3] - 2026-05-07
+
+### Añadido
+
+- El panel SFTP de una conexión SSH ahora se puede redimensionar desde un
+  tirador superior, recuerda su altura y permite volver al tamaño por defecto
+  con doble clic.
+- El lanzador RDP en Windows es más robusto: busca `mstsc.exe` en rutas del
+  sistema, valida salidas tempranas y añade fallbacks mediante `cmd start
+  /WAIT` y URL `rdp://`.
+
+### Cambiado
+
+- La autosincronización tras cambios locales espera ahora 1 minuto antes de
+  arrancar, para evitar competir con reorganizaciones largas de perfiles y
+  carpetas.
+- `sync-version` deja de tocar el README; `package.json` sigue siendo la fuente
+  única y la web resuelve la última versión desde GitHub.
+
+### Corregido
+
+- Al terminar una sincronización ya no se repliega el árbol de carpetas que el
+  usuario tenía abierto en la sidebar.
+- La sincronización deja de aplicar estado local de navegación de otro equipo
+  como workspace activo o modo de vista de la sidebar.
+
 ## [0.6.2] - 2026-05-06
 
 ### Añadido

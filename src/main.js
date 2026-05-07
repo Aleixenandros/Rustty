@@ -81,6 +81,10 @@ const DEFAULT_SYNC_HISTORY_KEEP = 30;
 const WINDOW_STATE_FLAGS_SIZE_POSITION_MAXIMIZED = 1 | 2 | 4;
 const WINDOW_CLOSE_FALLBACK_MS = 700;
 const WINDOW_STATE_CLOSE_SAVE_TIMEOUT_MS = 250;
+const SFTP_PANEL_HEIGHT_STORAGE_KEY = "rustty-sftp-panel-height-percent";
+const SFTP_PANEL_DEFAULT_HEIGHT_PERCENT = 42;
+const SFTP_PANEL_MIN_HEIGHT = 160;
+const SFTP_PANEL_MIN_TERMINAL_HEIGHT = 140;
 
 let bellAudioContext = null;
 
@@ -961,7 +965,7 @@ let _syncSidebarTextKey = "prefs_sync.status_idle";
 let _syncProfileAutoTimer = null;
 let _syncInFlight = false;
 let _syncPending = false;
-const SYNC_AUTO_DEBOUNCE_MS = 5000;
+const SYNC_AUTO_DEBOUNCE_MS = 60_000;
 async function populateSyncTab() {
   const config = await sync.getConfig().catch(() => ({
     enabled: false, backend: "none",
@@ -1221,6 +1225,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
 
   _syncInFlight = true;
   setSyncStatus("busy", "prefs_sync.status_busy");
+  const sidebarTreeState = captureSidebarTreeState();
   try {
     if (persistConfig) {
       await persistSyncConfig();
@@ -1235,6 +1240,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     registerAllCustomThemes();
     // Recargar perfiles del backend (puede haber añadidos/borrados)
     profiles = await invoke("get_profiles");
+    restoreSidebarTreeState(sidebarTreeState);
     renderConnectionList();
     // Reaplica tema y prefs si cambiaron
     applyTheme(prefs.theme);
@@ -2017,6 +2023,46 @@ function syncSidebarToActiveSession({ scroll = false } = {}) {
 
   if (scroll) {
     requestAnimationFrame(() => markSidebarProfile(profileId, { scroll: true }));
+  }
+}
+
+function captureSidebarTreeState() {
+  const container = document.getElementById("connection-list");
+  const openVisibleFolders = [];
+  container?.querySelectorAll(".folder-item").forEach((item) => {
+    const path = item.dataset.folderPath;
+    if (!path || !openFolders.has(path)) return;
+    openVisibleFolders.push({
+      path,
+      workspaceId: workspaceForElement(item),
+    });
+  });
+  return {
+    activeWorkspaceId: getActiveWorkspaceId(),
+    sidebarViewMode: prefs.sidebarViewMode,
+    openFolders: [...openFolders],
+    openVisibleFolders,
+  };
+}
+
+function restoreSidebarTreeState(state) {
+  if (!state) return;
+  const workspaces = Array.isArray(prefs.workspaces) ? prefs.workspaces : [];
+  if (workspaces.some((w) => w.id === state.activeWorkspaceId)) {
+    prefs.activeWorkspaceId = state.activeWorkspaceId;
+  }
+  if (["current", "all", "favorites"].includes(state.sidebarViewMode)) {
+    prefs.sidebarViewMode = state.sidebarViewMode;
+  }
+  userFolders = new Set(getWorkspaceFolders(getActiveWorkspaceId()));
+
+  openFolders.clear();
+  for (const path of state.openFolders || []) {
+    if (path) openFolders.add(path);
+  }
+  for (const item of state.openVisibleFolders || []) {
+    if (item?.path) openFolders.add(item.path);
+    if (item?.workspaceId) openFolders.add(`__ws__/${item.workspaceId}`);
   }
 }
 
@@ -6145,10 +6191,91 @@ function toggleActiveSftpElevated() {
   toggleSftpElevated(activeSessionId);
 }
 
+function getStoredSftpPanelHeightPercent() {
+  const raw = Number(localStorage.getItem(SFTP_PANEL_HEIGHT_STORAGE_KEY));
+  if (!Number.isFinite(raw) || raw <= 0) return SFTP_PANEL_DEFAULT_HEIGHT_PERCENT;
+  return Math.min(85, Math.max(20, raw));
+}
+
+function applySftpPanelHeight(panel, percent = getStoredSftpPanelHeightPercent()) {
+  panel.style.flexBasis = `${percent}%`;
+}
+
+function setupSftpPanelResize(panel, sessionId) {
+  const handle = panel.querySelector(".sftp-resize-handle");
+  if (!handle) return;
+  applySftpPanelHeight(panel);
+
+  handle.addEventListener("dblclick", () => {
+    localStorage.removeItem(SFTP_PANEL_HEIGHT_STORAGE_KEY);
+    applySftpPanelHeight(panel, SFTP_PANEL_DEFAULT_HEIGHT_PERCENT);
+    const s = sessions.get(sessionId);
+    s?.fitAddon?.fit();
+    notifyResize(sessionId, s?.terminal);
+  });
+
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const pane = panel.closest(".terminal-pane");
+    if (!pane) return;
+    e.preventDefault();
+    handle.setPointerCapture?.(e.pointerId);
+
+    const paneRect = pane.getBoundingClientRect();
+    const startY = e.clientY;
+    const startHeight = panel.getBoundingClientRect().height;
+    const maxHeight = Math.max(
+      SFTP_PANEL_MIN_HEIGHT,
+      paneRect.height - SFTP_PANEL_MIN_TERMINAL_HEIGHT
+    );
+    let raf = null;
+
+    document.body.classList.add("sftp-panel-resizing");
+
+    const fitVisibleTerminal = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = null;
+        const s = sessions.get(sessionId);
+        if (s?.fitAddon) {
+          try {
+            s.fitAddon.fit();
+            notifyResize(sessionId, s.terminal);
+          } catch {}
+        }
+      });
+    };
+
+    const onMove = (ev) => {
+      const delta = ev.clientY - startY;
+      const nextPx = Math.min(maxHeight, Math.max(SFTP_PANEL_MIN_HEIGHT, startHeight - delta));
+      panel.style.flexBasis = `${nextPx}px`;
+      fitVisibleTerminal();
+    };
+
+    const onUp = () => {
+      document.body.classList.remove("sftp-panel-resizing");
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+      const finalHeight = panel.getBoundingClientRect().height;
+      const pct = Math.min(85, Math.max(20, (finalHeight / paneRect.height) * 100));
+      localStorage.setItem(SFTP_PANEL_HEIGHT_STORAGE_KEY, String(Math.round(pct)));
+      applySftpPanelHeight(panel, pct);
+      fitVisibleTerminal();
+    };
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+  });
+}
+
 function buildSftpPanel(sessionId) {
   const panel = document.createElement("div");
   panel.className = "sftp-panel sftp-panel-split";
   panel.innerHTML = `
+    <div class="sftp-resize-handle" title="Redimensionar panel SFTP"></div>
     <div class="sftp-side sftp-side-local" data-side="local">
       <div class="sftp-side-title">Local</div>
       <div class="sftp-toolbar">
@@ -6294,6 +6421,8 @@ function buildSftpPanel(sessionId) {
       else transferSelected(sessionId, "download");
     });
   });
+
+  setupSftpPanelResize(panel, sessionId);
 
   return panel;
 }

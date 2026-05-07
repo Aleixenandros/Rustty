@@ -186,30 +186,186 @@ fn spawn_rdp_client(
     domain: Option<&str>,
     _password: Option<&str>, // mstsc no acepta contraseñas por línea de comandos
 ) -> Result<SpawnedRdpClient, String> {
-    let rdp_content = format!(
-        "full address:s:{host}:{port}\r\nusername:s:{username}\r\ndomain:s:{domain}\r\npromptcredentialonce:i:1\r\n",
-        domain = domain.unwrap_or("")
+    let rdp_path = write_windows_rdp_file(host, port, username, domain)?;
+    let mut errors = Vec::new();
+
+    if let Some(mstsc) = resolve_mstsc_path() {
+        match spawn_windows_mstsc(&mstsc, &rdp_path) {
+            Ok(child) => {
+                return Ok(SpawnedRdpClient {
+                    child,
+                    cleanup_path: Some(rdp_path),
+                });
+            }
+            Err(err) => errors.push(err),
+        }
+
+        match spawn_windows_rdp_file_via_shell(&rdp_path) {
+            Ok(child) => {
+                return Ok(SpawnedRdpClient {
+                    child,
+                    cleanup_path: Some(rdp_path),
+                });
+            }
+            Err(err) => errors.push(err),
+        }
+    } else {
+        errors.push(
+            "mstsc.exe no encontrado en SystemRoot/System32, Sysnative, WINDIR ni PATH".to_string(),
+        );
+    }
+
+    let _ = std::fs::remove_file(&rdp_path);
+
+    match spawn_windows_rdp_url(host, port, username, domain) {
+        Ok(child) => Ok(SpawnedRdpClient {
+            child,
+            cleanup_path: None,
+        }),
+        Err(url_err) => {
+            errors.push(format!("fallback rdp:// falló: {url_err}"));
+            Err(format!(
+                "No se pudo lanzar RDP en Windows:\n- {}",
+                errors.join("\n- ")
+            ))
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn write_windows_rdp_file(
+    host: &str,
+    port: u16,
+    username: &str,
+    domain: Option<&str>,
+) -> Result<PathBuf, String> {
+    let domain = domain.unwrap_or("").trim();
+    let mut rdp_content = format!(
+        "full address:s:{host}:{port}\r\nusername:s:{username}\r\npromptcredentialonce:i:1\r\n"
     );
+    if !domain.is_empty() {
+        rdp_content.push_str(&format!("domain:s:{domain}\r\n"));
+    }
 
     let rdp_path = std::env::temp_dir().join(format!("rustty_{}.rdp", uuid::Uuid::new_v4()));
     std::fs::write(&rdp_path, rdp_content)
         .map_err(|e| format!("Error al crear fichero RDP temporal: {e}"))?;
+    Ok(rdp_path)
+}
 
-    let child = match std::process::Command::new("mstsc")
-        .arg(rdp_path.to_string_lossy().as_ref())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(e) => {
-            let _ = std::fs::remove_file(&rdp_path);
-            return Err(format!("Error al lanzar mstsc.exe: {e}"));
+#[cfg(target_os = "windows")]
+fn resolve_mstsc_path() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    for var in ["SystemRoot", "WINDIR"] {
+        if let Some(root) = std::env::var_os(var) {
+            let root = PathBuf::from(root);
+            candidates.push(root.join("System32").join("mstsc.exe"));
+            candidates.push(root.join("Sysnative").join("mstsc.exe"));
         }
-    };
+    }
 
-    Ok(SpawnedRdpClient {
-        child,
-        cleanup_path: Some(rdp_path),
-    })
+    if let Some(path) = find_exe_on_path("mstsc.exe") {
+        candidates.push(path);
+    }
+
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn find_exe_on_path(exe: &str) -> Option<PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    std::env::split_paths(&path_var)
+        .map(|dir| dir.join(exe))
+        .find(|path| path.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_windows_mstsc(
+    mstsc_path: &std::path::Path,
+    rdp_path: &std::path::Path,
+) -> Result<std::process::Child, String> {
+    let mut child = std::process::Command::new(mstsc_path)
+        .arg(rdp_path)
+        .spawn()
+        .map_err(|e| format!("Error al lanzar {}: {e}", mstsc_path.display()))?;
+
+    ensure_process_did_not_fail_immediately(&mut child, "mstsc.exe", false)?;
+    Ok(child)
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_windows_rdp_file_via_shell(
+    rdp_path: &std::path::Path,
+) -> Result<std::process::Child, String> {
+    let mut child = std::process::Command::new("cmd")
+        .args(["/C", "start", "\"\"", "/WAIT"])
+        .arg(rdp_path)
+        .spawn()
+        .map_err(|e| format!("Error al abrir .rdp con cmd/start: {e}"))?;
+
+    ensure_process_did_not_fail_immediately(&mut child, "cmd start /WAIT .rdp", true)?;
+    Ok(child)
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_windows_rdp_url(
+    host: &str,
+    port: u16,
+    username: &str,
+    domain: Option<&str>,
+) -> Result<std::process::Child, String> {
+    let url = build_windows_rdp_url(host, port, username, domain);
+    let mut child = std::process::Command::new("cmd")
+        .args(["/C", "start", "\"\"", "/WAIT"])
+        .arg(&url)
+        .spawn()
+        .map_err(|e| format!("Error al abrir URL rdp://: {e}"))?;
+
+    ensure_process_did_not_fail_immediately(&mut child, "cmd start /WAIT rdp://", true)?;
+    Ok(child)
+}
+
+#[cfg(target_os = "windows")]
+fn build_windows_rdp_url(host: &str, port: u16, username: &str, domain: Option<&str>) -> String {
+    let full_address = format!("{host}:{port}");
+    let mut url = format!(
+        "rdp://full%20address=s:{full_address}&username=s:{}",
+        urlencoding::encode(username)
+    );
+    if let Some(domain) = domain.map(str::trim).filter(|d| !d.is_empty()) {
+        url.push_str("&domain=s:");
+        url.push_str(&urlencoding::encode(domain));
+    }
+    url
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_process_did_not_fail_immediately(
+    child: &mut std::process::Child,
+    label: &str,
+    accept_quick_success: bool,
+) -> Result<(), String> {
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    match child.try_wait() {
+        Ok(Some(status)) if status.success() && accept_quick_success => Ok(()),
+        Ok(Some(status)) if status.success() => Err(format!(
+            "{label} terminó inmediatamente con código 0; se probará otro método"
+        )),
+        Ok(Some(status)) => Err(format!(
+            "{label} terminó inmediatamente con {}",
+            format_exit_status(status)
+        )),
+        Ok(None) => Ok(()),
+        Err(e) => Err(format!("No se pudo comprobar el estado de {label}: {e}")),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn format_exit_status(status: std::process::ExitStatus) -> String {
+    match status.code() {
+        Some(code) => format!("código {code}"),
+        None => "salida sin código".to_string(),
+    }
 }
 
 /// macOS: abre la URL rdp:// con el cliente registrado (Microsoft Remote Desktop)

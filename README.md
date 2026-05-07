@@ -5,7 +5,7 @@
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
 
-> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Última versión publicada: **0.6.2**. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
+> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
 
 ## Características principales
 
@@ -289,7 +289,7 @@ La fuente única de versión es `package.json`. Para preparar una release, cambi
 npm run sync-version
 ```
 
-Ese comando sincroniza `Cargo.toml`, `Cargo.lock`, `package-lock.json` y el aviso de versión del README. La web pública resuelve su versión desde la última release de GitHub, no desde `package.json`. `npm run build`, `npm run tauri dev` y `npm run tauri build` también ejecutan la sincronización automáticamente.
+Ese comando sincroniza `Cargo.toml`, `Cargo.lock` y `package-lock.json`. La web pública resuelve su versión desde la última release de GitHub, no desde `package.json`. `npm run build`, `npm run tauri dev` y `npm run tauri build` también ejecutan la sincronización automáticamente.
 
 ```bash
 git tag v0.1.0
