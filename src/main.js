@@ -5021,6 +5021,24 @@ function injectOsc7Setup(sessionId) {
   sendTerminalInput(s, `${setup}\r`);
 }
 
+function canInjectOsc7ForSession(sessionObj) {
+  const profile = sessionObj?.profileId ? profiles.find((p) => p.id === sessionObj.profileId) : null;
+  return !profile || profile.follow_cwd !== false;
+}
+
+function setSftpFollow(sessionId, enabled, button = null) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  s.sftp.follow = !!enabled;
+  button?.classList.toggle("active", s.sftp.follow);
+  if (!s.sftp.follow) return;
+  if (s.remoteCwd && s.remoteCwd !== s.sftp.cwd) {
+    navigateSftpRemote(sessionId, s.remoteCwd);
+  } else if (!s.remoteCwd && canInjectOsc7ForSession(s)) {
+    injectOsc7Setup(sessionId);
+  }
+}
+
 /**
  * Maneja input de una terminal. Si broadcast está activo y la sesión forma parte
  * de la vista actual, replica el input a todas las otras panes de la vista.
@@ -5722,10 +5740,6 @@ async function registerSshListeners(sessionId, terminal) {
     renderConnectionList();
     s?.fitAddon.fit();
     notifyResize(sessionId, terminal);
-    const prof = s?.profileId ? profiles.find((p) => p.id === s.profileId) : null;
-    if (!prof || prof.follow_cwd !== false) {
-      setTimeout(() => injectOsc7Setup(sessionId), 400);
-    }
     startProfileAutoTunnels(sessionId);
   }));
 
@@ -6565,7 +6579,7 @@ async function openSftpPanel(sessionId) {
     transfers: new Map(),
     transferQueue: [],
     transferProcessing: false,
-    follow: true,  // Seguir al terminal por defecto si emite OSC 7
+    follow: false,
     elevated: false,
   };
 
@@ -6705,12 +6719,8 @@ function toggleActiveSftpFollow() {
     toast("Abre primero el panel SFTP", "warning");
     return;
   }
-  s.sftp.follow = !s.sftp.follow;
   const btn = s.sftp.panel.querySelector('[data-sftp-nav="follow"]');
-  btn?.classList.toggle("active", s.sftp.follow);
-  if (s.sftp.follow && s.remoteCwd && s.remoteCwd !== s.sftp.cwd) {
-    navigateSftpRemote(activeSessionId, s.remoteCwd);
-  }
+  setSftpFollow(activeSessionId, !s.sftp.follow, btn);
 }
 
 function toggleActiveSftpElevated() {
@@ -6835,7 +6845,7 @@ function buildSftpPanel(sessionId) {
         <button class="sftp-nav-btn" data-sftp-nav="up" data-side="remote" title="Directorio padre">↑</button>
         <button class="sftp-nav-btn" data-sftp-nav="home" data-side="remote" title="Inicio">⌂</button>
         <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="remote" title="Refrescar">⟳</button>
-        <button class="sftp-nav-btn sftp-follow-btn active" data-sftp-nav="follow"
+        <button class="sftp-nav-btn sftp-follow-btn" data-sftp-nav="follow"
                 title="Seguir el cwd del terminal (OSC 7)">CWD</button>
         <button class="sftp-nav-btn sftp-sudo-btn" data-sftp-nav="sudo"
                 title="Reconectar SFTP elevado (sudo -n sftp-server). Requiere NOPASSWD en /etc/sudoers">sudo</button>
@@ -6870,11 +6880,7 @@ function buildSftpPanel(sessionId) {
       const s = sessions.get(sessionId);
       if (!s?.sftp) return;
       if (nav === "follow") {
-        s.sftp.follow = !s.sftp.follow;
-        btn.classList.toggle("active", s.sftp.follow);
-        if (s.sftp.follow && s.remoteCwd && s.remoteCwd !== s.sftp.cwd) {
-          navigateSftpRemote(sessionId, s.remoteCwd);
-        }
+        setSftpFollow(sessionId, !s.sftp.follow, btn);
         return;
       }
       if (nav === "sudo") {

@@ -5,13 +5,13 @@
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
 
-> ✅ **Estado**: versión estable 1.0.1. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
+> ✅ **Estado**: versión estable 1.0.2. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
 
 ## Características principales
 
 - **Multi-protocolo**: conexiones SSH, SFTP y RDP (este último mediante `xfreerdp` / `mstsc` externos).
 - **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F), barra inferior con estado/latencia/diagnóstico y soporte de OSC 7 (seguimiento del `cwd` remoto).
-- **Panel SFTP integrado**: explorador de ficheros con **vista dividida remoto / local**, transferencia recursiva de carpetas, drag & drop, seguimiento automático del directorio del terminal y modo elevado a **sudo** cuando el servidor lo permita.
+- **Panel SFTP integrado**: explorador de ficheros con **vista dividida remoto / local**, transferencia recursiva de carpetas, drag & drop, seguimiento opcional del directorio del terminal y modo elevado a **sudo** cuando el servidor lo permita.
 - **Túneles SSH integrados**: redirección de puertos **local** (`-L`), **remota** (`-R`) y **dinámica / SOCKS** (`-D`) sobre una sesión activa o desde acceso rápido global, con panel de estado, tráfico, túneles guardados y autoconexión opcional por perfil.
 - **Opciones avanzadas SSH por perfil**: keep-alive configurable, **reconexión automática con backoff** ante caídas, **grabación de sesión** a fichero, bastion / ProxyJump, agent forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) en servidores antiguos.
 - **Multi-pestaña y vistas divididas**: trabaja con varias sesiones simultáneas, distribúyelas en *split* horizontal / vertical / grid y activa el *broadcast* para teclear en varias a la vez.

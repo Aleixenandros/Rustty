@@ -2,6 +2,15 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.0.2] - 2026-05-08
+
+### Corregido
+
+- Rustty deja de inyectar el hook OSC 7 al abrir una sesión SSH. El seguimiento
+  de `cwd` remoto queda desactivado por defecto y solo se activa al pulsar
+  **CWD** en el panel SFTP, evitando que shells restringidos o CLIs remotas
+  impriman el comando de integración como `Command not found`.
+
 ## [1.0.1] - 2026-05-08
 
 ### Añadido
