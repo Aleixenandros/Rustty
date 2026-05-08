@@ -21,6 +21,7 @@ use russh::client::{self, AuthResult};
 use russh::keys::ssh_key::Algorithm;
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
 use russh::{cipher, kex, ChannelMsg, Preferred};
+use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -306,6 +307,18 @@ impl SshManager {
     }
 }
 
+pub async fn test_connection(
+    test_id: String,
+    profile: ConnectionProfile,
+    password: Option<String>,
+    passphrase: Option<String>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    run_connection_test(test_id, profile, password, passphrase, app_handle)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ─── Worker asíncrono ───────────────────────────────────────────────────────
 
 /// Indica cómo terminó una iteración de `run_session`. Se usa para decidir si
@@ -448,6 +461,285 @@ fn sanitize_filename(input: &str) -> String {
             }
         })
         .collect()
+}
+
+async fn run_connection_test(
+    test_id: String,
+    profile: ConnectionProfile,
+    password: Option<String>,
+    passphrase: Option<String>,
+    app_handle: AppHandle,
+) -> Result<(), AppError> {
+    let preferred = if profile.allow_legacy_algorithms {
+        legacy_preferred()
+    } else {
+        Preferred::default()
+    };
+    let config = Arc::new(client::Config {
+        inactivity_timeout: Some(Duration::from_secs(30)),
+        keepalive_interval: None,
+        preferred,
+        ..Default::default()
+    });
+    let addr = format!("{}:{}", profile.host, profile.port);
+    let proxy_spec = profile
+        .proxy_jump
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    emit_connection_log(
+        &app_handle,
+        &test_id,
+        "resolving",
+        "info",
+        format!("Resolviendo {}:{}", profile.host, profile.port),
+    );
+
+    let mut handle = if let Some(spec) = proxy_spec {
+        let (b_user, b_host, b_port) = parse_jump_spec(spec, &profile.username);
+        let bastion_addr = format!("{}:{}", b_host, b_port);
+        let (bastion_handler, bastion_failure) =
+            host_keys::client(b_host.clone(), b_port, false, false);
+
+        emit_connection_log(
+            &app_handle,
+            &test_id,
+            "connecting",
+            "info",
+            format!("Conectando al bastion {bastion_addr}"),
+        );
+        emit_connection_log(
+            &app_handle,
+            &test_id,
+            "verifying_host_key",
+            "info",
+            format!("Verificando host key del bastion {b_host}:{b_port}"),
+        );
+        let mut bastion = client::connect(config.clone(), bastion_addr.clone(), bastion_handler)
+            .await
+            .map_err(|err| {
+                host_keys::take_failure(&bastion_failure)
+                    .map(AppError::Auth)
+                    .unwrap_or_else(|| {
+                        AppError::Io(format!(
+                            "No se puede conectar al bastion {bastion_addr}: {err}"
+                        ))
+                    })
+            })?;
+        emit_connection_log(
+            &app_handle,
+            &test_id,
+            "connecting",
+            "ok",
+            format!("Bastion conectado: {bastion_addr}"),
+        );
+
+        emit_connection_log(
+            &app_handle,
+            &test_id,
+            "authenticating",
+            "info",
+            format!("Autenticando en bastion como {b_user}"),
+        );
+        match authenticate_handle(
+            &mut bastion,
+            &profile.auth_type,
+            &b_user,
+            password.as_ref(),
+            passphrase.as_ref(),
+            profile.key_path.as_deref(),
+        )
+        .await?
+        {
+            AuthResult::Success => {}
+            AuthResult::Failure { remaining_methods } => {
+                return Err(AppError::Auth(format!(
+                    "Autenticación contra bastion fallida. Métodos restantes: {:?}",
+                    remaining_methods
+                )));
+            }
+        }
+        emit_connection_log(
+            &app_handle,
+            &test_id,
+            "authenticating",
+            "ok",
+            "Autenticación contra bastion completada",
+        );
+
+        emit_connection_log(
+            &app_handle,
+            &test_id,
+            "connecting",
+            "info",
+            format!("Abriendo túnel del bastion hacia {addr}"),
+        );
+        let chan = bastion
+            .channel_open_direct_tcpip(
+                profile.host.clone(),
+                profile.port as u32,
+                "127.0.0.1".to_string(),
+                0,
+            )
+            .await
+            .map_err(|e| {
+                AppError::Ssh(format!(
+                    "No se pudo abrir canal direct-tcpip a través del bastion: {e}"
+                ))
+            })?;
+        let stream = chan.into_stream();
+        let (target_handler, target_failure) = host_keys::client(
+            profile.host.clone(),
+            profile.port,
+            profile.agent_forwarding,
+            profile.x11_forwarding,
+        );
+        emit_connection_log(
+            &app_handle,
+            &test_id,
+            "verifying_host_key",
+            "info",
+            format!("Verificando host key de {addr}"),
+        );
+        client::connect_stream(config, stream, target_handler)
+            .await
+            .map_err(|err| {
+                host_keys::take_failure(&target_failure)
+                    .map(AppError::Auth)
+                    .unwrap_or_else(|| {
+                        AppError::Io(format!(
+                            "No se puede establecer SSH con {addr} a través del bastion: {err}"
+                        ))
+                    })
+            })?
+    } else {
+        let (client_handler, host_key_failure) = host_keys::client(
+            profile.host.clone(),
+            profile.port,
+            profile.agent_forwarding,
+            profile.x11_forwarding,
+        );
+        emit_connection_log(
+            &app_handle,
+            &test_id,
+            "connecting",
+            "info",
+            format!("Conectando a {addr}"),
+        );
+        emit_connection_log(
+            &app_handle,
+            &test_id,
+            "verifying_host_key",
+            "info",
+            format!("Verificando host key de {addr}"),
+        );
+        client::connect(config, addr.clone(), client_handler)
+            .await
+            .map_err(|err| {
+                host_keys::take_failure(&host_key_failure)
+                    .map(AppError::Auth)
+                    .unwrap_or_else(|| {
+                        AppError::Io(format!("No se puede conectar a {addr}: {err}"))
+                    })
+            })?
+    };
+
+    emit_connection_log(
+        &app_handle,
+        &test_id,
+        "connecting",
+        "ok",
+        format!("TCP/SSH establecido con {addr}"),
+    );
+    emit_connection_log(
+        &app_handle,
+        &test_id,
+        "authenticating",
+        "info",
+        format!("Autenticando como {}", profile.username),
+    );
+    match authenticate_handle(
+        &mut handle,
+        &profile.auth_type,
+        &profile.username,
+        password.as_ref(),
+        passphrase.as_ref(),
+        profile.key_path.as_deref(),
+    )
+    .await?
+    {
+        AuthResult::Success => {}
+        AuthResult::Failure { remaining_methods } => {
+            return Err(AppError::Auth(format!(
+                "Autenticación fallida. Métodos restantes: {:?}",
+                remaining_methods
+            )));
+        }
+    }
+
+    emit_connection_log(
+        &app_handle,
+        &test_id,
+        "authenticating",
+        "ok",
+        "Autenticación completada",
+    );
+    emit_connection_log(
+        &app_handle,
+        &test_id,
+        "opening_shell",
+        "info",
+        "Comprobando apertura de canal SSH/SFTP",
+    );
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| AppError::Ssh(format!("No se pudo abrir canal: {e}")))?;
+    match channel.request_subsystem(true, "sftp").await {
+        Ok(()) => match SftpSession::new(channel.into_stream()).await {
+            Ok(sftp) => {
+                let _ = sftp.close().await;
+                emit_connection_log(
+                    &app_handle,
+                    &test_id,
+                    "opening_shell",
+                    "ok",
+                    "Subsistema SFTP disponible",
+                );
+            }
+            Err(e) => {
+                emit_connection_log(
+                    &app_handle,
+                    &test_id,
+                    "opening_shell",
+                    "warning",
+                    format!("SSH válido, pero SFTP no inició: {e}"),
+                );
+            }
+        },
+        Err(e) => {
+            emit_connection_log(
+                &app_handle,
+                &test_id,
+                "opening_shell",
+                "warning",
+                format!("SSH válido, pero SFTP no está disponible: {e}"),
+            );
+        }
+    }
+    let _ = handle
+        .disconnect(russh::Disconnect::ByApplication, "", "en")
+        .await;
+
+    emit_connection_log(
+        &app_handle,
+        &test_id,
+        "connected",
+        "ok",
+        "Prueba SSH completada",
+    );
+    Ok(())
 }
 
 async fn open_session_log(path: &Path) -> Option<tokio::fs::File> {

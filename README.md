@@ -5,17 +5,18 @@
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
 
-> ✅ **Estado**: versión estable 1.0.0. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
+> ✅ **Estado**: versión estable 1.0.1. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
 
 ## Características principales
 
 - **Multi-protocolo**: conexiones SSH, SFTP y RDP (este último mediante `xfreerdp` / `mstsc` externos).
-- **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F) y soporte de OSC 7 (seguimiento del `cwd` remoto).
+- **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F), barra inferior con estado/latencia/diagnóstico y soporte de OSC 7 (seguimiento del `cwd` remoto).
 - **Panel SFTP integrado**: explorador de ficheros con **vista dividida remoto / local**, transferencia recursiva de carpetas, drag & drop, seguimiento automático del directorio del terminal y modo elevado a **sudo** cuando el servidor lo permita.
 - **Túneles SSH integrados**: redirección de puertos **local** (`-L`), **remota** (`-R`) y **dinámica / SOCKS** (`-D`) sobre una sesión activa o desde acceso rápido global, con panel de estado, tráfico, túneles guardados y autoconexión opcional por perfil.
 - **Opciones avanzadas SSH por perfil**: keep-alive configurable, **reconexión automática con backoff** ante caídas, **grabación de sesión** a fichero, bastion / ProxyJump, agent forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) en servidores antiguos.
 - **Multi-pestaña y vistas divididas**: trabaja con varias sesiones simultáneas, distribúyelas en *split* horizontal / vertical / grid y activa el *broadcast* para teclear en varias a la vez.
-- **Sidebar pulida**: rail vertical de iconos (Perfiles, Favoritos, Túneles, Sync, Preferencias y acciones rápidas), **drag & drop** entre carpetas y workspaces, colores por carpeta y selección automática de la conexión asociada a la pestaña activa.
+- **Sidebar pulida**: rail vertical de iconos (Perfiles, Favoritos, Túneles, Actividad, Sync, Preferencias y acciones rápidas), **drag & drop** entre carpetas y workspaces, colores por carpeta, recuerdo del árbol abierto y selección automática de la conexión asociada a la pestaña activa.
+- **Diagnóstico y actividad**: botón **Probar** en el modal de conexión sin guardar el perfil, logs SSH por etapas y centro global de actividad con SFTP, sync, errores y actualizaciones.
 - **Bandeja del sistema / quick launcher**: acceso rápido a favoritos, recientes, workspaces, consola local y abrir/ocultar ventana desde el icono de tray.
 - **Exportación granular**: exporta todos los perfiles, los de una carpeta o los de un workspace a JSON desde el menú contextual, preguntando antes si debe incluir contraseñas/passphrases guardadas.
 - **Seguridad**:
@@ -23,7 +24,7 @@
   - Soporte para bases de datos **KeePass** (`.kdbx`) como fuente de contraseñas.
   - Atajo `Ctrl+P` para pegar la contraseña del perfil activo sin exponerla en pantalla.
   - Verificación de `known_hosts` con TOFU y aviso ante cambios de fingerprint.
-- **Copias de seguridad y sincronización E2E**: perfiles, preferencias, temas, atajos y, si lo activas, contraseñas guardadas pueden sincronizarse con Google Drive, iCloud Drive, carpeta local / NAS o WebDAV. El blob remoto se cifra localmente con `age` y una passphrase maestra. Sincronización **por evento** (al iniciar y al detectar cambios locales) y **restauración de snapshots históricos** desde la pestaña de Copias.
+- **Copias de seguridad y sincronización E2E**: perfiles, preferencias, temas, atajos y, si lo activas, contraseñas guardadas pueden sincronizarse con Google Drive, iCloud Drive, carpeta local / NAS o WebDAV. El blob remoto se cifra localmente con `age` y una passphrase maestra. Sincronización **por evento** (comprueba al iniciar y sincroniza si hay cambios locales/remotos) y **restauración de snapshots históricos** desde la pestaña de Copias.
 - **Organización**: agrupa conexiones en **perfiles-contenedor (workspaces)** independientes, en carpetas dentro de cada workspace, **conexiones favoritas** y vistas de la sidebar (workspace actual, todos los perfiles, favoritos), búsqueda rápida y duplicación de conexiones / sesiones desde el menú contextual.
 - **Personalización**: 12 temas base integrados (Catppuccin Mocha / Latte, Dracula, Nord, xterm, VS Code Dark+, Tango, Solarized Dark / Light, Gruvbox Dark, Tokyo Night, Monokai) y ajustes de cursor, scrollback y *bell*. Posibilidad de importar temas personalizados en formato JSON v2 con tokens de UI y terminal.
 - **Internacionalización**: interfaz traducida a español, inglés, francés y portugués. (Traducciones realizadas con IA)
@@ -192,7 +193,7 @@ La sincronización es opt-in y cifra el estado antes de subirlo. Se sincronizan 
 
 Los exports JSON locales de conexiones/carpetas/workspaces preguntan antes de incluir secretos. Si eliges incluirlos, el JSON contiene credenciales legibles; usa preferiblemente el backup cifrado `.rustty-sync.bin` para transportar contraseñas.
 
-La sincronización se dispara al iniciar la app y cuando detecta cambios locales (debounce de 1,2 s). Antes de sobrescribir el blob remoto se guarda un snapshot cifrado; desde el desplegable **Restaurar copia** puedes volver a cualquier snapshot anterior disponible en el backend.
+La sincronización comprueba el estado al iniciar la app y se dispara cuando detecta cambios locales (debounce de 1 minuto). Si el contenido lógico local y remoto ya coincide, no reescribe el blob remoto ni crea un snapshot nuevo. Antes de sobrescribir un blob remoto distinto se guarda un snapshot cifrado; desde el desplegable **Restaurar copia** puedes volver a cualquier snapshot anterior disponible en el backend.
 
 Backends:
 

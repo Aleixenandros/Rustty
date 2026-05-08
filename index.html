@@ -27,6 +27,7 @@
           <button class="rail-btn" data-rail-view="profiles" data-i18n-title="rail.view_profiles" title="Perfiles" aria-label="Perfiles">📁</button>
           <button class="rail-btn" data-rail-view="favorites" data-i18n-title="rail.view_favorites" title="Favoritos" aria-label="Favoritos">★</button>
           <button class="rail-btn" data-rail-action="tunnels" data-i18n-title="rail.tunnels" title="Túneles SSH" aria-label="Túneles SSH">⇄</button>
+          <button class="rail-btn" data-rail-action="activity" title="Actividad" aria-label="Actividad">☷</button>
           <button class="rail-btn" data-rail-action="sync" data-i18n-title="rail.sync" title="Sincronización" aria-label="Sincronización">⇅</button>
           <button class="rail-btn" id="rail-btn-settings" data-rail-action="settings" data-i18n-title="sidebar.prefs_title" title="Preferencias" aria-label="Preferencias">⚙</button>
         </div>
@@ -112,7 +113,7 @@
         <div id="terminals-container">
           <div id="status-bar" class="hidden" aria-hidden="true">
             <span class="status-conn">
-              <span class="status-dot" id="status-dot"></span>
+              <span class="status-dot" id="status-dot" role="button" tabindex="0" title="Ver diagnóstico de conexión"></span>
               <span id="status-user-host">—</span>
             </span>
             <span class="status-sep"></span>
@@ -120,6 +121,10 @@
               <span class="status-label" data-i18n="status.latency">Latencia</span>
               <span id="status-latency">—</span>
             </span>
+            <button type="button" class="status-log-trigger hidden" id="status-log-trigger">
+              <span class="status-log-dot"></span>
+              <span id="status-log-text">—</span>
+            </button>
           </div>
           <div id="view-layout-bar" class="hidden">
             <button data-layout="columns" data-i18n-title="view_layout.columns" title="Dividir en columnas">⫴</button>
@@ -542,14 +547,47 @@
             </div>
           </details>
 
+          <div class="connection-test-panel hidden" id="connection-test-panel">
+            <div class="connection-test-head">
+              <span id="connection-test-title">Prueba de conexión</span>
+              <span class="connection-test-status" id="connection-test-status">Listo</span>
+            </div>
+            <div class="connection-test-list" id="connection-test-list"></div>
+          </div>
+
           <div class="modal-actions">
             <button type="button" class="btn-secondary" id="btn-modal-cancel" data-i18n="modal_conn.cancel">Cancelar</button>
+            <button type="button" class="btn-secondary" id="btn-modal-test">Probar</button>
             <button type="button" class="btn-secondary" id="btn-modal-save-only" data-i18n="modal_conn.save_only">Solo guardar</button>
             <button type="submit" class="btn-primary" id="btn-modal-save-connect" data-i18n="modal_conn.save_connect">Guardar y conectar</button>
           </div>
 
         </form>
       </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         PANEL: Centro de actividad global
+    ══════════════════════════════════════════════════════ -->
+    <div id="activity-center-overlay" class="hidden">
+      <aside id="activity-center-panel" aria-label="Centro de actividad">
+        <div class="activity-center-head">
+          <div>
+            <h2>Actividad</h2>
+            <p>Transferencias, conexiones, sync y avisos recientes</p>
+          </div>
+          <button type="button" class="btn-icon" id="btn-activity-close" aria-label="Cerrar">✕</button>
+        </div>
+        <div class="activity-center-toolbar">
+          <button type="button" class="activity-filter active" data-activity-filter="all">Todo</button>
+          <button type="button" class="activity-filter" data-activity-filter="connection">Conexiones</button>
+          <button type="button" class="activity-filter" data-activity-filter="sftp">SFTP</button>
+          <button type="button" class="activity-filter" data-activity-filter="sync">Sync</button>
+          <button type="button" class="activity-filter" data-activity-filter="update">Avisos</button>
+          <button type="button" class="activity-clear" id="btn-activity-clear">Limpiar</button>
+        </div>
+        <div id="activity-center-list" class="activity-center-list"></div>
+      </aside>
     </div>
 
     <!-- ══════════════════════════════════════════════════════
@@ -1245,7 +1283,7 @@
                 <label for="sync-history-keep" data-i18n="prefs_sync.history_keep">Copias históricas</label>
                 <div class="settings-control">
                   <input type="number" id="sync-history-keep" min="1" max="500" step="1" placeholder="30" />
-                  <p class="form-hint" data-i18n="prefs_sync.history_keep_hint">Número de snapshots cifrados a conservar antes de podar. La sincronización ocurre al iniciar y cuando detecta cambios locales.</p>
+                  <p class="form-hint" data-i18n="prefs_sync.history_keep_hint">Número de snapshots cifrados a conservar antes de podar. Al iniciar comprueba cambios; solo sincroniza si local/remoto difieren.</p>
                 </div>
               </div>
 

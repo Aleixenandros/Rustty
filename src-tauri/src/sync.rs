@@ -238,7 +238,7 @@ impl Default for SyncConfig {
 /// Un item del estado sincronizado. La clave en el `HashMap` es del estilo
 /// `profile:<uuid>`, `pref:theme`, `shortcut:close_tab`, etc. El `data` es
 /// la representación opaca del item (lo que el frontend nos haya pasado).
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SyncItem {
     pub data: serde_json::Value,
     pub updated_at: DateTime<Utc>,
@@ -246,7 +246,7 @@ pub struct SyncItem {
     pub device_id: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SyncState {
     pub version: u32,
     pub items: HashMap<String, SyncItem>,
@@ -267,6 +267,17 @@ impl Default for SyncState {
 }
 
 impl SyncState {
+    pub fn logically_eq(&self, other: &SyncState) -> bool {
+        self.version == other.version
+            && self.tombstones == other.tombstones
+            && self.items.len() == other.items.len()
+            && self.items.iter().all(|(key, item)| {
+                other.items.get(key).is_some_and(|other_item| {
+                    item.updated_at == other_item.updated_at && item.data == other_item.data
+                })
+            })
+    }
+
     /// Mezcla `other` (remoto) sobre `self` (local) usando last-write-wins
     /// por item. Devuelve cuántas filas cambiaron (útil para el toast).
     pub fn merge(&mut self, other: SyncState) -> usize {
@@ -297,6 +308,56 @@ impl SyncState {
         }
 
         changes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sync_item(data: serde_json::Value, device_id: &str) -> SyncItem {
+        SyncItem {
+            data,
+            updated_at: DateTime::parse_from_rfc3339("2026-05-08T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            device_id: device_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn logical_equality_ignores_device_id() {
+        let mut a = SyncState::default();
+        a.items.insert(
+            "prefs:bundle".into(),
+            sync_item(json!({"theme": "dark"}), "device-a"),
+        );
+
+        let mut b = SyncState::default();
+        b.items.insert(
+            "prefs:bundle".into(),
+            sync_item(json!({"theme": "dark"}), "device-b"),
+        );
+
+        assert!(a.logically_eq(&b));
+    }
+
+    #[test]
+    fn logical_equality_detects_data_changes() {
+        let mut a = SyncState::default();
+        a.items.insert(
+            "prefs:bundle".into(),
+            sync_item(json!({"theme": "dark"}), "device-a"),
+        );
+
+        let mut b = SyncState::default();
+        b.items.insert(
+            "prefs:bundle".into(),
+            sync_item(json!({"theme": "light"}), "device-a"),
+        );
+
+        assert!(!a.logically_eq(&b));
     }
 }
 

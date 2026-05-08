@@ -39,7 +39,15 @@ let userFolders = new Set(
 );
 
 /** Qué carpetas están expandidas en el árbol (en memoria) */
-const openFolders = new Set();
+const SIDEBAR_OPEN_FOLDERS_STORAGE_KEY = "rustty-sidebar-open-folders";
+const openFolders = new Set((() => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SIDEBAR_OPEN_FOLDERS_STORAGE_KEY) || "[]");
+    return Array.isArray(stored) ? stored.filter((item) => typeof item === "string" && item) : [];
+  } catch {
+    return [];
+  }
+})());
 
 /** Contexto del menú contextual activo */
 let ctxTarget = { type: null, id: null, folderPath: null, workspaceId: null };
@@ -72,6 +80,10 @@ const broadcastViews = new Map();
 
 let activeSessionId = null;
 let editingProfileId = null;
+let _connectionTestUnlisten = null;
+let _activityFilter = "all";
+const ACTIVITY_MAX_ITEMS = 250;
+const activityItems = [];
 
 const KEYRING_SERVICE = "rustty";
 const RECENT_CONNECTIONS_STORAGE_KEY = "rustty-recent-connections";
@@ -435,6 +447,13 @@ function toggleFavoriteProfile(id) {
 function savePrefs() {
   localStorage.setItem("rustty-prefs", JSON.stringify(prefs));
   scheduleTrayQuickLauncherUpdate();
+}
+
+function persistSidebarOpenFolders() {
+  localStorage.setItem(
+    SIDEBAR_OPEN_FOLDERS_STORAGE_KEY,
+    JSON.stringify([...openFolders].filter(Boolean))
+  );
 }
 
 /** Resuelve un tema efectivo (`system` → `dark` | `light` según el SO). */
@@ -1261,10 +1280,30 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     if (announce) {
       toast(t("prefs_sync.done_sync").replace("{n}", total), "success");
     }
+    recordActivity({
+      kind: "sync",
+      status: "ok",
+      title: t("prefs_sync.done_sync").replace("{n}", total),
+      detail: new Date(lastSyncAt).toLocaleString(),
+      actionLabel: "Abrir",
+      action: () => {
+        prefsActiveTab = "data";
+        openSettingsModal();
+      },
+    });
     refreshSyncSnapshots().catch(() => {});
     return summary;
   } catch (err) {
     setSyncStatus("error", "prefs_sync.status_error");
+    recordActivity({
+      kind: "sync",
+      status: "error",
+      title: "Sincronización fallida",
+      detail: String(err),
+      actionLabel: "Reintentar",
+      action: () => runSyncWithCurrentState({ persistConfig: false, announce: true })
+        .catch((e) => console.error("[sync] retry from activity", e)),
+    });
     if (String(err).includes("no_passphrase")) {
       toast(t("prefs_sync.no_passphrase"), "warning", 6000);
     } else if (announce) {
@@ -1498,6 +1537,12 @@ async function checkForUpdates({ interactive = true } = {}) {
     if (!latest) throw new Error("missing release version");
 
     if (compareVersions(latest, current) > 0) {
+      recordActivity({
+        kind: "update",
+        status: "warning",
+        title: t("prefs_about.update_available", { version: `v${latest}` }),
+        detail: release.html_url || RELEASES_PAGE_URL,
+      });
       setAboutUpdateStatus(
         t("prefs_about.update_available", { version: `v${latest}` }),
         "warning"
@@ -1511,10 +1556,25 @@ async function checkForUpdates({ interactive = true } = {}) {
           .catch((err) => toast(`No se pudo abrir ${RELEASES_PAGE_URL}: ${err}`, "error", 6000));
       }
     } else {
+      if (interactive) {
+        recordActivity({
+          kind: "update",
+          status: "ok",
+          title: t("prefs_about.update_current"),
+        });
+      }
       if (interactive) setAboutUpdateStatus(t("prefs_about.update_current"), "success");
     }
   } catch (err) {
     console.warn("[updates] check failed", err);
+    if (interactive) {
+      recordActivity({
+        kind: "update",
+        status: "error",
+        title: t("prefs_about.update_error"),
+        detail: String(err),
+      });
+    }
     if (interactive) {
       setAboutUpdateStatus(t("prefs_about.update_error"), "error");
       toast(`${t("prefs_about.update_error")}: ${err}`, "error", 6000);
@@ -1522,6 +1582,85 @@ async function checkForUpdates({ interactive = true } = {}) {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+function activityKindLabel(kind) {
+  return {
+    connection: "Conexión",
+    sftp: "SFTP",
+    sync: "Sync",
+    update: "Aviso",
+    toast: "Sistema",
+  }[kind] || "Actividad";
+}
+
+function activityTime(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function recordActivity({ kind = "toast", status = "info", title, detail = "", actionLabel = "", action = null } = {}) {
+  if (!title) return;
+  const item = {
+    id: crypto.randomUUID(),
+    kind,
+    status,
+    title: String(title),
+    detail: detail ? String(detail) : "",
+    actionLabel,
+    action,
+    timestamp: new Date().toISOString(),
+  };
+  activityItems.unshift(item);
+  if (activityItems.length > ACTIVITY_MAX_ITEMS) activityItems.splice(ACTIVITY_MAX_ITEMS);
+  renderActivityCenter();
+}
+
+function openActivityCenter(filter = null) {
+  if (filter) _activityFilter = filter;
+  document.getElementById("activity-center-overlay")?.classList.remove("hidden");
+  renderActivityCenter();
+}
+
+function closeActivityCenter() {
+  document.getElementById("activity-center-overlay")?.classList.add("hidden");
+}
+
+function renderActivityCenter() {
+  const list = document.getElementById("activity-center-list");
+  if (!list) return;
+  document.querySelectorAll(".activity-filter").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.activityFilter === _activityFilter);
+  });
+  const visible = _activityFilter === "all"
+    ? activityItems
+    : activityItems.filter((item) => item.kind === _activityFilter);
+  if (!visible.length) {
+    list.innerHTML = `<div class="activity-empty">Sin actividad reciente</div>`;
+    return;
+  }
+  list.innerHTML = visible.map((item) => `
+    <div class="activity-item ${escHtml(item.status)}" data-activity-id="${escHtml(item.id)}">
+      <span class="activity-dot"></span>
+      <div class="activity-body">
+        <div class="activity-main">
+          <span class="activity-kind">${escHtml(activityKindLabel(item.kind))}</span>
+          <span class="activity-title">${escHtml(item.title)}</span>
+          <span class="activity-time">${escHtml(activityTime(item.timestamp))}</span>
+        </div>
+        ${item.detail ? `<div class="activity-detail">${escHtml(item.detail)}</div>` : ""}
+      </div>
+      ${item.actionLabel ? `<button type="button" class="activity-action">${escHtml(item.actionLabel)}</button>` : ""}
+    </div>
+  `).join("");
+  list.querySelectorAll(".activity-item").forEach((row) => {
+    const item = activityItems.find((entry) => entry.id === row.dataset.activityId);
+    const btn = row.querySelector(".activity-action");
+    if (btn && typeof item?.action === "function") {
+      btn.addEventListener("click", () => item.action());
+    }
+  });
 }
 
 let _terminalThemeSnapshot = undefined;
@@ -1911,6 +2050,7 @@ let _sidebarSearchQuery = "";
 
 function renderConnectionList() {
   const container = document.getElementById("connection-list");
+  persistSidebarOpenFolders();
   scheduleTrayQuickLauncherUpdate();
   renderWorkspaceSwitcher();
 
@@ -3453,6 +3593,7 @@ function setPasswordVisible(visible) {
  */
 function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiveWorkspaceId()) {
   editingProfileId = null;
+  resetConnectionTestPanel();
   document.getElementById("modal-title").textContent = "Nueva conexión";
   document.getElementById("form-connection").reset();
   setPasswordVisible(false);
@@ -3492,6 +3633,7 @@ function openEditConnectionModal(profileId) {
   if (!profile) return;
 
   editingProfileId = profileId;
+  resetConnectionTestPanel();
   document.getElementById("modal-title").textContent = "Editar conexión";
 
   document.getElementById("f-name").value  = profile.name;
@@ -3606,6 +3748,7 @@ function closeModal() {
   document.getElementById("modal-overlay").classList.add("hidden");
   document.getElementById("form-connection").reset();
   setPasswordVisible(false);
+  resetConnectionTestPanel();
   editingProfileId = null;
 }
 
@@ -3745,12 +3888,17 @@ function updateConnTypeFields(type, adjustPort = false) {
 
   if (isRdp) {
     // RDP siempre usa contraseña
-    document.getElementById("field-password").classList.remove("hidden");
-    document.getElementById("field-save-password").classList.remove("hidden");
+    document.getElementById("f-auth-type").value = "password";
+    const useKp = document.getElementById("f-use-keepass").checked;
+    document.getElementById("field-keepass-toggle").classList.remove("hidden");
+    document.getElementById("field-keepass-entry").classList.toggle("hidden", !useKp);
+    document.getElementById("field-password").classList.toggle("hidden", useKp);
+    document.getElementById("field-save-password").classList.toggle("hidden", useKp);
     if (adjustPort) {
       const portEl = document.getElementById("f-port");
       if (parseInt(portEl.value, 10) === 22) portEl.value = 3389;
     }
+    updateKeepassEntryValidation();
   } else {
     updateAuthFields(document.getElementById("f-auth-type").value);
     if (adjustPort) {
@@ -4040,12 +4188,180 @@ function readFolderValue() {
   return select.value || null;
 }
 
+function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
+  const connType = document.getElementById("f-conn-type").value;
+  const authType = connType === "rdp" ? "password" : document.getElementById("f-auth-type").value;
+  const useKeepass = document.getElementById("f-use-keepass").checked
+    && authType === "password";
+  const keepassEntryUuid = useKeepass
+    ? (document.getElementById("f-keepass-entry").value || null)
+    : null;
+  const wsSelect = document.getElementById("f-workspace");
+  const wsFromForm = wsSelect && !wsSelect.closest(".form-row").classList.contains("hidden")
+    ? wsSelect.value
+    : null;
+  const existing = editingProfileId
+    ? profiles.find((p) => p.id === editingProfileId)
+    : null;
+  const workspaceId = wsFromForm || existing?.workspace_id || getActiveWorkspaceId() || "default";
+  const now = new Date().toISOString();
+
+  return {
+    id: persistIdentity ? (editingProfileId || crypto.randomUUID()) : (editingProfileId || `test-${crypto.randomUUID()}`),
+    name: document.getElementById("f-name").value.trim() || document.getElementById("f-host").value.trim() || "Prueba",
+    host: document.getElementById("f-host").value.trim(),
+    port: parseInt(document.getElementById("f-port").value, 10),
+    username: document.getElementById("f-user").value.trim(),
+    connection_type: connType,
+    domain: document.getElementById("f-domain").value.trim() || null,
+    auth_type: authType,
+    key_path: document.getElementById("f-key-path").value || null,
+    group: readFolderValue(),
+    notes: (document.getElementById("f-notes").value || "").trim() || null,
+    workspace_id: workspaceId,
+    keepass_entry_uuid: keepassEntryUuid,
+    follow_cwd: true,
+    keep_alive_secs: keepAliveFromInput(document.getElementById("f-keep-alive").value),
+    allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
+    agent_forwarding: document.getElementById("f-agent-forwarding").checked,
+    x11_forwarding: document.getElementById("f-x11-forwarding").checked,
+    auto_reconnect: autoReconnectFromInput(document.getElementById("f-auto-reconnect").value),
+    session_log: document.getElementById("f-session-log").checked,
+    proxy_jump: (document.getElementById("f-proxy-jump").value || "").trim() || null,
+    mac_address: (document.getElementById("f-mac-address").value || "").trim() || null,
+    wol_broadcast: (document.getElementById("f-wol-broadcast").value || "").trim() || null,
+    wol_port: wolPortFromInput(document.getElementById("f-wol-port").value),
+    ssh_tunnels: existing?.ssh_tunnels || [],
+    created_at: persistIdentity ? (existing?.created_at ?? now) : now,
+    updated_at: now,
+  };
+}
+
+function resetConnectionTestPanel() {
+  if (_connectionTestUnlisten) {
+    try { _connectionTestUnlisten(); } catch {}
+    _connectionTestUnlisten = null;
+  }
+  const panel = document.getElementById("connection-test-panel");
+  const list = document.getElementById("connection-test-list");
+  const status = document.getElementById("connection-test-status");
+  panel?.classList.add("hidden");
+  if (list) list.innerHTML = "";
+  if (status) {
+    status.textContent = "Listo";
+    status.className = "connection-test-status";
+  }
+}
+
+function setConnectionTestStatus(text, status = "") {
+  const statusEl = document.getElementById("connection-test-status");
+  if (!statusEl) return;
+  statusEl.textContent = text;
+  statusEl.className = `connection-test-status ${status}`.trim();
+}
+
+function appendConnectionTestLog(rawEntry = {}) {
+  const panel = document.getElementById("connection-test-panel");
+  const list = document.getElementById("connection-test-list");
+  if (!panel || !list) return;
+  const entry = normalizeConnectionLogEntry(rawEntry);
+  panel.classList.remove("hidden");
+  const row = document.createElement("div");
+  row.className = `connection-test-row ${entry.status}`;
+  row.innerHTML = `
+    <span class="connection-test-dot"></span>
+    <span class="connection-test-time">${escHtml(connectionLogTime(entry.timestamp))}</span>
+    <span class="connection-test-message">${escHtml(entry.message)}</span>
+  `;
+  list.appendChild(row);
+  list.scrollTop = list.scrollHeight;
+}
+
+async function runConnectionTestFromModal() {
+  const form = document.getElementById("form-connection");
+  if (form && !form.reportValidity()) return;
+
+  const btn = document.getElementById("btn-modal-test");
+  const profile = buildProfileFromConnectionForm({ persistIdentity: false });
+  const password = document.getElementById("f-password").value || null;
+  const passphrase = document.getElementById("f-passphrase").value || null;
+  const testId = `conn-test-${crypto.randomUUID()}`;
+  resetConnectionTestPanel();
+  document.getElementById("connection-test-panel")?.classList.remove("hidden");
+  setConnectionTestStatus("Probando…", "busy");
+  if (btn) btn.disabled = true;
+
+  try {
+    if (profile.connection_type === "rdp") {
+      appendConnectionTestLog({
+        stage: "connecting",
+        status: "info",
+        message: `Comprobando puerto RDP ${profile.host}:${profile.port}`,
+      });
+      const ms = await invoke("tcp_ping", { host: profile.host, port: profile.port });
+      appendConnectionTestLog({
+        stage: "connected",
+        status: "ok",
+        message: `Puerto RDP accesible (${ms} ms)`,
+      });
+      setConnectionTestStatus("OK", "ok");
+      toast("Prueba RDP completada", "success");
+      recordActivity({
+        kind: "connection",
+        status: "ok",
+        title: `Prueba RDP OK: ${profile.name}`,
+        detail: `${profile.host}:${profile.port}`,
+      });
+      return;
+    }
+
+    _connectionTestUnlisten = await listen(`ssh-log-${testId}`, (event) => {
+      appendConnectionTestLog(event.payload || {});
+    });
+    await invoke("ssh_test_connection", {
+      profile,
+      password,
+      passphrase,
+      testId,
+    });
+    setConnectionTestStatus("OK", "ok");
+    toast("Prueba SSH completada", "success");
+    recordActivity({
+      kind: "connection",
+      status: "ok",
+      title: `Prueba SSH OK: ${profile.name}`,
+      detail: `${profile.host}:${profile.port}`,
+    });
+  } catch (err) {
+    appendConnectionTestLog({
+      stage: "error",
+      status: "error",
+      message: String(err),
+    });
+    setConnectionTestStatus("Error", "error");
+    toast(`Prueba de conexión fallida: ${err}`, "error", 8000);
+    recordActivity({
+      kind: "connection",
+      status: "error",
+      title: `Prueba fallida: ${profile.name}`,
+      detail: String(err),
+    });
+  } finally {
+    if (_connectionTestUnlisten) {
+      try { _connectionTestUnlisten(); } catch {}
+      _connectionTestUnlisten = null;
+    }
+    if (btn) btn.disabled = false;
+  }
+}
+
 /**
  * Guarda el perfil y opcionalmente conecta.
  * @param {boolean} shouldConnect
  */
 async function saveAndClose(shouldConnect) {
-  const authType       = document.getElementById("f-auth-type").value;
+  const connType = document.getElementById("f-conn-type").value;
+  const authType       = connType === "rdp" ? "password" : document.getElementById("f-auth-type").value;
   const password       = document.getElementById("f-password").value || null;
   const savePassword   = document.getElementById("f-save-password").checked;
   const keyPath        = document.getElementById("f-key-path").value || null;
@@ -4053,7 +4369,6 @@ async function saveAndClose(shouldConnect) {
   const savePassphrase = document.getElementById("f-save-passphrase").checked;
   const group          = readFolderValue();
 
-  const connType = document.getElementById("f-conn-type").value;
   const useKeepass = document.getElementById("f-use-keepass").checked
     && authType === "password";
   const keepassEntryUuid = useKeepass
@@ -4894,12 +5209,36 @@ function clearStatusBar() {
   if (userHostEl) userHostEl.textContent = "—";
   const latEl = document.getElementById("status-latency");
   if (latEl) latEl.textContent = "—";
+  const logTrigger = document.getElementById("status-log-trigger");
+  if (logTrigger) logTrigger.classList.add("hidden");
+  const logText = document.getElementById("status-log-text");
+  if (logText) logText.textContent = "—";
   const dot = document.getElementById("status-dot");
   if (dot) dot.classList.remove("connected", "error", "reconnecting");
   if (_statusLatencyTimer) {
     clearInterval(_statusLatencyTimer);
     _statusLatencyTimer = null;
   }
+}
+
+function renderStatusConnectionLog() {
+  const trigger = document.getElementById("status-log-trigger");
+  const text = document.getElementById("status-log-text");
+  const dot = trigger?.querySelector(".status-log-dot");
+  if (!trigger || !text || !dot) return;
+  const s = activeSessionId ? sessions.get(activeSessionId) : null;
+  const latest = s?.connectionLogs?.at(-1);
+  trigger.classList.toggle("hidden", !latest);
+  if (!latest) return;
+  trigger.classList.remove("info", "ok", "warning", "error");
+  trigger.classList.add(latest.status || "info");
+  text.textContent = latest.message || "Diagnóstico de conexión";
+}
+
+function toggleActiveConnectionLogPanel() {
+  const s = activeSessionId ? sessions.get(activeSessionId) : null;
+  if (!s || s.type === "rdp") return;
+  toggleConnectionLogPanel(activeSessionId);
 }
 
 function updateStatusBar() {
@@ -4926,6 +5265,7 @@ function updateStatusBar() {
     else if (s.status === "reconnecting") dot.classList.add("reconnecting");
     else if (s.status === "error" || s.status === "closed") dot.classList.add("error");
   }
+  renderStatusConnectionLog();
 
   // Reanudar el probe de latencia cada vez que cambiamos de sesión activa
   if (_statusLatencyTimer) { clearInterval(_statusLatencyTimer); _statusLatencyTimer = null; }
@@ -5159,7 +5499,6 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   termArea.appendChild(buildTerminalSearchBar(sessionId));
   pane.appendChild(termArea);
   pane.appendChild(buildReconnectOverlay(sessionId));
-  pane.appendChild(buildConnectionLogStrip(sessionId));
   pane.appendChild(buildConnectionLogPanel(sessionId));
   document.getElementById("terminals-container").appendChild(pane);
 
@@ -5254,20 +5593,6 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   selectSession(sessionId, false);
 }
 
-function buildConnectionLogStrip(sessionId) {
-  const strip = document.createElement("button");
-  strip.type = "button";
-  strip.className = "connection-log-strip hidden";
-  strip.dataset.session = sessionId;
-  strip.innerHTML = `
-    <span class="connection-log-dot info"></span>
-    <span class="connection-log-latest">Preparando conexión…</span>
-    <span class="connection-log-open">▤</span>
-  `;
-  strip.addEventListener("click", () => toggleConnectionLogPanel(sessionId));
-  return strip;
-}
-
 function buildConnectionLogPanel(sessionId) {
   const panel = document.createElement("div");
   panel.className = "connection-log-panel hidden";
@@ -5314,6 +5639,20 @@ function appendConnectionLog(sessionId, rawEntry) {
     s.connectionLogs.push(entry);
   }
   if (s.connectionLogs.length > 120) s.connectionLogs.splice(0, s.connectionLogs.length - 120);
+  if (entry.status !== "info") {
+    const profile = s.profileId ? profiles.find((p) => p.id === s.profileId) : null;
+    recordActivity({
+      kind: "connection",
+      status: entry.status === "ok" ? "ok" : entry.status,
+      title: entry.message,
+      detail: profile?.name || "",
+      actionLabel: "Ver",
+      action: () => {
+        setActiveTab(sessionId);
+        setConnectionLogPanelOpen(sessionId, true);
+      },
+    });
+  }
   renderConnectionLog(sessionId);
 }
 
@@ -5322,18 +5661,7 @@ function renderConnectionLog(sessionId) {
   const pane = s?.pane || document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
   if (!s || !pane) return;
   const logs = s.connectionLogs || [];
-  const latest = logs[logs.length - 1];
-  const strip = pane.querySelector(".connection-log-strip");
   const panel = pane.querySelector(".connection-log-panel");
-  if (strip) {
-    strip.classList.toggle("hidden", !latest);
-    if (latest) {
-      const dot = strip.querySelector(".connection-log-dot");
-      dot?.setAttribute("class", `connection-log-dot ${latest.status}`);
-      const label = strip.querySelector(".connection-log-latest");
-      if (label) label.textContent = latest.message;
-    }
-  }
   if (panel) {
     panel.classList.toggle("hidden", !s.connectionLogOpen);
     const list = panel.querySelector(".connection-log-list");
@@ -5348,6 +5676,7 @@ function renderConnectionLog(sessionId) {
       list.scrollTop = list.scrollHeight;
     }
   }
+  if (sessionId === activeSessionId) renderStatusConnectionLog();
 }
 
 function setConnectionLogPanelOpen(sessionId, open) {
@@ -6839,7 +7168,15 @@ function setupSftpDropTargets(panel, sessionId) {
   });
 }
 
-function appendSftpActivity(panel, { status = "info", label, detail = "", bytes = 0, startedAt = 0 }) {
+function appendSftpActivity(panel, {
+  status = "info",
+  label,
+  detail = "",
+  bytes = 0,
+  startedAt = 0,
+  actionLabel = "Ver",
+  action = null,
+} = {}) {
   const wrap = panel.querySelector(".sftp-transfers-wrap");
   const log = panel.querySelector(".sftp-activity-log");
   if (!wrap || !log) return;
@@ -6864,6 +7201,14 @@ function appendSftpActivity(panel, { status = "info", label, detail = "", bytes 
   `;
   log.prepend(row);
   while (log.children.length > 100) log.lastElementChild?.remove();
+  recordActivity({
+    kind: "sftp",
+    status: status === "ok" || status === "renamed" || status === "overwritten" ? "ok" : status,
+    title: label,
+    detail,
+    actionLabel,
+    action: action || (() => revealSftpActivity(panel)),
+  });
   updateTransfersVisibility(panel);
 }
 
@@ -7213,6 +7558,8 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
       detail: `${srcPath}${finalTargetPath ? ` → ${finalTargetPath}` : ""}: ${String(err)}`,
       bytes: parseInt(transferEl.dataset.lastTotal || "0", 10),
       startedAt,
+      actionLabel: canceled ? "Ver" : "Reintentar",
+      action: canceled ? (() => revealSftpActivity(panel)) : (() => retrySftpTransfer(sessionId, transferId)),
     });
     if (!canceled) {
       toast(`Fallo transferencia: ${err}`, "error", 8000, {
@@ -7980,6 +8327,16 @@ function bindUIEvents() {
     ?.addEventListener("click", () => openNewConnectionModal());
   document.getElementById("home-tab")
     ?.addEventListener("click", () => selectHomeTab());
+  document.getElementById("status-dot")
+    ?.addEventListener("click", toggleActiveConnectionLogPanel);
+  document.getElementById("status-dot")
+    ?.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      toggleActiveConnectionLogPanel();
+    });
+  document.getElementById("status-log-trigger")
+    ?.addEventListener("click", toggleActiveConnectionLogPanel);
   document.getElementById("dashboard-search")
     ?.addEventListener("input", () => renderDashboard());
   document.getElementById("dashboard-search")
@@ -7993,6 +8350,23 @@ function bindUIEvents() {
       const action = btn.dataset.dashboardAction;
       if (action === "new-connection") openNewConnectionModal();
       else if (action === "local-shell") openLocalShell();
+    });
+  });
+  document.getElementById("btn-activity-close")
+    ?.addEventListener("click", closeActivityCenter);
+  document.getElementById("activity-center-overlay")
+    ?.addEventListener("click", (e) => {
+      if (e.target.id === "activity-center-overlay") closeActivityCenter();
+    });
+  document.getElementById("btn-activity-clear")
+    ?.addEventListener("click", () => {
+      activityItems.length = 0;
+      renderActivityCenter();
+    });
+  document.querySelectorAll(".activity-filter").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      _activityFilter = btn.dataset.activityFilter || "all";
+      renderActivityCenter();
     });
   });
   window.addEventListener("keydown", (e) => {
@@ -8029,6 +8403,7 @@ function bindUIEvents() {
       if (action === "new-connection") openNewConnectionModal();
       else if (action === "local-shell") openLocalShell();
       else if (action === "tunnels") openGlobalTunnelsModal();
+      else if (action === "activity") openActivityCenter();
       else if (action === "settings") openSettingsModal();
       else if (action === "sync") {
         prefsActiveTab = "data";
@@ -8297,6 +8672,7 @@ function bindUIEvents() {
   });
 
   // Botones del modal
+  document.getElementById("btn-modal-test")?.addEventListener("click", runConnectionTestFromModal);
   document.getElementById("btn-modal-save-only").addEventListener("click", () => {
     if (!document.getElementById("form-connection").checkValidity()) {
       document.getElementById("form-connection").reportValidity();
@@ -9357,6 +9733,15 @@ function toast(message, type = "info", ms = 3500, options = {}) {
   if (typeof ms === "object" && ms !== null) {
     options = ms;
     ms = 3500;
+  }
+  if (!options.skipActivity) {
+    recordActivity({
+      kind: "toast",
+      status: type,
+      title: String(message),
+      actionLabel: options.actionLabel || "",
+      action: options.onAction || null,
+    });
   }
   if (type === "error" && !options.actionLabel) {
     options = {

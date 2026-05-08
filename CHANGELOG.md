@@ -2,6 +2,33 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.0.1] - 2026-05-08
+
+### Añadido
+
+- **Test de conexión desde el modal**: el formulario de crear/editar conexión
+  incorpora el botón **Probar**, que valida SSH sin guardar el perfil y reutiliza
+  las mismas etapas de diagnóstico (`resolución`, `host key`, `autenticación`,
+  `SFTP`). En RDP comprueba la conectividad TCP/latencia al puerto configurado.
+- **Centro de actividad global**: nuevo acceso **☷** en el rail con eventos de
+  conexiones, SFTP, sincronización, toasts y comprobación de actualizaciones.
+  Incluye filtros, limpieza y acciones contextuales como ver logs o reintentar.
+
+### Cambiado
+
+- El diagnóstico de conexión deja de aparecer como una píldora flotante en la
+  parte superior del terminal. Ahora vive en la barra de estado inferior: el
+  punto verde/rojo y el mensaje de la derecha abren el detalle del log.
+- La sincronización de arranque pasa a ser idempotente: si el estado lógico
+  local/remoto coincide, no reescribe el blob cifrado ni crea snapshot histórico.
+
+### Corregido
+
+- La barra lateral recuerda entre reinicios qué carpetas/workspaces estaban
+  abiertos, en lugar de arrancar siempre con todo el árbol cerrado.
+- La construcción del estado de sincronización deja de fabricar cambios usando
+  timestamps del momento de arranque cuando no existen marcas reales.
+
 ## [1.0.0] - 2026-05-08
 
 ### Añadido

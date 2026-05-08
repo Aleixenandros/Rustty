@@ -139,6 +139,36 @@ pub fn ssh_connect(
     Ok(session_id)
 }
 
+#[tauri::command]
+pub fn ssh_test_connection(
+    app_handle: AppHandle,
+    profile: ConnectionProfile,
+    password: Option<String>,
+    passphrase: Option<String>,
+    test_id: String,
+) -> Result<(), String> {
+    let resolved_password = resolve_password_from_keepass(&profile, password)?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt.block_on(crate::ssh_manager::test_connection(
+                test_id,
+                profile,
+                resolved_password,
+                passphrase,
+                app_handle,
+            )),
+            Err(e) => Err(format!("No se pudo crear runtime tokio: {e}")),
+        };
+        let _ = tx.send(result);
+    });
+    rx.recv()
+        .map_err(|e| format!("La prueba de conexión no respondió: {e}"))?
+}
+
 /// Si el perfil tiene `keepass_entry_uuid` y la DB está desbloqueada, devuelve
 /// la contraseña de KeePass. Si el uuid está pero la DB bloqueada, devuelve error.
 /// En cualquier otro caso, pasa a través la contraseña recibida del frontend.
@@ -921,16 +951,20 @@ pub async fn sync_run(
 
     // 2. Merge: empezamos con el estado del frontend y aplicamos remoto LWW
     let mut merged = current;
-    merged.merge(remote);
+    merged.merge(remote.clone());
 
-    // 3. Push
-    let history_keep = config.history_keep.max(1);
-    backend
-        .archive_existing(history_keep)
-        .await
-        .map_err(|e| e.to_string())?;
-    let bytes = pack_state(&passphrase, &merged).map_err(|e| e.to_string())?;
-    backend.write(&bytes).await.map_err(|e| e.to_string())?;
+    // 3. Push solo si el merge cambia el estado lógico remoto. El cifrado age
+    // produce bytes distintos en cada escritura, así que comparar el blob
+    // cifrado crearía falsos positivos y snapshots innecesarios.
+    if !merged.logically_eq(&remote) {
+        let history_keep = config.history_keep.max(1);
+        backend
+            .archive_existing(history_keep)
+            .await
+            .map_err(|e| e.to_string())?;
+        let bytes = pack_state(&passphrase, &merged).map_err(|e| e.to_string())?;
+        backend.write(&bytes).await.map_err(|e| e.to_string())?;
+    }
 
     // 4. Cache local (snapshot del último merge). No persistimos secretos en
     // sync_state.json: solo deben vivir en keyring local o en el blob E2E.

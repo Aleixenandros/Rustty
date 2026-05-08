@@ -1047,43 +1047,6 @@ body.has-session-tabs .tab-home .tab-name {
   background: color-mix(in srgb, var(--blue) 28%, transparent);
 }
 
-.connection-log-strip {
-  position: absolute;
-  top: 10px;
-  right: 12px;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  max-width: min(420px, calc(100% - 24px));
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--surface0);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--crust) 88%, transparent);
-  color: var(--subtext0);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
-}
-
-.connection-log-strip.hidden { display: none; }
-
-.connection-log-latest {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.connection-log-open {
-  color: var(--overlay1);
-  flex: 0 0 auto;
-  font-size: 11px;
-}
-
-.connection-log-dot,
 .connection-log-row-dot {
   width: 7px;
   height: 7px;
@@ -1092,16 +1055,14 @@ body.has-session-tabs .tab-home .tab-name {
   background: var(--blue);
 }
 
-.connection-log-dot.ok,
 .connection-log-row.ok .connection-log-row-dot { background: var(--green); }
-.connection-log-dot.warning,
 .connection-log-row.warning .connection-log-row-dot { background: var(--yellow); }
-.connection-log-dot.error,
 .connection-log-row.error .connection-log-row-dot { background: var(--red); }
 
 .connection-log-panel {
   position: absolute;
-  top: 44px;
+  top: auto;
+  bottom: 10px;
   right: 12px;
   z-index: 11;
   width: min(440px, calc(100% - 24px));
@@ -1164,6 +1125,68 @@ body.has-session-tabs .tab-home .tab-name {
 .connection-log-row:hover { background: color-mix(in srgb, var(--surface0) 55%, transparent); }
 .connection-log-row-time { color: var(--overlay0); font-variant-numeric: tabular-nums; }
 .connection-log-row-message { min-width: 0; overflow-wrap: anywhere; }
+
+.connection-test-panel {
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  background: var(--crust);
+  overflow: hidden;
+}
+
+.connection-test-panel.hidden { display: none; }
+
+.connection-test-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--surface0);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.connection-test-status {
+  color: var(--subtext0);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.connection-test-status.busy { color: var(--yellow); }
+.connection-test-status.ok { color: var(--green); }
+.connection-test-status.error { color: var(--red); }
+
+.connection-test-list {
+  max-height: 180px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.connection-test-row {
+  display: grid;
+  grid-template-columns: 8px 64px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  padding: 5px 4px;
+  border-radius: 4px;
+  color: var(--subtext0);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.connection-test-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--blue);
+}
+
+.connection-test-row.ok .connection-test-dot { background: var(--green); }
+.connection-test-row.warning .connection-test-dot { background: var(--yellow); }
+.connection-test-row.error .connection-test-dot { background: var(--red); }
+.connection-test-time { color: var(--overlay0); font-variant-numeric: tabular-nums; }
+.connection-test-message { min-width: 0; overflow-wrap: anywhere; }
 
 .terminal-pane.terminal-bell-visual::after,
 #modal-prefs.terminal-bell-visual::after,
@@ -1287,6 +1310,7 @@ body.terminal-bell-visual::after {
   height: 8px;
   border-radius: 50%;
   background: var(--overlay1);
+  cursor: pointer;
 }
 
 #status-bar .status-dot.connected { background: var(--green); }
@@ -1307,6 +1331,51 @@ body.terminal-bell-visual::after {
 #status-bar .status-label {
   color: var(--overlay0);
   margin-right: 4px;
+}
+
+#status-bar .status-log-trigger {
+  margin-left: auto;
+  min-width: 0;
+  max-width: min(46vw, 520px);
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--subtext0);
+  padding: 1px 5px;
+  font: inherit;
+  cursor: pointer;
+}
+
+#status-bar .status-log-trigger.hidden {
+  display: none;
+}
+
+#status-bar .status-log-trigger:hover,
+#status-bar .status-dot:hover {
+  background: var(--surface0);
+}
+
+#status-bar .status-log-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--blue);
+}
+
+#status-bar .status-log-trigger.ok .status-log-dot { background: var(--green); }
+#status-bar .status-log-trigger.warning .status-log-dot { background: var(--yellow); }
+#status-bar .status-log-trigger.error .status-log-dot { background: var(--red); }
+
+#status-log-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ─── Selector de layout de la vista múltiple ──────────────── */
@@ -2356,6 +2425,183 @@ input[type="checkbox"] {
 
 .toast-action:hover {
   background: rgba(0, 0, 0, 0.12);
+}
+
+/* ─── Centro de actividad global ────────────────────────────── */
+#activity-center-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+  display: flex;
+  justify-content: flex-start;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+#activity-center-overlay.hidden { display: none; }
+
+#activity-center-panel {
+  width: min(520px, calc(100vw - 44px));
+  height: 100%;
+  margin-left: 44px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--surface0);
+  background: var(--mantle);
+  color: var(--text);
+  box-shadow: 16px 0 38px rgba(0, 0, 0, 0.36);
+}
+
+.activity-center-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border-bottom: 1px solid var(--surface0);
+}
+
+.activity-center-head h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.activity-center-head p {
+  margin: 4px 0 0;
+  color: var(--subtext0);
+  font-size: 12px;
+}
+
+.activity-center-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--surface0);
+  overflow-x: auto;
+}
+
+.activity-filter,
+.activity-clear {
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  background: var(--crust);
+  color: var(--subtext0);
+  padding: 5px 9px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.activity-filter:hover,
+.activity-clear:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+.activity-filter.active {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+}
+
+.activity-clear {
+  margin-left: auto;
+}
+
+.activity-center-list {
+  flex: 1;
+  overflow: auto;
+  padding: 10px;
+}
+
+.activity-empty {
+  padding: 24px 8px;
+  color: var(--overlay1);
+  font-size: 13px;
+  text-align: center;
+}
+
+.activity-item {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: start;
+  padding: 9px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--surface0) 70%, transparent);
+}
+
+.activity-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--blue);
+}
+
+.activity-item.ok .activity-dot,
+.activity-item.success .activity-dot { background: var(--green); }
+.activity-item.warning .activity-dot { background: var(--yellow); }
+.activity-item.error .activity-dot { background: var(--red); }
+
+.activity-body {
+  min-width: 0;
+}
+
+.activity-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.activity-kind {
+  flex: 0 0 auto;
+  color: var(--overlay1);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.activity-title {
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.activity-time {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--overlay0);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.activity-detail {
+  margin-top: 3px;
+  color: var(--subtext0);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.activity-action {
+  border: 1px solid var(--surface0);
+  border-radius: 5px;
+  background: var(--crust);
+  color: var(--subtext0);
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.activity-action:hover {
+  background: var(--surface0);
+  color: var(--text);
 }
 
 @keyframes slide-in {

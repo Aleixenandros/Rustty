@@ -99,6 +99,7 @@ pub fn run() {
             commands::wake_on_lan,
             // ── Sesiones SSH
             commands::ssh_connect,
+            commands::ssh_test_connection,
             commands::ssh_disconnect,
             commands::ssh_send_input,
             commands::ssh_resize,

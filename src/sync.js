@@ -37,6 +37,26 @@ const SYNCED_PREF_KEYS = [
 // Estado local de navegación. No debe viajar ni re-aplicarse desde otra
 // máquina porque hace que la sidebar cambie o se repliegue al terminar sync.
 const LOCAL_UI_PREF_KEYS = new Set(["activeWorkspaceId", "sidebarViewMode"]);
+const SYNC_FALLBACK_TIMESTAMP = "1970-01-01T00:00:00.000Z";
+
+function stableTimestamp(...values) {
+  return values.find((value) => typeof value === "string" && value.trim()) || SYNC_FALLBACK_TIMESTAMP;
+}
+
+function normalizeForCompare(value) {
+  if (Array.isArray(value)) return value.map(normalizeForCompare);
+  if (value && typeof value === "object") {
+    return Object.keys(value).sort().reduce((acc, key) => {
+      acc[key] = normalizeForCompare(value[key]);
+      return acc;
+    }, {});
+  }
+  return value;
+}
+
+function sameValue(a, b) {
+  return JSON.stringify(normalizeForCompare(a)) === JSON.stringify(normalizeForCompare(b));
+}
 
 /* ───────────────────────────── Construcción del estado ─────────────────── */
 
@@ -55,7 +75,7 @@ async function readProfileSecret(key) {
   }
 }
 
-async function addProfileSecretItems(items, profiles, prefs, deviceId, now) {
+async function addProfileSecretItems(items, profiles, prefs, deviceId) {
   const secretTs = prefs._secretsTs || {};
   for (const profile of profiles || []) {
     const pairs = [
@@ -67,7 +87,7 @@ async function addProfileSecretItems(items, profiles, prefs, deviceId, now) {
       if (!secret) continue;
       items[itemKey] = {
         data: { key, secret },
-        updated_at: secretTs[key] || profile.updated_at || profile.created_at || now,
+        updated_at: stableTimestamp(secretTs[key], profile.updated_at, profile.created_at),
         device_id: deviceId,
       };
     }
@@ -84,7 +104,7 @@ export async function buildSyncState(ctx) {
     for (const p of profiles) {
       items[`profile:${p.id}`] = {
         data: p,
-        updated_at: p.updated_at || p.created_at || now,
+        updated_at: stableTimestamp(p.updated_at, p.created_at),
         device_id: deviceId,
       };
     }
@@ -98,7 +118,7 @@ export async function buildSyncState(ctx) {
     for (const k of SYNCED_PREF_KEYS) bundle[k] = prefs[k];
     items["prefs:bundle"] = {
       data: bundle,
-      updated_at: prefs._prefsUpdatedAt || prefs._lastSyncAt || now,
+      updated_at: stableTimestamp(prefs._prefsUpdatedAt),
       device_id: deviceId,
     };
   }
@@ -107,7 +127,7 @@ export async function buildSyncState(ctx) {
     for (const t of prefs.customThemes || []) {
       items[`theme:${t.id}`] = {
         data: t,
-        updated_at: t.updatedAt || prefs._lastSyncAt || now,
+        updated_at: stableTimestamp(t.updatedAt),
         device_id: deviceId,
       };
     }
@@ -122,7 +142,7 @@ export async function buildSyncState(ctx) {
     for (const [id, accel] of Object.entries(sc)) {
       items[`shortcut:${id}`] = {
         data: accel,            // string o null (desactivado)
-        updated_at: ts[id] || prefs._lastSyncAt || now,
+        updated_at: stableTimestamp(ts[id]),
         device_id: deviceId,
       };
     }
@@ -136,7 +156,7 @@ export async function buildSyncState(ctx) {
       if (!snippet?.id) continue;
       items[`snippet:${snippet.id}`] = {
         data: snippet,
-        updated_at: snippet.updated_at || snippet.updatedAt || prefs._lastSyncAt || now,
+        updated_at: stableTimestamp(snippet.updated_at, snippet.updatedAt),
         device_id: deviceId,
       };
     }
@@ -146,7 +166,7 @@ export async function buildSyncState(ctx) {
   }
 
   if (selective.secrets) {
-    await addProfileSecretItems(items, profiles, prefs, deviceId, now);
+    await addProfileSecretItems(items, profiles, prefs, deviceId);
   }
 
   const exportedSecrets = ctx.exportedSecrets?.entries;
@@ -189,16 +209,19 @@ export async function applyMergedState(merged, ctx) {
   let secretsChanged = 0;
 
   const localProfileIds = new Set(profiles.map((p) => p.id));
+  const localProfilesById = new Map(profiles.map((p) => [p.id, p]));
 
   // Items
   for (const [key, item] of Object.entries(merged.items || {})) {
     if (key.startsWith("profile:")) {
       const id = key.slice(8);
-      const profile = item.data;
+      const profile = { ...(item.data || {}) };
       // Asegura los campos requeridos
       if (!profile.id) profile.id = id;
       if (!profile.created_at) profile.created_at = new Date().toISOString();
       profile.updated_at = item.updated_at;
+      const existing = localProfilesById.get(id);
+      if (existing && sameValue(existing, profile)) continue;
       try {
         await invoke("save_profile", { profile });
         if (!localProfileIds.has(id)) addedProfiles++;
@@ -206,37 +229,52 @@ export async function applyMergedState(merged, ctx) {
         console.error("[sync] save_profile", id, err);
       }
     } else if (key === "prefs:bundle") {
+      let bundleChanged = false;
+      let bundleDataChanged = false;
       for (const [prefKey, value] of Object.entries(item.data || {})) {
         if (LOCAL_UI_PREF_KEYS.has(prefKey)) continue;
+        if (sameValue(prefs[prefKey], value)) continue;
         prefs[prefKey] = value;
+        bundleChanged = true;
+        bundleDataChanged = true;
       }
-      prefs._prefsUpdatedAt = item.updated_at;
-      prefsChanged = true;
+      if (prefs._prefsUpdatedAt !== item.updated_at) {
+        prefs._prefsUpdatedAt = item.updated_at;
+        bundleChanged = true;
+      }
+      if (bundleChanged) prefsChanged = bundleDataChanged;
     } else if (key.startsWith("theme:")) {
       const id = key.slice(6);
-      const theme = item.data;
+      const theme = { ...(item.data || {}) };
       theme.updatedAt = item.updated_at;
       const list = prefs.customThemes || (prefs.customThemes = []);
       const idx = list.findIndex((t) => t.id === id);
+      if (idx >= 0 && sameValue(list[idx], theme)) continue;
       if (idx >= 0) list[idx] = theme; else list.push(theme);
       themesChanged++;
     } else if (key.startsWith("shortcut:")) {
       const id = key.slice(9);
       prefs.shortcuts = prefs.shortcuts || {};
-      prefs.shortcuts[id] = item.data;
       prefs._shortcutsTs = prefs._shortcutsTs || {};
+      const valueChanged = !sameValue(prefs.shortcuts[id], item.data);
+      const timestampChanged = prefs._shortcutsTs[id] !== item.updated_at;
+      if (!valueChanged && !timestampChanged) continue;
+      prefs.shortcuts[id] = item.data;
       prefs._shortcutsTs[id] = item.updated_at;
-      shortcutsChanged++;
+      if (valueChanged) shortcutsChanged++;
     } else if (key.startsWith("snippet:")) {
       const id = key.slice(8);
-      const snippet = item.data;
+      const snippet = { ...(item.data || {}) };
       snippet.id = snippet.id || id;
       snippet.updated_at = item.updated_at;
+      const existing = loadLocalSnippets().find((entry) => entry.id === id);
+      if (existing && sameValue(existing, snippet)) continue;
       upsertLocalSnippet(snippet);
     } else if (key.startsWith("secret:") && allowSecrets) {
       const secretKey = item.data?.key || key.slice(7);
       const secret = item.data?.secret;
       if (secretKey && secret) {
+        if (prefs._secretsTs?.[secretKey] === item.updated_at) continue;
         try {
           await invoke("keyring_set", {
             service: KEYRING_SERVICE,
