@@ -1047,6 +1047,124 @@ body.has-session-tabs .tab-home .tab-name {
   background: color-mix(in srgb, var(--blue) 28%, transparent);
 }
 
+.connection-log-strip {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: min(420px, calc(100% - 24px));
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--crust) 88%, transparent);
+  color: var(--subtext0);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+}
+
+.connection-log-strip.hidden { display: none; }
+
+.connection-log-latest {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-log-open {
+  color: var(--overlay1);
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+.connection-log-dot,
+.connection-log-row-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--blue);
+}
+
+.connection-log-dot.ok,
+.connection-log-row.ok .connection-log-row-dot { background: var(--green); }
+.connection-log-dot.warning,
+.connection-log-row.warning .connection-log-row-dot { background: var(--yellow); }
+.connection-log-dot.error,
+.connection-log-row.error .connection-log-row-dot { background: var(--red); }
+
+.connection-log-panel {
+  position: absolute;
+  top: 44px;
+  right: 12px;
+  z-index: 11;
+  width: min(440px, calc(100% - 24px));
+  max-height: min(360px, calc(100% - 70px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--crust) 94%, transparent);
+  color: var(--text);
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.34);
+  overflow: hidden;
+}
+
+.connection-log-panel.hidden { display: none; }
+
+.connection-log-head {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid var(--surface0);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.connection-log-close {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--overlay0);
+  cursor: pointer;
+}
+
+.connection-log-close:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+.connection-log-list {
+  overflow: auto;
+  padding: 6px;
+}
+
+.connection-log-row {
+  display: grid;
+  grid-template-columns: 8px 64px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  padding: 5px 4px;
+  border-radius: 4px;
+  color: var(--subtext0);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.connection-log-row:hover { background: color-mix(in srgb, var(--surface0) 55%, transparent); }
+.connection-log-row-time { color: var(--overlay0); font-variant-numeric: tabular-nums; }
+.connection-log-row-message { min-width: 0; overflow-wrap: anywhere; }
+
 .terminal-pane.terminal-bell-visual::after,
 #modal-prefs.terminal-bell-visual::after,
 body.terminal-bell-visual::after {

@@ -67,6 +67,33 @@ struct SshTunnelTrafficEvent {
     bytes_down: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SshConnectionLogEvent {
+    stage: &'static str,
+    status: &'static str,
+    message: String,
+    timestamp: String,
+}
+
+fn emit_connection_log(
+    app_handle: &AppHandle,
+    session_id: &str,
+    stage: &'static str,
+    status: &'static str,
+    message: impl Into<String>,
+) {
+    let _ = app_handle.emit(
+        &format!("ssh-log-{}", session_id),
+        SshConnectionLogEvent {
+            stage,
+            status,
+            message: message.into(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        },
+    );
+}
+
 // ─── Mensajes del frontend al hilo SSH ──────────────────────────────────────
 
 pub enum SessionCommand {
@@ -122,6 +149,7 @@ impl SshManager {
     /// Emite eventos Tauri para notificar al frontend:
     ///   - `ssh-connected-{id}` : conexión establecida
     ///   - `ssh-data-{id}`      : bytes recibidos del servidor (stdout + stderr)
+    ///   - `ssh-log-{id}`       : etapa de diagnóstico de conexión
     ///   - `ssh-error-{id}`     : error de conexión/autenticación
     ///   - `ssh-reconnecting-{id}` : intentando reconectar (payload: número de intento)
     ///   - `ssh-closed-{id}`    : sesión terminada
@@ -337,15 +365,35 @@ async fn run_session_with_reconnect(
         match exit {
             SessionExit::UserDisconnect => return,
             SessionExit::Fatal(err) => {
+                emit_connection_log(&app_handle, &session_id, "error", "error", err.to_string());
                 let _ = app_handle.emit(&format!("ssh-error-{}", session_id), err.to_string());
                 return;
             }
             SessionExit::ServerClosed => {
                 if max_attempts == 0 || attempt >= max_attempts {
+                    emit_connection_log(
+                        &app_handle,
+                        &session_id,
+                        "closed",
+                        "warning",
+                        "La sesión SSH se ha cerrado",
+                    );
                     return;
                 }
                 attempt += 1;
                 let delay = backoff_delay(attempt);
+                emit_connection_log(
+                    &app_handle,
+                    &session_id,
+                    "reconnecting",
+                    "warning",
+                    format!(
+                        "Reconectando en {}s ({}/{})",
+                        delay.as_secs(),
+                        attempt,
+                        max_attempts
+                    ),
+                );
                 let _ = app_handle.emit(
                     &format!("ssh-reconnecting-{}", session_id),
                     serde_json::json!({
@@ -454,12 +502,34 @@ async fn run_session(
         .map(str::trim)
         .filter(|s| !s.is_empty());
 
+    emit_connection_log(
+        &app_handle,
+        &session_id,
+        "resolving",
+        "info",
+        format!("Resolviendo {}:{}", profile.host, profile.port),
+    );
+
     let mut handle = if let Some(spec) = proxy_spec {
         // ── Modo ProxyJump: conectar al bastion → direct-tcpip → handshake target
         let (b_user, b_host, b_port) = parse_jump_spec(spec, &profile.username);
         let bastion_addr = format!("{}:{}", b_host, b_port);
         let (bastion_handler, bastion_failure) =
             host_keys::client(b_host.clone(), b_port, false, false);
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "connecting",
+            "info",
+            format!("Conectando al bastion {bastion_addr}"),
+        );
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "verifying_host_key",
+            "info",
+            format!("Verificando host key del bastion {b_host}:{b_port}"),
+        );
         let mut bastion =
             match client::connect(config.clone(), bastion_addr.clone(), bastion_handler).await {
                 Ok(h) => h,
@@ -467,6 +537,13 @@ async fn run_session(
                     if let Some(reason) = host_keys::take_failure(&bastion_failure) {
                         return SessionExit::Fatal(AppError::Auth(format!("Bastion: {reason}")));
                     }
+                    emit_connection_log(
+                        &app_handle,
+                        &session_id,
+                        "connecting",
+                        "error",
+                        format!("No se puede conectar al bastion {bastion_addr}: {err}"),
+                    );
                     let _ = app_handle.emit(
                         &format!("ssh-error-{}", session_id),
                         format!("No se puede conectar al bastion {bastion_addr}: {err}"),
@@ -474,7 +551,21 @@ async fn run_session(
                     return SessionExit::ServerClosed;
                 }
             };
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "connecting",
+            "ok",
+            format!("Bastion conectado: {bastion_addr}"),
+        );
 
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "authenticating",
+            "info",
+            format!("Autenticando en bastion como {b_user}"),
+        );
         match authenticate_handle(
             &mut bastion,
             &profile.auth_type,
@@ -494,7 +585,21 @@ async fn run_session(
             }
             Err(e) => return SessionExit::Fatal(AppError::Auth(format!("Bastion: {e}"))),
         }
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "authenticating",
+            "ok",
+            "Autenticación contra bastion completada",
+        );
 
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "connecting",
+            "info",
+            format!("Abriendo túnel del bastion hacia {addr}"),
+        );
         let chan = match bastion
             .channel_open_direct_tcpip(
                 profile.host.clone(),
@@ -520,8 +625,24 @@ async fn run_session(
             profile.x11_forwarding,
             remote_forwards.clone(),
         );
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "verifying_host_key",
+            "info",
+            format!("Verificando host key de {}", addr),
+        );
         match client::connect_stream(config, stream, target_handler).await {
-            Ok(h) => h,
+            Ok(h) => {
+                emit_connection_log(
+                    &app_handle,
+                    &session_id,
+                    "connecting",
+                    "ok",
+                    format!("SSH establecido con {addr} a través del bastion"),
+                );
+                h
+            }
             Err(err) => {
                 if let Some(reason) = host_keys::take_failure(&target_failure) {
                     return SessionExit::Fatal(AppError::Auth(reason));
@@ -540,12 +661,42 @@ async fn run_session(
             profile.x11_forwarding,
             remote_forwards.clone(),
         );
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "connecting",
+            "info",
+            format!("Conectando a {addr}"),
+        );
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "verifying_host_key",
+            "info",
+            format!("Verificando host key de {addr}"),
+        );
         match client::connect(config, addr.clone(), client_handler).await {
-            Ok(handle) => handle,
+            Ok(handle) => {
+                emit_connection_log(
+                    &app_handle,
+                    &session_id,
+                    "connecting",
+                    "ok",
+                    format!("TCP/SSH establecido con {addr}"),
+                );
+                handle
+            }
             Err(err) => {
                 if let Some(reason) = host_keys::take_failure(&host_key_failure) {
                     return SessionExit::Fatal(AppError::Auth(reason));
                 }
+                emit_connection_log(
+                    &app_handle,
+                    &session_id,
+                    "connecting",
+                    "error",
+                    format!("No se puede conectar a {addr}: {err}"),
+                );
                 let _ = app_handle.emit(
                     &format!("ssh-error-{}", session_id),
                     format!("No se puede conectar a {addr}: {err}"),
@@ -556,6 +707,13 @@ async fn run_session(
     };
 
     // 2. Autenticación contra el destino
+    emit_connection_log(
+        &app_handle,
+        &session_id,
+        "authenticating",
+        "info",
+        format!("Autenticando como {}", profile.username),
+    );
     let auth = match authenticate_handle(
         &mut handle,
         &profile.auth_type,
@@ -571,7 +729,15 @@ async fn run_session(
     };
 
     match auth {
-        AuthResult::Success => {}
+        AuthResult::Success => {
+            emit_connection_log(
+                &app_handle,
+                &session_id,
+                "authenticating",
+                "ok",
+                "Autenticación completada",
+            );
+        }
         AuthResult::Failure { remaining_methods } => {
             return SessionExit::Fatal(AppError::Auth(format!(
                 "Autenticación fallida. Métodos restantes: {:?}",
@@ -581,6 +747,13 @@ async fn run_session(
     }
 
     // 3. Canal + PTY + shell
+    emit_connection_log(
+        &app_handle,
+        &session_id,
+        "opening_shell",
+        "info",
+        "Abriendo canal SSH",
+    );
     let mut channel = match handle.channel_open_session().await {
         Ok(c) => c,
         Err(e) => return SessionExit::Fatal(AppError::Ssh(format!("No se pudo abrir canal: {e}"))),
@@ -611,6 +784,20 @@ async fn run_session(
         return SessionExit::Fatal(AppError::Ssh(format!("No se pudo abrir shell: {e}")));
     }
 
+    emit_connection_log(
+        &app_handle,
+        &session_id,
+        "opening_shell",
+        "ok",
+        "Shell remota abierta",
+    );
+    emit_connection_log(
+        &app_handle,
+        &session_id,
+        "connected",
+        "ok",
+        format!("Conectado a {}", profile.name),
+    );
     let _ = app_handle.emit(&format!("ssh-connected-{}", session_id), &profile.name);
 
     // 4. Bucle de E/S: multiplexa datos del servidor y comandos del frontend

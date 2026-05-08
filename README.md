@@ -5,7 +5,7 @@
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
 
-> 🚧 **Estado**: proyecto en desarrollo activo, aún sin release estable. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
+> ✅ **Estado**: versión estable 1.0.0. Consulta el [CHANGELOG](CHANGELOG.md) para ver las novedades.
 
 ## Características principales
 
@@ -16,9 +16,10 @@
 - **Opciones avanzadas SSH por perfil**: keep-alive configurable, **reconexión automática con backoff** ante caídas, **grabación de sesión** a fichero, bastion / ProxyJump, agent forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) en servidores antiguos.
 - **Multi-pestaña y vistas divididas**: trabaja con varias sesiones simultáneas, distribúyelas en *split* horizontal / vertical / grid y activa el *broadcast* para teclear en varias a la vez.
 - **Sidebar pulida**: rail vertical de iconos (Perfiles, Favoritos, Túneles, Sync, Preferencias y acciones rápidas), **drag & drop** entre carpetas y workspaces, colores por carpeta y selección automática de la conexión asociada a la pestaña activa.
+- **Bandeja del sistema / quick launcher**: acceso rápido a favoritos, recientes, workspaces, consola local y abrir/ocultar ventana desde el icono de tray.
 - **Exportación granular**: exporta todos los perfiles, los de una carpeta o los de un workspace a JSON desde el menú contextual, preguntando antes si debe incluir contraseñas/passphrases guardadas.
 - **Seguridad**:
-  - Integración nativa con el keyring del sistema (KWallet, GNOME Keyring, macOS Keychain, Windows Credential Store).
+  - Integración nativa con el keyring del sistema (Secret Service/KWallet en Linux, macOS Keychain, Windows Credential Store).
   - Soporte para bases de datos **KeePass** (`.kdbx`) como fuente de contraseñas.
   - Atajo `Ctrl+P` para pegar la contraseña del perfil activo sin exponerla en pantalla.
   - Verificación de `known_hosts` con TOFU y aviso ante cambios de fingerprint.
@@ -215,25 +216,25 @@ Si deseas compilar el proyecto desde el código fuente, sigue estos pasos:
     **Ubuntu / Debian**:
 
     ```bash
-    sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev pkg-config
+    sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev libssl-dev pkg-config
     ```
 
     **Fedora**:
 
     ```bash
-    sudo dnf install webkit2gtk4.1-devel libayatana-appindicator-devel librsvg2-devel openssl-devel
+    sudo dnf install webkit2gtk4.1-devel libayatana-appindicator-devel librsvg2-devel dbus-devel openssl-devel
     ```
 
     **Arch Linux**:
 
     ```bash
-    sudo pacman -S webkit2gtk-4.1 libayatana-appindicator librsvg openssl
+    sudo pacman -S webkit2gtk-4.1 libayatana-appindicator librsvg dbus openssl
     ```
 
     **openSUSE**:
 
     ```bash
-    sudo zypper install webkit2gtk3-devel libayatana-appindicator3-devel librsvg-devel libopenssl-devel
+    sudo zypper install webkit2gtk3-devel libayatana-appindicator3-devel librsvg-devel dbus-1-devel libopenssl-devel
     ```
 
    #### macOS (compilación)
@@ -292,7 +293,7 @@ npm run sync-version
 Ese comando sincroniza `Cargo.toml`, `Cargo.lock` y `package-lock.json`. La web pública resuelve su versión desde la última release de GitHub, no desde `package.json`. `npm run build`, `npm run tauri dev` y `npm run tauri build` también ejecutan la sincronización automáticamente.
 
 ```bash
-git tag v0.1.0
+git tag v1.0.0
 git push --tags
 ```
 

@@ -75,6 +75,7 @@ let editingProfileId = null;
 
 const KEYRING_SERVICE = "rustty";
 const RECENT_CONNECTIONS_STORAGE_KEY = "rustty-recent-connections";
+let _trayQuickLauncherTimer = null;
 const RELEASES_API_URL = "https://api.github.com/repos/Aleixenandros/Rustty/releases/latest";
 const RELEASES_PAGE_URL = "https://github.com/Aleixenandros/Rustty/releases/latest";
 const DEFAULT_SYNC_HISTORY_KEEP = 30;
@@ -433,6 +434,7 @@ function toggleFavoriteProfile(id) {
 
 function savePrefs() {
   localStorage.setItem("rustty-prefs", JSON.stringify(prefs));
+  scheduleTrayQuickLauncherUpdate();
 }
 
 /** Resuelve un tema efectivo (`system` → `dark` | `light` según el SO). */
@@ -1756,6 +1758,7 @@ async function init() {
 
   renderConnectionList();
   bindUIEvents();
+  await initTrayQuickLauncher().catch((e) => console.debug("[tray] init", e));
   await populateSyncTab().catch((e) => console.error("[sync] populate", e));
   if (_syncConfigCache?.enabled && _syncConfigCache.backend !== "none") {
     runSyncWithCurrentState({ persistConfig: false, announce: false })
@@ -1908,6 +1911,7 @@ let _sidebarSearchQuery = "";
 
 function renderConnectionList() {
   const container = document.getElementById("connection-list");
+  scheduleTrayQuickLauncherUpdate();
   renderWorkspaceSwitcher();
 
   if (prefs.sidebarViewMode === "all") {
@@ -2231,6 +2235,17 @@ function setSidebarViewMode(mode) {
   updateRailActiveState();
 }
 
+function switchToWorkspace(wsId) {
+  if (!prefs.workspaces.some((w) => w.id === wsId)) return;
+  prefs.activeWorkspaceId = wsId;
+  prefs.sidebarViewMode = "current";
+  userFolders = new Set(getWorkspaceFolders(wsId));
+  savePrefs();
+  renderConnectionList();
+  updateRailActiveState();
+  selectHomeTab();
+}
+
 function updateRailActiveState() {
   document.querySelectorAll("#rail [data-rail-view]").forEach((btn) => {
     const view = btn.dataset.railView;
@@ -2340,6 +2355,7 @@ function loadRecentConnections() {
 
 function saveRecentConnections(items) {
   localStorage.setItem(RECENT_CONNECTIONS_STORAGE_KEY, JSON.stringify(items.slice(0, 12)));
+  scheduleTrayQuickLauncherUpdate();
 }
 
 function recordRecentConnection(profileId) {
@@ -2354,6 +2370,57 @@ function getRecentProfiles() {
   return loadRecentConnections()
     .map((item) => ({ profile: byId.get(item.id), lastConnectedAt: item.lastConnectedAt }))
     .filter((item) => item.profile);
+}
+
+function trayProfileLabel(profile) {
+  const user = profile.username ? `${profile.username}@` : "";
+  const host = profile.host ? `${user}${profile.host}` : "";
+  return host ? `${profile.name} · ${host}` : profile.name;
+}
+
+function buildTrayQuickLauncherPayload() {
+  const favoriteIds = new Set(Array.isArray(prefs.favorites) ? prefs.favorites : []);
+  const favorites = profiles
+    .filter((profile) => favoriteIds.has(profile.id))
+    .slice(0, 8)
+    .map((profile) => ({ id: profile.id, label: trayProfileLabel(profile) }));
+  const recent = getRecentProfiles()
+    .slice(0, 8)
+    .map(({ profile }) => ({ id: profile.id, label: trayProfileLabel(profile) }));
+  const workspaces = (Array.isArray(prefs.workspaces) ? prefs.workspaces : [])
+    .slice(0, 12)
+    .map((workspace) => ({ id: workspace.id, label: workspace.name || "Default" }));
+  return { favorites, recent, workspaces };
+}
+
+function scheduleTrayQuickLauncherUpdate() {
+  clearTimeout(_trayQuickLauncherTimer);
+  _trayQuickLauncherTimer = setTimeout(() => {
+    _trayQuickLauncherTimer = null;
+    updateTrayQuickLauncher().catch((err) => console.debug("[tray] update", err));
+  }, 150);
+}
+
+async function updateTrayQuickLauncher() {
+  await invoke("tray_update_quick_launcher", {
+    payload: buildTrayQuickLauncherPayload(),
+  });
+}
+
+async function initTrayQuickLauncher() {
+  await listen("tray-action", (event) => {
+    const payload = event.payload || {};
+    if (payload.action === "local-shell") {
+      openLocalShell();
+    } else if (payload.action === "new-connection") {
+      openNewConnectionModal();
+    } else if (payload.action === "connect-profile" && payload.profileId) {
+      connectProfile(payload.profileId, { force: true });
+    } else if (payload.action === "switch-workspace" && payload.workspaceId) {
+      switchToWorkspace(payload.workspaceId);
+    }
+  });
+  scheduleTrayQuickLauncherUpdate();
 }
 
 function profileMatchesDashboardQuery(profile, query) {
@@ -4175,34 +4242,31 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
-  const tempId = `connecting-${profileId}-${Date.now()}`;
-  createTerminalTab(tempId, profile, "connecting");
+  const sessionId = `ssh-${crypto.randomUUID()}`;
+  createTerminalTab(sessionId, profile, "connecting");
+  const session = sessions.get(sessionId);
+  appendConnectionLog(sessionId, {
+    stage: "preparing",
+    status: "info",
+    message: `Preparando conexión con ${profile.name}`,
+    timestamp: new Date().toISOString(),
+  });
 
   try {
-    const sessionId = await invoke("ssh_connect", {
+    session.unlisteners = await registerSshListeners(sessionId, session.terminal);
+    await invoke("ssh_connect", {
+      sessionId,
       profileId,
       password:   password   || null,
       passphrase: passphrase || null,
     });
 
-    const session = sessions.get(tempId);
-    session.id = sessionId;          // actualiza la referencia que usan los closures
-    sessions.delete(tempId);
-    sessions.set(sessionId, session);
-
-    document.querySelectorAll(`[data-session="${tempId}"]`).forEach((el) => {
-      el.dataset.session = sessionId;
-    });
-    const vi = viewSelection.indexOf(tempId);
-    if (vi >= 0) viewSelection[vi] = sessionId;
-    if (activeSessionId === tempId) activeSessionId = sessionId;
-
-    session.unlisteners = await registerSshListeners(sessionId, session.terminal);
     updateTabStatus(sessionId, "connecting");
     setActiveTab(sessionId);
   } catch (err) {
-    sessions.delete(tempId);
-    removeTab(tempId);
+    for (const ul of session?.unlisteners || []) { try { ul(); } catch {} }
+    sessions.delete(sessionId);
+    removeTab(sessionId);
     toast(`No se pudo conectar: ${err}`, "error");
   }
 }
@@ -4649,7 +4713,7 @@ function injectOsc7Setup(sessionId) {
 /**
  * Reabre una sesión cerrada reutilizando la pestaña y el xterm existentes.
  * Para shell local: reusa el mismo sessionId.
- * Para SSH: genera un nuevo sessionId en backend y renombra la sesión en UI.
+ * Para SSH: reusa el sessionId para registrar diagnóstico antes del invoke.
  * RDP no entra aquí (tiene su propio botón de reconexión).
  */
 async function reconnectSession(sessionId) {
@@ -4716,28 +4780,25 @@ async function reconnectSshInPlace(s) {
   s.unlisteners = [];
   s.status = "connecting";
   updateTabStatus(oldSessionId, "connecting");
+  appendConnectionLog(oldSessionId, {
+    stage: "reconnecting",
+    status: "info",
+    message: `Preparando reconexión con ${profile.name}`,
+    timestamp: new Date().toISOString(),
+  });
 
   try {
-    const newSessionId = await invoke("ssh_connect", {
+    s.unlisteners = await registerSshListeners(oldSessionId, s.terminal);
+    await invoke("ssh_connect", {
+      sessionId: oldSessionId,
       profileId: profile.id,
       password:   creds.password   || null,
       passphrase: creds.passphrase || null,
     });
-
-    // Renombrar la sesión en la UI
-    s.id = newSessionId;
-    sessions.delete(oldSessionId);
-    sessions.set(newSessionId, s);
-    document.querySelectorAll(`[data-session="${oldSessionId}"]`).forEach((el) => {
-      el.dataset.session = newSessionId;
-    });
-    const vi = viewSelection.indexOf(oldSessionId);
-    if (vi >= 0) viewSelection[vi] = newSessionId;
-    if (activeSessionId === oldSessionId) activeSessionId = newSessionId;
-
-    s.unlisteners = await registerSshListeners(newSessionId, s.terminal);
-    updateTabStatus(newSessionId, "connecting");
+    updateTabStatus(oldSessionId, "connecting");
   } catch (err) {
+    for (const ul of s.unlisteners) { try { ul(); } catch {} }
+    s.unlisteners = [];
     s.status = "error";
     updateTabStatus(oldSessionId, "error");
     showReconnectOverlay(oldSessionId, "Error al reconectar");
@@ -5098,6 +5159,8 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   termArea.appendChild(buildTerminalSearchBar(sessionId));
   pane.appendChild(termArea);
   pane.appendChild(buildReconnectOverlay(sessionId));
+  pane.appendChild(buildConnectionLogStrip(sessionId));
+  pane.appendChild(buildConnectionLogPanel(sessionId));
   document.getElementById("terminals-container").appendChild(pane);
 
   // Crear pestaña
@@ -5135,6 +5198,8 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     remoteCwd: null,
     tunnels: new Map(),
     tunnelPanel: null,
+    connectionLogs: [],
+    connectionLogOpen: false,
   };
   sessions.set(sessionId, sessionObj);
   wirePaneFocusOnClick(pane, sessionId);
@@ -5189,6 +5254,115 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   selectSession(sessionId, false);
 }
 
+function buildConnectionLogStrip(sessionId) {
+  const strip = document.createElement("button");
+  strip.type = "button";
+  strip.className = "connection-log-strip hidden";
+  strip.dataset.session = sessionId;
+  strip.innerHTML = `
+    <span class="connection-log-dot info"></span>
+    <span class="connection-log-latest">Preparando conexión…</span>
+    <span class="connection-log-open">▤</span>
+  `;
+  strip.addEventListener("click", () => toggleConnectionLogPanel(sessionId));
+  return strip;
+}
+
+function buildConnectionLogPanel(sessionId) {
+  const panel = document.createElement("div");
+  panel.className = "connection-log-panel hidden";
+  panel.dataset.session = sessionId;
+  panel.innerHTML = `
+    <div class="connection-log-head">
+      <span>Diagnóstico de conexión</span>
+      <button type="button" class="connection-log-close" aria-label="Cerrar">✕</button>
+    </div>
+    <div class="connection-log-list"></div>
+  `;
+  panel.querySelector(".connection-log-close")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setConnectionLogPanelOpen(sessionId, false);
+  });
+  return panel;
+}
+
+function normalizeConnectionLogEntry(entry = {}) {
+  return {
+    stage: entry.stage || "info",
+    status: entry.status || "info",
+    message: entry.message || "",
+    timestamp: entry.timestamp || new Date().toISOString(),
+  };
+}
+
+function connectionLogTime(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function appendConnectionLog(sessionId, rawEntry) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  const entry = normalizeConnectionLogEntry(rawEntry);
+  if (!entry.message) return;
+  s.connectionLogs = s.connectionLogs || [];
+  const prev = s.connectionLogs[s.connectionLogs.length - 1];
+  if (prev && prev.stage === entry.stage && prev.status === entry.status && prev.message === entry.message) {
+    prev.timestamp = entry.timestamp;
+  } else {
+    s.connectionLogs.push(entry);
+  }
+  if (s.connectionLogs.length > 120) s.connectionLogs.splice(0, s.connectionLogs.length - 120);
+  renderConnectionLog(sessionId);
+}
+
+function renderConnectionLog(sessionId) {
+  const s = sessions.get(sessionId);
+  const pane = s?.pane || document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
+  if (!s || !pane) return;
+  const logs = s.connectionLogs || [];
+  const latest = logs[logs.length - 1];
+  const strip = pane.querySelector(".connection-log-strip");
+  const panel = pane.querySelector(".connection-log-panel");
+  if (strip) {
+    strip.classList.toggle("hidden", !latest);
+    if (latest) {
+      const dot = strip.querySelector(".connection-log-dot");
+      dot?.setAttribute("class", `connection-log-dot ${latest.status}`);
+      const label = strip.querySelector(".connection-log-latest");
+      if (label) label.textContent = latest.message;
+    }
+  }
+  if (panel) {
+    panel.classList.toggle("hidden", !s.connectionLogOpen);
+    const list = panel.querySelector(".connection-log-list");
+    if (list) {
+      list.innerHTML = logs.map((item) => `
+        <div class="connection-log-row ${escHtml(item.status)}">
+          <span class="connection-log-row-dot"></span>
+          <span class="connection-log-row-time">${escHtml(connectionLogTime(item.timestamp))}</span>
+          <span class="connection-log-row-message">${escHtml(item.message)}</span>
+        </div>
+      `).join("");
+      list.scrollTop = list.scrollHeight;
+    }
+  }
+}
+
+function setConnectionLogPanelOpen(sessionId, open) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  s.connectionLogOpen = !!open;
+  renderConnectionLog(sessionId);
+}
+
+function toggleConnectionLogPanel(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  setConnectionLogPanelOpen(sessionId, !s.connectionLogOpen);
+}
+
 async function registerSshListeners(sessionId, terminal) {
   const decoder = new TextDecoder();
   const ul = [];
@@ -5200,9 +5374,19 @@ async function registerSshListeners(sessionId, terminal) {
     if (filtered) terminal.write(applyHighlightRules(filtered));
   }));
 
+  ul.push(await listen(`ssh-log-${sessionId}`, (e) => {
+    appendConnectionLog(sessionId, e.payload || {});
+  }));
+
   ul.push(await listen(`ssh-connected-${sessionId}`, () => {
     const s = sessions.get(sessionId);
     if (s) s.status = "connected";
+    appendConnectionLog(sessionId, {
+      stage: "connected",
+      status: "ok",
+      message: "Sesión SSH conectada",
+      timestamp: new Date().toISOString(),
+    });
     hideReconnectOverlay(sessionId);
     updateTabStatus(sessionId, "connected");
     if (s?.profileId) recordRecentConnection(s.profileId);
@@ -5219,6 +5403,12 @@ async function registerSshListeners(sessionId, terminal) {
   ul.push(await listen(`ssh-error-${sessionId}`, (e) => {
     const s = sessions.get(sessionId);
     if (s) s.status = "error";
+    appendConnectionLog(sessionId, {
+      stage: "error",
+      status: "error",
+      message: String(e.payload || "Error SSH"),
+      timestamp: new Date().toISOString(),
+    });
     updateTabStatus(sessionId, "error");
     showReconnectOverlay(sessionId, "Error de conexión");
     terminal.writeln(`\r\n\x1b[31m✗ Error: ${e.payload}\x1b[0m\r\n`);
@@ -5231,12 +5421,24 @@ async function registerSshListeners(sessionId, terminal) {
     updateTabStatus(sessionId, "error");
     const { attempt, max, delay_ms } = e.payload || {};
     const secs = Math.round((delay_ms || 0) / 1000);
+    appendConnectionLog(sessionId, {
+      stage: "reconnecting",
+      status: "warning",
+      message: `Reintentando conexión (${attempt}/${max}) en ${secs}s`,
+      timestamp: new Date().toISOString(),
+    });
     terminal.writeln(`\r\n\x1b[33m↻ Reintentando conexión (${attempt}/${max}) en ${secs}s…\x1b[0m`);
   }));
 
   ul.push(await listen(`ssh-closed-${sessionId}`, () => {
     const s = sessions.get(sessionId);
     if (s) s.status = "closed";
+    appendConnectionLog(sessionId, {
+      stage: "closed",
+      status: "warning",
+      message: "Sesión SSH cerrada",
+      timestamp: new Date().toISOString(),
+    });
     updateTabStatus(sessionId, "error");
     showReconnectOverlay(sessionId, "Sesión cerrada");
     terminal.writeln(`\r\n\x1b[33m• ${t("terminal.closed")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);

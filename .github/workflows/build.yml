@@ -61,6 +61,7 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
+            libdbus-1-dev \
             libssl-dev \
             pkg-config \
             libssh2-1-dev \

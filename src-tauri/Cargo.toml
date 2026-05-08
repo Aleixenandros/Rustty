@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "0.6.3"
+version = "1.0.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -15,7 +15,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 # Persistencia automática de tamaño y posición de la ventana entre ejecuciones
@@ -31,8 +31,10 @@ tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "fs", "macr
 async-trait = "0.1"
 # PTY multiplataforma para la shell local
 portable-pty = "0.9"
-# Almacenamiento seguro de credenciales en el keystore del SO
-keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+# Almacenamiento seguro de credenciales en el keystore del SO.
+# En Linux usamos Secret Service como almacén persistente; keyutils por sí solo
+# vive en memoria de kernel y se pierde tras reiniciar.
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
 # Generación de UUIDs para IDs de sesión y perfil
 uuid = { version = "1", features = ["v4"] }
 # Directorios del sistema (app data dir)

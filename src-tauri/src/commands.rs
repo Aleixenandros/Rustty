@@ -101,6 +101,7 @@ fn parse_mac_address(input: &str) -> Result<[u8; 6], String> {
 /// El flujo de eventos emitidos por el backend:
 ///   - `ssh-connected-{id}` : conexión y auth exitosas
 ///   - `ssh-data-{id}`      : Vec<u8> con bytes recibidos del servidor
+///   - `ssh-log-{id}`       : etapa de diagnóstico de conexión
 ///   - `ssh-error-{id}`     : String con el error
 ///   - `ssh-closed-{id}`    : sesión finalizada (limpiamente o por error)
 #[tauri::command]
@@ -112,6 +113,7 @@ pub fn ssh_connect(
     profile_id: String,
     password: Option<String>,
     passphrase: Option<String>,
+    session_id: Option<String>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let profile = profiles
@@ -121,7 +123,7 @@ pub fn ssh_connect(
 
     let resolved_password = resolve_password_from_keepass(&profile, password)?;
 
-    let session_id = uuid::Uuid::new_v4().to_string();
+    let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     ssh_state
         .connect(
@@ -652,7 +654,15 @@ pub fn keyring_set(service: String, key: String, secret: String) -> Result<(), S
 pub fn keyring_get(service: String, key: String) -> Result<Option<String>, String> {
     let entry = keyring::Entry::new(&service, &key).map_err(|e| e.to_string())?;
     match entry.get_password() {
-        Ok(p) => Ok(Some(p)),
+        Ok(p) => {
+            #[cfg(target_os = "linux")]
+            {
+                // The Linux combo backend reads legacy keyutils entries as a cache
+                // and writes to Secret Service for persistence across reboots.
+                let _ = entry.set_password(&p);
+            }
+            Ok(Some(p))
+        }
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(e.to_string()),
     }

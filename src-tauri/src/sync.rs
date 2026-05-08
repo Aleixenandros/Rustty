@@ -401,7 +401,15 @@ fn keyring_get_secret(key: &str) -> Result<Option<String>, AppError> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, key)
         .map_err(|e| AppError::Sync(format!("keyring entry: {e}")))?;
     match entry.get_password() {
-        Ok(value) => Ok(Some(value)),
+        Ok(value) => {
+            #[cfg(target_os = "linux")]
+            {
+                // The Linux combo backend can read old keyutils-only entries;
+                // re-setting persists them into Secret Service as well.
+                let _ = entry.set_password(&value);
+            }
+            Ok(Some(value))
+        }
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(AppError::Sync(format!("keyring get: {e}"))),
     }

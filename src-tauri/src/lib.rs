@@ -1,3 +1,4 @@
+mod app_tray;
 mod commands;
 mod error;
 mod host_keys;
@@ -75,6 +76,7 @@ pub fn run() {
             app.manage(ProfileManager::new(data_dir.clone()));
             app.manage(SyncManager::new(data_dir.clone()));
             app.manage(DataDir(data_dir));
+            app_tray::setup(app);
 
             Ok(())
         })
@@ -89,6 +91,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // ── Aplicación
             commands::close_app,
+            app_tray::tray_update_quick_launcher,
             // ── Perfiles de conexión
             commands::get_profiles,
             commands::save_profile,

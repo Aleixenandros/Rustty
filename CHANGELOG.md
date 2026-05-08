@@ -2,6 +2,32 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.0.0] - 2026-05-08
+
+### Añadido
+
+- **Versión estable 1.0.0**: primer corte estable del cliente con SSH/SFTP/RDP,
+  sincronización E2E, workspaces, favoritos, túneles, temas, atajos y paquetes
+  multiplataforma.
+- **Logs visibles de conexión**: cada sesión SSH muestra etapas y errores
+  (`resolución`, `conexión TCP`, `host key`, `autenticación`, `shell`) sin
+  depender de la consola de desarrollo.
+- **Bandeja del sistema / quick launcher**: icono de tray con favoritos,
+  recientes, workspaces, consola local y acciones para abrir/ocultar la ventana.
+
+### Cambiado
+
+- El frontend preasigna el `session_id` antes de conectar por SSH para registrar
+  listeners de diagnóstico desde el primer evento emitido por el backend.
+- Las builds Linux incorporan dependencias DBus necesarias para el backend
+  persistente de Secret Service usado por el keyring.
+
+### Corregido
+
+- En Linux, las passphrases y secretos de sincronización del keyring pasan a
+  guardarse de forma persistente mediante Secret Service. Las entradas antiguas
+  disponibles solo en la sesión se migran automáticamente al leerlas.
+
 ## [0.6.3] - 2026-05-07
 
 ### Añadido
