@@ -7444,6 +7444,18 @@ function revealSftpActivity(panel) {
   wrap.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
+function waitForPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
+}
+
+async function revealTransferBeforeInvoke(panel, transferEl) {
+  panel?.querySelector(".sftp-transfers-wrap")?.classList.remove("hidden");
+  transferEl?.scrollIntoView({ block: "nearest" });
+  await waitForPaint();
+}
+
 function transferDirectionLabel(direction) {
   return direction === "upload" ? "Upload" : "Download";
 }
@@ -7721,6 +7733,7 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
         detail: `${srcPath} → ${remotePath}`,
         startedAt,
       });
+      await revealTransferBeforeInvoke(panel, transferEl);
       const cmd = isDir ? "sftp_upload_dir" : "sftp_upload";
       await invoke(cmd, invokeArgs);
       markTransferSuccess(transferEl, `✓ Subido a ${remotePath}`);
@@ -7753,6 +7766,7 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
         detail: `${srcPath} → ${localPath}`,
         startedAt,
       });
+      await revealTransferBeforeInvoke(panel, transferEl);
       const cmd = isDir ? "sftp_download_dir" : "sftp_download";
       await invoke(cmd, invokeArgs);
       markTransferSuccess(transferEl, `✓ Guardado en ${localPath}`);

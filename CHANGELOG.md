@@ -2,6 +2,18 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.1.2] - 2026-05-09
+
+### Corregido
+
+- Las transferencias del panel SFTP/FTP/FTPS ahora esperan las respuestas del
+  worker en `spawn_blocking`, evitando bloquear el runtime de Tauri y permitiendo
+  que los eventos de progreso actualicen porcentaje, velocidad y ETA durante la
+  copia.
+- La fila de transferencia se fuerza a pintarse antes de lanzar la operación
+  larga, de modo que aparece inmediatamente en **Transferencias** aunque el
+  servidor tarde en enviar el primer bloque.
+
 ## [1.1.1] - 2026-05-09
 
 ### Corregido

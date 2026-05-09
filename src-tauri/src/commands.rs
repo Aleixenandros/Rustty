@@ -398,14 +398,16 @@ pub async fn sftp_connect(
 
     let session_id = uuid::Uuid::new_v4().to_string();
 
-    sftp_state.connect(
-        session_id.clone(),
-        profile,
-        password,
-        passphrase,
-        elevated.unwrap_or(false),
-        app_handle,
-    )?;
+    sftp_state
+        .connect(
+            session_id.clone(),
+            profile,
+            password,
+            passphrase,
+            elevated.unwrap_or(false),
+            app_handle,
+        )
+        .await?;
     Ok(session_id)
 }
 
@@ -423,7 +425,7 @@ pub async fn sftp_list_dir(
     session_id: String,
     path: String,
 ) -> Result<Vec<FileEntry>, String> {
-    sftp_state.list_dir(&session_id, path)
+    sftp_state.list_dir(&session_id, path).await
 }
 
 #[tauri::command]
@@ -431,7 +433,7 @@ pub async fn sftp_home_dir(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
 ) -> Result<String, String> {
-    sftp_state.home_dir(&session_id)
+    sftp_state.home_dir(&session_id).await
 }
 
 #[tauri::command]
@@ -440,7 +442,7 @@ pub async fn sftp_stat(
     session_id: String,
     path: String,
 ) -> Result<FileEntry, String> {
-    sftp_state.stat(&session_id, path)
+    sftp_state.stat(&session_id, path).await
 }
 
 #[tauri::command]
@@ -449,7 +451,7 @@ pub async fn sftp_mkdir(
     session_id: String,
     path: String,
 ) -> Result<(), String> {
-    sftp_state.mkdir(&session_id, path)
+    sftp_state.mkdir(&session_id, path).await
 }
 
 #[tauri::command]
@@ -459,7 +461,7 @@ pub async fn sftp_remove(
     path: String,
     is_dir: bool,
 ) -> Result<(), String> {
-    sftp_state.remove(&session_id, path, is_dir)
+    sftp_state.remove(&session_id, path, is_dir).await
 }
 
 #[tauri::command]
@@ -469,7 +471,7 @@ pub async fn sftp_rename(
     from: String,
     to: String,
 ) -> Result<(), String> {
-    sftp_state.rename(&session_id, from, to)
+    sftp_state.rename(&session_id, from, to).await
 }
 
 /// Descarga un fichero remoto a `local_path`.
@@ -483,13 +485,15 @@ pub async fn sftp_download(
     transfer_id: String,
     verify_size: Option<bool>,
 ) -> Result<(), String> {
-    sftp_state.download(
-        &session_id,
-        remote_path,
-        PathBuf::from(local_path),
-        transfer_id,
-        verify_size.unwrap_or(false),
-    )
+    sftp_state
+        .download(
+            &session_id,
+            remote_path,
+            PathBuf::from(local_path),
+            transfer_id,
+            verify_size.unwrap_or(false),
+        )
+        .await
 }
 
 /// Sube un fichero local a `remote_path`.
@@ -502,13 +506,15 @@ pub async fn sftp_upload(
     transfer_id: String,
     verify_size: Option<bool>,
 ) -> Result<(), String> {
-    sftp_state.upload(
-        &session_id,
-        PathBuf::from(local_path),
-        remote_path,
-        transfer_id,
-        verify_size.unwrap_or(false),
-    )
+    sftp_state
+        .upload(
+            &session_id,
+            PathBuf::from(local_path),
+            remote_path,
+            transfer_id,
+            verify_size.unwrap_or(false),
+        )
+        .await
 }
 
 /// Descarga un directorio remoto recursivamente a `local_path`.
@@ -522,14 +528,16 @@ pub async fn sftp_download_dir(
     conflict_policy: Option<String>,
     verify_size: Option<bool>,
 ) -> Result<(), String> {
-    sftp_state.download_dir(
-        &session_id,
-        remote_path,
-        PathBuf::from(local_path),
-        transfer_id,
-        TransferConflictPolicy::from_str(conflict_policy.as_deref().unwrap_or("overwrite")),
-        verify_size.unwrap_or(false),
-    )
+    sftp_state
+        .download_dir(
+            &session_id,
+            remote_path,
+            PathBuf::from(local_path),
+            transfer_id,
+            TransferConflictPolicy::from_str(conflict_policy.as_deref().unwrap_or("overwrite")),
+            verify_size.unwrap_or(false),
+        )
+        .await
 }
 
 /// Sube un directorio local recursivamente a `remote_path`.
@@ -543,14 +551,16 @@ pub async fn sftp_upload_dir(
     conflict_policy: Option<String>,
     verify_size: Option<bool>,
 ) -> Result<(), String> {
-    sftp_state.upload_dir(
-        &session_id,
-        PathBuf::from(local_path),
-        remote_path,
-        transfer_id,
-        TransferConflictPolicy::from_str(conflict_policy.as_deref().unwrap_or("overwrite")),
-        verify_size.unwrap_or(false),
-    )
+    sftp_state
+        .upload_dir(
+            &session_id,
+            PathBuf::from(local_path),
+            remote_path,
+            transfer_id,
+            TransferConflictPolicy::from_str(conflict_policy.as_deref().unwrap_or("overwrite")),
+            verify_size.unwrap_or(false),
+        )
+        .await
 }
 
 #[tauri::command]

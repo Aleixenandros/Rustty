@@ -187,7 +187,7 @@ impl SftpManager {
     /// acceder a rutas que requieren root (ej. `/root/` tras `sudo su -`).
     /// Requiere que el `sudoers` permita ejecutar `sftp-server` sin
     /// contraseña para el usuario conectado.
-    pub fn connect(
+    pub async fn connect(
         &self,
         session_id: String,
         profile: ConnectionProfile,
@@ -226,8 +226,13 @@ impl SftpManager {
             ));
         });
 
-        // Esperar a que la autenticación + apertura SFTP terminen
-        match ready_rx.recv() {
+        // Esperar a que la autenticación + apertura terminen sin bloquear el
+        // runtime de Tauri; las transferencias largas deben dejar respirar a la UI.
+        let ready_result = tauri::async_runtime::spawn_blocking(move || ready_rx.recv())
+            .await
+            .map_err(|e| format!("No se pudo esperar al worker de ficheros: {e}"))?;
+
+        match ready_result {
             Ok(Ok(())) => {
                 self.sessions.lock().unwrap().insert(
                     session_id,
@@ -243,54 +248,76 @@ impl SftpManager {
         }
     }
 
-    fn send<T>(
+    async fn send<T>(
         &self,
         session_id: &str,
-        build: impl FnOnce(Reply<T>) -> SftpCommand,
-    ) -> Result<T, String> {
-        let (reply_tx, reply_rx) = mpsc::sync_channel::<Result<T, String>>(1);
-        {
+        build: impl FnOnce(Reply<T>) -> SftpCommand + Send + 'static,
+    ) -> Result<T, String>
+    where
+        T: Send + 'static,
+    {
+        let tx = {
             let map = self.sessions.lock().unwrap();
             let handle = map
                 .get(session_id)
                 .ok_or_else(|| format!("Sesión de ficheros no encontrada: {session_id}"))?;
-            handle.tx.send(build(reply_tx)).map_err(|e| e.to_string())?;
-        }
-        match reply_rx.recv() {
-            Ok(r) => r,
-            Err(_) => Err("El worker de ficheros terminó inesperadamente".into()),
-        }
+            handle.tx.clone()
+        };
+
+        tauri::async_runtime::spawn_blocking(move || {
+            let (reply_tx, reply_rx) = mpsc::sync_channel::<Result<T, String>>(1);
+            tx.send(build(reply_tx)).map_err(|e| e.to_string())?;
+            match reply_rx.recv() {
+                Ok(r) => r,
+                Err(_) => Err("El worker de ficheros terminó inesperadamente".into()),
+            }
+        })
+        .await
+        .map_err(|e| format!("No se pudo esperar respuesta del worker de ficheros: {e}"))?
     }
 
-    pub fn list_dir(&self, session_id: &str, path: String) -> Result<Vec<FileEntry>, String> {
-        self.send(session_id, |reply| SftpCommand::ListDir { path, reply })
+    pub async fn list_dir(&self, session_id: &str, path: String) -> Result<Vec<FileEntry>, String> {
+        self.send(session_id, move |reply| SftpCommand::ListDir {
+            path,
+            reply,
+        })
+        .await
     }
 
-    pub fn stat(&self, session_id: &str, path: String) -> Result<FileEntry, String> {
-        self.send(session_id, |reply| SftpCommand::Stat { path, reply })
+    pub async fn stat(&self, session_id: &str, path: String) -> Result<FileEntry, String> {
+        self.send(session_id, move |reply| SftpCommand::Stat { path, reply })
+            .await
     }
 
-    pub fn home_dir(&self, session_id: &str) -> Result<String, String> {
-        self.send(session_id, |reply| SftpCommand::HomeDir { reply })
+    pub async fn home_dir(&self, session_id: &str) -> Result<String, String> {
+        self.send(session_id, move |reply| SftpCommand::HomeDir { reply })
+            .await
     }
 
-    pub fn mkdir(&self, session_id: &str, path: String) -> Result<(), String> {
-        self.send(session_id, |reply| SftpCommand::Mkdir { path, reply })
+    pub async fn mkdir(&self, session_id: &str, path: String) -> Result<(), String> {
+        self.send(session_id, move |reply| SftpCommand::Mkdir { path, reply })
+            .await
     }
 
-    pub fn remove(&self, session_id: &str, path: String, is_dir: bool) -> Result<(), String> {
-        self.send(session_id, |reply| SftpCommand::Remove {
+    pub async fn remove(&self, session_id: &str, path: String, is_dir: bool) -> Result<(), String> {
+        self.send(session_id, move |reply| SftpCommand::Remove {
             path,
             is_dir,
             reply,
         })
+        .await
     }
 
-    pub fn rename(&self, session_id: &str, from: String, to: String) -> Result<(), String> {
-        self.send(session_id, |reply| SftpCommand::Rename { from, to, reply })
+    pub async fn rename(&self, session_id: &str, from: String, to: String) -> Result<(), String> {
+        self.send(session_id, move |reply| SftpCommand::Rename {
+            from,
+            to,
+            reply,
+        })
+        .await
     }
 
-    pub fn download(
+    pub async fn download(
         &self,
         session_id: &str,
         remote: String,
@@ -298,16 +325,17 @@ impl SftpManager {
         transfer_id: String,
         verify_size: bool,
     ) -> Result<(), String> {
-        self.send(session_id, |reply| SftpCommand::Download {
+        self.send(session_id, move |reply| SftpCommand::Download {
             remote,
             local,
             transfer_id,
             verify_size,
             reply,
         })
+        .await
     }
 
-    pub fn upload(
+    pub async fn upload(
         &self,
         session_id: &str,
         local: PathBuf,
@@ -315,16 +343,17 @@ impl SftpManager {
         transfer_id: String,
         verify_size: bool,
     ) -> Result<(), String> {
-        self.send(session_id, |reply| SftpCommand::Upload {
+        self.send(session_id, move |reply| SftpCommand::Upload {
             local,
             remote,
             transfer_id,
             verify_size,
             reply,
         })
+        .await
     }
 
-    pub fn download_dir(
+    pub async fn download_dir(
         &self,
         session_id: &str,
         remote: String,
@@ -333,7 +362,7 @@ impl SftpManager {
         conflict_policy: TransferConflictPolicy,
         verify_size: bool,
     ) -> Result<(), String> {
-        self.send(session_id, |reply| SftpCommand::DownloadDir {
+        self.send(session_id, move |reply| SftpCommand::DownloadDir {
             remote,
             local,
             transfer_id,
@@ -341,9 +370,10 @@ impl SftpManager {
             verify_size,
             reply,
         })
+        .await
     }
 
-    pub fn upload_dir(
+    pub async fn upload_dir(
         &self,
         session_id: &str,
         local: PathBuf,
@@ -352,7 +382,7 @@ impl SftpManager {
         conflict_policy: TransferConflictPolicy,
         verify_size: bool,
     ) -> Result<(), String> {
-        self.send(session_id, |reply| SftpCommand::UploadDir {
+        self.send(session_id, move |reply| SftpCommand::UploadDir {
             local,
             remote,
             transfer_id,
@@ -360,6 +390,7 @@ impl SftpManager {
             verify_size,
             reply,
         })
+        .await
     }
 
     pub fn cancel_transfer(&self, session_id: &str, transfer_id: String) -> Result<(), String> {
