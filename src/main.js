@@ -501,6 +501,10 @@ function applyTheme(theme) {
 
 const THEME_FORMAT_VERSION = 2;
 const BASE_THEME_IDS = new Set(Object.keys(TERMINAL_THEMES));
+const BUNDLED_THEME_PACKS = [
+  "/themes/bundled-themes.json",
+];
+const BUNDLED_THEME_IDS = new Set();
 
 const UI_THEME_TOKENS = [
   "base", "mantle", "crust",
@@ -619,6 +623,11 @@ function registerCustomTheme(theme) {
   appendCustomSwatch("terminal", theme);
 }
 
+function registerBundledTheme(theme) {
+  BUNDLED_THEME_IDS.add(theme.id);
+  registerCustomTheme(theme);
+}
+
 function appendCustomSwatch(picker, theme) {
   const root = document.querySelector(`.theme-picker[data-for="${picker}"]`);
   if (!root) return;
@@ -652,7 +661,7 @@ function registerAllCustomThemes() {
   if (styleEl) styleEl.textContent = "";
   document.querySelectorAll(".theme-picker .theme-option").forEach((opt) => {
     const id = opt.dataset.theme;
-    if (id && id !== "system" && id !== "inherit" && !BASE_THEME_IDS.has(id)) opt.remove();
+    if (id && id !== "system" && id !== "inherit" && !BASE_THEME_IDS.has(id) && !BUNDLED_THEME_IDS.has(id)) opt.remove();
   });
 
   const validThemes = [];
@@ -677,6 +686,38 @@ function registerAllCustomThemes() {
     }
   }
   prefs.customThemes = validThemes;
+}
+
+async function registerBundledThemePacks() {
+  for (const packPath of BUNDLED_THEME_PACKS) {
+    try {
+      const response = await fetch(packPath);
+      if (!response.ok) throw new Error(`${response.status} ${packPath}`);
+      const pack = await response.json();
+      for (const doc of (Array.isArray(pack?.themes) ? pack.themes : [])) {
+        try {
+          if (BASE_THEME_IDS.has(doc?.id)) continue;
+          const theme = {
+            formatVersion: THEME_FORMAT_VERSION,
+            id: baseSlugifyThemeId(doc.id || doc.name),
+            name: String(doc.name || "").trim().slice(0, 60),
+            ui: pickThemeTokens(doc.ui, UI_THEME_TOKENS),
+            terminal: pickThemeTokens(doc.terminal, TERMINAL_THEME_TOKENS),
+          };
+          if (!theme.id || !theme.name || !theme.ui.base || !theme.ui.text) continue;
+          if (!theme.terminal.background || !theme.terminal.foreground) continue;
+          registerBundledTheme(theme);
+        } catch (err) {
+          console.warn("[theme] invalid bundled theme skipped", err);
+        }
+      }
+    } catch (err) {
+      console.warn("[theme] bundled pack not loaded", err);
+    }
+  }
+  applyTheme(prefs.theme);
+  selectUiTheme(prefs.theme);
+  selectTerminalTheme(prefs.terminalTheme || "inherit");
 }
 
 async function exportCurrentTheme() {
@@ -762,25 +803,37 @@ async function importTheme() {
     data = JSON.parse(text);
   } catch (err) { toast(t("toast.theme_import_invalid"), "error"); return; }
 
-  let theme;
-  try {
-    theme = normalizeThemeDocument(data);
-  } catch (err) {
+  const themeDocs = Array.isArray(data?.themes) ? data.themes : (Array.isArray(data) ? data : [data]);
+  const importedThemes = [];
+
+  prefs.customThemes = prefs.customThemes || [];
+  for (const doc of themeDocs) {
+    try {
+      const theme = normalizeThemeDocument(doc);
+      prefs.customThemes.push(theme);
+      registerCustomTheme(theme);
+      importedThemes.push(theme);
+    } catch (err) {
+      console.warn("[theme] invalid imported theme skipped", err);
+    }
+  }
+
+  if (!importedThemes.length) {
     toast(t("toast.theme_import_invalid"), "error");
     return;
   }
 
-  prefs.customThemes = prefs.customThemes || [];
-  prefs.customThemes.push(theme);
-  registerCustomTheme(theme);
-
   // Seleccionarlo como tema activo de UI
+  const theme = importedThemes[importedThemes.length - 1];
   prefs.theme = theme.id;
   applyTheme(theme.id);
   selectUiTheme(theme.id);
   savePrefs();
   scheduleProfileAutoSync();
-  toast(t("toast.theme_imported").replace("{name}", theme.name), "success");
+  const importedName = importedThemes.length === 1
+    ? theme.name
+    : `${data?.name || "pack"} (${importedThemes.length})`;
+  toast(t("toast.theme_imported").replace("{name}", importedName), "success");
 }
 
 function selectUiTheme(theme) {
@@ -1888,6 +1941,7 @@ async function lockKeepass() {
 
 async function init() {
   loadPrefs();
+  await registerBundledThemePacks();
 
   try {
     profiles = await invoke("get_profiles");
@@ -2857,10 +2911,18 @@ function connectionProtocolMeta(type) {
   switch (type) {
     case "rdp":
       return { className: "rdp", label: "RDP", icon: "▣" };
+    case "ftp":
+      return { className: "ftp", label: "FTP", icon: "↕" };
+    case "ftps":
+      return { className: "ftps", label: "FTPS", icon: "⇅" };
     case "ssh":
     default:
       return { className: "ssh", label: "SSH", icon: ">_" };
   }
+}
+
+function isFileTransferConnectionType(type) {
+  return type === "ftp" || type === "ftps";
 }
 
 function bindTreeEvents(container) {
@@ -3874,20 +3936,21 @@ function updateAuthFields(authType) {
 }
 
 /**
- * Muestra/oculta campos según el tipo de conexión (ssh | rdp).
- * Para RDP oculta los campos SSH-específicos y ajusta el puerto por defecto.
+ * Muestra/oculta campos según el tipo de conexión.
+ * RDP y FTP/FTPS usan contraseña; SSH mantiene clave/agente y opciones avanzadas.
  */
 function updateConnTypeFields(type, adjustPort = false) {
   const isRdp = type === "rdp";
+  const isFileTransfer = isFileTransferConnectionType(type);
+  const isPasswordOnly = isRdp || isFileTransfer;
   document.getElementById("field-domain").classList.toggle("hidden", !isRdp);
-  document.getElementById("field-auth-type").classList.toggle("hidden", isRdp);
+  document.getElementById("field-auth-type").classList.toggle("hidden", isPasswordOnly);
   document.getElementById("field-key-path").classList.add("hidden");
   document.getElementById("field-passphrase").classList.add("hidden");
   document.getElementById("field-save-passphrase").classList.add("hidden");
-  document.getElementById("field-advanced").classList.toggle("hidden", isRdp);
+  document.getElementById("field-advanced").classList.toggle("hidden", isPasswordOnly);
 
-  if (isRdp) {
-    // RDP siempre usa contraseña
+  if (isPasswordOnly) {
     document.getElementById("f-auth-type").value = "password";
     const useKp = document.getElementById("f-use-keepass").checked;
     document.getElementById("field-keepass-toggle").classList.remove("hidden");
@@ -3896,14 +3959,17 @@ function updateConnTypeFields(type, adjustPort = false) {
     document.getElementById("field-save-password").classList.toggle("hidden", useKp);
     if (adjustPort) {
       const portEl = document.getElementById("f-port");
-      if (parseInt(portEl.value, 10) === 22) portEl.value = 3389;
+      const current = parseInt(portEl.value, 10);
+      if (isRdp && (current === 22 || current === 21)) portEl.value = 3389;
+      if (isFileTransfer && (current === 22 || current === 3389)) portEl.value = 21;
     }
     updateKeepassEntryValidation();
   } else {
     updateAuthFields(document.getElementById("f-auth-type").value);
     if (adjustPort) {
       const portEl = document.getElementById("f-port");
-      if (parseInt(portEl.value, 10) === 3389) portEl.value = 22;
+      const current = parseInt(portEl.value, 10);
+      if (current === 3389 || current === 21) portEl.value = 22;
     }
   }
 }
@@ -4190,7 +4256,9 @@ function readFolderValue() {
 
 function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
   const connType = document.getElementById("f-conn-type").value;
-  const authType = connType === "rdp" ? "password" : document.getElementById("f-auth-type").value;
+  const authType = (connType === "rdp" || isFileTransferConnectionType(connType))
+    ? "password"
+    : document.getElementById("f-auth-type").value;
   const useKeepass = document.getElementById("f-use-keepass").checked
     && authType === "password";
   const keepassEntryUuid = useKeepass
@@ -4315,6 +4383,30 @@ async function runConnectionTestFromModal() {
       return;
     }
 
+    if (isFileTransferConnectionType(profile.connection_type)) {
+      const proto = profile.connection_type.toUpperCase();
+      appendConnectionTestLog({
+        stage: "connecting",
+        status: "info",
+        message: `Comprobando puerto ${proto} ${profile.host}:${profile.port}`,
+      });
+      const ms = await invoke("tcp_ping", { host: profile.host, port: profile.port });
+      appendConnectionTestLog({
+        stage: "connected",
+        status: "ok",
+        message: `Puerto ${proto} accesible (${ms} ms)`,
+      });
+      setConnectionTestStatus("OK", "ok");
+      toast(`Prueba ${proto} completada`, "success");
+      recordActivity({
+        kind: "connection",
+        status: "ok",
+        title: `Prueba ${proto} OK: ${profile.name}`,
+        detail: `${profile.host}:${profile.port}`,
+      });
+      return;
+    }
+
     _connectionTestUnlisten = await listen(`ssh-log-${testId}`, (event) => {
       appendConnectionTestLog(event.payload || {});
     });
@@ -4361,7 +4453,9 @@ async function runConnectionTestFromModal() {
  */
 async function saveAndClose(shouldConnect) {
   const connType = document.getElementById("f-conn-type").value;
-  const authType       = connType === "rdp" ? "password" : document.getElementById("f-auth-type").value;
+  const authType       = (connType === "rdp" || isFileTransferConnectionType(connType))
+    ? "password"
+    : document.getElementById("f-auth-type").value;
   const password       = document.getElementById("f-password").value || null;
   const savePassword   = document.getElementById("f-save-password").checked;
   const keyPath        = document.getElementById("f-key-path").value || null;
@@ -4444,6 +4538,8 @@ async function saveAndClose(shouldConnect) {
     if (shouldConnect) {
       if (connType === "rdp") {
         await connectRdp(profile.id, { passwordOverride: password });
+      } else if (isFileTransferConnectionType(connType)) {
+        await connectFileTransferProfile(profile.id, { passwordOverride: password });
       } else {
         await connectProfileWithCredentials(profile.id, password, passphrase, savePassphrase);
       }
@@ -4503,12 +4599,44 @@ async function resolveSshCredentials(profile) {
   return { password, passphrase };
 }
 
+async function resolvePasswordOnlyCredentials(profile, {
+  passwordOverride = null,
+  titleKey = "modal_credential.sftp_password_title",
+  messageKey = "modal_credential.sftp_message",
+} = {}) {
+  if (profile.keepass_entry_uuid) {
+    if (!keepassUnlocked) {
+      toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
+      return null;
+    }
+    return passwordOverride || null;
+  }
+
+  let password = passwordOverride || await getStoredSecret(passwordKey(profile.id));
+  if (!password) {
+    password = await promptProfileSecret(profile, {
+      titleKey,
+      messageKey,
+      labelKey: "modal_credential.password_label",
+      rememberKey: "modal_credential.remember_password",
+      secretKey: passwordKey(profile.id),
+      secretLabel: "contraseña",
+    });
+    if (password === null) return null;
+  }
+  return password;
+}
+
 async function connectProfile(profileId, { force = false } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
   if (profile.connection_type === "rdp") {
     return connectRdp(profileId);
+  }
+
+  if (isFileTransferConnectionType(profile.connection_type)) {
+    return connectFileTransferProfile(profileId, { force });
   }
 
   if (!force) {
@@ -4697,6 +4825,75 @@ async function closeRdpSession(sessionId) {
   renderConnectionList();
 }
 
+async function connectFileTransferProfile(profileId, { passwordOverride = null, force = false } = {}) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+
+  for (const [sid, s] of [...sessions]) {
+    if (s.profileId === profileId && isFileTransferConnectionType(s.type) && s.status !== "closed") {
+      if (!force) {
+        setActiveTab(sid);
+        return;
+      }
+      await closeSession(sid);
+    }
+  }
+
+  const password = await resolvePasswordOnlyCredentials(profile, {
+    passwordOverride,
+    titleKey: "modal_credential.sftp_password_title",
+    messageKey: "modal_credential.sftp_message",
+  });
+  if (password === null) return;
+
+  const sessionId = `${profile.connection_type}-${crypto.randomUUID()}`;
+  const sessionObj = {
+    profileId,
+    id: sessionId,
+    type: profile.connection_type,
+    status: "connecting",
+    terminal: null,
+    fitAddon: null,
+    unlisteners: [],
+    remoteCwd: null,
+    tunnels: new Map(),
+    tunnelPanel: null,
+  };
+  sessions.set(sessionId, sessionObj);
+  createFileTransferTab(sessionId, profile, "connecting");
+
+  try {
+    await openSftpPanel(sessionId, { passwordOverride: password, passphraseOverride: null });
+    sessionObj.status = "connected";
+    updateTabStatus(sessionId, "connected");
+    recordRecentConnection(profileId);
+    renderConnectionList();
+    setActiveTab(sessionId);
+    toast(`${profile.connection_type.toUpperCase()} conectado: ${profile.name}`, "success");
+  } catch (err) {
+    sessions.delete(sessionId);
+    removeTab(sessionId);
+    console.warn("[file-transfer] open failed", err);
+  }
+}
+
+function createFileTransferTab(sessionId, profile, initialStatus) {
+  const pane = document.createElement("div");
+  pane.className = "terminal-pane file-transfer-pane";
+  pane.dataset.session = sessionId;
+  document.getElementById("terminals-container").appendChild(pane);
+
+  const tab = createTab(sessionId, profile, initialStatus, { sftp: false });
+  tab.dataset.type = profile.connection_type;
+
+  const s = sessions.get(sessionId);
+  if (s) s.pane = pane;
+  wirePaneFocusOnClick(pane, sessionId);
+
+  document.getElementById("welcome-screen").classList.add("hidden");
+  selectSession(sessionId, false);
+}
+
 /**
  * Crea el tab y el panel de estado para una sesión RDP.
  * En lugar de un terminal, muestra tarjeta informativa con botón de desconexión.
@@ -4816,7 +5013,7 @@ function updateBroadcastClasses() {
   document.querySelectorAll(".terminal-pane").forEach((p) => {
     const sid = p.dataset.session;
     const s = sessions.get(sid);
-    const eligible = !!s && s.type !== "rdp" && viewSelection.includes(sid);
+    const eligible = !!s && !!s.terminal && s.type !== "rdp" && viewSelection.includes(sid);
     p.classList.toggle("pane-broadcasting", on && eligible);
   });
   const btn = document.querySelector('#view-layout-bar button[data-action="broadcast"]');
@@ -4828,7 +5025,7 @@ function updateBroadcastClasses() {
  * Se usa tanto para la pane origen como para replicar en broadcast.
  */
 function sendTerminalInput(sessionObj, data) {
-  if (!sessionObj || sessionObj.status === "closed" || sessionObj.type === "rdp") return;
+  if (!sessionObj || sessionObj.status === "closed" || !sessionObj.terminal || sessionObj.type === "rdp") return;
   const cmd = sessionObj._closeOverride ? "local_shell_send_input" : "ssh_send_input";
   invoke(cmd, {
     sessionId: sessionObj.id,
@@ -4856,7 +5053,7 @@ async function writeSystemClipboardText(text) {
 }
 
 async function pasteClipboardIntoSession(sessionObj) {
-  if (!sessionObj || sessionObj.status === "closed" || sessionObj.type === "rdp") return;
+  if (!sessionObj || sessionObj.status === "closed" || !sessionObj.terminal || sessionObj.type === "rdp") return;
   const text = await readSystemClipboardText();
   if (!text) return;
   sendTerminalInput(sessionObj, text);
@@ -5546,6 +5743,7 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   const sessionObj = {
     profileId: profile.id,
     id: sessionId,
+    type: "ssh",
     terminal,
     fitAddon,
     searchAddon,
@@ -5832,6 +6030,13 @@ async function closeSession(sessionId) {
   // RDP
   if (s.type === "rdp") {
     return closeRdpSession(sessionId);
+  }
+
+  if (isFileTransferConnectionType(s.type)) {
+    sessions.delete(sessionId);
+    removeTab(sessionId);
+    renderConnectionList();
+    return;
   }
 
   // SSH
@@ -6516,7 +6721,7 @@ async function getShellName() {
 async function toggleSftpPanel(sessionId) {
   const s = sessions.get(sessionId);
   if (!s || s.status !== "connected") {
-    toast("La sesión SSH debe estar conectada", "warning");
+    toast("La sesión debe estar conectada", "warning");
     return;
   }
   if (s.sftp?.panel) {
@@ -6533,15 +6738,16 @@ async function toggleSftpPanel(sessionId) {
   await openSftpPanel(sessionId);
 }
 
-async function openSftpPanel(sessionId) {
+async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOverride = null } = {}) {
   const s = sessions.get(sessionId);
   if (!s) return;
   const profile = profiles.find((p) => p.id === s.profileId);
   if (!profile) return;
+  const isFileTransfer = isFileTransferConnectionType(profile.connection_type);
 
   // Resolver credenciales: KeePass > keyring > prompt
-  let password = null, passphrase = null;
-  if (profile.auth_type === "password") {
+  let password = passwordOverride, passphrase = passphraseOverride;
+  if (profile.auth_type === "password" && !password) {
     if (profile.keepass_entry_uuid) {
       if (!keepassUnlocked) {
         toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
@@ -6561,12 +6767,21 @@ async function openSftpPanel(sessionId) {
         if (password === null) return;
       }
     }
-  } else if (profile.auth_type === "public_key") {
+  } else if (profile.auth_type === "public_key" && !passphrase) {
     passphrase = await getStoredSecret(passphraseKey(profile.id));
   }
 
   // Construir panel primero con estado "conectando"
   const panel = buildSftpPanel(sessionId);
+  panel.classList.toggle("file-transfer-root", isFileTransfer);
+  if (isFileTransfer) {
+    panel.querySelector(".sftp-resize-handle")?.classList.add("hidden");
+    panel.querySelector('[data-sftp-nav="follow"]')?.classList.add("hidden");
+    panel.querySelector('[data-sftp-nav="sudo"]')?.classList.add("hidden");
+    panel.querySelector("[data-sftp-sudo-badge]")?.classList.add("hidden");
+    const title = panel.querySelector(".sftp-side-remote .sftp-side-title span");
+    if (title) title.textContent = profile.connection_type.toUpperCase();
+  }
   const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
   pane.appendChild(panel);
 
@@ -6583,7 +6798,7 @@ async function openSftpPanel(sessionId) {
     elevated: false,
   };
 
-  setSftpStatus(panel, "Conectando SFTP…");
+  setSftpStatus(panel, `Conectando ${isFileTransfer ? profile.connection_type.toUpperCase() : "SFTP"}…`);
 
   try {
     const sftpSessionId = await invoke("sftp_connect", {
@@ -6596,7 +6811,7 @@ async function openSftpPanel(sessionId) {
 
     // Si el terminal ya tiene un cwd conocido (por OSC 7) lo usamos,
     // si no, pedimos el home al servidor.
-    const initial = s.remoteCwd
+    const initial = (!isFileTransfer && s.remoteCwd)
       || await invoke("sftp_home_dir", { sessionId: sftpSessionId }).catch(() => "/");
     await navigateSftpRemote(sessionId, initial);
 
@@ -6605,9 +6820,10 @@ async function openSftpPanel(sessionId) {
     s.sftp.localCwd = localHome;
     await navigateSftpLocal(sessionId, localHome);
   } catch (err) {
-    toast(`SFTP falló: ${err}`, "error");
+    toast(`${isFileTransfer ? profile.connection_type.toUpperCase() : "SFTP"} falló: ${err}`, "error");
     panel.remove();
     s.sftp = null;
+    throw err;
   }
 
   s.fitAddon?.fit();
@@ -6624,6 +6840,7 @@ async function toggleSftpElevated(sessionId) {
   if (!s?.sftp) return;
   const profile = profiles.find((p) => p.id === s.profileId);
   if (!profile) return;
+  if (isFileTransferConnectionType(profile.connection_type)) return;
   const panel = s.sftp.panel;
   const btn = panel.querySelector('[data-sftp-nav="sudo"]');
 
@@ -6701,7 +6918,7 @@ async function toggleSftpElevated(sessionId) {
 function activeSftpSession() {
   if (!activeSessionId) return null;
   const s = sessions.get(activeSessionId);
-  return s?.type === "ssh" ? s : null;
+  return (s?.type === "ssh" || isFileTransferConnectionType(s?.type)) ? s : null;
 }
 
 function toggleActiveSftpPanel() {
@@ -6715,7 +6932,7 @@ function toggleActiveSftpPanel() {
 
 function toggleActiveSftpFollow() {
   const s = activeSftpSession();
-  if (!s?.sftp) {
+  if (!s?.sftp || isFileTransferConnectionType(s.type)) {
     toast("Abre primero el panel SFTP", "warning");
     return;
   }
@@ -6725,7 +6942,7 @@ function toggleActiveSftpFollow() {
 
 function toggleActiveSftpElevated() {
   const s = activeSftpSession();
-  if (!s?.sftp) {
+  if (!s?.sftp || isFileTransferConnectionType(s.type)) {
     toast("Abre primero el panel SFTP", "warning");
     return;
   }
@@ -7664,12 +7881,18 @@ async function confirmDelete(sessionId, side, path, name, isDir) {
 async function closeSftpPanel(sessionId) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
+  const closesWholeTab = isFileTransferConnectionType(s.type);
   if (s.sftp.sftpSessionId) {
     invoke("sftp_disconnect", { sessionId: s.sftp.sftpSessionId }).catch(() => {});
   }
   s.sftp.panel.remove();
   s.sftp = null;
   s.fitAddon?.fit();
+  if (closesWholeTab) {
+    sessions.delete(sessionId);
+    removeTab(sessionId);
+    renderConnectionList();
+  }
 }
 
 function addTransfer(panel, label, transferId, detail = "") {

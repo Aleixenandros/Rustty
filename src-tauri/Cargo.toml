@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.0.2"
+version = "1.1.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -27,6 +27,8 @@ serde_json = "1"
 # nos permite arrancar un sftp-server elevado con `sudo` sobre un canal exec.
 russh = "0.50"
 russh-sftp = "2"
+suppaftp = { version = "8.0.3", features = ["rustls-ring"] }
+webpki-roots = "1"
 tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "fs", "macros", "time"] }
 async-trait = "0.1"
 # PTY multiplataforma para la shell local

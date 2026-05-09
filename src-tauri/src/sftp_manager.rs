@@ -1,4 +1,5 @@
-//! Gestor SFTP basado en `russh` + `russh-sftp`.
+//! Gestor de transferencia de ficheros basado en SFTP (`russh-sftp`) y
+//! FTP/FTPS (`suppaftp`).
 //!
 //! A diferencia de libssh2/ssh2-rs (que sólo expone el subsistema SFTP
 //! estándar), russh nos permite abrir un canal `exec` y hablar SFTP por
@@ -12,12 +13,17 @@
 //! para todo lo demás) sin forzar una migración general.
 
 use std::collections::{HashMap, HashSet};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use suppaftp::list::{File as FtpListFile, ListParser};
+use suppaftp::types::FileType as FtpTransferType;
+use suppaftp::{rustls, FtpStream, RustlsConnector, RustlsFtpStream};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -42,7 +48,7 @@ pub struct FileEntry {
     pub permissions: Option<u32>,
 }
 
-// ─── Mensajes al hilo SFTP ───────────────────────────────────────────────────
+// ─── Mensajes al hilo de transferencia ──────────────────────────────────────
 
 type Reply<T> = mpsc::SyncSender<Result<T, String>>;
 
@@ -122,6 +128,43 @@ impl TransferConflictPolicy {
     }
 }
 
+#[async_trait(?Send)]
+trait FileTransfer {
+    async fn list_dir(&mut self, path: &str) -> Result<Vec<FileEntry>, String>;
+    async fn stat(&mut self, path: &str) -> Result<FileEntry, String>;
+    async fn home_dir(&mut self) -> Result<String, String>;
+    async fn mkdir(&mut self, path: &str) -> Result<(), String>;
+    async fn remove(&mut self, path: &str, is_dir: bool) -> Result<(), String>;
+    async fn rename(&mut self, from: &str, to: &str) -> Result<(), String>;
+    async fn download(
+        &mut self,
+        remote: &str,
+        local: &Path,
+        transfer_id: &str,
+        verify_size: bool,
+        app: &AppHandle,
+        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    ) -> Result<(), String>;
+    async fn upload(
+        &mut self,
+        local: &Path,
+        remote: &str,
+        transfer_id: &str,
+        verify_size: bool,
+        app: &AppHandle,
+        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    ) -> Result<(), String>;
+    async fn close(&mut self);
+}
+
+struct SftpBackend {
+    sftp: SftpSession,
+}
+
+struct FtpBackend {
+    ftp: FtpConnection,
+}
+
 struct SftpHandle {
     tx: mpsc::Sender<SftpCommand>,
     canceled_transfers: Arc<Mutex<HashSet<String>>>,
@@ -138,7 +181,7 @@ impl SftpManager {
         }
     }
 
-    /// Abre una sesión SFTP.
+    /// Abre una sesión de transferencia de ficheros.
     ///
     /// `elevated = true` arranca el servidor SFTP bajo `sudo -n` para
     /// acceder a rutas que requieren root (ej. `/root/` tras `sudo su -`).
@@ -196,7 +239,7 @@ impl SftpManager {
                 Ok(())
             }
             Ok(Err(e)) => Err(e),
-            Err(_) => Err("El worker SFTP terminó inesperadamente".into()),
+            Err(_) => Err("El worker de ficheros terminó inesperadamente".into()),
         }
     }
 
@@ -210,12 +253,12 @@ impl SftpManager {
             let map = self.sessions.lock().unwrap();
             let handle = map
                 .get(session_id)
-                .ok_or_else(|| format!("Sesión SFTP no encontrada: {session_id}"))?;
+                .ok_or_else(|| format!("Sesión de ficheros no encontrada: {session_id}"))?;
             handle.tx.send(build(reply_tx)).map_err(|e| e.to_string())?;
         }
         match reply_rx.recv() {
             Ok(r) => r,
-            Err(_) => Err("El worker SFTP terminó inesperadamente".into()),
+            Err(_) => Err("El worker de ficheros terminó inesperadamente".into()),
         }
     }
 
@@ -322,7 +365,7 @@ impl SftpManager {
     pub fn cancel_transfer(&self, session_id: &str, transfer_id: String) -> Result<(), String> {
         let sessions = self.sessions.lock().unwrap();
         let Some(handle) = sessions.get(session_id) else {
-            return Err("Sesión SFTP no encontrada".to_string());
+            return Err("Sesión de ficheros no encontrada".to_string());
         };
         handle
             .canceled_transfers
@@ -366,7 +409,7 @@ async fn run_sftp_worker(
     app_handle: AppHandle,
     canceled_transfers: Arc<Mutex<HashSet<String>>>,
 ) {
-    let sftp = match connect_and_open_sftp(
+    let mut backend = match connect_and_open_backend(
         &profile,
         password.as_deref(),
         passphrase.as_deref(),
@@ -392,31 +435,26 @@ async fn run_sftp_worker(
         };
         match cmd {
             SftpCommand::ListDir { path, reply } => {
-                let _ = reply.send(do_list_dir(&sftp, &path).await);
+                let _ = reply.send(backend.list_dir(&path).await);
             }
             SftpCommand::Stat { path, reply } => {
-                let _ = reply.send(do_stat(&sftp, &path).await);
+                let _ = reply.send(backend.stat(&path).await);
             }
             SftpCommand::HomeDir { reply } => {
-                let _ = reply.send(do_home_dir(&sftp).await);
+                let _ = reply.send(backend.home_dir().await);
             }
             SftpCommand::Mkdir { path, reply } => {
-                let _ = reply.send(sftp.create_dir(path).await.map_err(|e| e.to_string()));
+                let _ = reply.send(backend.mkdir(&path).await);
             }
             SftpCommand::Remove {
                 path,
                 is_dir,
                 reply,
             } => {
-                let res = if is_dir {
-                    sftp.remove_dir(path).await
-                } else {
-                    sftp.remove_file(path).await
-                };
-                let _ = reply.send(res.map_err(|e| e.to_string()));
+                let _ = reply.send(backend.remove(&path, is_dir).await);
             }
             SftpCommand::Rename { from, to, reply } => {
-                let _ = reply.send(sftp.rename(from, to).await.map_err(|e| e.to_string()));
+                let _ = reply.send(backend.rename(&from, &to).await);
             }
             SftpCommand::Download {
                 remote,
@@ -425,16 +463,16 @@ async fn run_sftp_worker(
                 verify_size,
                 reply,
             } => {
-                let res = do_download(
-                    &sftp,
-                    &remote,
-                    &local,
-                    &transfer_id,
-                    verify_size,
-                    &app_handle,
-                    &canceled_transfers,
-                )
-                .await;
+                let res = backend
+                    .download(
+                        &remote,
+                        &local,
+                        &transfer_id,
+                        verify_size,
+                        &app_handle,
+                        &canceled_transfers,
+                    )
+                    .await;
                 let _ = reply.send(res);
             }
             SftpCommand::Upload {
@@ -444,16 +482,16 @@ async fn run_sftp_worker(
                 verify_size,
                 reply,
             } => {
-                let res = do_upload(
-                    &sftp,
-                    &local,
-                    &remote,
-                    &transfer_id,
-                    verify_size,
-                    &app_handle,
-                    &canceled_transfers,
-                )
-                .await;
+                let res = backend
+                    .upload(
+                        &local,
+                        &remote,
+                        &transfer_id,
+                        verify_size,
+                        &app_handle,
+                        &canceled_transfers,
+                    )
+                    .await;
                 let _ = reply.send(res);
             }
             SftpCommand::DownloadDir {
@@ -465,7 +503,7 @@ async fn run_sftp_worker(
                 reply,
             } => {
                 let res = do_download_dir(
-                    &sftp,
+                    backend.as_mut(),
                     &remote,
                     &local,
                     &transfer_id,
@@ -486,7 +524,7 @@ async fn run_sftp_worker(
                 reply,
             } => {
                 let res = do_upload_dir(
-                    &sftp,
+                    backend.as_mut(),
                     &local,
                     &remote,
                     &transfer_id,
@@ -502,9 +540,25 @@ async fn run_sftp_worker(
         }
     }
 
-    // Cerrar sesión SFTP ordenadamente
-    let _ = sftp.close().await;
+    // Cerrar sesión de transferencia ordenadamente.
+    backend.close().await;
     let _ = session_id; // mantenemos por si queremos emitir eventos de cierre
+}
+
+async fn connect_and_open_backend(
+    profile: &ConnectionProfile,
+    password: Option<&str>,
+    passphrase: Option<&str>,
+    elevated: bool,
+) -> Result<Box<dyn FileTransfer>, String> {
+    match profile.connection_type.as_str() {
+        "ftp" | "ftps" => Ok(Box::new(FtpBackend {
+            ftp: connect_ftp(profile, password)?,
+        })),
+        _ => Ok(Box::new(SftpBackend {
+            sftp: connect_and_open_sftp(profile, password, passphrase, elevated).await?,
+        })),
+    }
 }
 
 /// Abre conexión SSH con russh, autentica, abre canal y arranca subsistema
@@ -664,6 +718,396 @@ async fn authenticate_with_agent(
     Err("Autenticación vía agente SSH no soportada en esta plataforma".into())
 }
 
+#[async_trait(?Send)]
+impl FileTransfer for SftpBackend {
+    async fn list_dir(&mut self, path: &str) -> Result<Vec<FileEntry>, String> {
+        do_list_dir(&self.sftp, path).await
+    }
+
+    async fn stat(&mut self, path: &str) -> Result<FileEntry, String> {
+        do_stat(&self.sftp, path).await
+    }
+
+    async fn home_dir(&mut self) -> Result<String, String> {
+        do_home_dir(&self.sftp).await
+    }
+
+    async fn mkdir(&mut self, path: &str) -> Result<(), String> {
+        self.sftp
+            .create_dir(path.to_string())
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn remove(&mut self, path: &str, is_dir: bool) -> Result<(), String> {
+        let res = if is_dir {
+            self.sftp.remove_dir(path.to_string()).await
+        } else {
+            self.sftp.remove_file(path.to_string()).await
+        };
+        res.map_err(|e| e.to_string())
+    }
+
+    async fn rename(&mut self, from: &str, to: &str) -> Result<(), String> {
+        self.sftp
+            .rename(from.to_string(), to.to_string())
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn download(
+        &mut self,
+        remote: &str,
+        local: &Path,
+        transfer_id: &str,
+        verify_size: bool,
+        app: &AppHandle,
+        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    ) -> Result<(), String> {
+        do_download(
+            &self.sftp,
+            remote,
+            local,
+            transfer_id,
+            verify_size,
+            app,
+            canceled_transfers,
+        )
+        .await
+    }
+
+    async fn upload(
+        &mut self,
+        local: &Path,
+        remote: &str,
+        transfer_id: &str,
+        verify_size: bool,
+        app: &AppHandle,
+        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    ) -> Result<(), String> {
+        do_upload(
+            &self.sftp,
+            local,
+            remote,
+            transfer_id,
+            verify_size,
+            app,
+            canceled_transfers,
+        )
+        .await
+    }
+
+    async fn close(&mut self) {
+        let _ = self.sftp.close().await;
+    }
+}
+
+enum FtpConnection {
+    Plain(FtpStream),
+    ExplicitTls(RustlsFtpStream),
+}
+
+impl FtpConnection {
+    fn connect(profile: &ConnectionProfile, password: Option<&str>) -> Result<Self, String> {
+        let addr = format!("{}:{}", profile.host, profile.port);
+        let username = if profile.username.trim().is_empty() {
+            "anonymous"
+        } else {
+            profile.username.trim()
+        };
+        let pass = password.unwrap_or(if username == "anonymous" {
+            "anonymous@"
+        } else {
+            ""
+        });
+
+        if profile.connection_type == "ftps" {
+            let root_store =
+                rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            let config = rustls::ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+            let connector = RustlsConnector::from(Arc::new(config));
+            let mut ftp = RustlsFtpStream::connect(addr.as_str())
+                .map_err(|e| format!("No se puede conectar FTPS a {addr}: {e}"))?
+                .into_secure(connector, profile.host.as_str())
+                .map_err(|e| format!("No se pudo iniciar TLS explícito: {e}"))?;
+            ftp.login(username, pass)
+                .map_err(|e| format!("Error de autenticación FTPS: {e}"))?;
+            ftp.transfer_type(FtpTransferType::Binary)
+                .map_err(|e| format!("No se pudo activar modo binario FTPS: {e}"))?;
+            Ok(Self::ExplicitTls(ftp))
+        } else {
+            let mut ftp = FtpStream::connect(addr.as_str())
+                .map_err(|e| format!("No se puede conectar FTP a {addr}: {e}"))?;
+            ftp.login(username, pass)
+                .map_err(|e| format!("Error de autenticación FTP: {e}"))?;
+            ftp.transfer_type(FtpTransferType::Binary)
+                .map_err(|e| format!("No se pudo activar modo binario FTP: {e}"))?;
+            Ok(Self::Plain(ftp))
+        }
+    }
+
+    fn pwd(&mut self) -> Result<String, String> {
+        match self {
+            Self::Plain(ftp) => ftp.pwd(),
+            Self::ExplicitTls(ftp) => ftp.pwd(),
+        }
+        .map_err(|e| e.to_string())
+    }
+
+    fn mkdir(&mut self, path: &str) -> Result<(), String> {
+        match self {
+            Self::Plain(ftp) => ftp.mkdir(path),
+            Self::ExplicitTls(ftp) => ftp.mkdir(path),
+        }
+        .map_err(|e| e.to_string())
+    }
+
+    fn remove(&mut self, path: &str, is_dir: bool) -> Result<(), String> {
+        match (self, is_dir) {
+            (Self::Plain(ftp), true) => ftp.rmdir(path),
+            (Self::Plain(ftp), false) => ftp.rm(path),
+            (Self::ExplicitTls(ftp), true) => ftp.rmdir(path),
+            (Self::ExplicitTls(ftp), false) => ftp.rm(path),
+        }
+        .map_err(|e| e.to_string())
+    }
+
+    fn rename(&mut self, from: &str, to: &str) -> Result<(), String> {
+        match self {
+            Self::Plain(ftp) => ftp.rename(from, to),
+            Self::ExplicitTls(ftp) => ftp.rename(from, to),
+        }
+        .map_err(|e| e.to_string())
+    }
+
+    fn mlsd(&mut self, path: &str) -> Result<Vec<String>, String> {
+        match self {
+            Self::Plain(ftp) => ftp.mlsd(Some(path)),
+            Self::ExplicitTls(ftp) => ftp.mlsd(Some(path)),
+        }
+        .map_err(|e| e.to_string())
+    }
+
+    fn list(&mut self, path: &str) -> Result<Vec<String>, String> {
+        match self {
+            Self::Plain(ftp) => ftp.list(Some(path)),
+            Self::ExplicitTls(ftp) => ftp.list(Some(path)),
+        }
+        .map_err(|e| e.to_string())
+    }
+
+    fn mlst(&mut self, path: &str) -> Result<String, String> {
+        match self {
+            Self::Plain(ftp) => ftp.mlst(Some(path)),
+            Self::ExplicitTls(ftp) => ftp.mlst(Some(path)),
+        }
+        .map_err(|e| e.to_string())
+    }
+
+    fn size(&mut self, path: &str) -> Result<u64, String> {
+        match self {
+            Self::Plain(ftp) => ftp.size(path),
+            Self::ExplicitTls(ftp) => ftp.size(path),
+        }
+        .map(|n| n as u64)
+        .map_err(|e| e.to_string())
+    }
+
+    fn mdtm(&mut self, path: &str) -> Result<u64, String> {
+        let dt = match self {
+            Self::Plain(ftp) => ftp.mdtm(path),
+            Self::ExplicitTls(ftp) => ftp.mdtm(path),
+        }
+        .map_err(|e| e.to_string())?;
+        Ok(dt.and_utc().timestamp().max(0) as u64)
+    }
+
+    fn download_to(
+        &mut self,
+        remote: &str,
+        local: &Path,
+        total: u64,
+        transfer_id: &str,
+        app: &AppHandle,
+        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    ) -> Result<(), String> {
+        if let Some(parent) = local.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut local_file = std::fs::File::create(local).map_err(|e| e.to_string())?;
+
+        match self {
+            Self::Plain(ftp) => {
+                let mut remote_file = ftp.retr_as_stream(remote).map_err(|e| e.to_string())?;
+                transfer_copy_blocking(
+                    &mut remote_file,
+                    &mut local_file,
+                    total,
+                    transfer_id,
+                    app,
+                    canceled_transfers,
+                )?;
+                ftp.finalize_retr_stream(remote_file)
+                    .map_err(|e| e.to_string())?;
+            }
+            Self::ExplicitTls(ftp) => {
+                let mut remote_file = ftp.retr_as_stream(remote).map_err(|e| e.to_string())?;
+                transfer_copy_blocking(
+                    &mut remote_file,
+                    &mut local_file,
+                    total,
+                    transfer_id,
+                    app,
+                    canceled_transfers,
+                )?;
+                ftp.finalize_retr_stream(remote_file)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn upload_from(
+        &mut self,
+        local: &Path,
+        remote: &str,
+        total: u64,
+        transfer_id: &str,
+        app: &AppHandle,
+        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    ) -> Result<(), String> {
+        let mut local_file = std::fs::File::open(local).map_err(|e| e.to_string())?;
+        match self {
+            Self::Plain(ftp) => {
+                let mut remote_file = ftp.put_with_stream(remote).map_err(|e| e.to_string())?;
+                transfer_copy_blocking(
+                    &mut local_file,
+                    &mut remote_file,
+                    total,
+                    transfer_id,
+                    app,
+                    canceled_transfers,
+                )?;
+                ftp.finalize_put_stream(remote_file)
+                    .map_err(|e| e.to_string())?;
+            }
+            Self::ExplicitTls(ftp) => {
+                let mut remote_file = ftp.put_with_stream(remote).map_err(|e| e.to_string())?;
+                transfer_copy_blocking(
+                    &mut local_file,
+                    &mut remote_file,
+                    total,
+                    transfer_id,
+                    app,
+                    canceled_transfers,
+                )?;
+                ftp.finalize_put_stream(remote_file)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn quit(&mut self) {
+        let _ = match self {
+            Self::Plain(ftp) => ftp.quit(),
+            Self::ExplicitTls(ftp) => ftp.quit(),
+        };
+    }
+}
+
+fn connect_ftp(
+    profile: &ConnectionProfile,
+    password: Option<&str>,
+) -> Result<FtpConnection, String> {
+    FtpConnection::connect(profile, password)
+}
+
+#[async_trait(?Send)]
+impl FileTransfer for FtpBackend {
+    async fn list_dir(&mut self, path: &str) -> Result<Vec<FileEntry>, String> {
+        ftp_list_dir(&mut self.ftp, path)
+    }
+
+    async fn stat(&mut self, path: &str) -> Result<FileEntry, String> {
+        ftp_stat(&mut self.ftp, path)
+    }
+
+    async fn home_dir(&mut self) -> Result<String, String> {
+        self.ftp.pwd()
+    }
+
+    async fn mkdir(&mut self, path: &str) -> Result<(), String> {
+        self.ftp.mkdir(path)
+    }
+
+    async fn remove(&mut self, path: &str, is_dir: bool) -> Result<(), String> {
+        self.ftp.remove(path, is_dir)
+    }
+
+    async fn rename(&mut self, from: &str, to: &str) -> Result<(), String> {
+        self.ftp.rename(from, to)
+    }
+
+    async fn download(
+        &mut self,
+        remote: &str,
+        local: &Path,
+        transfer_id: &str,
+        verify_size: bool,
+        app: &AppHandle,
+        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    ) -> Result<(), String> {
+        let entry = ftp_stat(&mut self.ftp, remote)?;
+        let total = entry.size;
+        self.ftp
+            .download_to(remote, local, total, transfer_id, app, canceled_transfers)?;
+        if verify_size {
+            let written = std::fs::metadata(local)
+                .map_err(|e| format!("verificación local: {e}"))?
+                .len();
+            if written != total {
+                return Err(format!(
+                    "verificación fallida: tamaño local {written} B, esperado {total} B"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn upload(
+        &mut self,
+        local: &Path,
+        remote: &str,
+        transfer_id: &str,
+        verify_size: bool,
+        app: &AppHandle,
+        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    ) -> Result<(), String> {
+        let total = std::fs::metadata(local).map_err(|e| e.to_string())?.len();
+        self.ftp
+            .upload_from(local, remote, total, transfer_id, app, canceled_transfers)?;
+        if verify_size {
+            let written = self
+                .ftp
+                .size(remote)
+                .map_err(|e| format!("verificación remota: {e}"))?;
+            if written != total {
+                return Err(format!(
+                    "verificación fallida: tamaño remoto {written} B, esperado {total} B"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn close(&mut self) {
+        self.ftp.quit();
+    }
+}
+
 // ─── Operaciones ────────────────────────────────────────────────────────────
 
 async fn do_list_dir(sftp: &SftpSession, path: &str) -> Result<Vec<FileEntry>, String> {
@@ -723,6 +1167,76 @@ async fn do_home_dir(sftp: &SftpSession) -> Result<String, String> {
     sftp.canonicalize(".".to_string())
         .await
         .map_err(|e| e.to_string())
+}
+
+fn ftp_list_dir(ftp: &mut FtpConnection, path: &str) -> Result<Vec<FileEntry>, String> {
+    let mut out = match ftp.mlsd(path) {
+        Ok(lines) => lines
+            .into_iter()
+            .filter_map(|line| ListParser::parse_mlsd(&line).ok())
+            .filter(|file| file.name() != "." && file.name() != "..")
+            .map(|file| ftp_file_entry(path, &file))
+            .collect::<Vec<_>>(),
+        Err(_) => ftp
+            .list(path)?
+            .into_iter()
+            .filter_map(|line| line.parse::<FtpListFile>().ok())
+            .filter(|file| file.name() != "." && file.name() != "..")
+            .map(|file| ftp_file_entry(path, &file))
+            .collect::<Vec<_>>(),
+    };
+    out.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+    Ok(out)
+}
+
+fn ftp_stat(ftp: &mut FtpConnection, path: &str) -> Result<FileEntry, String> {
+    if let Ok(raw) = ftp.mlst(path) {
+        if let Ok(file) = ListParser::parse_mlst(raw.trim()) {
+            let mut entry = ftp_file_entry(remote_parent(path).as_str(), &file);
+            entry.name = remote_name(path);
+            entry.path = path.to_string();
+            return Ok(entry);
+        }
+    }
+
+    if let Ok(size) = ftp.size(path) {
+        return Ok(FileEntry {
+            name: remote_name(path),
+            path: path.to_string(),
+            is_dir: false,
+            is_symlink: false,
+            size,
+            modified: ftp.mdtm(path).ok(),
+            permissions: None,
+        });
+    }
+
+    let parent = remote_parent(path);
+    let name = remote_name(path);
+    ftp_list_dir(ftp, &parent)?
+        .into_iter()
+        .find(|entry| entry.name == name || entry.path == path)
+        .ok_or_else(|| format!("No se pudo consultar {path}"))
+}
+
+fn ftp_file_entry(base: &str, file: &FtpListFile) -> FileEntry {
+    FileEntry {
+        name: file.name().to_string(),
+        path: join_remote(base, file.name()),
+        is_dir: file.is_directory(),
+        is_symlink: file.is_symlink(),
+        size: file.size() as u64,
+        modified: file
+            .modified()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs()),
+        permissions: None,
+    }
 }
 
 async fn do_download(
@@ -895,13 +1409,97 @@ where
     Ok(())
 }
 
+fn transfer_copy_blocking<R, W>(
+    src: &mut R,
+    dst: &mut W,
+    total: u64,
+    transfer_id: &str,
+    app: &AppHandle,
+    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+) -> Result<(), String>
+where
+    R: Read,
+    W: Write,
+{
+    let mut buf = vec![0u8; 65_536];
+    let mut transferred: u64 = 0;
+    let mut last_emit: u64 = 0;
+    let event = format!("sftp-progress-{transfer_id}");
+
+    let _ = app.emit(
+        &event,
+        serde_json::json!({
+            "transferred": 0u64, "total": total, "done": false,
+        }),
+    );
+
+    loop {
+        if canceled_transfers.lock().unwrap().remove(transfer_id) {
+            let _ = app.emit(
+                &event,
+                serde_json::json!({
+                    "transferred": transferred, "total": total, "done": true, "canceled": true,
+                }),
+            );
+            return Err("transferencia cancelada".to_string());
+        }
+
+        let n = src.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        dst.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        transferred += n as u64;
+
+        if transferred - last_emit >= 262_144 {
+            last_emit = transferred;
+            let _ = app.emit(
+                &event,
+                serde_json::json!({
+                    "transferred": transferred, "total": total, "done": false,
+                }),
+            );
+        }
+    }
+
+    dst.flush().map_err(|e| e.to_string())?;
+    let _ = app.emit(
+        &event,
+        serde_json::json!({
+            "transferred": transferred, "total": total, "done": true,
+        }),
+    );
+    Ok(())
+}
+
 /// Une un path remoto + nombre sin depender de convenciones locales.
 fn join_remote(base: &str, name: &str) -> String {
-    if base.ends_with('/') {
+    if base.is_empty() || base == "." {
+        name.to_string()
+    } else if base.ends_with('/') {
         format!("{base}{name}")
     } else {
         format!("{base}/{name}")
     }
+}
+
+fn remote_parent(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    match trimmed.rsplit_once('/') {
+        Some(("", _)) => "/".to_string(),
+        Some((parent, _)) if !parent.is_empty() => parent.to_string(),
+        _ => ".".to_string(),
+    }
+}
+
+fn remote_name(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    trimmed
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(trimmed)
+        .to_string()
 }
 
 async fn auto_rename_local_path(path: &Path) -> PathBuf {
@@ -929,7 +1527,7 @@ async fn auto_rename_local_path(path: &Path) -> PathBuf {
     ))
 }
 
-async fn auto_rename_remote_path(sftp: &SftpSession, remote: &str) -> String {
+async fn auto_rename_remote_path(backend: &mut dyn FileTransfer, remote: &str) -> String {
     let (parent, name) = remote.rsplit_once('/').unwrap_or(("", remote));
     let dot = name
         .rfind('.')
@@ -946,7 +1544,7 @@ async fn auto_rename_remote_path(sftp: &SftpSession, remote: &str) -> String {
         } else {
             join_remote(parent, &candidate_name)
         };
-        if sftp.metadata(candidate.clone()).await.is_err() {
+        if backend.stat(&candidate).await.is_err() {
             return candidate;
         }
     }
@@ -964,7 +1562,7 @@ async fn auto_rename_remote_path(sftp: &SftpSession, remote: &str) -> String {
 /// `sftp-progress-{transfer_id}-{idx}` y al final se emite el resumen en
 /// `sftp-progress-{transfer_id}` con `done: true`.
 async fn do_download_dir(
-    sftp: &SftpSession,
+    backend: &mut dyn FileTransfer,
     remote: &str,
     local: &Path,
     transfer_id: &str,
@@ -981,7 +1579,7 @@ async fn do_download_dir(
 
     let mut stack = vec![(remote.to_string(), local.to_path_buf())];
     while let Some((rdir, ldir)) = stack.pop() {
-        let entries = do_list_dir(sftp, &rdir).await?;
+        let entries = backend.list_dir(&rdir).await?;
         for e in entries {
             let mut local_target = ldir.join(&e.name);
             if e.is_dir {
@@ -1005,16 +1603,16 @@ async fn do_download_dir(
                 }
                 idx += 1;
                 let sub_id = format!("{transfer_id}-{idx}");
-                do_download(
-                    sftp,
-                    &e.path,
-                    &local_target,
-                    &sub_id,
-                    verify_size,
-                    app,
-                    canceled_transfers,
-                )
-                .await?;
+                backend
+                    .download(
+                        &e.path,
+                        &local_target,
+                        &sub_id,
+                        verify_size,
+                        app,
+                        canceled_transfers,
+                    )
+                    .await?;
             }
         }
     }
@@ -1030,7 +1628,7 @@ async fn do_download_dir(
 /// Sube recursivamente un directorio local al `remote`. Crea las carpetas
 /// remotas conforme avanza y reusa `do_upload` para los archivos.
 async fn do_upload_dir(
-    sftp: &SftpSession,
+    backend: &mut dyn FileTransfer,
     local: &Path,
     remote: &str,
     transfer_id: &str,
@@ -1039,7 +1637,7 @@ async fn do_upload_dir(
     app: &AppHandle,
     canceled_transfers: &Arc<Mutex<HashSet<String>>>,
 ) -> Result<(), String> {
-    let _ = sftp.create_dir(remote.to_string()).await; // ignorar si ya existe
+    let _ = backend.mkdir(remote).await; // ignorar si ya existe
     let summary_event = format!("sftp-progress-{transfer_id}");
     let mut idx: u32 = 0;
 
@@ -1054,34 +1652,35 @@ async fn do_upload_dir(
             let mut remote_target = join_remote(&rdir, &name);
             let ft = entry.file_type().await.map_err(|e| e.to_string())?;
             if ft.is_dir() {
-                let _ = sftp.create_dir(remote_target.clone()).await;
+                let _ = backend.mkdir(&remote_target).await;
                 stack.push((path, remote_target));
             } else if ft.is_file() {
-                if let Ok(meta) = sftp.metadata(remote_target.clone()).await {
+                if let Ok(meta) = backend.stat(&remote_target).await {
                     match conflict_policy {
                         TransferConflictPolicy::Skip => continue,
                         TransferConflictPolicy::Rename => {
-                            remote_target = auto_rename_remote_path(sftp, &remote_target).await;
+                            remote_target = auto_rename_remote_path(backend, &remote_target).await;
                         }
                         TransferConflictPolicy::Overwrite => {
-                            if meta.file_type().is_dir() {
-                                remote_target = auto_rename_remote_path(sftp, &remote_target).await;
+                            if meta.is_dir {
+                                remote_target =
+                                    auto_rename_remote_path(backend, &remote_target).await;
                             }
                         }
                     }
                 }
                 idx += 1;
                 let sub_id = format!("{transfer_id}-{idx}");
-                do_upload(
-                    sftp,
-                    &path,
-                    &remote_target,
-                    &sub_id,
-                    verify_size,
-                    app,
-                    canceled_transfers,
-                )
-                .await?;
+                backend
+                    .upload(
+                        &path,
+                        &remote_target,
+                        &sub_id,
+                        verify_size,
+                        app,
+                        canceled_transfers,
+                    )
+                    .await?;
             }
         }
     }

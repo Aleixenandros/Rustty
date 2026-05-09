@@ -2,6 +2,28 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.1.0] - 2026-05-09
+
+### Añadido
+
+- **Perfiles FTP y FTPS**: el formulario de conexión permite crear perfiles
+  `ftp` y `ftps`, con contraseña/KeePass/keyring, puerto 21 por defecto y
+  apertura directa del explorador de ficheros local/remoto.
+- **Backend de transferencia unificado**: el gestor de ficheros abstrae SFTP,
+  FTP y FTPS tras un `trait FileTransfer`. FTP plano y FTPS explícito usan
+  `suppaftp`; FTPS se cifra con `rustls` y raíces `webpki-roots`.
+- **Biblioteca ampliada de temas Rustty v2**: 221 temas precargados aparecen
+  directamente en Preferencias -> Apariencia y se publican en
+  `public/themes/bundled-themes.json`.
+
+### Cambiado
+
+- El panel SFTP pasa a ser el panel común de ficheros para SFTP/FTP/FTPS,
+  reutilizando árbol local/remoto, drag & drop, cola de transferencias,
+  conflictos, progreso y logs.
+- La documentación de arquitectura, memoria y temas refleja los nuevos backends
+  de transferencia y la biblioteca de temas incluida.
+
 ## [1.0.2] - 2026-05-08
 
 ### Corregido

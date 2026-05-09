@@ -630,6 +630,19 @@ body.sidebar-collapsed #sidebar-resize-handle {
   border-color: color-mix(in srgb, var(--green) 45%, transparent);
 }
 
+.conn-item-icon.ftp,
+.conn-item-icon.ftps {
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+  color: var(--teal);
+  border-color: color-mix(in srgb, var(--teal) 42%, transparent);
+}
+
+.conn-item-icon.ftp.connected,
+.conn-item-icon.ftps.connected {
+  background: color-mix(in srgb, var(--teal) 18%, transparent);
+  color: var(--teal);
+}
+
 .conn-item-info {
   flex: 1;
   overflow: hidden;
@@ -1003,6 +1016,10 @@ body.has-session-tabs .tab-home .tab-name {
 
 .terminal-pane.pane-focused {
   outline-color: color-mix(in srgb, var(--blue) 55%, transparent);
+}
+
+.file-transfer-pane {
+  padding: 6px;
 }
 
 .terminal-reconnect-overlay {
@@ -1724,6 +1741,8 @@ body.terminal-bell-visual::after {
 
 .dashboard-proto.ssh { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 55%, var(--surface1)); }
 .dashboard-proto.rdp { color: var(--peach); border-color: color-mix(in srgb, var(--peach) 55%, var(--surface1)); }
+.dashboard-proto.ftp,
+.dashboard-proto.ftps { color: var(--teal); border-color: color-mix(in srgb, var(--teal) 55%, var(--surface1)); }
 
 .dashboard-activity-meta {
   color: var(--subtext0);
@@ -3949,6 +3968,13 @@ html.theme-monokai {
 }
 
 .sftp-panel.hidden { display: none; }
+
+.sftp-panel.file-transfer-root {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  margin-top: 0;
+}
 
 .sftp-panel-split {
   display: grid;

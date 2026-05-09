@@ -59,7 +59,8 @@ pub struct SshTunnelProfile {
 }
 
 /// Perfil de conexión guardado por el usuario.
-/// Soporta SSH y RDP. No almacena contraseñas en texto plano; usa keyring.
+/// Soporta SSH, RDP y transferencia FTP/FTPS. No almacena contraseñas en texto
+/// plano; usa keyring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionProfile {
     /// UUID único del perfil
@@ -68,11 +69,11 @@ pub struct ConnectionProfile {
     pub name: String,
     /// Hostname o IP del servidor remoto
     pub host: String,
-    /// Puerto (SSH: 22, RDP: 3389 por defecto)
+    /// Puerto (SSH: 22, RDP: 3389, FTP/FTPS explícito: 21 por defecto)
     pub port: u16,
     /// Nombre de usuario
     pub username: String,
-    /// Tipo de conexión: "ssh" | "rdp"  (default "ssh" para compatibilidad)
+    /// Tipo de conexión: "ssh" | "rdp" | "ftp" | "ftps"
     #[serde(default = "default_conn_type")]
     pub connection_type: String,
     /// Dominio Windows (solo RDP)

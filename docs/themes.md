@@ -60,6 +60,16 @@ La forma más cómoda de empezar es ir a Preferencias -> Apariencia y pulsar
 "Exportar plantilla". Rustty exporta el tema activo con este formato; después
 solo hay que editar colores e importarlo desde la misma pantalla.
 
+También hay una biblioteca ampliada de temas incluida en este repositorio:
+
+- `docs/themes/bundled/bundled-themes.json`: pack completo en formato Rustty v2.
+- `public/themes/bundled-themes.json`: copia publicada que se carga al arrancar.
+
+El importador de Rustty acepta tanto un tema suelto como un pack JSON con
+`themes: [...]`. Además, la biblioteca publicada en `public/themes/` aparece
+directamente en los selectores de Preferencias -> Apariencia sin guardarse en
+`prefs.customThemes`.
+
 Tokens de UI:
 
 - `crust`, `mantle`, `base`: fondos principales.
