@@ -2,6 +2,15 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.1.1] - 2026-05-09
+
+### Corregido
+
+- Las operaciones del panel de ficheros SFTP/FTP/FTPS dejan de bloquear la
+  WebView mientras esperan al backend. Las transferencias largas ya no deberían
+  disparar el aviso del sistema de "Rustty no responde" antes de empezar a
+  mostrar progreso.
+
 ## [1.1.0] - 2026-05-09
 
 ### Añadido

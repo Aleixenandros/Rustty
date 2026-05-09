@@ -379,7 +379,7 @@ pub fn local_shell_close(
 /// Abre una sesión SFTP paralela a la SSH para transferencia de ficheros.
 /// Devuelve el session_id (independiente del de la sesión SSH interactiva).
 #[tauri::command]
-pub fn sftp_connect(
+pub async fn sftp_connect(
     sftp_state: State<'_, SftpManager>,
     profile_state: State<'_, ProfileManager>,
     app_handle: AppHandle,
@@ -410,7 +410,7 @@ pub fn sftp_connect(
 }
 
 #[tauri::command]
-pub fn sftp_disconnect(
+pub async fn sftp_disconnect(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
 ) -> Result<(), String> {
@@ -418,7 +418,7 @@ pub fn sftp_disconnect(
 }
 
 #[tauri::command]
-pub fn sftp_list_dir(
+pub async fn sftp_list_dir(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
     path: String,
@@ -427,7 +427,7 @@ pub fn sftp_list_dir(
 }
 
 #[tauri::command]
-pub fn sftp_home_dir(
+pub async fn sftp_home_dir(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
 ) -> Result<String, String> {
@@ -435,7 +435,7 @@ pub fn sftp_home_dir(
 }
 
 #[tauri::command]
-pub fn sftp_stat(
+pub async fn sftp_stat(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
     path: String,
@@ -444,7 +444,7 @@ pub fn sftp_stat(
 }
 
 #[tauri::command]
-pub fn sftp_mkdir(
+pub async fn sftp_mkdir(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
     path: String,
@@ -453,7 +453,7 @@ pub fn sftp_mkdir(
 }
 
 #[tauri::command]
-pub fn sftp_remove(
+pub async fn sftp_remove(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
     path: String,
@@ -463,7 +463,7 @@ pub fn sftp_remove(
 }
 
 #[tauri::command]
-pub fn sftp_rename(
+pub async fn sftp_rename(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
     from: String,
@@ -475,7 +475,7 @@ pub fn sftp_rename(
 /// Descarga un fichero remoto a `local_path`.
 /// Emite `sftp-progress-{transfer_id}` con { transferred, total, done }.
 #[tauri::command]
-pub fn sftp_download(
+pub async fn sftp_download(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
     remote_path: String,
@@ -494,7 +494,7 @@ pub fn sftp_download(
 
 /// Sube un fichero local a `remote_path`.
 #[tauri::command]
-pub fn sftp_upload(
+pub async fn sftp_upload(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
     local_path: String,
@@ -513,7 +513,7 @@ pub fn sftp_upload(
 
 /// Descarga un directorio remoto recursivamente a `local_path`.
 #[tauri::command]
-pub fn sftp_download_dir(
+pub async fn sftp_download_dir(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
     remote_path: String,
@@ -534,7 +534,7 @@ pub fn sftp_download_dir(
 
 /// Sube un directorio local recursivamente a `remote_path`.
 #[tauri::command]
-pub fn sftp_upload_dir(
+pub async fn sftp_upload_dir(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
     local_path: String,
@@ -554,7 +554,7 @@ pub fn sftp_upload_dir(
 }
 
 #[tauri::command]
-pub fn sftp_cancel_transfer(
+pub async fn sftp_cancel_transfer(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
     transfer_id: String,
