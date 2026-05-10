@@ -387,6 +387,7 @@ pub async fn sftp_connect(
     password: Option<String>,
     passphrase: Option<String>,
     elevated: Option<bool>,
+    session_id: Option<String>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let profile = profiles
@@ -396,7 +397,7 @@ pub async fn sftp_connect(
 
     let password = resolve_password_from_keepass(&profile, password)?;
 
-    let session_id = uuid::Uuid::new_v4().to_string();
+    let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     sftp_state
         .connect(

@@ -37,6 +37,33 @@ use crate::profiles::{AuthType, ConnectionProfile};
 
 // ─── Tipos expuestos al frontend ─────────────────────────────────────────────
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SftpLogEvent {
+    stage: &'static str,
+    status: &'static str,
+    message: String,
+    timestamp: String,
+}
+
+fn emit_sftp_log(
+    app_handle: &AppHandle,
+    session_id: &str,
+    stage: &'static str,
+    status: &'static str,
+    message: impl Into<String>,
+) {
+    let _ = app_handle.emit(
+        &format!("sftp-log-{}", session_id),
+        SftpLogEvent {
+            stage,
+            status,
+            message: message.into(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        },
+    );
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntry {
     pub name: String,
@@ -445,6 +472,8 @@ async fn run_sftp_worker(
         password.as_deref(),
         passphrase.as_deref(),
         elevated,
+        &app_handle,
+        &session_id,
     )
     .await
     {
@@ -581,14 +610,46 @@ async fn connect_and_open_backend(
     password: Option<&str>,
     passphrase: Option<&str>,
     elevated: bool,
+    app_handle: &AppHandle,
+    session_id: &str,
 ) -> Result<Box<dyn FileTransfer>, String> {
     match profile.connection_type.as_str() {
-        "ftp" | "ftps" => Ok(Box::new(FtpBackend {
-            ftp: connect_ftp(profile, password)?,
-        })),
-        _ => Ok(Box::new(SftpBackend {
-            sftp: connect_and_open_sftp(profile, password, passphrase, elevated).await?,
-        })),
+        "ftp" | "ftps" => {
+            emit_sftp_log(
+                app_handle,
+                session_id,
+                "connect",
+                "info",
+                format!(
+                    "Conectando {} a {}:{}",
+                    profile.connection_type.to_uppercase(),
+                    profile.host,
+                    profile.port
+                ),
+            );
+            match connect_ftp(profile, password) {
+                Ok(ftp) => {
+                    emit_sftp_log(
+                        app_handle,
+                        session_id,
+                        "ready",
+                        "ok",
+                        format!("{} listo", profile.connection_type.to_uppercase()),
+                    );
+                    Ok(Box::new(FtpBackend { ftp }))
+                }
+                Err(e) => {
+                    emit_sftp_log(app_handle, session_id, "error", "error", e.clone());
+                    Err(e)
+                }
+            }
+        }
+        _ => {
+            let sftp =
+                connect_and_open_sftp(profile, password, passphrase, elevated, app_handle, session_id)
+                    .await?;
+            Ok(Box::new(SftpBackend { sftp }))
+        }
     }
 }
 
@@ -599,6 +660,8 @@ async fn connect_and_open_sftp(
     password: Option<&str>,
     passphrase: Option<&str>,
     elevated: bool,
+    app_handle: &AppHandle,
+    session_id: &str,
 ) -> Result<SftpSession, String> {
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
@@ -606,34 +669,75 @@ async fn connect_and_open_sftp(
     });
 
     let addr = format!("{}:{}", profile.host, profile.port);
+    emit_sftp_log(
+        app_handle,
+        session_id,
+        "connect",
+        "info",
+        format!("Conectando SFTP a {addr}"),
+    );
     let (client_handler, host_key_failure) =
         host_keys::client(profile.host.clone(), profile.port, false, false);
     let mut handle = match client::connect(config, addr.clone(), client_handler).await {
         Ok(handle) => handle,
         Err(err) => {
-            if let Some(reason) = host_keys::take_failure(&host_key_failure) {
-                return Err(reason);
-            }
-            return Err(format!("No se puede conectar a {addr}: {err}"));
+            let reason = host_keys::take_failure(&host_key_failure)
+                .unwrap_or_else(|| format!("No se puede conectar a {addr}: {err}"));
+            emit_sftp_log(app_handle, session_id, "connect", "error", reason.clone());
+            return Err(reason);
         }
     };
+    emit_sftp_log(
+        app_handle,
+        session_id,
+        "host_key",
+        "ok",
+        format!("Host key verificada ({addr})"),
+    );
 
     // Autenticación
+    emit_sftp_log(
+        app_handle,
+        session_id,
+        "auth",
+        "info",
+        format!(
+            "Autenticando como {} ({})",
+            profile.username,
+            match &profile.auth_type {
+                AuthType::Password => "password",
+                AuthType::PublicKey => "public_key",
+                AuthType::Agent => "agent",
+            }
+        ),
+    );
     let auth = match &profile.auth_type {
         AuthType::Password => {
-            let pass = password.ok_or_else(|| "Se requiere contraseña".to_string())?;
+            let pass = password.ok_or_else(|| {
+                let msg = "Se requiere contraseña".to_string();
+                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                msg
+            })?;
             handle
                 .authenticate_password(profile.username.clone(), pass.to_string())
                 .await
-                .map_err(|e| format!("Error de autenticación: {e}"))?
+                .map_err(|e| {
+                    let msg = format!("Error de autenticación: {e}");
+                    emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                    msg
+                })?
         }
         AuthType::PublicKey => {
-            let key_path = profile
-                .key_path
-                .as_ref()
-                .ok_or_else(|| "Se requiere ruta de clave privada".to_string())?;
-            let key = load_secret_key(Path::new(key_path), passphrase)
-                .map_err(|e| format!("Clave inválida: {e}"))?;
+            let key_path = profile.key_path.as_ref().ok_or_else(|| {
+                let msg = "Se requiere ruta de clave privada".to_string();
+                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                msg
+            })?;
+            let key = load_secret_key(Path::new(key_path), passphrase).map_err(|e| {
+                let msg = format!("Clave inválida: {e}");
+                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                msg
+            })?;
             let hash_alg = handle
                 .best_supported_rsa_hash()
                 .await
@@ -646,53 +750,96 @@ async fn connect_and_open_sftp(
                     PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
                 )
                 .await
-                .map_err(|e| format!("Error de autenticación por clave: {e}"))?
+                .map_err(|e| {
+                    let msg = format!("Error de autenticación por clave: {e}");
+                    emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                    msg
+                })?
         }
-        AuthType::Agent => authenticate_with_agent(&mut handle, &profile.username).await?,
+        AuthType::Agent => authenticate_with_agent(&mut handle, &profile.username)
+            .await
+            .map_err(|e| {
+                emit_sftp_log(app_handle, session_id, "auth", "error", e.clone());
+                e
+            })?,
     };
 
     match auth {
-        AuthResult::Success => {}
+        AuthResult::Success => {
+            emit_sftp_log(app_handle, session_id, "auth", "ok", "Autenticado");
+        }
         AuthResult::Failure { remaining_methods } => {
-            return Err(format!(
+            let msg = format!(
                 "Autenticación fallida. Métodos restantes: {:?}",
                 remaining_methods
-            ));
+            );
+            emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+            return Err(msg);
         }
     }
 
     // Abrir canal y activar SFTP (normal o elevado)
-    let channel = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("No se pudo abrir canal: {e}"))?;
+    let channel = handle.channel_open_session().await.map_err(|e| {
+        let msg = format!("No se pudo abrir canal: {e}");
+        emit_sftp_log(app_handle, session_id, "channel", "error", msg.clone());
+        msg
+    })?;
 
     if elevated {
+        emit_sftp_log(
+            app_handle,
+            session_id,
+            "subsystem",
+            "info",
+            "Lanzando sudo sftp-server (modo elevado)",
+        );
         // Probar las rutas habituales de sftp-server. Salimos con el primero
         // que sea ejecutable. El `exec` final sustituye al shell sh, así que
         // no hay wrapper que estropee el protocolo SFTP en el pipe.
         let cmd = r#"for p in /usr/libexec/openssh/sftp-server /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server /usr/libexec/sftp-server; do [ -x "$p" ] && exec sudo -n "$p"; done; echo "sftp-server binary not found" >&2; exit 127"#;
-        channel
-            .exec(true, cmd)
-            .await
-            .map_err(|e| format!("No se pudo lanzar sftp-server elevado: {e}"))?;
+        channel.exec(true, cmd).await.map_err(|e| {
+            let msg = format!("No se pudo lanzar sftp-server elevado: {e}");
+            emit_sftp_log(app_handle, session_id, "subsystem", "error", msg.clone());
+            msg
+        })?;
     } else {
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|e| format!("No se pudo abrir el subsistema SFTP: {e}"))?;
+        emit_sftp_log(
+            app_handle,
+            session_id,
+            "subsystem",
+            "info",
+            "Abriendo subsistema sftp",
+        );
+        channel.request_subsystem(true, "sftp").await.map_err(|e| {
+            let msg = format!("No se pudo abrir el subsistema SFTP: {e}");
+            emit_sftp_log(app_handle, session_id, "subsystem", "error", msg.clone());
+            msg
+        })?;
     }
 
     let sftp = SftpSession::new(channel.into_stream()).await.map_err(|e| {
-        if elevated {
+        let msg = if elevated {
             format!(
                 "No se pudo iniciar SFTP elevado ({e}). \
                      Comprueba que /etc/sudoers permita NOPASSWD sobre sftp-server."
             )
         } else {
             format!("No se pudo iniciar sesión SFTP: {e}")
-        }
+        };
+        emit_sftp_log(app_handle, session_id, "subsystem", "error", msg.clone());
+        msg
     })?;
+    emit_sftp_log(
+        app_handle,
+        session_id,
+        "ready",
+        "ok",
+        if elevated {
+            "Sesión SFTP elevada lista"
+        } else {
+            "Sesión SFTP lista"
+        },
+    );
 
     Ok(sftp)
 }

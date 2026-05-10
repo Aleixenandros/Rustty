@@ -6799,15 +6799,42 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
   };
 
   setSftpStatus(panel, `Conectando ${isFileTransfer ? profile.connection_type.toUpperCase() : "SFTP"}…`);
+  const protoLabel = isFileTransfer ? profile.connection_type.toUpperCase() : "SFTP";
+  appendSftpActivity(panel, {
+    status: "running",
+    label: `Conectando ${protoLabel}`,
+    detail: `${profile.username || ""}@${profile.host}:${profile.port || (isFileTransfer ? 21 : 22)}`,
+  });
+
+  // Preasignar sessionId y registrar listener antes de invocar el connect
+  // para no perder los eventos tempranos de etapas de conexión.
+  const sftpSessionId = crypto.randomUUID();
+  const ulSftpLog = await listen(`sftp-log-${sftpSessionId}`, (ev) => {
+    const payload = ev.payload || {};
+    const status = payload.status === "ok" || payload.status === "error" ? payload.status : "running";
+    if (!payload.message) return;
+    appendSftpActivity(panel, {
+      status,
+      label: payload.message,
+      detail: payload.stage ? `etapa: ${payload.stage}` : "",
+    });
+  });
+  s.sftp.unlisteners.push(ulSftpLog);
 
   try {
-    const sftpSessionId = await invoke("sftp_connect", {
+    await invoke("sftp_connect", {
       profileId: profile.id,
       password: password || null,
       passphrase: passphrase || null,
       elevated: s.sftp.elevated,
+      sessionId: sftpSessionId,
     });
     s.sftp.sftpSessionId = sftpSessionId;
+    appendSftpActivity(panel, {
+      status: "ok",
+      label: `${protoLabel} conectado`,
+      detail: s.sftp.elevated ? "Sesión con privilegios elevados (sudo)" : "Sesión establecida",
+    });
 
     // Si el terminal ya tiene un cwd conocido (por OSC 7) lo usamos,
     // si no, pedimos el home al servidor.
@@ -6820,7 +6847,12 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
     s.sftp.localCwd = localHome;
     await navigateSftpLocal(sessionId, localHome);
   } catch (err) {
-    toast(`${isFileTransfer ? profile.connection_type.toUpperCase() : "SFTP"} falló: ${err}`, "error");
+    toast(`${protoLabel} falló: ${err}`, "error");
+    appendSftpActivity(panel, {
+      status: "error",
+      label: `${protoLabel} falló`,
+      detail: String(err),
+    });
     panel.remove();
     s.sftp = null;
     throw err;
@@ -6877,14 +6909,29 @@ async function toggleSftpElevated(sessionId) {
     s.sftp.sftpSessionId = null;
   }
 
+  // Listener temprano para que las etapas de la reconexión aparezcan en el log.
+  const newSftpSessionId = crypto.randomUUID();
+  const ulSftpLog = await listen(`sftp-log-${newSftpSessionId}`, (ev) => {
+    const payload = ev.payload || {};
+    const status = payload.status === "ok" || payload.status === "error" ? payload.status : "running";
+    if (!payload.message) return;
+    appendSftpActivity(panel, {
+      status,
+      label: payload.message,
+      detail: payload.stage ? `etapa: ${payload.stage}` : "",
+    });
+  });
+  s.sftp.unlisteners.push(ulSftpLog);
+
   try {
-    const sftpSessionId = await invoke("sftp_connect", {
+    await invoke("sftp_connect", {
       profileId: profile.id,
       password: password || null,
       passphrase: passphrase || null,
       elevated: targetElevated,
+      sessionId: newSftpSessionId,
     });
-    s.sftp.sftpSessionId = sftpSessionId;
+    s.sftp.sftpSessionId = newSftpSessionId;
     s.sftp.elevated = targetElevated;
     btn?.classList.toggle("active", targetElevated);
     panel
@@ -6897,13 +6944,26 @@ async function toggleSftpElevated(sessionId) {
     toast(`No se pudo reconectar: ${err}`, "error");
     // Intentar volver al modo previo para no dejar el panel sin sesión
     try {
-      const sftpSessionId = await invoke("sftp_connect", {
+      const fallbackSftpSessionId = crypto.randomUUID();
+      const ulFallback = await listen(`sftp-log-${fallbackSftpSessionId}`, (ev) => {
+        const payload = ev.payload || {};
+        const status = payload.status === "ok" || payload.status === "error" ? payload.status : "running";
+        if (!payload.message) return;
+        appendSftpActivity(panel, {
+          status,
+          label: payload.message,
+          detail: payload.stage ? `etapa: ${payload.stage}` : "",
+        });
+      });
+      s.sftp.unlisteners.push(ulFallback);
+      await invoke("sftp_connect", {
         profileId: profile.id,
         password: password || null,
         passphrase: passphrase || null,
         elevated: wasElevated,
+        sessionId: fallbackSftpSessionId,
       });
-      s.sftp.sftpSessionId = sftpSessionId;
+      s.sftp.sftpSessionId = fallbackSftpSessionId;
       s.sftp.elevated = wasElevated;
       btn?.classList.toggle("active", wasElevated);
       await navigateSftp(sessionId, prevCwd || "/");
@@ -7075,17 +7135,21 @@ function buildSftpPanel(sessionId) {
       </div>
     </div>
 
-    <div class="sftp-transfers-wrap hidden">
+    <div class="sftp-transfers-wrap">
       <div class="sftp-transfers-header">
         <span>Transferencias</span>
         <button class="sftp-transfers-clear" title="Limpiar completadas">Limpiar</button>
       </div>
-      <div class="sftp-transfers"></div>
+      <div class="sftp-transfers">
+        <div class="sftp-transfers-empty">Sin transferencias todavía</div>
+      </div>
       <div class="sftp-activity-header">
         <span>Actividad</span>
         <button class="sftp-activity-clear" title="Limpiar actividad">Limpiar log</button>
       </div>
-      <div class="sftp-activity-log"></div>
+      <div class="sftp-activity-log">
+        <div class="sftp-activity-empty">Sin actividad todavía</div>
+      </div>
     </div>
   `;
 
@@ -7222,6 +7286,11 @@ async function navigateSftpRemote(sessionId, path) {
     } else {
       toast(`No se pudo listar: ${err}`, "error");
     }
+    appendSftpActivity(panel, {
+      status: "error",
+      label: "Listar Remoto",
+      detail: `${path}: ${msg}`,
+    });
     filesDiv.innerHTML = `<div class="sftp-empty error">Error: ${escHtml(msg)}</div>`;
   }
 }
@@ -7241,6 +7310,11 @@ async function navigateSftpLocal(sessionId, path) {
     panel.querySelector('.sftp-path[data-side="local"]').value = path;
     renderSftpFiles(sessionId, "local", entries);
   } catch (err) {
+    appendSftpActivity(panel, {
+      status: "error",
+      label: "Listar Local",
+      detail: `${path}: ${String(err)}`,
+    });
     filesDiv.innerHTML = `<div class="sftp-empty error">Error: ${escHtml(String(err))}</div>`;
   }
 }
@@ -7405,6 +7479,7 @@ function appendSftpActivity(panel, {
   if (!wrap || !log) return;
 
   wrap.classList.remove("hidden");
+  log.querySelector(".sftp-activity-empty")?.remove();
   const row = document.createElement("div");
   row.className = `sftp-activity-row ${status}`;
   const elapsed = startedAt ? Math.max(0, Date.now() - startedAt) : 0;
@@ -7789,11 +7864,16 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
       markTransferError(transferEl, String(err));
       if (job) job.status = "error";
     }
+    const transferredBytes = parseInt(transferEl.dataset.lastTransferred || "0", 10);
+    const totalBytes = parseInt(transferEl.dataset.lastTotal || "0", 10);
+    const partialDetail = totalBytes > 0
+      ? ` (${formatSize(transferredBytes)} de ${formatSize(totalBytes)})`
+      : "";
     appendSftpActivity(panel, {
       status: canceled ? "canceled" : "error",
       label: `${transferDirectionLabel(direction)} ${label}`,
-      detail: `${srcPath}${finalTargetPath ? ` → ${finalTargetPath}` : ""}: ${String(err)}`,
-      bytes: parseInt(transferEl.dataset.lastTotal || "0", 10),
+      detail: `${srcPath}${finalTargetPath ? ` → ${finalTargetPath}` : ""}${partialDetail}: ${String(err)}`,
+      bytes: transferredBytes,
       startedAt,
       actionLabel: canceled ? "Ver" : "Reintentar",
       action: canceled ? (() => revealSftpActivity(panel)) : (() => retrySftpTransfer(sessionId, transferId)),
@@ -7821,18 +7901,32 @@ async function promptMkdir(sessionId, side) {
     submitLabel: "Crear",
   });
   if (!name) return;
+  const where = side === "local" ? "Local" : "Remoto";
   try {
+    let path;
     if (side === "local") {
-      const path = await invoke("local_path_join", { base: s.sftp.localCwd, name });
+      path = await invoke("local_path_join", { base: s.sftp.localCwd, name });
       await invoke("local_mkdir", { path });
       navigateSftpLocal(sessionId, s.sftp.localCwd);
     } else {
       if (!s.sftp.sftpSessionId) return;
-      const path = joinRemote(s.sftp.cwd, name);
+      path = joinRemote(s.sftp.cwd, name);
       await invoke("sftp_mkdir", { sessionId: s.sftp.sftpSessionId, path });
       navigateSftpRemote(sessionId, s.sftp.cwd);
     }
-  } catch (err) { toast(`Error: ${err}`, "error"); }
+    appendSftpActivity(s.sftp.panel, {
+      status: "ok",
+      label: `Mkdir ${where}`,
+      detail: path,
+    });
+  } catch (err) {
+    toast(`Error: ${err}`, "error");
+    appendSftpActivity(s.sftp.panel, {
+      status: "error",
+      label: `Mkdir ${where}`,
+      detail: `${name}: ${String(err)}`,
+    });
+  }
 }
 
 async function promptRename(sessionId, side, oldPath, oldName) {
@@ -7846,15 +7940,17 @@ async function promptRename(sessionId, side, oldPath, oldName) {
     submitLabel: "Renombrar",
   });
   if (!newName || newName === oldName) return;
+  const where = side === "local" ? "Local" : "Remoto";
   try {
+    let newPath;
     if (side === "local") {
       const parent = localParentPath(oldPath);
-      const newPath = await invoke("local_path_join", { base: parent, name: newName });
+      newPath = await invoke("local_path_join", { base: parent, name: newName });
       await invoke("local_rename", { from: oldPath, to: newPath });
       navigateSftpLocal(sessionId, s.sftp.localCwd);
     } else {
       if (!s.sftp.sftpSessionId) return;
-      const newPath = joinRemote(parentPath(oldPath), newName);
+      newPath = joinRemote(parentPath(oldPath), newName);
       await invoke("sftp_rename", {
         sessionId: s.sftp.sftpSessionId,
         from: oldPath,
@@ -7862,16 +7958,29 @@ async function promptRename(sessionId, side, oldPath, oldName) {
       });
       navigateSftpRemote(sessionId, s.sftp.cwd);
     }
-  } catch (err) { toast(`Error: ${err}`, "error"); }
+    appendSftpActivity(s.sftp.panel, {
+      status: "ok",
+      label: `Renombrar ${where}`,
+      detail: `${oldPath} → ${newPath}`,
+    });
+  } catch (err) {
+    toast(`Error: ${err}`, "error");
+    appendSftpActivity(s.sftp.panel, {
+      status: "error",
+      label: `Renombrar ${where}`,
+      detail: `${oldPath} → ${newName}: ${String(err)}`,
+    });
+  }
 }
 
 async function confirmDelete(sessionId, side, path, name, isDir) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
   const kind = isDir ? "la carpeta" : "el fichero";
+  const where = side === "local" ? "Local" : "Remoto";
   const ok = await confirmThemed({
     title: "Eliminar",
-    message: `¿Eliminar ${kind} "${name}" de ${side === "local" ? "Local" : "Remoto"}?`,
+    message: `¿Eliminar ${kind} "${name}" de ${where}?`,
     submitLabel: "Eliminar",
     danger: true,
   });
@@ -7889,7 +7998,19 @@ async function confirmDelete(sessionId, side, path, name, isDir) {
       });
       navigateSftpRemote(sessionId, s.sftp.cwd);
     }
-  } catch (err) { toast(`Error: ${err}`, "error"); }
+    appendSftpActivity(s.sftp.panel, {
+      status: "ok",
+      label: `Eliminar ${where}`,
+      detail: path,
+    });
+  } catch (err) {
+    toast(`Error: ${err}`, "error");
+    appendSftpActivity(s.sftp.panel, {
+      status: "error",
+      label: `Eliminar ${where}`,
+      detail: `${path}: ${String(err)}`,
+    });
+  }
 }
 
 async function closeSftpPanel(sessionId) {
@@ -7898,6 +8019,9 @@ async function closeSftpPanel(sessionId) {
   const closesWholeTab = isFileTransferConnectionType(s.type);
   if (s.sftp.sftpSessionId) {
     invoke("sftp_disconnect", { sessionId: s.sftp.sftpSessionId }).catch(() => {});
+  }
+  for (const ul of s.sftp.unlisteners || []) {
+    try { ul(); } catch {}
   }
   s.sftp.panel.remove();
   s.sftp = null;
@@ -7912,6 +8036,7 @@ async function closeSftpPanel(sessionId) {
 function addTransfer(panel, label, transferId, detail = "") {
   const wrap = panel.querySelector(".sftp-transfers-wrap");
   wrap.classList.remove("hidden");
+  panel.querySelector(".sftp-transfers-empty")?.remove();
   const el = document.createElement("div");
   el.className = "sftp-transfer";
   el.dataset.transfer = transferId;
@@ -7985,6 +8110,9 @@ function updateTransfer(el, { transferred, total, done }) {
   if (Number.isFinite(total) && total > 0) {
     el.dataset.lastTotal = String(total);
   }
+  if (Number.isFinite(transferred) && transferred >= 0) {
+    el.dataset.lastTransferred = String(transferred);
+  }
   if (done) el.classList.add("done");
 }
 
@@ -8042,9 +8170,22 @@ function updateTransfersVisibility(panel) {
   const list = panel.querySelector(".sftp-transfers");
   const activity = panel.querySelector(".sftp-activity-log");
   const wrap = panel.querySelector(".sftp-transfers-wrap");
-  const hasTransfers = (list?.children.length || 0) > 0;
-  const hasActivity = (activity?.children.length || 0) > 0;
-  wrap.classList.toggle("hidden", !hasTransfers && !hasActivity);
+  if (!wrap) return;
+  // El wrap se mantiene siempre visible mientras el panel SFTP esté abierto:
+  // los placeholders cubren el caso "sin contenido".
+  wrap.classList.remove("hidden");
+  if (list && !list.querySelector(".sftp-transfer") && !list.querySelector(".sftp-transfers-empty")) {
+    const empty = document.createElement("div");
+    empty.className = "sftp-transfers-empty";
+    empty.textContent = "Sin transferencias todavía";
+    list.appendChild(empty);
+  }
+  if (activity && !activity.querySelector(".sftp-activity-row") && !activity.querySelector(".sftp-activity-empty")) {
+    const empty = document.createElement("div");
+    empty.className = "sftp-activity-empty";
+    empty.textContent = "Sin actividad todavía";
+    activity.appendChild(empty);
+  }
 }
 
 function setSftpStatus(panel, msg) {

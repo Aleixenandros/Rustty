@@ -4245,12 +4245,21 @@ body.sftp-panel-resizing {
 .sftp-transfers-wrap {
   border-top: 1px solid var(--surface0);
   background: var(--crust);
-  max-height: 40%;
+  max-height: 50%;
+  min-height: 96px;
   display: flex;
   flex-direction: column;
 }
 
 .sftp-transfers-wrap.hidden { display: none; }
+
+.sftp-transfers-empty,
+.sftp-activity-empty {
+  padding: 10px 12px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--overlay0);
+}
 
 .sftp-transfers-header,
 .sftp-activity-header {
@@ -4290,7 +4299,8 @@ body.sftp-panel-resizing {
 }
 
 .sftp-activity-log {
-  max-height: 120px;
+  max-height: 180px;
+  min-height: 48px;
 }
 
 .sftp-transfer {
