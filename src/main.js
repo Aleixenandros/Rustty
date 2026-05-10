@@ -4835,7 +4835,7 @@ async function connectFileTransferProfile(profileId, { passwordOverride = null, 
         setActiveTab(sid);
         return;
       }
-      await closeSession(sid);
+      await closeSession(sid, { skipConfirm: true });
     }
   }
 
@@ -6010,9 +6010,43 @@ function updateTabStatus(sessionId, status) {
   if (sessionId === activeSessionId) updateStatusBar();
 }
 
-async function closeSession(sessionId) {
+function isSessionLive(s) {
+  if (!s) return false;
+  return s.status === "connecting" || s.status === "connected" || s.status === "reconnecting";
+}
+
+function sessionHasActiveTransfers(s) {
+  if (!s?.sftp) return false;
+  if ((s.sftp.transferQueue?.length || 0) > 0) return true;
+  for (const job of s.sftp.transfers?.values?.() || []) {
+    if (job.status === "running" || job.status === "queued") return true;
+  }
+  return false;
+}
+
+async function confirmCloseSession(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s) return true;
+  if (!isSessionLive(s) && !sessionHasActiveTransfers(s)) return true;
+  const profile = profiles.find((p) => p.id === s.profileId);
+  const name = profile?.name || s._closeOverride ? "consola local" : (s.type ? s.type.toUpperCase() : "sesión");
+  const transfers = sessionHasActiveTransfers(s)
+    ? "\n\nHay transferencias SFTP en curso que se cancelarán."
+    : "";
+  return confirmThemed({
+    title: "Cerrar pestaña",
+    message: `La conexión "${name}" sigue abierta. ¿Cerrar la pestaña y desconectar?${transfers}`,
+    submitLabel: "Cerrar y desconectar",
+    danger: true,
+  });
+}
+
+async function closeSession(sessionId, opts = {}) {
+  const { skipConfirm = false } = opts;
   const s = sessions.get(sessionId);
   if (!s) return;
+
+  if (!skipConfirm && !(await confirmCloseSession(sessionId))) return;
 
   // Si hay un panel SFTP abierto, desconectarlo primero
   if (s.sftp?.sftpSessionId) {
@@ -10051,22 +10085,33 @@ async function handleTabContextAction(action) {
     await closeSession(targetId);
     return;
   }
-  if (action === "close-all") {
-    for (const sid of [...sessions.keys()]) await closeSession(sid);
-    return;
-  }
-  if (action === "close-others") {
-    for (const sid of [...sessions.keys()]) {
-      if (sid !== targetId) await closeSession(sid);
+  if (action === "close-all" || action === "close-others" || action === "close-right") {
+    let ids;
+    if (action === "close-all") {
+      ids = [...sessions.keys()];
+    } else if (action === "close-others") {
+      ids = [...sessions.keys()].filter((sid) => sid !== targetId);
+    } else {
+      const order = [...document.querySelectorAll("#tabs-container .tab")]
+        .map((el) => el.dataset.session);
+      const idx = order.indexOf(targetId);
+      if (idx < 0) return;
+      ids = order.slice(idx + 1);
     }
-    return;
-  }
-  if (action === "close-right") {
-    const order = [...document.querySelectorAll("#tabs-container .tab")]
-      .map((el) => el.dataset.session);
-    const idx = order.indexOf(targetId);
-    if (idx < 0) return;
-    for (const sid of order.slice(idx + 1)) await closeSession(sid);
+    const liveCount = ids.filter((sid) => {
+      const s = sessions.get(sid);
+      return isSessionLive(s) || sessionHasActiveTransfers(s);
+    }).length;
+    if (liveCount > 0) {
+      const ok = await confirmThemed({
+        title: "Cerrar pestañas",
+        message: `Hay ${liveCount} ${liveCount === 1 ? "conexión activa" : "conexiones activas"} entre las pestañas a cerrar. ¿Continuar y desconectarlas?`,
+        submitLabel: "Cerrar todas",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    for (const sid of ids) await closeSession(sid, { skipConfirm: true });
     return;
   }
   if (action === "duplicate") {

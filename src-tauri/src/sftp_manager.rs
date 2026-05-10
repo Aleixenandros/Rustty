@@ -12,7 +12,7 @@
 //! (que sigue usando `ssh2` síncrono para el shell interactivo y `std`
 //! para todo lo demás) sin forzar una migración general.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
@@ -20,15 +20,17 @@ use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use futures::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
 use suppaftp::list::{File as FtpListFile, ListParser};
 use suppaftp::types::FileType as FtpTransferType;
 use suppaftp::{rustls, FtpStream, RustlsConnector, RustlsFtpStream};
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use russh::client::{self, AuthResult};
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
+use russh_sftp::client::fs::File as SftpFile;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::OpenFlags;
 
@@ -1417,6 +1419,15 @@ fn ftp_file_entry(base: &str, file: &FtpListFile) -> FileEntry {
     }
 }
 
+// Tamaño de cada petición SFTP (read/write). El máximo del cliente russh-sftp
+// es 256 KiB; usar el tope reduce el número de round-trips frente a buffers
+// más pequeños.
+const SFTP_CHUNK: u64 = 256 * 1024;
+// Peticiones SFTP simultáneas en vuelo durante una transferencia. Mantener N
+// peticiones a la vez satura el ancho de banda real cuando el RTT no es
+// despreciable (sin pipelining el techo es chunk_size / RTT).
+const SFTP_PIPELINE: usize = 16;
+
 async fn do_download(
     sftp: &SftpSession,
     remote: &str,
@@ -1432,10 +1443,6 @@ async fn do_download(
         .map_err(|e| e.to_string())?;
     let total = meta.len();
 
-    let mut remote_file = sftp
-        .open(remote.to_string())
-        .await
-        .map_err(|e| e.to_string())?;
     if let Some(parent) = local.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -1445,8 +1452,9 @@ async fn do_download(
         .await
         .map_err(|e| e.to_string())?;
 
-    transfer_copy(
-        &mut remote_file,
+    pipelined_download(
+        sftp,
+        remote,
         &mut local_file,
         total,
         transfer_id,
@@ -1485,27 +1493,16 @@ async fn do_upload(
         .map_err(|e| e.to_string())?;
     let total = meta.len();
 
-    let mut local_file = tokio::fs::File::open(local)
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut remote_file = sftp
-        .open_with_flags(
-            remote.to_string(),
-            OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
-    transfer_copy(
-        &mut local_file,
-        &mut remote_file,
+    pipelined_upload(
+        sftp,
+        local,
+        remote,
         total,
         transfer_id,
         app,
         canceled_transfers,
     )
     .await?;
-    drop(remote_file);
 
     if verify_size {
         let written = sftp
@@ -1523,31 +1520,44 @@ async fn do_upload(
     Ok(())
 }
 
-/// Copia con emisión de progreso. Buffer de 64 KiB; emite cada ~256 KiB o al EOF.
-async fn transfer_copy<R, W>(
-    src: &mut R,
-    dst: &mut W,
+/// Descarga con pipelining: abre N file handles SFTP sobre el mismo remoto,
+/// mantiene hasta N reads simultáneos en vuelo y los escribe al fichero local
+/// en el orden correcto usando una BTreeMap como buffer de reordenado.
+async fn pipelined_download(
+    sftp: &SftpSession,
+    remote: &str,
+    local_file: &mut tokio::fs::File,
     total: u64,
     transfer_id: &str,
     app: &AppHandle,
     canceled_transfers: &Arc<Mutex<HashSet<String>>>,
-) -> Result<(), String>
-where
-    R: AsyncReadExt + Unpin,
-    W: AsyncWriteExt + Unpin,
-{
-    let mut buf = vec![0u8; 65_536];
-    let mut transferred: u64 = 0;
-    let mut last_emit: u64 = 0;
+) -> Result<(), String> {
     let event = format!("sftp-progress-{transfer_id}");
-
-    // Progreso inicial
     let _ = app.emit(
         &event,
-        serde_json::json!({
-            "transferred": 0u64, "total": total, "done": false,
-        }),
+        serde_json::json!({ "transferred": 0u64, "total": total, "done": false }),
     );
+
+    if total == 0 {
+        let _ = app.emit(
+            &event,
+            serde_json::json!({ "transferred": 0u64, "total": 0u64, "done": true }),
+        );
+        return Ok(());
+    }
+
+    // Abrir N file handles concurrentemente para no pagar N RTT secuenciales.
+    let parallelism = effective_parallelism(total);
+    let mut idle_files: Vec<SftpFile> = open_handles(sftp, remote, parallelism, OpenFlags::READ)
+        .await
+        .map_err(|e| format!("No se pudieron abrir los handles SFTP: {e}"))?;
+
+    let mut next_read: u64 = 0;
+    let mut next_write: u64 = 0;
+    let mut transferred: u64 = 0;
+    let mut last_emit: u64 = 0;
+    let mut completed: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
+    let mut in_flight: FuturesUnordered<_> = FuturesUnordered::new();
 
     loop {
         if canceled_transfers.lock().unwrap().remove(transfer_id) {
@@ -1559,12 +1569,186 @@ where
             );
             return Err("transferencia cancelada".to_string());
         }
-        let n = src.read(&mut buf).await.map_err(|e| e.to_string())?;
-        if n == 0 {
+
+        while !idle_files.is_empty() && next_read < total {
+            let mut f = idle_files.pop().unwrap();
+            let len = (total - next_read).min(SFTP_CHUNK);
+            let off = next_read;
+            next_read += len;
+            in_flight.push(async move {
+                let res = read_chunk_at(&mut f, off, len).await;
+                (f, off, res)
+            });
+        }
+
+        if in_flight.is_empty() {
             break;
         }
-        dst.write_all(&buf[..n]).await.map_err(|e| e.to_string())?;
-        transferred += n as u64;
+
+        let (f, offset, result) = in_flight.next().await.unwrap();
+        idle_files.push(f);
+        let data = result?;
+        completed.insert(offset, data);
+
+        while let Some(data) = completed.remove(&next_write) {
+            let n = data.len() as u64;
+            if n == 0 {
+                return Err("EOF inesperado durante la descarga".to_string());
+            }
+            local_file
+                .write_all(&data)
+                .await
+                .map_err(|e| e.to_string())?;
+            next_write += n;
+            transferred += n;
+
+            if transferred - last_emit >= 262_144 {
+                last_emit = transferred;
+                let _ = app.emit(
+                    &event,
+                    serde_json::json!({
+                        "transferred": transferred, "total": total, "done": false,
+                    }),
+                );
+            }
+        }
+    }
+
+    local_file.flush().await.map_err(|e| e.to_string())?;
+    let _ = app.emit(
+        &event,
+        serde_json::json!({ "transferred": transferred, "total": total, "done": true }),
+    );
+    Ok(())
+}
+
+/// Lee `len` bytes desde `offset` reintentando hasta cubrir el chunk o llegar
+/// a EOF. El servidor puede devolver menos bytes de los pedidos.
+async fn read_chunk_at(
+    file: &mut SftpFile,
+    offset: u64,
+    len: u64,
+) -> Result<Vec<u8>, String> {
+    use std::io::SeekFrom;
+    file.seek(SeekFrom::Start(offset))
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; len as usize];
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..]).await {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    buf.truncate(filled);
+    Ok(buf)
+}
+
+/// Sube con pipelining. El primer handle se abre con TRUNCATE para vaciar el
+/// destino; los N-1 restantes se abren con WRITE para escribir en paralelo a
+/// distintos offsets sobre el mismo fichero.
+async fn pipelined_upload(
+    sftp: &SftpSession,
+    local: &Path,
+    remote: &str,
+    total: u64,
+    transfer_id: &str,
+    app: &AppHandle,
+    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+) -> Result<(), String> {
+    let event = format!("sftp-progress-{transfer_id}");
+    let _ = app.emit(
+        &event,
+        serde_json::json!({ "transferred": 0u64, "total": total, "done": false }),
+    );
+
+    // Crear/truncar el remoto antes de abrir handles paralelos. El primer
+    // handle también nos sirve como uno de los N en vuelo.
+    let first = sftp
+        .open_with_flags(
+            remote.to_string(),
+            OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if total == 0 {
+        drop(first);
+        let _ = app.emit(
+            &event,
+            serde_json::json!({ "transferred": 0u64, "total": 0u64, "done": true }),
+        );
+        return Ok(());
+    }
+
+    let parallelism = effective_parallelism(total);
+    let mut idle_files: Vec<SftpFile> = Vec::with_capacity(parallelism);
+    idle_files.push(first);
+    if parallelism > 1 {
+        let extra = open_handles(sftp, remote, parallelism - 1, OpenFlags::WRITE)
+            .await
+            .map_err(|e| format!("No se pudieron abrir los handles SFTP: {e}"))?;
+        idle_files.extend(extra);
+    }
+
+    let mut local_file = tokio::fs::File::open(local)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut next_offset: u64 = 0;
+    let mut transferred: u64 = 0;
+    let mut last_emit: u64 = 0;
+    let mut in_flight: FuturesUnordered<_> = FuturesUnordered::new();
+
+    loop {
+        if canceled_transfers.lock().unwrap().remove(transfer_id) {
+            let _ = app.emit(
+                &event,
+                serde_json::json!({
+                    "transferred": transferred, "total": total, "done": true, "canceled": true,
+                }),
+            );
+            return Err("transferencia cancelada".to_string());
+        }
+
+        while !idle_files.is_empty() && next_offset < total {
+            let mut f = idle_files.pop().unwrap();
+            let len = (total - next_offset).min(SFTP_CHUNK);
+            let off = next_offset;
+            next_offset += len;
+
+            let mut buf = vec![0u8; len as usize];
+            let mut filled = 0usize;
+            while filled < buf.len() {
+                match local_file.read(&mut buf[filled..]).await {
+                    Ok(0) => break,
+                    Ok(n) => filled += n,
+                    Err(e) => return Err(e.to_string()),
+                }
+            }
+            if filled == 0 {
+                idle_files.push(f);
+                next_offset = total; // forzar fin del bucle externo
+                break;
+            }
+            buf.truncate(filled);
+
+            in_flight.push(async move {
+                let res = write_chunk_at(&mut f, off, &buf).await;
+                (f, filled as u64, res)
+            });
+        }
+
+        if in_flight.is_empty() {
+            break;
+        }
+
+        let (f, n, result) = in_flight.next().await.unwrap();
+        idle_files.push(f);
+        result?;
+        transferred += n;
 
         if transferred - last_emit >= 262_144 {
             last_emit = transferred;
@@ -1577,14 +1761,60 @@ where
         }
     }
 
-    dst.flush().await.map_err(|e| e.to_string())?;
+    // Cerrar los handles de forma ordenada antes de informar "done" para que
+    // el servidor haya flusheado al volver al main loop.
+    for f in idle_files.drain(..) {
+        drop(f);
+    }
+
     let _ = app.emit(
         &event,
-        serde_json::json!({
-            "transferred": transferred, "total": total, "done": true,
-        }),
+        serde_json::json!({ "transferred": transferred, "total": total, "done": true }),
     );
     Ok(())
+}
+
+async fn write_chunk_at(
+    file: &mut SftpFile,
+    offset: u64,
+    data: &[u8],
+) -> Result<(), String> {
+    use std::io::SeekFrom;
+    // SeekFrom::Start sólo actualiza el `pos` local, no hace round-trip;
+    // así cada chunk consume exactamente un WRITE remoto. Saltamos `flush`
+    // a propósito: provocaría un fsync por chunk y anula el pipelining.
+    file.seek(SeekFrom::Start(offset))
+        .await
+        .map_err(|e| e.to_string())?;
+    file.write_all(data).await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Abre `count` file handles concurrentemente sobre el mismo path. Devuelve
+/// el primer error si alguno falla.
+async fn open_handles(
+    sftp: &SftpSession,
+    remote: &str,
+    count: usize,
+    flags: OpenFlags,
+) -> Result<Vec<SftpFile>, String> {
+    let mut futs = FuturesUnordered::new();
+    for _ in 0..count {
+        futs.push(sftp.open_with_flags(remote.to_string(), flags));
+    }
+    let mut handles = Vec::with_capacity(count);
+    while let Some(res) = futs.next().await {
+        handles.push(res.map_err(|e| e.to_string())?);
+    }
+    Ok(handles)
+}
+
+fn effective_parallelism(total: u64) -> usize {
+    if total <= SFTP_CHUNK {
+        return 1;
+    }
+    let chunks = total.div_ceil(SFTP_CHUNK) as usize;
+    chunks.min(SFTP_PIPELINE).max(1)
 }
 
 fn transfer_copy_blocking<R, W>(
@@ -1599,7 +1829,7 @@ where
     R: Read,
     W: Write,
 {
-    let mut buf = vec![0u8; 65_536];
+    let mut buf = vec![0u8; 256 * 1024];
     let mut transferred: u64 = 0;
     let mut last_emit: u64 = 0;
     let event = format!("sftp-progress-{transfer_id}");
