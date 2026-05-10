@@ -2,6 +2,50 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.3.0] - 2026-05-10
+
+### Cambiado
+
+- **Pipelining SFTP**: las descargas y subidas mantienen 16 peticiones SFTP en
+  vuelo simultáneamente con chunks de 256 KiB (el máximo del cliente
+  `russh-sftp`). Antes el bucle era serie con buffer de 64 KiB, lo que limitaba
+  la velocidad real a `chunk / RTT` (~5 MB/s con 12-15 ms de latencia). Ahora
+  la transferencia satura el ancho de banda real de la conexión en lugar del
+  producto chunk × RTT.
+- El camino FTP/FTPS sube el buffer de 64 KiB a 256 KiB.
+
+## [1.2.0] - 2026-05-10
+
+### Añadido
+
+- **Etapas de conexión SFTP visibles**: el backend emite `sftp-log-{sessionId}`
+  por cada fase (`connect`, `host_key`, `auth`, `channel`, `subsystem`, `ready`)
+  igual que ya hacía SSH. El frontend preasigna el `sessionId` antes de invocar
+  `sftp_connect` para no perder eventos tempranos y los pinta en el panel
+  ACTIVIDAD del SFTP.
+- **Log de operaciones SFTP**: el panel registra en ACTIVIDAD las operaciones
+  `mkdir`, renombrar, eliminar y errores de listado (Local y Remoto), además
+  del inicio/fin de cada transferencia.
+- **Confirmación al cerrar pestaña**: `Ctrl+W`, la `✕` de la pestaña y la
+  acción "Cerrar" del menú contextual avisan si la conexión sigue viva o hay
+  transferencias SFTP en curso. Las acciones "Cerrar todas / otras / a la
+  derecha" preguntan una sola vez con el conteo de sesiones afectadas.
+
+### Cambiado
+
+- El bloque TRANSFERENCIAS / ACTIVIDAD del panel SFTP deja de empezar oculto:
+  aparece nada más abrir el panel con placeholders ("Sin transferencias
+  todavía", "Sin actividad todavía") y se mantiene visible mientras el panel
+  exista. `min-height` y `max-height` ajustados para que siempre quede sitio
+  legible aunque haya una transferencia en curso.
+
+### Corregido
+
+- El meta de la fila de error/cancelado usaba el tamaño total del fichero y la
+  velocidad media calculada con ese total, dando lecturas absurdas cuando solo
+  se habían transferido unos pocos MB. Ahora usa los bytes realmente movidos y
+  añade en el detalle `(transferido de total)`.
+
 ## [1.1.2] - 2026-05-09
 
 ### Corregido
