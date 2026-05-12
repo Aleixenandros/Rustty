@@ -1,4 +1,6 @@
 use std::net::UdpSocket;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager, State};
@@ -475,6 +477,17 @@ pub async fn sftp_rename(
     sftp_state.rename(&session_id, from, to).await
 }
 
+#[tauri::command]
+pub async fn sftp_chmod(
+    sftp_state: State<'_, SftpManager>,
+    session_id: String,
+    path: String,
+    mode: u32,
+) -> Result<(), String> {
+    validate_octal_mode(mode)?;
+    sftp_state.chmod(&session_id, path, mode).await
+}
+
 /// Descarga un fichero remoto a `local_path`.
 /// Emite `sftp-progress-{transfer_id}` con { transferred, total, done }.
 #[tauri::command]
@@ -583,6 +596,7 @@ pub struct LocalFileEntry {
     pub is_symlink: bool,
     pub size: u64,
     pub modified: Option<u64>,
+    pub permissions: Option<u32>,
 }
 
 /// Lista un directorio local con el mismo formato (forma) que `sftp_list_dir`.
@@ -609,6 +623,7 @@ pub fn local_list_dir(path: String) -> Result<Vec<LocalFileEntry>, String> {
             is_symlink: meta.file_type().is_symlink(),
             size: if meta.is_file() { meta.len() } else { 0 },
             modified,
+            permissions: local_mode(&meta),
         });
     }
     out.sort_by(|a, b| match (a.is_dir, b.is_dir) {
@@ -663,6 +678,41 @@ pub fn local_remove(path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn local_rename(from: String, to: String) -> Result<(), String> {
     std::fs::rename(&from, &to).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn local_chmod(path: String, mode: u32) -> Result<(), String> {
+    validate_octal_mode(mode)?;
+    set_local_mode(&path, mode)
+}
+
+fn validate_octal_mode(mode: u32) -> Result<(), String> {
+    if mode <= 0o7777 {
+        Ok(())
+    } else {
+        Err("Permisos octales no válidos".to_string())
+    }
+}
+
+#[cfg(unix)]
+fn local_mode(meta: &std::fs::Metadata) -> Option<u32> {
+    Some(meta.permissions().mode())
+}
+
+#[cfg(not(unix))]
+fn local_mode(_meta: &std::fs::Metadata) -> Option<u32> {
+    None
+}
+
+#[cfg(unix)]
+fn set_local_mode(path: &str, mode: u32) -> Result<(), String> {
+    let perms = std::fs::Permissions::from_mode(mode);
+    std::fs::set_permissions(path, perms).map_err(|e| e.to_string())
+}
+
+#[cfg(not(unix))]
+fn set_local_mode(_path: &str, _mode: u32) -> Result<(), String> {
+    Err("Cambiar permisos locales solo está soportado en Unix".to_string())
 }
 
 #[tauri::command]

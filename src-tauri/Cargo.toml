@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.3.0"
+version = "1.4.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -29,7 +29,10 @@ russh = "0.50"
 russh-sftp = "2"
 suppaftp = { version = "8.0.3", features = ["rustls-ring"] }
 webpki-roots = "1"
-tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "fs", "macros", "time"] }
+tokio = { version = "1", features = ["rt", "net", "io-util", "io-std", "sync", "fs", "macros", "time"] }
+# CLI SSH sin interfaz gráfica: modo raw del terminal y prompts secretos.
+crossterm = "0.29"
+rpassword = "7"
 # Combinadores de futuros para pipelining SFTP (FuturesUnordered).
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 async-trait = "0.1"

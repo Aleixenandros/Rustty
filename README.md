@@ -9,12 +9,13 @@
 
 - **Multi-protocolo**: conexiones SSH, SFTP, FTP, FTPS y RDP (este último mediante `xfreerdp` / `mstsc` externos).
 - **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F), barra inferior con estado/latencia/diagnóstico y soporte de OSC 7 (seguimiento del `cwd` remoto).
-- **Panel de ficheros integrado**: explorador SFTP/FTP/FTPS con **vista dividida remoto / local**, transferencia recursiva de carpetas, drag & drop, conflictos configurables, cola de transferencias, seguimiento opcional del directorio del terminal en SSH y modo elevado a **sudo** cuando el servidor lo permita.
+- **Panel de ficheros integrado**: explorador SFTP/FTP/FTPS con **vista dividida remoto / local**, transferencia recursiva de carpetas, drag & drop, conflictos configurables, cola de transferencias, logs en pestañas redimensionables, menús contextuales, seguimiento opcional del directorio del terminal en SSH y modo elevado a **sudo** cuando el servidor lo permita.
+- **CLI SSH**: lista conexiones guardadas con `rustty -l` y conecta directamente desde la terminal con `rustty -c <nombre|id|ip|host>` sin abrir la interfaz gráfica.
 - **Túneles SSH integrados**: redirección de puertos **local** (`-L`), **remota** (`-R`) y **dinámica / SOCKS** (`-D`) sobre una sesión activa o desde acceso rápido global, con panel de estado, tráfico, túneles guardados y autoconexión opcional por perfil.
 - **Opciones avanzadas SSH por perfil**: keep-alive configurable, **reconexión automática con backoff** ante caídas, **grabación de sesión** a fichero, bastion / ProxyJump, agent forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) en servidores antiguos.
 - **Multi-pestaña y vistas divididas**: trabaja con varias sesiones simultáneas, distribúyelas en *split* horizontal / vertical / grid y activa el *broadcast* para teclear en varias a la vez.
 - **Sidebar pulida**: rail vertical de iconos (Perfiles, Favoritos, Túneles, Actividad, Sync, Preferencias y acciones rápidas), **drag & drop** entre carpetas y workspaces, colores por carpeta, recuerdo del árbol abierto y selección automática de la conexión asociada a la pestaña activa.
-- **Diagnóstico y actividad**: botón **Probar** en el modal de conexión sin guardar el perfil, logs SSH por etapas, comprobación TCP para RDP/FTP/FTPS y centro global de actividad con transferencias, sync, errores y actualizaciones.
+- **Diagnóstico y actividad**: botón **Probar** en el modal de conexión sin guardar el perfil, logs SSH por etapas, comprobación TCP para RDP/FTP/FTPS y centro global de actividad persistente con transferencias, sync, errores y actualizaciones.
 - **Bandeja del sistema / quick launcher**: acceso rápido a favoritos, recientes, workspaces, consola local y abrir/ocultar ventana desde el icono de tray.
 - **Exportación granular**: exporta todos los perfiles, los de una carpeta o los de un workspace a JSON desde el menú contextual, preguntando antes si debe incluir contraseñas/passphrases guardadas.
 - **Seguridad**:
@@ -64,8 +65,23 @@ Rustty incluye un **editor de atajos** en Preferencias → *Atajos* que permite 
 | `Ctrl+Alt+C`                   | Copiar selección del terminal                          |
 | `Ctrl+Alt+V`                   | Pegar en el terminal                                   |
 | `Ctrl+P`                       | Pegar la contraseña del perfil activo en el shell      |
+| `Ctrl+K`                       | Buscar conexiones desde cualquier vista                |
 | `Ctrl+F`                       | Buscar dentro del buffer del terminal                  |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Aumentar / disminuir / restablecer el tamaño de fuente |
+
+## CLI SSH
+
+Rustty también puede usarse desde terminal para trabajar con conexiones SSH guardadas:
+
+```bash
+rustty -l
+rustty --list
+rustty -l --json
+rustty -c <nombre|id|ip|host>
+rustty --connect <nombre|id|ip|host>
+```
+
+`-c` reutiliza los datos del perfil, el keyring del sistema, `known_hosts`, ProxyJump, keepalive, agent forwarding y la compatibilidad legacy configurada en la conexión. Si una contraseña o passphrase no está guardada en el keyring, la pedirá en la terminal sin mostrarla.
 
 ## Instalación
 

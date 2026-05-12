@@ -2,6 +2,37 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.4.0] - 2026-05-12
+
+### Añadido
+
+- **CLI SSH inicial**: `rustty -l` / `--list` lista conexiones SSH guardadas,
+  `rustty -l --json` emite JSON y `rustty -c <nombre|id|ip|host>` /
+  `--connect` abre una sesión SSH directamente en la terminal sin lanzar la
+  interfaz gráfica.
+- El CLI reutiliza los perfiles guardados, keyring, `known_hosts`, ProxyJump,
+  keepalive, agent forwarding y la opción de algoritmos legacy configurada por
+  perfil. Si falta un secreto en el keyring, lo pide en terminal sin eco.
+- **Búsqueda global de conexiones**: `Ctrl+K` funciona desde cualquier vista,
+  incluso dentro de una sesión abierta, enfocando la búsqueda de la sidebar.
+- Menús contextuales en los paneles local/remoto del explorador SFTP para crear
+  carpetas, subir/descargar, renombrar, eliminar, refrescar y cambiar permisos.
+- Comandos backend para cambiar permisos en entradas SFTP y locales.
+
+### Cambiado
+
+- Los logs del panel SFTP se muestran en pestañas separadas de
+  **Transferencias** y **Actividad**, pegadas a la parte inferior del panel y
+  redimensionables hacia arriba con altura persistente.
+- El centro global de actividad usa un icono más descriptivo y conserva su
+  historial en `localStorage` entre reinicios.
+
+### Corregido
+
+- Las transferencias SFTP grandes ya no se cortan alrededor de 1 GiB: el canal
+  SFTP aumenta el timeout de petición y evita chocar con la renegociación de
+  claves por defecto de `russh`.
+
 ## [1.3.0] - 2026-05-10
 
 ### Cambiado

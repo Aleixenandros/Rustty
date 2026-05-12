@@ -27,7 +27,7 @@
           <button class="rail-btn" data-rail-view="profiles" data-i18n-title="rail.view_profiles" title="Perfiles" aria-label="Perfiles">📁</button>
           <button class="rail-btn" data-rail-view="favorites" data-i18n-title="rail.view_favorites" title="Favoritos" aria-label="Favoritos">★</button>
           <button class="rail-btn" data-rail-action="tunnels" data-i18n-title="rail.tunnels" title="Túneles SSH" aria-label="Túneles SSH">⇄</button>
-          <button class="rail-btn" data-rail-action="activity" title="Actividad" aria-label="Actividad">☷</button>
+          <button class="rail-btn" data-rail-action="activity" title="Historial y logs" aria-label="Historial y logs">📝</button>
           <button class="rail-btn" data-rail-action="sync" data-i18n-title="rail.sync" title="Sincronización" aria-label="Sincronización">⇅</button>
           <button class="rail-btn" id="rail-btn-settings" data-rail-action="settings" data-i18n-title="sidebar.prefs_title" title="Preferencias" aria-label="Preferencias">⚙</button>
         </div>
@@ -272,6 +272,38 @@
       </button>
       <button class="ctx-item danger ctx-ws-only hidden" data-ctx="delete-ws">
         <span class="ctx-icon">✕</span><span data-i18n="ctx.delete_workspace">Eliminar perfil</span>
+      </button>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MENÚ CONTEXTUAL (clic derecho en panel SFTP)
+    ══════════════════════════════════════════════════════ -->
+    <div id="sftp-context-menu" class="ctx-menu hidden">
+      <button class="ctx-item" data-sftpctx="refresh">
+        <span class="ctx-icon">⟳</span><span>Refrescar</span>
+      </button>
+      <button class="ctx-item" data-sftpctx="mkdir">
+        <span class="ctx-icon">📁</span><span>Nueva carpeta</span>
+      </button>
+      <div class="ctx-sep"></div>
+      <button class="ctx-item sftpctx-remote-only sftpctx-needs-selection" data-sftpctx="download">
+        <span class="ctx-icon">⇩</span><span>Descargar selección</span>
+      </button>
+      <button class="ctx-item" data-sftpctx="upload-files">
+        <span class="ctx-icon">⇧</span><span>Subir archivos…</span>
+      </button>
+      <button class="ctx-item sftpctx-local-only sftpctx-needs-selection hidden" data-sftpctx="upload-selected">
+        <span class="ctx-icon">⇧</span><span>Subir selección</span>
+      </button>
+      <div class="ctx-sep"></div>
+      <button class="ctx-item sftpctx-single-selection" data-sftpctx="rename">
+        <span class="ctx-icon">✎</span><span>Renombrar</span>
+      </button>
+      <button class="ctx-item sftpctx-needs-selection" data-sftpctx="chmod">
+        <span class="ctx-icon">◫</span><span>Cambiar permisos…</span>
+      </button>
+      <button class="ctx-item danger sftpctx-needs-selection" data-sftpctx="delete">
+        <span class="ctx-icon">✕</span><span>Eliminar</span>
       </button>
     </div>
 
@@ -576,7 +608,7 @@
         <div class="activity-center-head">
           <div>
             <h2>Actividad</h2>
-            <p>Transferencias, conexiones, sync y avisos recientes</p>
+            <p>Transferencias, conexiones, sync y avisos guardados</p>
           </div>
           <button type="button" class="btn-icon" id="btn-activity-close" aria-label="Cerrar">✕</button>
         </div>

@@ -83,7 +83,8 @@ let editingProfileId = null;
 let _connectionTestUnlisten = null;
 let _activityFilter = "all";
 const ACTIVITY_MAX_ITEMS = 250;
-const activityItems = [];
+const ACTIVITY_HISTORY_STORAGE_KEY = "rustty-activity-history-v1";
+const activityItems = loadActivityHistory();
 
 const KEYRING_SERVICE = "rustty";
 const RECENT_CONNECTIONS_STORAGE_KEY = "rustty-recent-connections";
@@ -95,11 +96,16 @@ const WINDOW_STATE_FLAGS_SIZE_POSITION_MAXIMIZED = 1 | 2 | 4;
 const WINDOW_CLOSE_FALLBACK_MS = 700;
 const WINDOW_STATE_CLOSE_SAVE_TIMEOUT_MS = 250;
 const SFTP_PANEL_HEIGHT_STORAGE_KEY = "rustty-sftp-panel-height-percent";
+const SFTP_LOG_HEIGHT_STORAGE_KEY = "rustty-sftp-log-height-px";
 const SFTP_PANEL_DEFAULT_HEIGHT_PERCENT = 42;
 const SFTP_PANEL_MIN_HEIGHT = 160;
 const SFTP_PANEL_MIN_TERMINAL_HEIGHT = 140;
+const SFTP_LOG_DEFAULT_HEIGHT = 190;
+const SFTP_LOG_MIN_HEIGHT = 110;
+const SFTP_LOG_MIN_FILE_AREA_HEIGHT = 160;
 
 let bellAudioContext = null;
+let sftpCtxTarget = null;
 
 // ═══════════════════════════════════════════════════════════════
 // TEMAS XTERM.JS
@@ -1650,12 +1656,76 @@ function activityKindLabel(kind) {
 function activityTime(value) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const now = new Date();
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  if (sameDay) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function normalizeActivityItem(item) {
+  if (!item || typeof item !== "object" || !item.title) return null;
+  const timestamp = new Date(item.timestamp);
+  return {
+    id: String(item.id || crypto.randomUUID()),
+    kind: String(item.kind || "toast").slice(0, 40),
+    status: String(item.status || "info").slice(0, 40),
+    title: String(item.title).slice(0, 500),
+    detail: item.detail ? String(item.detail).slice(0, 2000) : "",
+    actionLabel: item.actionLabel ? String(item.actionLabel).slice(0, 80) : "",
+    action: typeof item.action === "function" ? item.action : null,
+    timestamp: Number.isFinite(timestamp.getTime()) ? timestamp.toISOString() : new Date().toISOString(),
+  };
+}
+
+function serializableActivityItem(item) {
+  return {
+    id: item.id,
+    kind: item.kind,
+    status: item.status,
+    title: item.title,
+    detail: item.detail,
+    actionLabel: item.actionLabel,
+    timestamp: item.timestamp,
+  };
+}
+
+function loadActivityHistory() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ACTIVITY_HISTORY_STORAGE_KEY) || "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map(normalizeActivityItem)
+      .filter(Boolean)
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, ACTIVITY_MAX_ITEMS);
+  } catch {
+    return [];
+  }
+}
+
+function persistActivityHistory() {
+  try {
+    localStorage.setItem(
+      ACTIVITY_HISTORY_STORAGE_KEY,
+      JSON.stringify(activityItems.slice(0, ACTIVITY_MAX_ITEMS).map(serializableActivityItem)),
+    );
+  } catch (err) {
+    console.warn("[activity] could not persist history", err);
+  }
 }
 
 function recordActivity({ kind = "toast", status = "info", title, detail = "", actionLabel = "", action = null } = {}) {
   if (!title) return;
-  const item = {
+  const item = normalizeActivityItem({
     id: crypto.randomUUID(),
     kind,
     status,
@@ -1664,9 +1734,11 @@ function recordActivity({ kind = "toast", status = "info", title, detail = "", a
     actionLabel,
     action,
     timestamp: new Date().toISOString(),
-  };
+  });
+  if (!item) return;
   activityItems.unshift(item);
   if (activityItems.length > ACTIVITY_MAX_ITEMS) activityItems.splice(ACTIVITY_MAX_ITEMS);
+  persistActivityHistory();
   renderActivityCenter();
 }
 
@@ -1704,7 +1776,7 @@ function renderActivityCenter() {
         </div>
         ${item.detail ? `<div class="activity-detail">${escHtml(item.detail)}</div>` : ""}
       </div>
-      ${item.actionLabel ? `<button type="button" class="activity-action">${escHtml(item.actionLabel)}</button>` : ""}
+      ${item.actionLabel && typeof item.action === "function" ? `<button type="button" class="activity-action">${escHtml(item.actionLabel)}</button>` : ""}
     </div>
   `).join("");
   list.querySelectorAll(".activity-item").forEach((row) => {
@@ -2759,6 +2831,51 @@ function focusDashboardSearch() {
   search.focus();
   search.select();
   return true;
+}
+
+function sidebarSearchCandidates(query = "") {
+  const q = String(query || "").trim().toLowerCase();
+  let scoped = profiles;
+  if (prefs.sidebarViewMode === "favorites") {
+    scoped = profiles.filter((profile) => isFavoriteProfile(profile.id));
+  } else if (prefs.sidebarViewMode !== "all") {
+    scoped = profiles.filter(profileBelongsToActiveWorkspace);
+  }
+  return scoped
+    .filter((profile) => !q || profileMatchesSidebarQuery(profile, q))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function refitVisibleTerminalsSoon() {
+  requestAnimationFrame(() => {
+    for (const sid of viewSelection) {
+      const s = sessions.get(sid);
+      if (s?.fitAddon) {
+        try {
+          s.fitAddon.fit();
+          notifyResize(sid, s.terminal);
+        } catch {}
+      }
+    }
+  });
+}
+
+function focusConnectionSearch() {
+  if (focusDashboardSearch()) return;
+
+  if (document.body.classList.contains("sidebar-collapsed")) {
+    document.body.classList.remove("sidebar-collapsed");
+    localStorage.setItem("rustty-sidebar-collapsed", "0");
+    refitVisibleTerminalsSoon();
+  }
+
+  toggleSidebarTools(true);
+  requestAnimationFrame(() => {
+    const search = document.getElementById("sidebar-search");
+    if (!search) return;
+    search.focus();
+    search.select();
+  });
 }
 
 function renderTreeNode(node, depth) {
@@ -7123,6 +7240,84 @@ function setupSftpPanelResize(panel, sessionId) {
   });
 }
 
+function getStoredSftpLogHeight() {
+  const raw = Number(localStorage.getItem(SFTP_LOG_HEIGHT_STORAGE_KEY));
+  if (!Number.isFinite(raw) || raw <= 0) return SFTP_LOG_DEFAULT_HEIGHT;
+  return Math.min(420, Math.max(SFTP_LOG_MIN_HEIGHT, raw));
+}
+
+function applySftpLogHeight(panel, height = getStoredSftpLogHeight()) {
+  const wrap = panel.querySelector(".sftp-transfers-wrap");
+  if (!wrap) return;
+  wrap.style.height = `${Math.round(height)}px`;
+}
+
+function setupSftpLogResize(panel) {
+  const wrap = panel.querySelector(".sftp-transfers-wrap");
+  const handle = panel.querySelector(".sftp-log-resize-handle");
+  if (!wrap || !handle) return;
+  applySftpLogHeight(panel);
+
+  handle.addEventListener("dblclick", () => {
+    localStorage.removeItem(SFTP_LOG_HEIGHT_STORAGE_KEY);
+    applySftpLogHeight(panel, SFTP_LOG_DEFAULT_HEIGHT);
+  });
+
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    handle.setPointerCapture?.(e.pointerId);
+
+    const startY = e.clientY;
+    const startHeight = wrap.getBoundingClientRect().height;
+    const panelHeight = panel.getBoundingClientRect().height;
+    const maxHeight = Math.max(
+      SFTP_LOG_MIN_HEIGHT,
+      panelHeight - SFTP_LOG_MIN_FILE_AREA_HEIGHT,
+    );
+
+    document.body.classList.add("sftp-log-resizing");
+
+    const onMove = (ev) => {
+      const delta = ev.clientY - startY;
+      const nextPx = Math.min(maxHeight, Math.max(SFTP_LOG_MIN_HEIGHT, startHeight - delta));
+      wrap.style.height = `${nextPx}px`;
+    };
+
+    const onUp = () => {
+      document.body.classList.remove("sftp-log-resizing");
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+      const finalHeight = wrap.getBoundingClientRect().height;
+      localStorage.setItem(SFTP_LOG_HEIGHT_STORAGE_KEY, String(Math.round(finalHeight)));
+    };
+
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+  });
+}
+
+function setSftpLogTab(panel, tab) {
+  panel.querySelectorAll(".sftp-log-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.sftpLogTab === tab);
+  });
+  panel.querySelectorAll(".sftp-log-pane").forEach((pane) => {
+    pane.classList.toggle("active", pane.dataset.sftpLogPane === tab);
+  });
+  panel.querySelector(".sftp-transfers-clear")?.classList.toggle("hidden", tab !== "transfers");
+  panel.querySelector(".sftp-activity-clear")?.classList.toggle("hidden", tab !== "activity");
+}
+
+function setupSftpLogTabs(panel) {
+  panel.querySelectorAll(".sftp-log-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setSftpLogTab(panel, btn.dataset.sftpLogTab || "transfers");
+    });
+  });
+}
+
 function buildSftpPanel(sessionId) {
   const panel = document.createElement("div");
   panel.className = "sftp-panel sftp-panel-split";
@@ -7170,19 +7365,23 @@ function buildSftpPanel(sessionId) {
     </div>
 
     <div class="sftp-transfers-wrap">
-      <div class="sftp-transfers-header">
-        <span>Transferencias</span>
+      <div class="sftp-log-resize-handle" title="Redimensionar logs SFTP"></div>
+      <div class="sftp-log-tabs">
+        <button class="sftp-log-tab active" data-sftp-log-tab="transfers">Transferencias</button>
+        <button class="sftp-log-tab" data-sftp-log-tab="activity">Actividad</button>
+        <span class="sftp-log-spacer"></span>
         <button class="sftp-transfers-clear" title="Limpiar completadas">Limpiar</button>
+        <button class="sftp-activity-clear hidden" title="Limpiar actividad">Limpiar log</button>
       </div>
-      <div class="sftp-transfers">
-        <div class="sftp-transfers-empty">Sin transferencias todavía</div>
+      <div class="sftp-log-pane active" data-sftp-log-pane="transfers">
+        <div class="sftp-transfers">
+          <div class="sftp-transfers-empty">Sin transferencias todavía</div>
+        </div>
       </div>
-      <div class="sftp-activity-header">
-        <span>Actividad</span>
-        <button class="sftp-activity-clear" title="Limpiar actividad">Limpiar log</button>
-      </div>
-      <div class="sftp-activity-log">
-        <div class="sftp-activity-empty">Sin actividad todavía</div>
+      <div class="sftp-log-pane" data-sftp-log-pane="activity">
+        <div class="sftp-activity-log">
+          <div class="sftp-activity-empty">Sin actividad todavía</div>
+        </div>
       </div>
     </div>
   `;
@@ -7242,6 +7441,7 @@ function buildSftpPanel(sessionId) {
   });
 
   setupSftpDropTargets(panel, sessionId);
+  setupSftpContextMenus(panel, sessionId);
 
   panel.querySelectorAll("[data-sftp-act]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -7275,6 +7475,8 @@ function buildSftpPanel(sessionId) {
   });
 
   setupSftpPanelResize(panel, sessionId);
+  setupSftpLogTabs(panel);
+  setupSftpLogResize(panel);
 
   return panel;
 }
@@ -7366,7 +7568,8 @@ function renderSftpFiles(sessionId, side, entries) {
          data-path="${escHtml(e.path)}"
          data-name="${escHtml(e.name)}"
          data-is-dir="${e.is_dir}"
-         data-is-symlink="${e.is_symlink}">
+         data-is-symlink="${e.is_symlink}"
+         data-permissions="${e.permissions ?? ""}">
       <span class="sftp-icon">${e.is_dir ? "📁" : (e.is_symlink ? "🔗" : "📄")}</span>
       <span class="sftp-name">${escHtml(e.name)}</span>
       <span class="sftp-size">${e.is_dir ? "" : formatSize(e.size)}</span>
@@ -7407,6 +7610,15 @@ function renderSftpFiles(sessionId, side, entries) {
     row.addEventListener("dragend", () => {
       row.classList.remove("dragging");
       clearSftpDragPayload();
+    });
+
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      if (!row.classList.contains("selected")) {
+        filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => r.classList.remove("selected"));
+        row.classList.add("selected");
+      }
+      showSftpContextMenu(e.clientX, e.clientY, sessionId, side);
     });
 
     // Doble clic: entrar en carpeta. En remoto: descargar archivo al cwd local. En local: subir al cwd remoto.
@@ -7455,6 +7667,7 @@ function selectedRows(sessionId, side) {
     name: row.dataset.name,
     isDir: row.dataset.isDir === "true",
     isSymlink: row.dataset.isSymlink === "true",
+    permissions: row.dataset.permissions ? Number(row.dataset.permissions) : null,
   }));
 }
 
@@ -7495,6 +7708,104 @@ function setupSftpDropTargets(panel, sessionId) {
       const direction = targetSide === "remote" ? "upload" : "download";
       await transferRows(sessionId, direction, payload.rows);
       clearSftpDragPayload();
+    });
+  });
+}
+
+function selectedSftpContextRows(sessionId, side) {
+  const rows = selectedRows(sessionId, side);
+  return rows.filter((row) => !row.isSymlink);
+}
+
+function positionFloatingMenu(menu, x, y) {
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  menu.classList.remove("hidden");
+  const { width, height } = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(x, window.innerWidth - width - 6)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - height - 6)}px`;
+}
+
+function showSftpContextMenu(x, y, sessionId, side) {
+  const menu = document.getElementById("sftp-context-menu");
+  if (!menu) return;
+  const rows = selectedSftpContextRows(sessionId, side);
+  sftpCtxTarget = { sessionId, side };
+
+  menu.querySelectorAll(".sftpctx-local-only").forEach((el) => {
+    el.classList.toggle("hidden", side !== "local");
+  });
+  menu.querySelectorAll(".sftpctx-remote-only").forEach((el) => {
+    el.classList.toggle("hidden", side !== "remote");
+  });
+
+  const hasSelection = rows.length > 0;
+  const singleSelection = rows.length === 1;
+  menu.querySelectorAll(".sftpctx-needs-selection").forEach((el) => {
+    el.disabled = !hasSelection;
+  });
+  menu.querySelectorAll(".sftpctx-single-selection").forEach((el) => {
+    el.disabled = !singleSelection;
+  });
+
+  positionFloatingMenu(menu, x, y);
+}
+
+function hideSftpContextMenu() {
+  document.getElementById("sftp-context-menu")?.classList.add("hidden");
+  sftpCtxTarget = null;
+}
+
+async function handleSftpContextMenuAction(action) {
+  const target = sftpCtxTarget;
+  hideSftpContextMenu();
+  if (!target) return;
+  const { sessionId, side } = target;
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const rows = selectedSftpContextRows(sessionId, side);
+
+  switch (action) {
+    case "refresh":
+      if (side === "local") await navigateSftpLocal(sessionId, s.sftp.localCwd);
+      else await navigateSftpRemote(sessionId, s.sftp.cwd);
+      break;
+    case "mkdir":
+      await promptMkdir(sessionId, side);
+      break;
+    case "download":
+      if (rows.length) transferRows(sessionId, "download", rows);
+      else toast("Selecciona uno o más elementos remotos", "warning");
+      break;
+    case "upload-selected":
+      if (rows.length) transferRows(sessionId, "upload", rows);
+      else toast("Selecciona uno o más elementos locales", "warning");
+      break;
+    case "upload-files":
+      await uploadLocalFilesFromDialog(sessionId);
+      break;
+    case "rename":
+      if (rows.length === 1) await promptRename(sessionId, side, rows[0].path, rows[0].name);
+      else toast("Selecciona un único elemento para renombrar", "warning");
+      break;
+    case "chmod":
+      if (rows.length) await promptSftpPermissions(sessionId, side, rows);
+      else toast("Selecciona uno o más elementos", "warning");
+      break;
+    case "delete":
+      if (rows.length) await confirmDeleteRows(sessionId, side, rows);
+      else toast("Selecciona uno o más elementos", "warning");
+      break;
+  }
+}
+
+function setupSftpContextMenus(panel, sessionId) {
+  panel.querySelectorAll(".sftp-files").forEach((filesDiv) => {
+    filesDiv.addEventListener("contextmenu", (e) => {
+      const row = e.target.closest(".sftp-row");
+      if (row) return;
+      e.preventDefault();
+      showSftpContextMenu(e.clientX, e.clientY, sessionId, filesDiv.dataset.side);
     });
   });
 }
@@ -7549,6 +7860,7 @@ function revealSftpActivity(panel) {
   const log = panel?.querySelector(".sftp-activity-log");
   if (!wrap || !log) return;
   wrap.classList.remove("hidden");
+  setSftpLogTab(panel, "activity");
   log.scrollTop = 0;
   wrap.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
@@ -7561,6 +7873,7 @@ function waitForPaint() {
 
 async function revealTransferBeforeInvoke(panel, transferEl) {
   panel?.querySelector(".sftp-transfers-wrap")?.classList.remove("hidden");
+  if (panel) setSftpLogTab(panel, "transfers");
   transferEl?.scrollIntoView({ block: "nearest" });
   await waitForPaint();
 }
@@ -8047,6 +8360,149 @@ async function confirmDelete(sessionId, side, path, name, isDir) {
   }
 }
 
+async function confirmDeleteRows(sessionId, side, rows) {
+  if (rows.length === 1) {
+    return confirmDelete(sessionId, side, rows[0].path, rows[0].name, rows[0].isDir);
+  }
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const where = side === "local" ? "Local" : "Remoto";
+  const ok = await confirmThemed({
+    title: "Eliminar selección",
+    message: `¿Eliminar ${rows.length} elementos de ${where}?`,
+    submitLabel: "Eliminar",
+    danger: true,
+  });
+  if (!ok) return;
+
+  let okCount = 0;
+  let failed = 0;
+  for (const row of rows) {
+    try {
+      if (side === "local") {
+        await invoke("local_remove", { path: row.path });
+      } else if (s.sftp.sftpSessionId) {
+        await invoke("sftp_remove", {
+          sessionId: s.sftp.sftpSessionId,
+          path: row.path,
+          isDir: row.isDir,
+        });
+      }
+      okCount += 1;
+    } catch (err) {
+      failed += 1;
+      appendSftpActivity(s.sftp.panel, {
+        status: "error",
+        label: `Eliminar ${where}`,
+        detail: `${row.path}: ${String(err)}`,
+      });
+    }
+  }
+
+  if (side === "local") await navigateSftpLocal(sessionId, s.sftp.localCwd);
+  else await navigateSftpRemote(sessionId, s.sftp.cwd);
+  appendSftpActivity(s.sftp.panel, {
+    status: failed ? "error" : "ok",
+    label: `Eliminar ${where}`,
+    detail: `${okCount} eliminados${failed ? `, ${failed} errores` : ""}`,
+  });
+}
+
+async function uploadLocalFilesFromDialog(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp?.sftpSessionId) return;
+  let paths;
+  try {
+    paths = await openDialog({
+      title: "Subir archivos",
+      multiple: true,
+      directory: false,
+    });
+  } catch (err) {
+    toast(`Error al abrir diálogo: ${err}`, "error");
+    return;
+  }
+  if (!paths) return;
+  const selected = Array.isArray(paths) ? paths : [paths];
+  if (!selected.length) return;
+  const rows = selected.map((path) => ({
+    path,
+    name: localNameFromPath(path),
+    isDir: false,
+    isSymlink: false,
+  }));
+  transferRows(sessionId, "upload", rows);
+}
+
+function localNameFromPath(path) {
+  return String(path || "").split(/[\\/]/).filter(Boolean).pop() || "archivo";
+}
+
+function formatOctalMode(mode) {
+  if (!Number.isFinite(mode)) return "";
+  return (mode & 0o777).toString(8).padStart(3, "0");
+}
+
+function parseOctalMode(input) {
+  const value = String(input || "").trim();
+  if (!/^[0-7]{3,4}$/.test(value)) return null;
+  const parsed = parseInt(value, 8);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 0o7777) return null;
+  return parsed;
+}
+
+async function promptSftpPermissions(sessionId, side, rows) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const where = side === "local" ? "Local" : "Remoto";
+  const initial = rows.length === 1 ? formatOctalMode(rows[0].permissions) : "";
+  const modeText = await promptTextValue({
+    title: "Cambiar permisos",
+    message: `${where}: ${rows.length === 1 ? rows[0].name : `${rows.length} elementos`}. Usa formato octal, por ejemplo 755 o 0644.`,
+    label: "Permisos",
+    initialValue: initial,
+    submitLabel: "Aplicar",
+  });
+  if (!modeText) return;
+  const mode = parseOctalMode(modeText);
+  if (mode === null) {
+    toast("Permisos no válidos. Usa octal, por ejemplo 755 o 0644.", "warning");
+    return;
+  }
+
+  let okCount = 0;
+  let failed = 0;
+  for (const row of rows) {
+    try {
+      if (side === "local") {
+        await invoke("local_chmod", { path: row.path, mode });
+      } else if (s.sftp.sftpSessionId) {
+        await invoke("sftp_chmod", {
+          sessionId: s.sftp.sftpSessionId,
+          path: row.path,
+          mode,
+        });
+      }
+      okCount += 1;
+    } catch (err) {
+      failed += 1;
+      appendSftpActivity(s.sftp.panel, {
+        status: "error",
+        label: `Permisos ${where}`,
+        detail: `${row.path}: ${String(err)}`,
+      });
+    }
+  }
+
+  if (side === "local") await navigateSftpLocal(sessionId, s.sftp.localCwd);
+  else await navigateSftpRemote(sessionId, s.sftp.cwd);
+  appendSftpActivity(s.sftp.panel, {
+    status: failed ? "error" : "ok",
+    label: `Permisos ${where}`,
+    detail: `${okCount} actualizados a ${mode.toString(8)}${failed ? `, ${failed} errores` : ""}`,
+  });
+}
+
 async function closeSftpPanel(sessionId) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
@@ -8070,6 +8526,7 @@ async function closeSftpPanel(sessionId) {
 function addTransfer(panel, label, transferId, detail = "") {
   const wrap = panel.querySelector(".sftp-transfers-wrap");
   wrap.classList.remove("hidden");
+  setSftpLogTab(panel, "transfers");
   panel.querySelector(".sftp-transfers-empty")?.remove();
   const el = document.createElement("div");
   el.className = "sftp-transfer";
@@ -8736,6 +9193,13 @@ function bindUIEvents() {
         _sidebarSearchQuery = "";
         applySidebarSearchFilter();
         e.preventDefault();
+      } else if (e.key === "Enter") {
+        const first = sidebarSearchCandidates(sidebarSearch.value)[0];
+        if (first) {
+          connectProfile(first.id);
+          toggleSidebarTools(false);
+          e.preventDefault();
+        }
       }
     });
   }
@@ -8779,6 +9243,7 @@ function bindUIEvents() {
   document.getElementById("btn-activity-clear")
     ?.addEventListener("click", () => {
       activityItems.length = 0;
+      persistActivityHistory();
       renderActivityCenter();
     });
   document.querySelectorAll(".activity-filter").forEach((btn) => {
@@ -8787,12 +9252,6 @@ function bindUIEvents() {
       renderActivityCenter();
     });
   });
-  window.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === "KeyK") {
-      if (focusDashboardSearch()) e.preventDefault();
-    }
-  });
-
   // Barra de layouts para la vista múltiple
   document.querySelectorAll("#view-layout-bar button").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -9163,6 +9622,12 @@ function bindUIEvents() {
     if (btn) handleTabContextAction(btn.dataset.tabctx);
   });
 
+  document.getElementById("sftp-context-menu")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-sftpctx]");
+    if (!btn || btn.disabled) return;
+    handleSftpContextMenuAction(btn.dataset.sftpctx);
+  });
+
   // Cerrar los menús contextuales al hacer clic fuera de ellos
   document.addEventListener("click", (e) => {
     const menu = document.getElementById("context-menu");
@@ -9172,6 +9637,10 @@ function bindUIEvents() {
     const tabMenu = document.getElementById("tab-context-menu");
     if (!tabMenu.classList.contains("hidden") && !tabMenu.contains(e.target)) {
       hideTabContextMenu();
+    }
+    const sftpMenu = document.getElementById("sftp-context-menu");
+    if (sftpMenu && !sftpMenu.classList.contains("hidden") && !sftpMenu.contains(e.target)) {
+      hideSftpContextMenu();
     }
   });
 
@@ -9192,6 +9661,7 @@ function bindUIEvents() {
       closeSettingsModal();
       hideContextMenu();
       hideTabContextMenu();
+      hideSftpContextMenu();
     }
   });
 
@@ -9214,6 +9684,7 @@ const SHORTCUT_ACTIONS = {
   paste_password:    { default: "Ctrl+P",         run: () => pasteSessionPasswordIntoActiveTerminal() },
   new_local_shell:   { default: "Ctrl+Shift+T",   run: () => openLocalShell() },
   new_connection:    { default: "Ctrl+Shift+N",   run: () => openNewConnectionModal() },
+  search_connections:{ default: "Ctrl+K",         run: () => focusConnectionSearch() },
   close_tab:         { default: "Ctrl+W",         run: () => { if (activeSessionId) closeSession(activeSessionId); } },
   next_tab:          { default: "Ctrl+Tab",       run: () => switchTab(1) },
   prev_tab:          { default: "Ctrl+Shift+Tab", run: () => switchTab(-1) },

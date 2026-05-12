@@ -1572,7 +1572,7 @@ async fn authenticate_with_agent(
 /// Construye una lista de algoritmos preferidos que conserva los modernos
 /// como prioritarios pero añade variantes legacy (CBC, 3DES, DH-SHA1,
 /// HMAC-SHA1, ssh-rsa) al final para poder negociar con servidores antiguos.
-fn legacy_preferred() -> Preferred {
+pub(crate) fn legacy_preferred() -> Preferred {
     let default = Preferred::default();
 
     let mut cipher: Vec<cipher::Name> = default.cipher.iter().copied().collect();
@@ -1616,7 +1616,7 @@ fn legacy_preferred() -> Preferred {
 /// Parsea un spec de jump host con formato `[user@]host[:port]`.
 /// Si el `user` no se especifica, hereda el del perfil destino. Puerto por
 /// defecto: 22.
-fn parse_jump_spec(spec: &str, default_user: &str) -> (String, String, u16) {
+pub(crate) fn parse_jump_spec(spec: &str, default_user: &str) -> (String, String, u16) {
     let s = spec.trim();
     let (user, rest) = match s.split_once('@') {
         Some((u, r)) => (u.to_string(), r),
@@ -1635,7 +1635,7 @@ fn parse_jump_spec(spec: &str, default_user: &str) -> (String, String, u16) {
 /// Autentica un `client::Handle` aplicando el `auth_type` con las credenciales
 /// dadas. Reusable para el bastion (ProxyJump) y para el destino. La auth por
 /// clave pública requiere `key_path`.
-async fn authenticate_handle(
+pub(crate) async fn authenticate_handle(
     handle: &mut client::Handle<host_keys::KnownHostsClient>,
     auth_type: &AuthType,
     username: &str,

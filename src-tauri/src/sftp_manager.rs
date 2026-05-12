@@ -32,7 +32,7 @@ use russh::client::{self, AuthResult};
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
 use russh_sftp::client::fs::File as SftpFile;
 use russh_sftp::client::SftpSession;
-use russh_sftp::protocol::OpenFlags;
+use russh_sftp::protocol::{FileAttributes, OpenFlags};
 
 use crate::host_keys;
 use crate::profiles::{AuthType, ConnectionProfile};
@@ -107,6 +107,11 @@ enum SftpCommand {
         to: String,
         reply: Reply<()>,
     },
+    Chmod {
+        path: String,
+        mode: u32,
+        reply: Reply<()>,
+    },
     Download {
         remote: String,
         local: PathBuf,
@@ -165,6 +170,7 @@ trait FileTransfer {
     async fn mkdir(&mut self, path: &str) -> Result<(), String>;
     async fn remove(&mut self, path: &str, is_dir: bool) -> Result<(), String>;
     async fn rename(&mut self, from: &str, to: &str) -> Result<(), String>;
+    async fn chmod(&mut self, path: &str, mode: u32) -> Result<(), String>;
     async fn download(
         &mut self,
         remote: &str,
@@ -346,6 +352,15 @@ impl SftpManager {
         .await
     }
 
+    pub async fn chmod(&self, session_id: &str, path: String, mode: u32) -> Result<(), String> {
+        self.send(session_id, move |reply| SftpCommand::Chmod {
+            path,
+            mode,
+            reply,
+        })
+        .await
+    }
+
     pub async fn download(
         &self,
         session_id: &str,
@@ -518,6 +533,9 @@ async fn run_sftp_worker(
             SftpCommand::Rename { from, to, reply } => {
                 let _ = reply.send(backend.rename(&from, &to).await);
             }
+            SftpCommand::Chmod { path, mode, reply } => {
+                let _ = reply.send(backend.chmod(&path, mode).await);
+            }
             SftpCommand::Download {
                 remote,
                 local,
@@ -647,9 +665,10 @@ async fn connect_and_open_backend(
             }
         }
         _ => {
-            let sftp =
-                connect_and_open_sftp(profile, password, passphrase, elevated, app_handle, session_id)
-                    .await?;
+            let sftp = connect_and_open_sftp(
+                profile, password, passphrase, elevated, app_handle, session_id,
+            )
+            .await?;
             Ok(Box::new(SftpBackend { sftp }))
         }
     }
@@ -819,18 +838,20 @@ async fn connect_and_open_sftp(
         })?;
     }
 
-    let sftp = SftpSession::new(channel.into_stream()).await.map_err(|e| {
-        let msg = if elevated {
-            format!(
-                "No se pudo iniciar SFTP elevado ({e}). \
+    let sftp = SftpSession::new_opts(channel.into_stream(), Some(SFTP_REQUEST_TIMEOUT_SECS))
+        .await
+        .map_err(|e| {
+            let msg = if elevated {
+                format!(
+                    "No se pudo iniciar SFTP elevado ({e}). \
                      Comprueba que /etc/sudoers permita NOPASSWD sobre sftp-server."
-            )
-        } else {
-            format!("No se pudo iniciar sesión SFTP: {e}")
-        };
-        emit_sftp_log(app_handle, session_id, "subsystem", "error", msg.clone());
-        msg
-    })?;
+                )
+            } else {
+                format!("No se pudo iniciar sesión SFTP: {e}")
+            };
+            emit_sftp_log(app_handle, session_id, "subsystem", "error", msg.clone());
+            msg
+        })?;
     emit_sftp_log(
         app_handle,
         session_id,
@@ -931,6 +952,25 @@ impl FileTransfer for SftpBackend {
     async fn rename(&mut self, from: &str, to: &str) -> Result<(), String> {
         self.sftp
             .rename(from.to_string(), to.to_string())
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn chmod(&mut self, path: &str, mode: u32) -> Result<(), String> {
+        self.sftp
+            .set_metadata(
+                path.to_string(),
+                FileAttributes {
+                    size: None,
+                    uid: None,
+                    user: None,
+                    gid: None,
+                    group: None,
+                    permissions: Some(mode),
+                    atime: None,
+                    mtime: None,
+                },
+            )
             .await
             .map_err(|e| e.to_string())
     }
@@ -1231,6 +1271,10 @@ impl FileTransfer for FtpBackend {
         self.ftp.rename(from, to)
     }
 
+    async fn chmod(&mut self, _path: &str, _mode: u32) -> Result<(), String> {
+        Err("Cambiar permisos no está soportado en conexiones FTP/FTPS".to_string())
+    }
+
     async fn download(
         &mut self,
         remote: &str,
@@ -1427,6 +1471,10 @@ const SFTP_CHUNK: u64 = 256 * 1024;
 // peticiones a la vez satura el ancho de banda real cuando el RTT no es
 // despreciable (sin pipelining el techo es chunk_size / RTT).
 const SFTP_PIPELINE: usize = 16;
+// russh renegocia claves al cruzar 1 GiB (límite recomendado por RFC 4253).
+// Durante esa ventana alguna petición SFTP puede tardar bastante más que los
+// 10s por defecto de russh-sftp, especialmente con pipeline y servidores lentos.
+const SFTP_REQUEST_TIMEOUT_SECS: u64 = 120;
 
 async fn do_download(
     sftp: &SftpSession,
@@ -1624,11 +1672,7 @@ async fn pipelined_download(
 
 /// Lee `len` bytes desde `offset` reintentando hasta cubrir el chunk o llegar
 /// a EOF. El servidor puede devolver menos bytes de los pedidos.
-async fn read_chunk_at(
-    file: &mut SftpFile,
-    offset: u64,
-    len: u64,
-) -> Result<Vec<u8>, String> {
+async fn read_chunk_at(file: &mut SftpFile, offset: u64, len: u64) -> Result<Vec<u8>, String> {
     use std::io::SeekFrom;
     file.seek(SeekFrom::Start(offset))
         .await
@@ -1774,11 +1818,7 @@ async fn pipelined_upload(
     Ok(())
 }
 
-async fn write_chunk_at(
-    file: &mut SftpFile,
-    offset: u64,
-    data: &[u8],
-) -> Result<(), String> {
+async fn write_chunk_at(file: &mut SftpFile, offset: u64, data: &[u8]) -> Result<(), String> {
     use std::io::SeekFrom;
     // SeekFrom::Start sólo actualiza el `pos` local, no hace round-trip;
     // así cada chunk consume exactamente un WRITE remoto. Saltamos `flush`

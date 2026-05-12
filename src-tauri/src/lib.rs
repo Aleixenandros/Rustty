@@ -1,4 +1,5 @@
 mod app_tray;
+pub mod cli;
 mod commands;
 mod error;
 mod host_keys;
@@ -50,6 +51,14 @@ fn portable_data_dir() -> Option<PathBuf> {
     None
 }
 
+pub fn resolve_data_dir() -> PathBuf {
+    portable_data_dir().unwrap_or_else(|| {
+        dirs::data_dir()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+            .join("com.rustty.app")
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -60,11 +69,7 @@ pub fn run() {
         .setup(|app| {
             // Si es la build portable de Windows, los datos viajan junto al
             // .exe en `.conf/com.rustty.app/`. Si no, ruta estándar (identifier).
-            let data_dir = portable_data_dir().unwrap_or_else(|| {
-                app.path()
-                    .app_data_dir()
-                    .expect("No se pudo obtener el directorio de datos de la app")
-            });
+            let data_dir = resolve_data_dir();
 
             std::fs::create_dir_all(&data_dir).expect("No se pudo crear el directorio de datos");
 
@@ -133,6 +138,7 @@ pub fn run() {
             commands::sftp_mkdir,
             commands::sftp_remove,
             commands::sftp_rename,
+            commands::sftp_chmod,
             commands::sftp_download,
             commands::sftp_upload,
             commands::sftp_download_dir,
@@ -144,6 +150,7 @@ pub fn run() {
             commands::local_mkdir,
             commands::local_remove,
             commands::local_rename,
+            commands::local_chmod,
             commands::local_path_join,
             commands::local_path_parent,
             // ── Utilidades
