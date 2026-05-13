@@ -2,6 +2,18 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.6.0] - 2026-05-13
+
+### Añadido
+
+- Vista compacta opcional para listas largas de conexiones en la sidebar.
+- Indicadores de actividad no leída en pestañas SSH y consolas locales.
+
+### Cambiado
+
+- Selector de temas más compacto y escaneable para bibliotecas amplias.
+- La biblioteca ampliada de temas queda publicada desde `public/themes/bundled-themes.json`; se eliminan las copias JSON individuales versionadas en `docs/themes/bundled/`.
+
 ## [1.5.1] - 2026-05-13
 
 ### Añadido

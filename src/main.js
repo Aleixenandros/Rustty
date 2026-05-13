@@ -345,6 +345,8 @@ const DEFAULT_PREFS = {
   favorites:       [],
   // Modo de la vista de la sidebar: "current" | "all" | "favorites".
   sidebarViewMode: "current",
+  // Densidad compacta para listas largas de conexiones en la sidebar.
+  sidebarCompact:  false,
   // Color por carpeta. Mapa { folderPath: colorId } donde colorId es uno de
   // los presets en FOLDER_COLOR_PRESETS o null para "sin color".
   folderColors:    {},
@@ -403,6 +405,7 @@ function loadPrefs() {
   if (!["current", "all", "favorites"].includes(prefs.sidebarViewMode)) {
     prefs.sidebarViewMode = "current";
   }
+  prefs.sidebarCompact = Boolean(prefs.sidebarCompact);
   if (!prefs.lang || !SUPPORTED_LANGS.includes(prefs.lang)) {
     prefs.lang = detectLanguage();
   }
@@ -2176,6 +2179,7 @@ let _sidebarSearchQuery = "";
 
 function renderConnectionList() {
   const container = document.getElementById("connection-list");
+  container?.classList.toggle("compact", Boolean(prefs.sidebarCompact));
   persistSidebarOpenFolders();
   scheduleTrayQuickLauncherUpdate();
   renderWorkspaceSwitcher();
@@ -2437,6 +2441,11 @@ function renderWorkspaceSwitcher() {
   document.querySelectorAll(".tools-view-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.viewMode === prefs.sidebarViewMode);
   });
+  const compactBtn = document.getElementById("btn-sidebar-compact");
+  if (compactBtn) {
+    compactBtn.classList.toggle("active", Boolean(prefs.sidebarCompact));
+    compactBtn.setAttribute("aria-pressed", prefs.sidebarCompact ? "true" : "false");
+  }
 
   if (!menu) return;
   const items = prefs.workspaces.map((w) => {
@@ -2499,6 +2508,12 @@ function setSidebarViewMode(mode) {
   savePrefs();
   renderConnectionList();
   updateRailActiveState();
+}
+
+function setSidebarCompact(enabled) {
+  prefs.sidebarCompact = Boolean(enabled);
+  savePrefs();
+  renderConnectionList();
 }
 
 function switchToWorkspace(wsId) {
@@ -5137,6 +5152,21 @@ function updateBroadcastClasses() {
   if (btn) btn.classList.toggle("active", on);
 }
 
+function markTabActivity(sessionId, { important = false } = {}) {
+  if (!sessionId) return;
+  if (sessionId === activeSessionId && !document.hidden) return;
+  const tab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
+  if (!tab) return;
+  tab.classList.add("has-unread-activity");
+  tab.classList.toggle("has-unread-important", Boolean(important));
+}
+
+function clearTabActivity(sessionId) {
+  if (!sessionId) return;
+  const tab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
+  tab?.classList.remove("has-unread-activity", "has-unread-important");
+}
+
 /**
  * Envía input a una sesión terminal (SSH o shell local).
  * Se usa tanto para la pane origen como para replicar en broadcast.
@@ -5394,7 +5424,11 @@ async function reconnectLocalInPlace(s) {
 
     const decoder = new TextDecoder();
     const ul = await listen(`shell-data-${sessionId}`, (e) => {
-      s.terminal.write(decoder.decode(new Uint8Array(e.payload)));
+      const text = decoder.decode(new Uint8Array(e.payload));
+      if (text) {
+        s.terminal.write(text);
+        markTabActivity(sessionId);
+      }
     });
     const ulClose = await listen(`shell-closed-${sessionId}`, () => {
       s.status = "closed";
@@ -5402,6 +5436,7 @@ async function reconnectLocalInPlace(s) {
       renderDashboard();
       showReconnectOverlay(sessionId, "Consola cerrada");
       s.terminal.writeln(`\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
+      markTabActivity(sessionId, { important: true });
     });
     s.unlisteners.push(ul, ulClose);
   } catch (err) {
@@ -5483,6 +5518,7 @@ function selectSession(sid, additive = false) {
     viewSelection = [sid];
   }
   activeSessionId = sid;
+  clearTabActivity(sid);
   renderView();
   updateStatusBar();
   syncSidebarToActiveSession({ scroll: true });
@@ -5493,6 +5529,7 @@ function focusPaneByOffset(delta) {
   const currentIdx = Math.max(0, viewSelection.indexOf(activeSessionId));
   const nextIdx = (currentIdx + delta + viewSelection.length) % viewSelection.length;
   activeSessionId = viewSelection[nextIdx];
+  clearTabActivity(activeSessionId);
   updateTabSelectionClasses();
   updateStatusBar();
   syncSidebarToActiveSession({ scroll: true });
@@ -5716,6 +5753,7 @@ function updateTabSelectionClasses() {
   });
   document.getElementById("home-tab")
     ?.classList.toggle("active", viewSelection.length === 0);
+  if (activeSessionId) clearTabActivity(activeSessionId);
   document.querySelectorAll(".terminal-pane").forEach((p) => {
     p.classList.toggle("pane-focused",
       viewSelection.length > 1 && p.dataset.session === activeSessionId);
@@ -6033,7 +6071,10 @@ async function registerSshListeners(sessionId, terminal) {
     const s = sessions.get(sessionId);
     const text = decoder.decode(new Uint8Array(e.payload));
     const filtered = filterSuppressedTerminalOutput(s, text);
-    if (filtered) terminal.write(applyHighlightRules(filtered));
+    if (filtered) {
+      terminal.write(applyHighlightRules(filtered));
+      markTabActivity(sessionId);
+    }
   }));
 
   ul.push(await listen(`ssh-log-${sessionId}`, (e) => {
@@ -6070,6 +6111,7 @@ async function registerSshListeners(sessionId, terminal) {
     updateTabStatus(sessionId, "error");
     showReconnectOverlay(sessionId, "Error de conexión");
     terminal.writeln(`\r\n\x1b[31m✗ Error: ${e.payload}\x1b[0m\r\n`);
+    markTabActivity(sessionId, { important: true });
     toast(`Error SSH: ${e.payload}`, "error");
   }));
 
@@ -6086,6 +6128,7 @@ async function registerSshListeners(sessionId, terminal) {
       timestamp: new Date().toISOString(),
     });
     terminal.writeln(`\r\n\x1b[33m↻ Reintentando conexión (${attempt}/${max}) en ${secs}s…\x1b[0m`);
+    markTabActivity(sessionId, { important: true });
   }));
 
   ul.push(await listen(`ssh-closed-${sessionId}`, () => {
@@ -6100,6 +6143,7 @@ async function registerSshListeners(sessionId, terminal) {
     updateTabStatus(sessionId, "error");
     showReconnectOverlay(sessionId, "Sesión cerrada");
     terminal.writeln(`\r\n\x1b[33m• ${t("terminal.closed")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
+    markTabActivity(sessionId, { important: true });
     renderConnectionList();
   }));
 
@@ -6829,13 +6873,18 @@ async function openLocalShell() {
 
     const decoder = new TextDecoder();
     const ul = await listen(`shell-data-${sessionId}`, (e) => {
-      s.terminal.write(decoder.decode(new Uint8Array(e.payload)));
+      const text = decoder.decode(new Uint8Array(e.payload));
+      if (text) {
+        s.terminal.write(text);
+        markTabActivity(sessionId);
+      }
     });
     const ulClose = await listen(`shell-closed-${sessionId}`, () => {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
       showReconnectOverlay(sessionId, "Consola cerrada");
       s.terminal.writeln(`\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
+      markTabActivity(sessionId, { important: true });
     });
     s.unlisteners.push(ul, ulClose);
 
@@ -9145,6 +9194,9 @@ function bindUIEvents() {
   // Bloquear el menú contextual nativo del WebView (Atrás, Recargar, Inspeccionar…).
   // Los menús de la app llaman a showContextMenu() y no dependen del default.
   window.addEventListener("contextmenu", (e) => e.preventDefault());
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && activeSessionId) clearTabActivity(activeSessionId);
+  });
 
   // Reemplazar todos los <select> nativos por el dropdown personalizado
   document.querySelectorAll("select").forEach(enhanceSelect);
@@ -9167,6 +9219,12 @@ function bindUIEvents() {
       const viewBtn = e.target.closest(".tools-view-btn");
       if (viewBtn) {
         setSidebarViewMode(viewBtn.dataset.viewMode);
+        renderWorkspaceSwitcher();
+        return;
+      }
+      const densityBtn = e.target.closest("#btn-sidebar-compact");
+      if (densityBtn) {
+        setSidebarCompact(!prefs.sidebarCompact);
         renderWorkspaceSwitcher();
         return;
       }

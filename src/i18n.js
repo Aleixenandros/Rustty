@@ -40,6 +40,8 @@ const DICTIONARIES = {
       view_current: "Workspace actual",
       view_all: "Todos los perfiles",
       view_favorites: "Favoritos",
+      compact_view: "Vista compacta",
+      compact_title: "Mostrar una lista de conexiones más compacta",
       favorites_empty: "Aún no has marcado ninguna conexión como favorita.",
     },
     rail: {
@@ -480,6 +482,8 @@ const DICTIONARIES = {
       view_current: "Current workspace",
       view_all: "All workspaces",
       view_favorites: "Favorites",
+      compact_view: "Compact list",
+      compact_title: "Show a denser connection list",
       favorites_empty: "You haven't favorited any connection yet.",
     },
     rail: {
@@ -920,6 +924,8 @@ const DICTIONARIES = {
       view_current: "Espace actuel",
       view_all: "Tous les espaces",
       view_favorites: "Favoris",
+      compact_view: "Liste compacte",
+      compact_title: "Afficher une liste de connexions plus compacte",
       favorites_empty: "Aucune connexion n'est marquée comme favorite.",
     },
     rail: {
@@ -1289,6 +1295,8 @@ const DICTIONARIES = {
       view_current: "Workspace atual",
       view_all: "Todos os perfis",
       view_favorites: "Favoritos",
+      compact_view: "Vista compacta",
+      compact_title: "Mostrar uma lista de conexões mais compacta",
       favorites_empty: "Ainda não marcaste nenhuma conexão como favorita.",
     },
     rail: {

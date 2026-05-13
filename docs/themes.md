@@ -62,8 +62,8 @@ solo hay que editar colores e importarlo desde la misma pantalla.
 
 También hay una biblioteca ampliada de temas incluida en este repositorio:
 
-- `docs/themes/bundled/bundled-themes.json`: pack completo en formato Rustty v2.
-- `public/themes/bundled-themes.json`: copia publicada que se carga al arrancar.
+- `public/themes/bundled-themes.json`: pack completo en formato Rustty v2 que
+  se carga al arrancar.
 
 El importador de Rustty acepta tanto un tema suelto como un pack JSON con
 `themes: [...]`. Además, la biblioteca publicada en `public/themes/` aparece
