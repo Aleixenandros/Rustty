@@ -11,7 +11,7 @@
  * - setLanguage(lang) cambia el idioma activo y reaplica al <html lang=…>.
  */
 
-export const SUPPORTED_LANGS = ["es", "en", "fr", "pt"];
+export const SUPPORTED_LANGS = ["es", "en", "fr", "pt", "de"];
 
 const DICTIONARIES = {
   es: {
@@ -172,7 +172,7 @@ const DICTIONARIES = {
       proxy_jump: "Bastion / Jump host",
       proxy_jump_hint: "Conecta primero a este host bastión y abre un canal SSH al destino real a través suyo (ProxyJump). Reutiliza las credenciales del perfil.",
       cancel: "Cancelar",
-      save_only: "Solo guardar",
+      save_only: "Guardar",
       save_connect: "Guardar y conectar",
     },
     modal_credential: {
@@ -251,6 +251,7 @@ const DICTIONARIES = {
       theme_dark: "Oscuro",
       theme_light: "Claro",
       theme_system: "Sistema",
+      theme_search: "Buscar tema…",
       theme_inherit: "Igual que la interfaz",
       terminal_theme: "Tema del terminal",
       terminal_theme_hint: "Si se deja en \"Igual que la interfaz\", el terminal hereda el tema de arriba.",
@@ -292,6 +293,7 @@ const DICTIONARIES = {
       lang_en: "Inglés (English)",
       lang_fr: "Francés (Français)",
       lang_pt: "Portugués (Português)",
+      lang_de: "Alemán (Deutsch)",
     },
     status: {
       latency: "Latencia",
@@ -614,7 +616,7 @@ const DICTIONARIES = {
       proxy_jump: "Bastion / jump host",
       proxy_jump_hint: "Connect to this bastion host first and tunnel an SSH channel to the actual target (ProxyJump). Reuses the profile credentials.",
       cancel: "Cancel",
-      save_only: "Save only",
+      save_only: "Save",
       save_connect: "Save and connect",
     },
     modal_credential: {
@@ -693,6 +695,7 @@ const DICTIONARIES = {
       theme_dark: "Dark",
       theme_light: "Light",
       theme_system: "System",
+      theme_search: "Search theme…",
       theme_inherit: "Same as UI",
       terminal_theme: "Terminal theme",
       terminal_theme_hint: "If left on \"Same as UI\", the terminal inherits the theme above.",
@@ -734,6 +737,7 @@ const DICTIONARIES = {
       lang_en: "English",
       lang_fr: "French (Français)",
       lang_pt: "Portuguese (Português)",
+      lang_de: "German (Deutsch)",
     },
     status: {
       latency: "Latency",
@@ -1135,6 +1139,7 @@ const DICTIONARIES = {
       theme_dark: "Sombre",
       theme_light: "Clair",
       theme_system: "Système",
+      theme_search: "Rechercher un thème…",
       theme_inherit: "Identique à l'interface",
       terminal_theme: "Thème du terminal",
       terminal_theme_hint: "Si l'option \"Identique à l'interface\" est sélectionnée, le terminal hérite du thème ci-dessus.",
@@ -1176,6 +1181,7 @@ const DICTIONARIES = {
       lang_en: "Anglais (English)",
       lang_fr: "Français",
       lang_pt: "Portugais (Português)",
+      lang_de: "Allemand (Deutsch)",
     },
     status: {
       latency: "Latence",
@@ -1427,7 +1433,7 @@ const DICTIONARIES = {
       proxy_jump: "Bastion / Jump host",
       proxy_jump_hint: "Conecta primeiro a este host bastion e abre um canal SSH ao destino real através dele (ProxyJump). Reutiliza as credenciais do perfil.",
       cancel: "Cancelar",
-      save_only: "Só guardar",
+      save_only: "Guardar",
       save_connect: "Guardar e conectar",
     },
     modal_credential: {
@@ -1506,6 +1512,7 @@ const DICTIONARIES = {
       theme_dark: "Escuro",
       theme_light: "Claro",
       theme_system: "Sistema",
+      theme_search: "Pesquisar tema…",
       theme_inherit: "Igual à interface",
       terminal_theme: "Tema do terminal",
       terminal_theme_hint: "Se for deixado em \"Igual à interface\", o terminal herda o tema acima.",
@@ -1547,6 +1554,7 @@ const DICTIONARIES = {
       lang_en: "Inglês (English)",
       lang_fr: "Francês (Français)",
       lang_pt: "Português",
+      lang_de: "Alemão (Deutsch)",
     },
     status: {
       latency: "Latência",
@@ -1639,6 +1647,27 @@ const DICTIONARIES = {
       theme_import_invalid: "Formato de tema inválido",
     },
   },
+
+  de: {
+    modal_conn: {
+      save_only: "Speichern",
+      save_connect: "Speichern und verbinden",
+    },
+    prefs_language: {
+      title: "Sprache",
+      hint: "Wähle die Sprache der Oberfläche.",
+      language: "Sprache",
+      lang_system: "System (auto)",
+      lang_es: "Spanisch (Español)",
+      lang_en: "Englisch (English)",
+      lang_fr: "Französisch (Français)",
+      lang_pt: "Portugiesisch (Português)",
+      lang_de: "Deutsch",
+    },
+    prefs_appearance: {
+      theme_search: "Theme suchen…",
+    },
+  },
 };
 
 let currentLang = "es";
@@ -1648,10 +1677,11 @@ function resolve(obj, key) {
   return key.split(".").reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), obj);
 }
 
-/** Traduce una clave. Si falta, cae a español y, si tampoco está, devuelve la propia clave. */
+/** Traduce una clave. Si falta, cae a inglés, luego a español y finalmente a la clave. */
 export function t(key, params = null) {
   let str =
     resolve(DICTIONARIES[currentLang], key) ??
+    (currentLang !== "es" ? resolve(DICTIONARIES.en, key) : undefined) ??
     resolve(DICTIONARIES.es, key) ??
     key;
   if (params && typeof str === "string") {

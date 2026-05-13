@@ -88,6 +88,18 @@ const activityItems = loadActivityHistory();
 
 const KEYRING_SERVICE = "rustty";
 const RECENT_CONNECTIONS_STORAGE_KEY = "rustty-recent-connections";
+
+const DEFAULT_HIGHLIGHT_RULES = [
+  { pattern: "ERROR|ERR|FATAL|FAIL|FAILED|EXCEPTION", color: "red", bold: true },
+  { pattern: "WARN|WARNING|DEPRECATED", color: "yellow", bold: true },
+  { pattern: "INFO|NOTICE", color: "cyan", bold: false },
+  { pattern: "SUCCESS|OK|DONE", color: "green", bold: false },
+  { pattern: "DEBUG|TRACE", color: "magenta", bold: false },
+];
+
+function defaultHighlightRules() {
+  return DEFAULT_HIGHLIGHT_RULES.map((rule) => ({ ...rule }));
+}
 let _trayQuickLauncherTimer = null;
 const RELEASES_API_URL = "https://api.github.com/repos/Aleixenandros/Rustty/releases/latest";
 const RELEASES_PAGE_URL = "https://github.com/Aleixenandros/Rustty/releases/latest";
@@ -353,7 +365,8 @@ const DEFAULT_PREFS = {
   // Reglas de resaltado por regex aplicadas a la salida del terminal.
   // Cada regla: { pattern: string, color: "red"|"yellow"|"green"|"blue"|"magenta"|"cyan"|"white", bold: bool }.
   // Se aplican en orden — la primera coincidencia gana.
-  highlightRules:  [],
+  highlightRules:  defaultHighlightRules(),
+  _highlightRulesSeeded: true,
 };
 
 // Paleta de colores predefinidos para las carpetas. Cada entrada es el id que
@@ -406,6 +419,13 @@ function loadPrefs() {
     prefs.sidebarViewMode = "current";
   }
   prefs.sidebarCompact = Boolean(prefs.sidebarCompact);
+  if (!Array.isArray(prefs.highlightRules)) {
+    prefs.highlightRules = defaultHighlightRules();
+  }
+  if (stored && !stored._highlightRulesSeeded && prefs.highlightRules.length === 0) {
+    prefs.highlightRules = defaultHighlightRules();
+  }
+  prefs._highlightRulesSeeded = true;
   if (!prefs.lang || !SUPPORTED_LANGS.includes(prefs.lang)) {
     prefs.lang = detectLanguage();
   }
@@ -645,7 +665,7 @@ function appendCustomSwatch(picker, theme) {
     label = document.createElement("label");
     label.className = "theme-option";
     label.dataset.theme = theme.id;
-    root.appendChild(label);
+    (root.querySelector(".theme-options-list") || root).appendChild(label);
   }
   label.className = "theme-option";
   label.dataset.theme = theme.id;
@@ -662,6 +682,110 @@ function appendCustomSwatch(picker, theme) {
     if (picker === "ui") selectUiTheme(theme.id);
     else selectTerminalTheme(theme.id);
   });
+  filterThemePickerOptions(root);
+  updateThemePickerButton(picker, picker === "ui" ? prefs.theme : (prefs.terminalTheme || "inherit"));
+}
+
+function getThemeOptionLabel(option) {
+  return option?.querySelector(".theme-label")?.textContent?.trim() || option?.dataset.theme || "";
+}
+
+function updateThemePickerButton(picker, value) {
+  const root = document.querySelector(`.theme-picker[data-for="${picker}"]`);
+  const toggle = root?.querySelector(".theme-picker-toggle");
+  if (!root || !toggle) return;
+  const selected = root.querySelector(`.theme-option[data-theme="${CSS.escape(value)}"]`)
+    || root.querySelector(".theme-option");
+  const previewHost = toggle.querySelector(".theme-picker-toggle-preview");
+  const label = toggle.querySelector(".theme-picker-toggle-label");
+  if (previewHost) {
+    previewHost.innerHTML = "";
+    const preview = selected?.querySelector(".theme-preview")?.cloneNode(true);
+    if (preview) previewHost.appendChild(preview);
+  }
+  if (label) label.textContent = getThemeOptionLabel(selected);
+}
+
+function filterThemePickerOptions(root) {
+  if (!root) return;
+  const query = root.querySelector(".theme-picker-search")?.value.trim().toLowerCase() || "";
+  root.querySelectorAll(".theme-option").forEach((option) => {
+    const haystack = `${getThemeOptionLabel(option)} ${option.dataset.theme || ""}`.toLowerCase();
+    option.classList.toggle("is-filtered-out", Boolean(query) && !haystack.includes(query));
+  });
+}
+
+function setThemePickerOpen(root, open) {
+  if (!root) return;
+  root.classList.toggle("open", open);
+  root.querySelector(".theme-picker-panel")?.classList.toggle("hidden", !open);
+  root.querySelector(".theme-picker-toggle")?.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) {
+    const search = root.querySelector(".theme-picker-search");
+    if (search) {
+      search.value = "";
+      filterThemePickerOptions(root);
+      search.focus();
+    }
+  }
+}
+
+function enhanceThemePickers() {
+  document.querySelectorAll(".theme-picker").forEach((root) => {
+    if (root.classList.contains("enhanced")) return;
+    const picker = root.dataset.for || "ui";
+    const options = [...root.querySelectorAll(":scope > .theme-option")];
+    if (!options.length) return;
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "theme-picker-toggle";
+    toggle.setAttribute("aria-haspopup", "listbox");
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.innerHTML = `
+      <span class="theme-picker-toggle-preview" aria-hidden="true"></span>
+      <span class="theme-picker-toggle-label"></span>
+      <span class="theme-picker-chevron" aria-hidden="true">⌄</span>
+    `;
+
+    const panel = document.createElement("div");
+    panel.className = "theme-picker-panel hidden";
+    panel.innerHTML = `
+      <input type="search" class="theme-picker-search" data-i18n-placeholder="prefs_appearance.theme_search" placeholder="${escHtml(t("prefs_appearance.theme_search"))}" />
+      <div class="theme-options-list" role="listbox"></div>
+    `;
+    const list = panel.querySelector(".theme-options-list");
+    options.forEach((option) => list.appendChild(option));
+    root.append(toggle, panel);
+    root.classList.add("enhanced");
+
+    toggle.addEventListener("click", () => setThemePickerOpen(root, !root.classList.contains("open")));
+    panel.querySelector(".theme-picker-search")?.addEventListener("input", () => filterThemePickerOptions(root));
+    panel.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        setThemePickerOpen(root, false);
+        toggle.focus();
+      }
+    });
+    root.addEventListener("change", (e) => {
+      const radio = e.target.closest('input[type="radio"]');
+      if (!radio) return;
+      updateThemePickerButton(picker, radio.value);
+      setThemePickerOpen(root, false);
+    });
+  });
+
+  if (!enhanceThemePickers._wiredOutsideClick) {
+    document.addEventListener("click", (e) => {
+      document.querySelectorAll(".theme-picker.open").forEach((root) => {
+        if (!root.contains(e.target)) setThemePickerOpen(root, false);
+      });
+    });
+    enhanceThemePickers._wiredOutsideClick = true;
+  }
+
+  updateThemePickerButton("ui", prefs.theme);
+  updateThemePickerButton("terminal", prefs.terminalTheme || "inherit");
 }
 
 /** Registra todos los temas custom al arranque (tras loadPrefs). */
@@ -852,6 +976,7 @@ function selectUiTheme(theme) {
   document.querySelectorAll('.theme-picker[data-for="ui"] .theme-option').forEach((o) =>
     o.classList.toggle("selected", o.dataset.theme === theme)
   );
+  updateThemePickerButton("ui", theme);
   applyTheme(theme);
 }
 
@@ -862,6 +987,7 @@ function selectTerminalTheme(value) {
   document.querySelectorAll('.theme-picker[data-for="terminal"] .theme-option').forEach((o) =>
     o.classList.toggle("selected", o.dataset.theme === value)
   );
+  updateThemePickerButton("terminal", value);
   prefs.terminalTheme = (value === "inherit") ? null : value;
   applyPrefsToAllTerminals();
 }
@@ -996,6 +1122,7 @@ function openSettingsModal() {
   document.querySelectorAll('.theme-picker[data-for="ui"] .theme-option').forEach((opt) =>
     opt.classList.toggle("selected", opt.dataset.theme === prefs.theme)
   );
+  updateThemePickerButton("ui", prefs.theme);
 
   // Tema del terminal: si no hay override se marca "inherit"
   const termVal = prefs.terminalTheme || "inherit";
@@ -1005,6 +1132,7 @@ function openSettingsModal() {
   document.querySelectorAll('.theme-picker[data-for="terminal"] .theme-option').forEach((opt) =>
     opt.classList.toggle("selected", opt.dataset.theme === termVal)
   );
+  updateThemePickerButton("terminal", termVal);
 
   // Rellenar el selector de carpetas para exportar
   const folderSel = document.getElementById("export-folder-select");
@@ -1872,6 +2000,7 @@ function savePrefsFromModal() {
     sidebarViewMode: previousPrefs.sidebarViewMode || "current",
     folderColors:    previousPrefs.folderColors || {},
     highlightRules:  readHighlightRulesFromEditor(),
+    _highlightRulesSeeded: true,
     tombstones:      previousPrefs.tombstones || {},
     _shortcutsTs:    previousPrefs._shortcutsTs || {},
     _lastSyncAt:     previousPrefs._lastSyncAt || null,
@@ -2017,6 +2146,7 @@ async function lockKeepass() {
 async function init() {
   loadPrefs();
   await registerBundledThemePacks();
+  enhanceThemePickers();
 
   try {
     profiles = await invoke("get_profiles");
@@ -6991,6 +7121,11 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
     localCwd: "/",
     panel,
     unlisteners: [],
+    entries: { local: [], remote: [] },
+    sort: {
+      local: { key: "name", direction: "asc" },
+      remote: { key: "name", direction: "asc" },
+    },
     transfers: new Map(),
     transferQueue: [],
     transferProcessing: false,
@@ -7217,6 +7352,7 @@ function getStoredSftpPanelHeightPercent() {
 
 function applySftpPanelHeight(panel, percent = getStoredSftpPanelHeightPercent()) {
   panel.style.flexBasis = `${percent}%`;
+  requestAnimationFrame(() => applySftpLogHeight(panel));
 }
 
 function setupSftpPanelResize(panel, sessionId) {
@@ -7292,13 +7428,26 @@ function setupSftpPanelResize(panel, sessionId) {
 function getStoredSftpLogHeight() {
   const raw = Number(localStorage.getItem(SFTP_LOG_HEIGHT_STORAGE_KEY));
   if (!Number.isFinite(raw) || raw <= 0) return SFTP_LOG_DEFAULT_HEIGHT;
-  return Math.min(420, Math.max(SFTP_LOG_MIN_HEIGHT, raw));
+  return Math.max(SFTP_LOG_MIN_HEIGHT, raw);
+}
+
+function getSftpLogMaxHeight(panel) {
+  const panelHeight = panel?.getBoundingClientRect?.().height || 0;
+  if (!Number.isFinite(panelHeight) || panelHeight <= 0) return Infinity;
+  return Math.max(SFTP_LOG_MIN_HEIGHT, panelHeight - SFTP_LOG_MIN_FILE_AREA_HEIGHT);
+}
+
+function clampSftpLogHeight(panel, height) {
+  const maxHeight = getSftpLogMaxHeight(panel);
+  return Math.min(maxHeight, Math.max(SFTP_LOG_MIN_HEIGHT, height));
 }
 
 function applySftpLogHeight(panel, height = getStoredSftpLogHeight()) {
   const wrap = panel.querySelector(".sftp-transfers-wrap");
   if (!wrap) return;
-  wrap.style.height = `${Math.round(height)}px`;
+  const next = clampSftpLogHeight(panel, height);
+  panel.style.setProperty("--sftp-log-height", `${Math.round(next)}px`);
+  wrap.style.height = "";
 }
 
 function setupSftpLogResize(panel) {
@@ -7319,18 +7468,14 @@ function setupSftpLogResize(panel) {
 
     const startY = e.clientY;
     const startHeight = wrap.getBoundingClientRect().height;
-    const panelHeight = panel.getBoundingClientRect().height;
-    const maxHeight = Math.max(
-      SFTP_LOG_MIN_HEIGHT,
-      panelHeight - SFTP_LOG_MIN_FILE_AREA_HEIGHT,
-    );
+    const maxHeight = getSftpLogMaxHeight(panel);
 
     document.body.classList.add("sftp-log-resizing");
 
     const onMove = (ev) => {
       const delta = ev.clientY - startY;
       const nextPx = Math.min(maxHeight, Math.max(SFTP_LOG_MIN_HEIGHT, startHeight - delta));
-      wrap.style.height = `${nextPx}px`;
+      panel.style.setProperty("--sftp-log-height", `${Math.round(nextPx)}px`);
     };
 
     const onUp = () => {
@@ -7381,6 +7526,13 @@ function buildSftpPanel(sessionId) {
         <input class="sftp-path" data-side="local" type="text" spellcheck="false" />
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="local" title="Nueva carpeta">＋</button>
       </div>
+      <div class="sftp-columns" data-side="local">
+        <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="local" data-sftp-sort="type">Tipo</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-name" data-side="local" data-sftp-sort="name">Nombre</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-size" data-side="local" data-sftp-sort="size">Tamaño</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-modified" data-side="local" data-sftp-sort="modified">Fecha</button>
+        <span></span>
+      </div>
       <div class="sftp-files" data-side="local" tabindex="0">
         <div class="sftp-empty">Cargando…</div>
       </div>
@@ -7407,6 +7559,13 @@ function buildSftpPanel(sessionId) {
         <input class="sftp-path" data-side="remote" type="text" spellcheck="false" />
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="remote" title="Nueva carpeta">＋</button>
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="close" title="Cerrar panel">✕</button>
+      </div>
+      <div class="sftp-columns" data-side="remote">
+        <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="remote" data-sftp-sort="type">Tipo</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-name" data-side="remote" data-sftp-sort="name">Nombre</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-size" data-side="remote" data-sftp-sort="size">Tamaño</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-modified" data-side="remote" data-sftp-sort="modified">Fecha</button>
+        <span></span>
       </div>
       <div class="sftp-files" data-side="remote" tabindex="0">
         <div class="sftp-empty">Cargando…</div>
@@ -7491,6 +7650,7 @@ function buildSftpPanel(sessionId) {
 
   setupSftpDropTargets(panel, sessionId);
   setupSftpContextMenus(panel, sessionId);
+  setupSftpSortHeaders(panel, sessionId);
 
   panel.querySelectorAll("[data-sftp-act]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -7607,11 +7767,15 @@ async function navigateSftpLocal(sessionId, path) {
 function renderSftpFiles(sessionId, side, entries) {
   const s = sessions.get(sessionId);
   const filesDiv = s.sftp.panel.querySelector(`.sftp-files[data-side="${side}"]`);
-  if (entries.length === 0) {
+  s.sftp.entries = s.sftp.entries || { local: [], remote: [] };
+  s.sftp.entries[side] = Array.isArray(entries) ? [...entries] : [];
+  updateSftpSortHeaders(s.sftp.panel, side, s.sftp.sort?.[side]);
+  const sorted = sortSftpEntries(s.sftp.entries[side], s.sftp.sort?.[side]);
+  if (sorted.length === 0) {
     filesDiv.innerHTML = `<div class="sftp-empty">Carpeta vacía</div>`;
     return;
   }
-  filesDiv.innerHTML = entries.map((e) => `
+  filesDiv.innerHTML = sorted.map((e) => `
     <div class="sftp-row ${e.is_dir ? "is-dir" : "is-file"}"
          draggable="${e.is_symlink ? "false" : "true"}"
          data-path="${escHtml(e.path)}"
@@ -7703,6 +7867,73 @@ function renderSftpFiles(sessionId, side, entries) {
           confirmDelete(sessionId, side, row.dataset.path, row.dataset.name, isDir);
         }
       });
+    });
+  });
+}
+
+function sftpEntryTypeRank(entry) {
+  if (entry?.is_dir) return 0;
+  if (entry?.is_symlink) return 1;
+  return 2;
+}
+
+function sftpEntrySortValue(entry, key) {
+  if (key === "type") return sftpEntryTypeRank(entry);
+  if (key === "size") return entry?.is_dir ? -1 : Number(entry?.size || 0);
+  if (key === "modified") return Number(entry?.modified || 0);
+  return String(entry?.name || "").toLocaleLowerCase();
+}
+
+function compareSftpEntries(a, b, key, direction) {
+  const dir = direction === "desc" ? -1 : 1;
+  const typeDelta = sftpEntryTypeRank(a) - sftpEntryTypeRank(b);
+  if (key !== "type" && typeDelta !== 0) return typeDelta;
+  const av = sftpEntrySortValue(a, key);
+  const bv = sftpEntrySortValue(b, key);
+  let delta = 0;
+  if (typeof av === "number" && typeof bv === "number") {
+    delta = av - bv;
+  } else {
+    delta = String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" });
+  }
+  if (delta === 0 && key !== "name") {
+    delta = String(a?.name || "").localeCompare(String(b?.name || ""), undefined, { numeric: true, sensitivity: "base" });
+  }
+  return delta * dir;
+}
+
+function sortSftpEntries(entries, sort = {}) {
+  const key = ["type", "name", "size", "modified"].includes(sort.key) ? sort.key : "name";
+  const direction = sort.direction === "desc" ? "desc" : "asc";
+  return [...entries].sort((a, b) => compareSftpEntries(a, b, key, direction));
+}
+
+function updateSftpSortHeaders(panel, side, sort = {}) {
+  const key = sort?.key || "name";
+  const direction = sort?.direction === "desc" ? "desc" : "asc";
+  panel.querySelectorAll(`.sftp-sort-btn[data-side="${side}"]`).forEach((btn) => {
+    const active = btn.dataset.sftpSort === key;
+    btn.classList.toggle("active", active);
+    btn.classList.toggle("desc", active && direction === "desc");
+    btn.setAttribute("aria-sort", active ? (direction === "desc" ? "descending" : "ascending") : "none");
+  });
+}
+
+function setupSftpSortHeaders(panel, sessionId) {
+  panel.querySelectorAll(".sftp-sort-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const s = sessions.get(sessionId);
+      const side = btn.dataset.side;
+      const key = btn.dataset.sftpSort;
+      if (!s?.sftp || !side || !key) return;
+      const current = s.sftp.sort?.[side] || { key: "name", direction: "asc" };
+      const next = {
+        key,
+        direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+      };
+      s.sftp.sort = s.sftp.sort || {};
+      s.sftp.sort[side] = next;
+      renderSftpFiles(sessionId, side, s.sftp.entries?.[side] || []);
     });
   });
 }

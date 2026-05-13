@@ -2,6 +2,20 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.7.0] - 2026-05-13
+
+### Añadido
+
+- Idioma alemán en Preferencias, con fallback de traducciones a inglés antes de español.
+- Reglas de ejemplo para el resaltado por regex del terminal: errores, warnings, info, éxito y debug.
+- Ordenación por tipo, nombre, tamaño y fecha en las listas local y remota del panel SFTP.
+
+### Cambiado
+
+- El botón secundario del modal de conexión pasa de "Solo guardar" a "Guardar".
+- Los selectores de temas de Apariencia se muestran como desplegables buscables por nombre.
+- El panel de logs SFTP usa una fila redimensionable del layout y ocupa correctamente el alto disponible.
+
 ## [1.6.0] - 2026-05-13
 
 ### Añadido
