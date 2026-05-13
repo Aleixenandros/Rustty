@@ -2,6 +2,12 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.5.1] - 2026-05-13
+
+### Añadido
+
+- La documentación web incluye una página dedicada al CLI SSH con listado de perfiles, conexión interactiva, ejecución remota, `--tty`, códigos de salida y limitaciones.
+
 ## [1.5.0] - 2026-05-13
 
 ### Añadido
