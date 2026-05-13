@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <meta name="description" content="Documentación de Rustty — guías de instalación, perfiles, copias de seguridad, túneles SSH, atajos, KeePass y SFTP.">
+  <link rel="canonical" href="https://rustty.es/docs/">
+
+  <script>(function(){
+    var t = localStorage.getItem('theme');
+    var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var dark = (t === 'dark') || (!t && prefersDark);
+    var de = document.documentElement;
+    if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+    else document.documentElement.setAttribute('data-theme', 'light');
+  })();</script>
+
+  <title>Documentación — Rustty</title>
+  <link rel="icon" type="image/svg+xml" href="/img/favicon.svg">
+  <link rel="stylesheet" href="/css/estilos.css">
+
+  <script src="js/marked.umd.js"></script>
+</head>
+
+<body>
+  <nav id="site-nav"></nav>
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+
+  <main>
+    <div class="docs-layout">
+
+      <aside class="docs-sidebar">
+        <h3 class="docs-sidebar-title" aria-expanded="false">
+          Índice
+          <svg class="docs-sidebar-chevron" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </h3>
+        <ul id="docs-menu">
+          <li><a href="?page=Inicio">Introducción</a></li>
+          <li><a href="?page=Instalacion">Instalación</a></li>
+          <li><a href="?page=Perfiles">Perfiles y conexiones</a></li>
+          <li><a href="?page=CLI">CLI SSH</a></li>
+          <li><a href="?page=KeePass">KeePass y keyring</a></li>
+          <li><a href="?page=Copias">Copias de seguridad</a></li>
+          <li><a href="?page=SFTP">Panel SFTP</a></li>
+          <li><a href="?page=Tuneles">Túneles SSH</a></li>
+          <li><a href="?page=Atajos">Atajos de teclado</a></li>
+          <li><a href="?page=Temas">Temas y tipografía</a></li>
+          <li><a href="?page=Scripts">Scripts y sesiones</a></li>
+          <li><a href="?page=Seguridad">Seguridad</a></li>
+          <li><a href="?page=FAQ">Preguntas frecuentes</a></li>
+        </ul>
+      </aside>
+
+      <article class="docs-content" id="docs-content">
+        <p style="color: var(--on-surface-variant);">Cargando…</p>
+      </article>
+
+    </div>
+  </main>
+
+  <footer id="site-footer"></footer>
+  <script src="/js/components.js"></script>
+
+  <script>
+    (function () {
+      const ALLOWED = new Set([
+        "Inicio", "Instalacion", "Perfiles", "CLI", "KeePass", "Copias", "SFTP", "Tuneles",
+        "Atajos", "Temas", "Scripts", "Seguridad", "FAQ",
+      ]);
+      const DEFAULT_PAGE = "Inicio";
+
+      const params = new URLSearchParams(window.location.search);
+      let page = params.get("page");
+      if (!page || !ALLOWED.has(page)) page = DEFAULT_PAGE;
+
+      // Marcar el ítem activo en el sidebar
+      document.querySelectorAll("#docs-menu a").forEach((a) => {
+        const p = new URL(a.href, window.location.origin).searchParams.get("page");
+        if (p === page) a.classList.add("active");
+      });
+
+      // Cargar y renderizar la página
+      const content = document.getElementById("docs-content");
+      fetch(`${page}.md`, { cache: "no-cache" })
+        .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+        .then((md) => {
+          // Renderizar con marked
+          content.innerHTML = marked.parse(md);
+          // Scroll al anchor si existe en la URL
+          if (window.location.hash) {
+            const target = document.querySelector(window.location.hash);
+            if (target) target.scrollIntoView({ behavior: "smooth" });
+          }
+          // Actualizar <title>
+          const h1 = content.querySelector("h1");
+          if (h1) document.title = `${h1.textContent.trim()} — Rustty`;
+        })
+        .catch((err) => {
+          content.innerHTML = `
+            <h1>Página no encontrada</h1>
+            <p>No se pudo cargar <code>${page}.md</code>.</p>
+            <p style="color: var(--on-surface-variant);">${String(err)}</p>
+            <p><a href="?page=Inicio">← Volver al índice</a></p>`;
+        });
+    })();
+  </script>
+</body>
+</html>
