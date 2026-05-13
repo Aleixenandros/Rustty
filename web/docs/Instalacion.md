@@ -82,9 +82,15 @@ rustty --list
 rustty -l --json
 rustty -c <nombre|id|ip|host>
 rustty --connect <nombre|id|ip|host>
+rustty -c <nombre|id|ip|host> --exec "uptime"
+rustty -c <nombre|id|ip|host> -- hostname
+rustty -c <nombre|id|ip|host> "hostname"
+rustty -c <nombre|id|ip|host> --tty -- sudo systemctl status nginx
 ```
 
 `-c` conecta en la misma terminal, reutilizando puerto, usuario, método de autenticación, keyring, `known_hosts`, ProxyJump y opciones SSH del perfil.
+
+Si añades un comando remoto, Rustty abre un canal SSH `exec`, reenvía `stdin`, separa `stdout`/`stderr` y termina con el código de salida remoto. `--exec` es la forma más clara para comandos con comillas o tuberías; `--` y el texto extra después del perfil funcionan como atajos cómodos. `--tty` solicita pseudo-terminal para comandos que lo necesiten.
 
 ## Compilar desde fuente
 

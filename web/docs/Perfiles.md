@@ -57,10 +57,17 @@ Los perfiles SSH guardados también se pueden usar desde la terminal:
 
 ```bash
 rustty -l
+rustty -l --json
 rustty -c <nombre|id|ip|host>
+rustty -c <nombre|id|ip|host> --exec "uptime"
+rustty -c <nombre|id|ip|host> -- hostname
+rustty -c <nombre|id|ip|host> "hostname"
+rustty -c <nombre|id|ip|host> --tty -- sudo systemctl status nginx
 ```
 
 El listado muestra sólo conexiones SSH. Al conectar, Rustty usa los datos guardados del perfil: host/IP, puerto, usuario, método de autenticación, keyring, `known_hosts`, ProxyJump, keepalive, agent forwarding y compatibilidad legacy si estaba activada. Si falta un secreto en el keyring, lo pedirá en la terminal sin eco.
+
+Cuando se pasa un comando remoto, Rustty no abre una shell interactiva: ejecuta el comando con un canal SSH `exec`, escribe `stdout` y `stderr` en la terminal local y devuelve el mismo código de salida que el servidor. Usa `--tty` si el comando necesita pseudo-terminal.
 
 ## Seguimiento del directorio remoto (CWD)
 

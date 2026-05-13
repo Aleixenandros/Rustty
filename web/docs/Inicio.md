@@ -5,7 +5,7 @@
 ## ¿Qué puede hacer?
 
 - Abrir varias sesiones SSH a la vez y organizarlas en pestañas o vistas divididas.
-- Listar y abrir conexiones SSH guardadas desde terminal con `rustty -l` y `rustty -c <nombre|id|ip|host>`, sin abrir la interfaz gráfica.
+- Listar, abrir conexiones SSH guardadas y ejecutar comandos remotos desde terminal con `rustty -l`, `rustty -c <nombre|id|ip|host>` y `rustty -c <perfil> --exec "cmd"`, sin abrir la interfaz gráfica.
 - Agrupar tus conexiones en **perfiles-contenedor (workspaces)** independientes con sus propias carpetas, mover conexiones en lote con selección múltiple, marcarlas como **favoritas** y alternar la sidebar entre *Workspace actual*, *Todos los perfiles* y *Favoritos* desde el botón ≡ de la cabecera. Al cambiar de pestaña, Rustty selecciona automáticamente la conexión asociada en la barra lateral y recuerda el árbol de carpetas abierto entre reinicios.
 - Probar una conexión desde el modal antes de guardarla, ver el diagnóstico SSH por etapas en la barra inferior y consultar el centro global de actividad desde el acceso **Historial y logs** del rail.
 - Transferir ficheros con un **panel SFTP** integrado de **vista dividida remoto / local**, transferencia recursiva de carpetas, seguimiento del directorio del terminal y elevación a `sudo` cuando el servidor lo permita.

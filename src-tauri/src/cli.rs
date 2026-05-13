@@ -18,9 +18,21 @@ const KEYRING_SERVICE: &str = "rustty";
 
 #[derive(Debug)]
 enum CliCommand {
-    List { json: bool },
-    Connect { query: String },
+    List {
+        json: bool,
+    },
+    Connect {
+        query: String,
+        remote_command: Option<RemoteCommand>,
+    },
     Help,
+    Invalid(String),
+}
+
+#[derive(Debug, Clone)]
+struct RemoteCommand {
+    command: String,
+    tty: bool,
 }
 
 #[derive(Debug)]
@@ -59,7 +71,7 @@ pub fn try_run_from_env() -> Option<i32> {
     let args: Vec<String> = env::args().skip(1).collect();
     let command = parse_cli_command(&args)?;
     let code = match run_cli(command) {
-        Ok(()) => 0,
+        Ok(code) => code,
         Err(err) => {
             eprintln!("{err}");
             2
@@ -80,22 +92,87 @@ fn parse_cli_command(args: &[String]) -> Option<CliCommand> {
         Some("-l") | Some("--list") => Some(CliCommand::List {
             json: args.iter().any(|arg| *arg == "--json"),
         }),
-        Some("-c") | Some("--connect") => args.get(1).map(|query| CliCommand::Connect {
-            query: (*query).to_string(),
-        }),
+        Some("-c") | Some("--connect") => match args.get(1) {
+            Some(query) => parse_connect_command(query, &args[2..]),
+            None => Some(CliCommand::Invalid(
+                "Indica una busqueda para -c.".to_string(),
+            )),
+        },
         Some("-h") | Some("--help") => Some(CliCommand::Help),
         _ => None,
     }
 }
 
-fn run_cli(command: CliCommand) -> Result<(), String> {
+fn parse_connect_command(query: &str, rest: &[&str]) -> Option<CliCommand> {
+    let mut tty = false;
+    let mut i = 0;
+    let mut command_parts: Option<&[&str]> = None;
+
+    while i < rest.len() {
+        match rest[i] {
+            "--tty" | "-t" => {
+                tty = true;
+                i += 1;
+            }
+            "--exec" | "-e" => {
+                command_parts = Some(&rest[i + 1..]);
+                break;
+            }
+            "--" => {
+                command_parts = Some(&rest[i + 1..]);
+                break;
+            }
+            arg if arg.starts_with('-') => {
+                return Some(CliCommand::Invalid(format!(
+                    "Opcion CLI desconocida para -c: {arg}"
+                )));
+            }
+            _ => {
+                command_parts = Some(&rest[i..]);
+                break;
+            }
+        }
+    }
+
+    let remote_command = match command_parts {
+        Some(parts) if parts.is_empty() => {
+            return Some(CliCommand::Invalid(
+                "Indica el comando remoto despues de --exec o --.".to_string(),
+            ));
+        }
+        Some(parts) => {
+            let command = parts.join(" ").trim().to_string();
+            if command.is_empty() {
+                return Some(CliCommand::Invalid(
+                    "El comando remoto no puede estar vacio.".to_string(),
+                ));
+            }
+            Some(RemoteCommand { command, tty })
+        }
+        None => None,
+    };
+
+    Some(CliCommand::Connect {
+        query: query.to_string(),
+        remote_command,
+    })
+}
+
+fn run_cli(command: CliCommand) -> Result<i32, String> {
     match command {
-        CliCommand::List { json } => list_profiles(json),
-        CliCommand::Connect { query } => connect_by_query(&query),
+        CliCommand::List { json } => {
+            list_profiles(json)?;
+            Ok(0)
+        }
+        CliCommand::Connect {
+            query,
+            remote_command,
+        } => connect_by_query(&query, remote_command),
         CliCommand::Help => {
             print_help();
-            Ok(())
+            Ok(0)
         }
+        CliCommand::Invalid(message) => Err(message),
     }
 }
 
@@ -107,6 +184,10 @@ fn print_help() {
            rustty -l | --list                 Lista conexiones SSH guardadas\n\
            rustty -l --json                   Lista conexiones SSH en JSON\n\
            rustty -c <nombre|id|ip|host>      Conecta sin abrir la interfaz grafica\n\
+           rustty -c <perfil> --exec \"cmd\"    Ejecuta un comando remoto y sale\n\
+           rustty -c <perfil> -- cmd          Ejecuta un comando remoto y sale\n\
+           rustty -c <perfil> \"cmd\"           Alias breve para comando remoto\n\
+           rustty -c <perfil> --tty -- cmd    Ejecuta con pseudo-terminal\n\
          "
     );
 }
@@ -210,7 +291,7 @@ fn list_profiles(json: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn connect_by_query(query: &str) -> Result<(), String> {
+fn connect_by_query(query: &str, remote_command: Option<RemoteCommand>) -> Result<i32, String> {
     let profiles = load_profiles()?;
     let profile = find_profile(&profiles, query)?.clone();
     let secrets = resolve_secrets(&profile)?;
@@ -223,7 +304,15 @@ fn connect_by_query(query: &str) -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|e| format!("No se pudo crear runtime tokio: {e}"))?;
-    runtime.block_on(run_ssh_session(profile, secrets))
+    runtime.block_on(async {
+        match remote_command {
+            Some(remote) => run_remote_command(profile, secrets, remote).await,
+            None => {
+                run_ssh_session(profile, secrets).await?;
+                Ok(0)
+            }
+        }
+    })
 }
 
 fn find_profile<'a>(
@@ -447,6 +536,216 @@ async fn run_ssh_session(profile: ConnectionProfile, secrets: CliSecrets) -> Res
 
     let _ = channel.close().await;
     Ok(())
+}
+
+async fn run_remote_command(
+    profile: ConnectionProfile,
+    secrets: CliSecrets,
+    remote: RemoteCommand,
+) -> Result<i32, String> {
+    let keepalive_interval = profile
+        .keep_alive_secs
+        .filter(|secs| *secs > 0)
+        .map(|secs| Duration::from_secs(secs as u64));
+    let preferred = if profile.allow_legacy_algorithms {
+        legacy_preferred()
+    } else {
+        Preferred::default()
+    };
+    let config = Arc::new(client::Config {
+        inactivity_timeout: Some(Duration::from_secs(3600)),
+        keepalive_interval,
+        preferred,
+        ..Default::default()
+    });
+
+    let mut handle = connect_handle(&profile, config, &secrets).await?;
+    authenticate_target(&mut handle, &profile, &secrets).await?;
+
+    let mut channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("No se pudo abrir canal SSH: {e}"))?;
+
+    if profile.agent_forwarding {
+        let _ = channel.agent_forward(false).await;
+    }
+
+    let _raw = if remote.tty {
+        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+        let term = env::var("TERM").unwrap_or_else(|_| "xterm-256color".to_string());
+        channel
+            .request_pty(true, &term, cols as u32, rows as u32, 0, 0, &[])
+            .await
+            .map_err(|e| format!("No se pudo solicitar PTY: {e}"))?;
+        Some(RawModeGuard::enter()?)
+    } else {
+        None
+    };
+
+    channel
+        .exec(true, remote.command.as_str())
+        .await
+        .map_err(|e| format!("No se pudo ejecutar el comando remoto: {e}"))?;
+
+    let mut stdin = tokio::io::stdin();
+    let mut stdout = tokio::io::stdout();
+    let mut stderr = tokio::io::stderr();
+    let mut stdin_buf = [0u8; 8192];
+    let mut stdin_closed = false;
+    let mut exit_code: Option<u32> = None;
+
+    loop {
+        tokio::select! {
+            read = stdin.read(&mut stdin_buf), if !stdin_closed => {
+                match read {
+                    Ok(0) => {
+                        stdin_closed = true;
+                        let _ = channel.eof().await;
+                    }
+                    Ok(n) => {
+                        channel
+                            .data(&stdin_buf[..n])
+                            .await
+                            .map_err(|e| format!("Error enviando stdin al comando remoto: {e}"))?;
+                    }
+                    Err(e) => return Err(format!("Error leyendo stdin: {e}")),
+                }
+            }
+            msg = channel.wait() => {
+                match msg {
+                    Some(ChannelMsg::Data { data }) => {
+                        stdout
+                            .write_all(&data)
+                            .await
+                            .map_err(|e| format!("Error escribiendo stdout: {e}"))?;
+                        stdout
+                            .flush()
+                            .await
+                            .map_err(|e| format!("Error vaciando stdout: {e}"))?;
+                    }
+                    Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        stderr
+                            .write_all(&data)
+                            .await
+                            .map_err(|e| format!("Error escribiendo stderr: {e}"))?;
+                        stderr
+                            .flush()
+                            .await
+                            .map_err(|e| format!("Error vaciando stderr: {e}"))?;
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) => {
+                        exit_code = Some(exit_status);
+                        if !stdin_closed {
+                            stdin_closed = true;
+                            let _ = channel.eof().await;
+                        }
+                    }
+                    Some(ChannelMsg::ExitSignal { .. }) => {
+                        exit_code = Some(255);
+                        if !stdin_closed {
+                            stdin_closed = true;
+                            let _ = channel.eof().await;
+                        }
+                    }
+                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+        }
+    }
+
+    let _ = channel.close().await;
+    Ok(normalize_exit_code(exit_code.unwrap_or(255)))
+}
+
+fn normalize_exit_code(code: u32) -> i32 {
+    code.min(255) as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn parses_interactive_connect() {
+        match parse_cli_command(&args(&["-c", "prod"])) {
+            Some(CliCommand::Connect {
+                query,
+                remote_command: None,
+            }) => assert_eq!(query, "prod"),
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_exec_command() {
+        match parse_cli_command(&args(&["-c", "prod", "--exec", "uptime"])) {
+            Some(CliCommand::Connect {
+                query,
+                remote_command: Some(remote),
+            }) => {
+                assert_eq!(query, "prod");
+                assert_eq!(remote.command, "uptime");
+                assert!(!remote.tty);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_double_dash_command_with_tty() {
+        match parse_cli_command(&args(&[
+            "-c",
+            "prod",
+            "--tty",
+            "--",
+            "sudo",
+            "systemctl",
+            "restart",
+            "nginx",
+        ])) {
+            Some(CliCommand::Connect {
+                query,
+                remote_command: Some(remote),
+            }) => {
+                assert_eq!(query, "prod");
+                assert_eq!(remote.command, "sudo systemctl restart nginx");
+                assert!(remote.tty);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_trailing_command_alias() {
+        match parse_cli_command(&args(&["-c", "prod", "hostname"])) {
+            Some(CliCommand::Connect {
+                query,
+                remote_command: Some(remote),
+            }) => {
+                assert_eq!(query, "prod");
+                assert_eq!(remote.command, "hostname");
+                assert!(!remote.tty);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_empty_exec_command() {
+        match parse_cli_command(&args(&["-c", "prod", "--exec"])) {
+            Some(CliCommand::Invalid(message)) => {
+                assert!(message.contains("comando remoto"));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
 }
 
 async fn connect_handle(

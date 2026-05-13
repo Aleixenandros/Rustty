@@ -10,7 +10,7 @@
 - **Multi-protocolo**: conexiones SSH, SFTP, FTP, FTPS y RDP (este último mediante `xfreerdp` / `mstsc` externos).
 - **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F), barra inferior con estado/latencia/diagnóstico y soporte de OSC 7 (seguimiento del `cwd` remoto).
 - **Panel de ficheros integrado**: explorador SFTP/FTP/FTPS con **vista dividida remoto / local**, transferencia recursiva de carpetas, drag & drop, conflictos configurables, cola de transferencias, logs en pestañas redimensionables, menús contextuales, seguimiento opcional del directorio del terminal en SSH y modo elevado a **sudo** cuando el servidor lo permita.
-- **CLI SSH**: lista conexiones guardadas con `rustty -l` y conecta directamente desde la terminal con `rustty -c <nombre|id|ip|host>` sin abrir la interfaz gráfica.
+- **CLI SSH**: lista conexiones guardadas con `rustty -l`, conecta directamente con `rustty -c <nombre|id|ip|host>` y ejecuta comandos remotos con `--exec`, `--` o el alias `rustty -c <perfil> "cmd"`, sin abrir la interfaz gráfica.
 - **Túneles SSH integrados**: redirección de puertos **local** (`-L`), **remota** (`-R`) y **dinámica / SOCKS** (`-D`) sobre una sesión activa o desde acceso rápido global, con panel de estado, tráfico, túneles guardados y autoconexión opcional por perfil.
 - **Opciones avanzadas SSH por perfil**: keep-alive configurable, **reconexión automática con backoff** ante caídas, **grabación de sesión** a fichero, bastion / ProxyJump, agent forwarding, X11 forwarding y opción para permitir cifrados / kex / MAC legacy (aes-cbc, dh-sha1, hmac-sha1, ssh-rsa) en servidores antiguos.
 - **Multi-pestaña y vistas divididas**: trabaja con varias sesiones simultáneas, distribúyelas en *split* horizontal / vertical / grid y activa el *broadcast* para teclear en varias a la vez.
@@ -79,9 +79,15 @@ rustty --list
 rustty -l --json
 rustty -c <nombre|id|ip|host>
 rustty --connect <nombre|id|ip|host>
+rustty -c <nombre|id|ip|host> --exec "uptime"
+rustty -c <nombre|id|ip|host> -- hostname
+rustty -c <nombre|id|ip|host> "hostname"
+rustty -c <nombre|id|ip|host> --tty -- sudo systemctl status nginx
 ```
 
 `-c` reutiliza los datos del perfil, el keyring del sistema, `known_hosts`, ProxyJump, keepalive, agent forwarding y la compatibilidad legacy configurada en la conexión. Si una contraseña o passphrase no está guardada en el keyring, la pedirá en la terminal sin mostrarla.
+
+Cuando se añade un comando remoto, Rustty abre un canal SSH `exec`, escribe `stdout`/`stderr` en la terminal local y termina con el código de salida remoto. `--exec` es la forma recomendada para comandos con comillas o tuberías; `--` acepta una forma breve similar a `ssh`, y el texto extra después del perfil queda como alias cómodo. `--tty` solicita pseudo-terminal para comandos que lo necesiten, como algunos usos de `sudo`.
 
 ## Instalación
 

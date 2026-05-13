@@ -2,6 +2,12 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.5.0] - 2026-05-13
+
+### Añadido
+
+- La CLI SSH puede ejecutar comandos remotos sin abrir la GUI: `rustty -c <perfil> --exec "cmd"`, `rustty -c <perfil> -- cmd` o el alias breve `rustty -c <perfil> "cmd"`. También acepta `--tty` para solicitar pseudo-terminal y devuelve el código de salida remoto al proceso local.
+
 ## [1.4.0] - 2026-05-12
 
 ### Añadido

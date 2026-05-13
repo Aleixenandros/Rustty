@@ -144,6 +144,12 @@ input, select, textarea {
   border-radius: 0 2px 2px 0;
 }
 
+.rail-btn-logs {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
 .rail-btn-primary {
   background: var(--blue);
   color: var(--crust);
