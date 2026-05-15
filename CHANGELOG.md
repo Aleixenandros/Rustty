@@ -2,6 +2,16 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.7.1] - 2026-05-15
+
+### Corregido
+
+- Los temas Rustty v2 precargados vuelven a aplicar sus tokens de interfaz y
+  terminal al seleccionarlos desde Preferencias -> Apariencia, en lugar de
+  caer visualmente al tema oscuro por defecto.
+- La vista previa del terminal respeta el tema de interfaz seleccionado en vivo
+  cuando el terminal está configurado como "Igual que la interfaz".
+
 ## [1.7.0] - 2026-05-13
 
 ### Añadido

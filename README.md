@@ -25,8 +25,8 @@
   - Verificación de `known_hosts` con TOFU y aviso ante cambios de fingerprint.
 - **Copias de seguridad y sincronización E2E**: perfiles, preferencias, temas, atajos y, si lo activas, contraseñas guardadas pueden sincronizarse con Google Drive, iCloud Drive, carpeta local / NAS o WebDAV. El blob remoto se cifra localmente con `age` y una passphrase maestra. Sincronización **por evento** (comprueba al iniciar y sincroniza si hay cambios locales/remotos) y **restauración de snapshots históricos** desde la pestaña de Copias.
 - **Organización**: agrupa conexiones en **perfiles-contenedor (workspaces)** independientes, en carpetas dentro de cada workspace, **conexiones favoritas** y vistas de la sidebar (workspace actual, todos los perfiles, favoritos), búsqueda rápida y duplicación de conexiones / sesiones desde el menú contextual.
-- **Personalización**: 12 temas base integrados y una biblioteca ampliada de 221 temas Rustty v2 precargados, además de ajustes de cursor, scrollback y *bell*. Posibilidad de importar temas personalizados en formato JSON v2 con tokens de UI y terminal.
-- **Internacionalización**: interfaz traducida a español, inglés, francés y portugués. (Traducciones realizadas con IA)
+- **Personalización**: 12 temas base integrados y una biblioteca ampliada de 221 temas Rustty v2 precargados para interfaz y terminal, además de ajustes de cursor, scrollback y *bell*. Posibilidad de importar temas personalizados en formato JSON v2 con tokens de UI y terminal.
+- **Internacionalización**: interfaz traducida a español, inglés, francés, portugués y alemán. (Traducciones realizadas con IA)
 
 ## Capturas
 

@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.7.0"
+version = "1.7.1"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"

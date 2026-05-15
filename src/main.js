@@ -498,7 +498,7 @@ function resolveEffectiveTheme(theme) {
  *  en caso contrario el terminal hereda el tema de UI. */
 function getTerminalTheme() {
   const override = prefs.terminalTheme;
-  const base = (override && override !== "inherit") ? override : prefs.theme;
+  const base = (override && override !== "inherit") ? override : (uiThemePreview || prefs.theme);
   const effective = resolveEffectiveTheme(base);
   return TERMINAL_THEMES[effective] || TERMINAL_THEMES.dark;
 }
@@ -534,6 +534,7 @@ const BUNDLED_THEME_PACKS = [
   "/themes/bundled-themes.json",
 ];
 const BUNDLED_THEME_IDS = new Set();
+let uiThemePreview = null;
 
 const UI_THEME_TOKENS = [
   "base", "mantle", "crust",
@@ -627,34 +628,49 @@ function buildThemeDocument({ id, name, ui, terminal }) {
   };
 }
 
-/** Registra un tema custom en runtime: extiende TERMINAL_THEMES, inyecta
+function getRuntimeThemeStyleElement(source) {
+  const id = source === "bundled"
+    ? "rustty-bundled-themes-style"
+    : "rustty-custom-themes-style";
+  let styleEl = document.getElementById(id);
+  if (!styleEl) {
+    styleEl = document.createElement("style");
+    styleEl.id = id;
+    document.head.appendChild(styleEl);
+  }
+  return styleEl;
+}
+
+function appendRuntimeThemeCss(theme, source) {
+  const decl = UI_THEME_TOKENS
+    .map((token) => theme.ui[token] ? `--${token}: ${theme.ui[token]};` : "")
+    .filter(Boolean).join(" ");
+  getRuntimeThemeStyleElement(source).appendChild(
+    document.createTextNode(`\nhtml.theme-${theme.id} { ${decl} }\n`)
+  );
+}
+
+/** Registra un tema runtime: extiende TERMINAL_THEMES, inyecta
  *  CSS vars bajo `html.theme-<id>` y añade un swatch a los pickers. */
-function registerCustomTheme(theme) {
+function registerRuntimeTheme(theme, { source = "custom" } = {}) {
   TERMINAL_THEMES[theme.id] = theme.terminal;
   const cssClass = `theme-${theme.id}`;
   if (!THEME_CLASSES.includes(cssClass)) THEME_CLASSES.push(cssClass);
 
-  let styleEl = document.getElementById("rustty-custom-themes-style");
-  if (!styleEl) {
-    styleEl = document.createElement("style");
-    styleEl.id = "rustty-custom-themes-style";
-    document.head.appendChild(styleEl);
-  }
-  const decl = UI_THEME_TOKENS
-    .map((token) => theme.ui[token] ? `--${token}: ${theme.ui[token]};` : "")
-    .filter(Boolean).join(" ");
-  styleEl.appendChild(
-    document.createTextNode(`\nhtml.${cssClass} { ${decl} }\n`)
-  );
+  appendRuntimeThemeCss(theme, source);
 
   // Swatches en ambos pickers (UI + terminal)
   appendCustomSwatch("ui", theme);
   appendCustomSwatch("terminal", theme);
 }
 
+function registerCustomTheme(theme) {
+  registerRuntimeTheme(theme, { source: "custom" });
+}
+
 function registerBundledTheme(theme) {
   BUNDLED_THEME_IDS.add(theme.id);
-  registerCustomTheme(theme);
+  registerRuntimeTheme(theme, { source: "bundled" });
 }
 
 function appendCustomSwatch(picker, theme) {
@@ -811,7 +827,7 @@ function registerAllCustomThemes() {
       };
       if (!theme.id || !theme.name || !theme.ui.base || !theme.ui.text) continue;
       if (!theme.terminal.background || !theme.terminal.foreground) continue;
-      if (BASE_THEME_IDS.has(theme.id)) continue;
+      if (BASE_THEME_IDS.has(theme.id) || BUNDLED_THEME_IDS.has(theme.id)) continue;
       validThemes.push(theme);
       registerCustomTheme(theme);
     } catch (err) {
@@ -822,6 +838,8 @@ function registerAllCustomThemes() {
 }
 
 async function registerBundledThemePacks() {
+  const styleEl = document.getElementById("rustty-bundled-themes-style");
+  if (styleEl) styleEl.textContent = "";
   for (const packPath of BUNDLED_THEME_PACKS) {
     try {
       const response = await fetch(packPath);
@@ -970,6 +988,8 @@ async function importTheme() {
 }
 
 function selectUiTheme(theme) {
+  const prefsModal = document.getElementById("modal-prefs-overlay");
+  uiThemePreview = prefsModal && !prefsModal.classList.contains("hidden") ? theme : null;
   document.querySelectorAll('input[name="pref-theme"]').forEach((r) => {
     r.checked = (r.value === theme);
   });
@@ -1934,6 +1954,7 @@ function closeSettingsModal() {
   }
   _terminalThemeSnapshot = undefined;
   _typographySnapshot = null;
+  uiThemePreview = null;
   applyTheme(prefs.theme);
   cancelShortcutCapture();
   document.getElementById("modal-prefs-overlay").classList.add("hidden");
@@ -2031,6 +2052,7 @@ function savePrefsFromModal() {
   // Los snapshots ya no son relevantes: las prefs guardadas son la verdad.
   _terminalThemeSnapshot = undefined;
   _typographySnapshot = null;
+  uiThemePreview = null;
   applyTheme(prefs.theme);
   applyPrefsToAllTerminals();
   closeSettingsModal();
