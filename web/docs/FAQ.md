@@ -66,6 +66,10 @@ Sí. El botón **⇄** del rail lateral abre la vista global de túneles. Desde 
 
 Sí. En el panel **⇄** puedes marcar **Guardar** para persistir el túnel, o **Auto** para que se abra automáticamente al conectar ese perfil.
 
+## ¿Por qué las transferencias SFTP iban tan lentas?
+
+Hasta la 1.2.x el camino SFTP era serie con buffer de 64 KiB, así que el techo de velocidad era `chunk_size / RTT` (~5 MB/s con 12-15 ms de latencia). Desde la **1.3.0** Rustty mantiene 16 peticiones SFTP simultáneamente en vuelo con chunks de 256 KiB, lo que satura el ancho de banda real de la conexión en lugar de quedarse limitado por la latencia.
+
 ## ¿Por qué la sidebar cambia sola al moverme entre pestañas?
 
 Es intencional: cuando activas una pestaña asociada a un perfil, Rustty abre su workspace/carpeta en la sidebar y marca esa conexión. Así puedes ubicar rápidamente qué perfil corresponde a la sesión activa.

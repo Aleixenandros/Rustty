@@ -47,8 +47,27 @@ Puedes acceder a estas acciones desde la toolbar, los botones centrales o el men
 
 Las transferencias SFTP grandes están preparadas para superar el umbral de 1 GiB sin cortar la sesión por timeout durante la renegociación de claves.
 
+## Panel TRANSFERENCIAS / ACTIVIDAD
+
+Justo debajo de la vista dividida hay dos secciones siempre visibles:
+
+- **TRANSFERENCIAS**: cola con barra de progreso, velocidad, ETA y botones de cancelar/reintentar para cada transferencia en curso o terminada.
+- **ACTIVIDAD**: log con cada operación SFTP — etapas de conexión (`connect`, `host_key`, `auth`, `subsystem`, `ready`), `mkdir`, renombrar, eliminar, errores de listado e inicio/fin de cada transferencia. Cada fila muestra estado (`ok`, `error`, `skipped`, `canceled`), etiqueta y tiempo.
+
+Si una transferencia falla o se cancela, el detalle muestra los bytes realmente transferidos junto al total del fichero, no solo el tamaño esperado.
+
+## Rendimiento (pipelining)
+
+Las descargas y subidas mantienen 16 peticiones SFTP simultáneamente en vuelo con chunks de 256 KiB. Eso elimina el techo de velocidad `chunk × RTT` típico de los clientes SFTP en serie: con un RTT de 12-15 ms y buffer de 64 KiB el techo era de ~5 MB/s; con 4 MiB de datos en vuelo a la vez, la transferencia satura el ancho de banda real de la conexión.
+
+Si el servidor caps por sesión (por ejemplo limita a 100 Mbps) verás velocidades estables cerca de ese tope, sin importar la latencia.
+
 ## SFTP elevado
 
 El botón **sudo** reconecta el SFTP usando `sudo sftp-server` en el servidor remoto. Requiere que el usuario tenga `NOPASSWD` configurado para el binario `sftp-server` correspondiente.
 
 Si el servidor no permite esa elevación, desactiva **sudo** y usa SFTP normal.
+
+## Cerrar el panel con una transferencia en curso
+
+Si intentas cerrar la pestaña o pulsas `Ctrl+W` con una transferencia activa, Rustty pregunta antes de continuar y cancela las transferencias en curso si confirmas. El mismo aviso aparece para sesiones SSH vivas: evita perder progreso por error.
