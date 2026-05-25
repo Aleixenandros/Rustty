@@ -457,7 +457,10 @@ async fn run_ssh_session(profile: ConnectionProfile, secrets: CliSecrets) -> Res
     let keepalive_interval = profile
         .keep_alive_secs
         .filter(|secs| *secs > 0)
-        .map(|secs| Duration::from_secs(secs as u64));
+        .map(|secs| Duration::from_secs(secs as u64))
+        .unwrap_or_else(|| {
+            Duration::from_secs(crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_SECS)
+        });
     let preferred = if profile.allow_legacy_algorithms {
         legacy_preferred()
     } else {
@@ -465,7 +468,8 @@ async fn run_ssh_session(profile: ConnectionProfile, secrets: CliSecrets) -> Res
     };
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
-        keepalive_interval,
+        keepalive_interval: Some(keepalive_interval),
+        keepalive_max: crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_MAX,
         preferred,
         ..Default::default()
     });
@@ -546,7 +550,10 @@ async fn run_remote_command(
     let keepalive_interval = profile
         .keep_alive_secs
         .filter(|secs| *secs > 0)
-        .map(|secs| Duration::from_secs(secs as u64));
+        .map(|secs| Duration::from_secs(secs as u64))
+        .unwrap_or_else(|| {
+            Duration::from_secs(crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_SECS)
+        });
     let preferred = if profile.allow_legacy_algorithms {
         legacy_preferred()
     } else {
@@ -554,7 +561,8 @@ async fn run_remote_command(
     };
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
-        keepalive_interval,
+        keepalive_interval: Some(keepalive_interval),
+        keepalive_max: crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_MAX,
         preferred,
         ..Default::default()
     });
@@ -765,13 +773,14 @@ async fn connect_handle(
         let bastion_addr = format!("{}:{}", b_host, b_port);
         let (bastion_handler, bastion_failure) =
             host_keys::client(b_host.clone(), b_port, false, false);
-        let mut bastion = client::connect(config.clone(), bastion_addr.clone(), bastion_handler)
-            .await
-            .map_err(|err| {
-                host_keys::take_failure(&bastion_failure).unwrap_or_else(|| {
-                    format!("No se puede conectar al bastion {bastion_addr}: {err}")
-                })
-            })?;
+        let mut bastion =
+            crate::ssh_manager::russh_connect_addr(config.clone(), &bastion_addr, bastion_handler)
+                .await
+                .map_err(|err| {
+                    host_keys::take_failure(&bastion_failure).unwrap_or_else(|| {
+                        format!("No se puede conectar al bastion {bastion_addr}: {err}")
+                    })
+                })?;
 
         match authenticate_handle(
             &mut bastion,
@@ -825,7 +834,7 @@ async fn connect_handle(
             profile.agent_forwarding,
             false,
         );
-        client::connect(config, addr.clone(), client_handler)
+        crate::ssh_manager::russh_connect_addr(config, &addr, client_handler)
             .await
             .map_err(|err| {
                 host_keys::take_failure(&host_key_failure)

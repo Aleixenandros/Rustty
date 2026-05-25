@@ -586,6 +586,24 @@ pub async fn sftp_cancel_transfer(
     sftp_state.cancel_transfer(&session_id, transfer_id)
 }
 
+#[tauri::command]
+pub async fn sftp_pause_transfer(
+    sftp_state: State<'_, SftpManager>,
+    session_id: String,
+    transfer_id: String,
+) -> Result<(), String> {
+    sftp_state.pause_transfer(&session_id, transfer_id)
+}
+
+#[tauri::command]
+pub async fn sftp_resume_transfer(
+    sftp_state: State<'_, SftpManager>,
+    session_id: String,
+    transfer_id: String,
+) -> Result<(), String> {
+    sftp_state.resume_transfer(&session_id, transfer_id)
+}
+
 // ─── Comandos de FS local (panel SFTP partido) ────────────────────────────────
 
 #[derive(serde::Serialize)]

@@ -77,6 +77,47 @@ pub struct FileEntry {
     pub permissions: Option<u32>,
 }
 
+// ─── Control de transferencias (cancelar + pausar) ──────────────────────────
+
+/// Estado compartido entre el `SftpHandle` (hilo principal) y el worker para
+/// señalizar cancelación y pausa de transferencias por `transfer_id`. La
+/// cancelación se consume al detectarla (one-shot) y abre la rama de error
+/// "transferencia cancelada"; la pausa es un flag persistente que el bucle de
+/// `pipelined_download`/`pipelined_upload` consulta antes de pedir más chunks.
+#[derive(Default)]
+pub struct TransferControls {
+    canceled: Mutex<HashSet<String>>,
+    paused: Mutex<HashSet<String>>,
+}
+
+impl TransferControls {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn take_cancel(&self, transfer_id: &str) -> bool {
+        self.canceled.lock().unwrap().remove(transfer_id)
+    }
+
+    fn is_paused(&self, transfer_id: &str) -> bool {
+        self.paused.lock().unwrap().contains(transfer_id)
+    }
+
+    fn cancel(&self, transfer_id: String) {
+        // Cancelar también levanta la pausa para que el bucle salga inmediatamente.
+        self.paused.lock().unwrap().remove(&transfer_id);
+        self.canceled.lock().unwrap().insert(transfer_id);
+    }
+
+    fn pause(&self, transfer_id: String) {
+        self.paused.lock().unwrap().insert(transfer_id);
+    }
+
+    fn resume(&self, transfer_id: &str) {
+        self.paused.lock().unwrap().remove(transfer_id);
+    }
+}
+
 // ─── Mensajes al hilo de transferencia ──────────────────────────────────────
 
 type Reply<T> = mpsc::SyncSender<Result<T, String>>;
@@ -178,7 +219,7 @@ trait FileTransfer {
         transfer_id: &str,
         verify_size: bool,
         app: &AppHandle,
-        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+        controls: &Arc<TransferControls>,
     ) -> Result<(), String>;
     async fn upload(
         &mut self,
@@ -187,7 +228,7 @@ trait FileTransfer {
         transfer_id: &str,
         verify_size: bool,
         app: &AppHandle,
-        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+        controls: &Arc<TransferControls>,
     ) -> Result<(), String>;
     async fn close(&mut self);
 }
@@ -202,7 +243,7 @@ struct FtpBackend {
 
 struct SftpHandle {
     tx: mpsc::Sender<SftpCommand>,
-    canceled_transfers: Arc<Mutex<HashSet<String>>>,
+    controls: Arc<TransferControls>,
 }
 
 pub struct SftpManager {
@@ -233,10 +274,10 @@ impl SftpManager {
     ) -> Result<(), String> {
         let (tx, rx) = mpsc::channel::<SftpCommand>();
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
-        let canceled_transfers = Arc::new(Mutex::new(HashSet::<String>::new()));
+        let controls = Arc::new(TransferControls::new());
 
         let sid = session_id.clone();
-        let worker_canceled_transfers = Arc::clone(&canceled_transfers);
+        let worker_controls = Arc::clone(&controls);
         thread::spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -257,7 +298,7 @@ impl SftpManager {
                 rx,
                 ready_tx,
                 app_handle,
-                worker_canceled_transfers,
+                worker_controls,
             ));
         });
 
@@ -269,13 +310,10 @@ impl SftpManager {
 
         match ready_result {
             Ok(Ok(())) => {
-                self.sessions.lock().unwrap().insert(
-                    session_id,
-                    SftpHandle {
-                        tx,
-                        canceled_transfers,
-                    },
-                );
+                self.sessions
+                    .lock()
+                    .unwrap()
+                    .insert(session_id, SftpHandle { tx, controls });
                 Ok(())
             }
             Ok(Err(e)) => Err(e),
@@ -442,11 +480,25 @@ impl SftpManager {
         let Some(handle) = sessions.get(session_id) else {
             return Err("Sesión de ficheros no encontrada".to_string());
         };
-        handle
-            .canceled_transfers
-            .lock()
-            .unwrap()
-            .insert(transfer_id);
+        handle.controls.cancel(transfer_id);
+        Ok(())
+    }
+
+    pub fn pause_transfer(&self, session_id: &str, transfer_id: String) -> Result<(), String> {
+        let sessions = self.sessions.lock().unwrap();
+        let Some(handle) = sessions.get(session_id) else {
+            return Err("Sesión de ficheros no encontrada".to_string());
+        };
+        handle.controls.pause(transfer_id);
+        Ok(())
+    }
+
+    pub fn resume_transfer(&self, session_id: &str, transfer_id: String) -> Result<(), String> {
+        let sessions = self.sessions.lock().unwrap();
+        let Some(handle) = sessions.get(session_id) else {
+            return Err("Sesión de ficheros no encontrada".to_string());
+        };
+        handle.controls.resume(&transfer_id);
         Ok(())
     }
 
@@ -482,7 +534,7 @@ async fn run_sftp_worker(
     rx: mpsc::Receiver<SftpCommand>,
     ready: mpsc::SyncSender<Result<(), String>>,
     app_handle: AppHandle,
-    canceled_transfers: Arc<Mutex<HashSet<String>>>,
+    controls: Arc<TransferControls>,
 ) {
     let mut backend = match connect_and_open_backend(
         &profile,
@@ -550,7 +602,7 @@ async fn run_sftp_worker(
                         &transfer_id,
                         verify_size,
                         &app_handle,
-                        &canceled_transfers,
+                        &controls,
                     )
                     .await;
                 let _ = reply.send(res);
@@ -569,7 +621,7 @@ async fn run_sftp_worker(
                         &transfer_id,
                         verify_size,
                         &app_handle,
-                        &canceled_transfers,
+                        &controls,
                     )
                     .await;
                 let _ = reply.send(res);
@@ -590,7 +642,7 @@ async fn run_sftp_worker(
                     conflict_policy,
                     verify_size,
                     &app_handle,
-                    &canceled_transfers,
+                    &controls,
                 )
                 .await;
                 let _ = reply.send(res);
@@ -611,7 +663,7 @@ async fn run_sftp_worker(
                     conflict_policy,
                     verify_size,
                     &app_handle,
-                    &canceled_transfers,
+                    &controls,
                 )
                 .await;
                 let _ = reply.send(res);
@@ -684,8 +736,20 @@ async fn connect_and_open_sftp(
     app_handle: &AppHandle,
     session_id: &str,
 ) -> Result<SftpSession, String> {
+    // window_size / maximum_packet_size de la config por defecto de russh
+    // (2 MiB / 32 KiB) capan el throughput a ~window_size/RTT: con 25 ms de
+    // RTT el techo queda en ~80 MB/s y baja drásticamente con RTTs mayores,
+    // independientemente del pipelining SFTP. Subimos la ventana del canal a
+    // 32 MiB y el paquete máximo al tope permitido (65535) para que el
+    // pipeline de 16 × 256 KiB no se vea estrangulado por WINDOW_ADJUST.
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
+        window_size: 32 * 1024 * 1024,
+        maximum_packet_size: 65535,
+        keepalive_interval: Some(Duration::from_secs(
+            crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_SECS,
+        )),
+        keepalive_max: crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_MAX,
         ..Default::default()
     });
 
@@ -699,7 +763,9 @@ async fn connect_and_open_sftp(
     );
     let (client_handler, host_key_failure) =
         host_keys::client(profile.host.clone(), profile.port, false, false);
-    let mut handle = match client::connect(config, addr.clone(), client_handler).await {
+    let mut handle = match crate::ssh_manager::russh_connect_addr(config, &addr, client_handler)
+        .await
+    {
         Ok(handle) => handle,
         Err(err) => {
             let reason = host_keys::take_failure(&host_key_failure)
@@ -982,7 +1048,7 @@ impl FileTransfer for SftpBackend {
         transfer_id: &str,
         verify_size: bool,
         app: &AppHandle,
-        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+        controls: &Arc<TransferControls>,
     ) -> Result<(), String> {
         do_download(
             &self.sftp,
@@ -991,7 +1057,7 @@ impl FileTransfer for SftpBackend {
             transfer_id,
             verify_size,
             app,
-            canceled_transfers,
+            controls,
         )
         .await
     }
@@ -1003,7 +1069,7 @@ impl FileTransfer for SftpBackend {
         transfer_id: &str,
         verify_size: bool,
         app: &AppHandle,
-        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+        controls: &Arc<TransferControls>,
     ) -> Result<(), String> {
         do_upload(
             &self.sftp,
@@ -1012,7 +1078,7 @@ impl FileTransfer for SftpBackend {
             transfer_id,
             verify_size,
             app,
-            canceled_transfers,
+            controls,
         )
         .await
     }
@@ -1151,7 +1217,7 @@ impl FtpConnection {
         total: u64,
         transfer_id: &str,
         app: &AppHandle,
-        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+        controls: &Arc<TransferControls>,
     ) -> Result<(), String> {
         if let Some(parent) = local.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -1167,7 +1233,7 @@ impl FtpConnection {
                     total,
                     transfer_id,
                     app,
-                    canceled_transfers,
+                    controls,
                 )?;
                 ftp.finalize_retr_stream(remote_file)
                     .map_err(|e| e.to_string())?;
@@ -1180,7 +1246,7 @@ impl FtpConnection {
                     total,
                     transfer_id,
                     app,
-                    canceled_transfers,
+                    controls,
                 )?;
                 ftp.finalize_retr_stream(remote_file)
                     .map_err(|e| e.to_string())?;
@@ -1196,7 +1262,7 @@ impl FtpConnection {
         total: u64,
         transfer_id: &str,
         app: &AppHandle,
-        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+        controls: &Arc<TransferControls>,
     ) -> Result<(), String> {
         let mut local_file = std::fs::File::open(local).map_err(|e| e.to_string())?;
         match self {
@@ -1208,7 +1274,7 @@ impl FtpConnection {
                     total,
                     transfer_id,
                     app,
-                    canceled_transfers,
+                    controls,
                 )?;
                 ftp.finalize_put_stream(remote_file)
                     .map_err(|e| e.to_string())?;
@@ -1221,7 +1287,7 @@ impl FtpConnection {
                     total,
                     transfer_id,
                     app,
-                    canceled_transfers,
+                    controls,
                 )?;
                 ftp.finalize_put_stream(remote_file)
                     .map_err(|e| e.to_string())?;
@@ -1282,12 +1348,12 @@ impl FileTransfer for FtpBackend {
         transfer_id: &str,
         verify_size: bool,
         app: &AppHandle,
-        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+        controls: &Arc<TransferControls>,
     ) -> Result<(), String> {
         let entry = ftp_stat(&mut self.ftp, remote)?;
         let total = entry.size;
         self.ftp
-            .download_to(remote, local, total, transfer_id, app, canceled_transfers)?;
+            .download_to(remote, local, total, transfer_id, app, controls)?;
         if verify_size {
             let written = std::fs::metadata(local)
                 .map_err(|e| format!("verificación local: {e}"))?
@@ -1308,11 +1374,11 @@ impl FileTransfer for FtpBackend {
         transfer_id: &str,
         verify_size: bool,
         app: &AppHandle,
-        canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+        controls: &Arc<TransferControls>,
     ) -> Result<(), String> {
         let total = std::fs::metadata(local).map_err(|e| e.to_string())?.len();
         self.ftp
-            .upload_from(local, remote, total, transfer_id, app, canceled_transfers)?;
+            .upload_from(local, remote, total, transfer_id, app, controls)?;
         if verify_size {
             let written = self
                 .ftp
@@ -1483,7 +1549,7 @@ async fn do_download(
     transfer_id: &str,
     verify_size: bool,
     app: &AppHandle,
-    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
     let meta = sftp
         .metadata(remote.to_string())
@@ -1507,7 +1573,7 @@ async fn do_download(
         total,
         transfer_id,
         app,
-        canceled_transfers,
+        controls,
     )
     .await?;
     drop(local_file);
@@ -1534,7 +1600,7 @@ async fn do_upload(
     transfer_id: &str,
     verify_size: bool,
     app: &AppHandle,
-    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
     let meta = tokio::fs::metadata(local)
         .await
@@ -1548,7 +1614,7 @@ async fn do_upload(
         total,
         transfer_id,
         app,
-        canceled_transfers,
+        controls,
     )
     .await?;
 
@@ -1578,7 +1644,7 @@ async fn pipelined_download(
     total: u64,
     transfer_id: &str,
     app: &AppHandle,
-    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
     let event = format!("sftp-progress-{transfer_id}");
     let _ = app.emit(
@@ -1607,8 +1673,9 @@ async fn pipelined_download(
     let mut completed: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
     let mut in_flight: FuturesUnordered<_> = FuturesUnordered::new();
 
+    let mut was_paused = false;
     loop {
-        if canceled_transfers.lock().unwrap().remove(transfer_id) {
+        if controls.take_cancel(transfer_id) {
             let _ = app.emit(
                 &event,
                 serde_json::json!({
@@ -1618,18 +1685,45 @@ async fn pipelined_download(
             return Err("transferencia cancelada".to_string());
         }
 
-        while !idle_files.is_empty() && next_read < total {
-            let mut f = idle_files.pop().unwrap();
-            let len = (total - next_read).min(SFTP_CHUNK);
-            let off = next_read;
-            next_read += len;
-            in_flight.push(async move {
-                let res = read_chunk_at(&mut f, off, len).await;
-                (f, off, res)
-            });
+        // Pausa: dejamos terminar lo que ya está en vuelo, no encolamos nuevos
+        // chunks y dormimos breves intervalos hasta que el usuario reanude o
+        // cancele. Mantenemos handles SFTP abiertos para no perder posición.
+        let paused = controls.is_paused(transfer_id);
+        if paused && !was_paused {
+            let _ = app.emit(
+                &event,
+                serde_json::json!({
+                    "transferred": transferred, "total": total, "done": false, "paused": true,
+                }),
+            );
+        } else if !paused && was_paused {
+            let _ = app.emit(
+                &event,
+                serde_json::json!({
+                    "transferred": transferred, "total": total, "done": false, "paused": false,
+                }),
+            );
+        }
+        was_paused = paused;
+
+        if !paused {
+            while !idle_files.is_empty() && next_read < total {
+                let mut f = idle_files.pop().unwrap();
+                let len = (total - next_read).min(SFTP_CHUNK);
+                let off = next_read;
+                next_read += len;
+                in_flight.push(async move {
+                    let res = read_chunk_at(&mut f, off, len).await;
+                    (f, off, res)
+                });
+            }
         }
 
         if in_flight.is_empty() {
+            if paused {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                continue;
+            }
             break;
         }
 
@@ -1700,7 +1794,7 @@ async fn pipelined_upload(
     total: u64,
     transfer_id: &str,
     app: &AppHandle,
-    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
     let event = format!("sftp-progress-{transfer_id}");
     let _ = app.emit(
@@ -1745,9 +1839,10 @@ async fn pipelined_upload(
     let mut transferred: u64 = 0;
     let mut last_emit: u64 = 0;
     let mut in_flight: FuturesUnordered<_> = FuturesUnordered::new();
+    let mut was_paused = false;
 
     loop {
-        if canceled_transfers.lock().unwrap().remove(transfer_id) {
+        if controls.take_cancel(transfer_id) {
             let _ = app.emit(
                 &event,
                 serde_json::json!({
@@ -1757,35 +1852,59 @@ async fn pipelined_upload(
             return Err("transferencia cancelada".to_string());
         }
 
-        while !idle_files.is_empty() && next_offset < total {
-            let mut f = idle_files.pop().unwrap();
-            let len = (total - next_offset).min(SFTP_CHUNK);
-            let off = next_offset;
-            next_offset += len;
+        let paused = controls.is_paused(transfer_id);
+        if paused && !was_paused {
+            let _ = app.emit(
+                &event,
+                serde_json::json!({
+                    "transferred": transferred, "total": total, "done": false, "paused": true,
+                }),
+            );
+        } else if !paused && was_paused {
+            let _ = app.emit(
+                &event,
+                serde_json::json!({
+                    "transferred": transferred, "total": total, "done": false, "paused": false,
+                }),
+            );
+        }
+        was_paused = paused;
 
-            let mut buf = vec![0u8; len as usize];
-            let mut filled = 0usize;
-            while filled < buf.len() {
-                match local_file.read(&mut buf[filled..]).await {
-                    Ok(0) => break,
-                    Ok(n) => filled += n,
-                    Err(e) => return Err(e.to_string()),
+        if !paused {
+            while !idle_files.is_empty() && next_offset < total {
+                let mut f = idle_files.pop().unwrap();
+                let len = (total - next_offset).min(SFTP_CHUNK);
+                let off = next_offset;
+                next_offset += len;
+
+                let mut buf = vec![0u8; len as usize];
+                let mut filled = 0usize;
+                while filled < buf.len() {
+                    match local_file.read(&mut buf[filled..]).await {
+                        Ok(0) => break,
+                        Ok(n) => filled += n,
+                        Err(e) => return Err(e.to_string()),
+                    }
                 }
-            }
-            if filled == 0 {
-                idle_files.push(f);
-                next_offset = total; // forzar fin del bucle externo
-                break;
-            }
-            buf.truncate(filled);
+                if filled == 0 {
+                    idle_files.push(f);
+                    next_offset = total; // forzar fin del bucle externo
+                    break;
+                }
+                buf.truncate(filled);
 
-            in_flight.push(async move {
-                let res = write_chunk_at(&mut f, off, &buf).await;
-                (f, filled as u64, res)
-            });
+                in_flight.push(async move {
+                    let res = write_chunk_at(&mut f, off, &buf).await;
+                    (f, filled as u64, res)
+                });
+            }
         }
 
         if in_flight.is_empty() {
+            if paused {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                continue;
+            }
             break;
         }
 
@@ -1863,7 +1982,7 @@ fn transfer_copy_blocking<R, W>(
     total: u64,
     transfer_id: &str,
     app: &AppHandle,
-    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    controls: &Arc<TransferControls>,
 ) -> Result<(), String>
 where
     R: Read,
@@ -1881,8 +2000,9 @@ where
         }),
     );
 
+    let mut was_paused = false;
     loop {
-        if canceled_transfers.lock().unwrap().remove(transfer_id) {
+        if controls.take_cancel(transfer_id) {
             let _ = app.emit(
                 &event,
                 serde_json::json!({
@@ -1890,6 +2010,33 @@ where
                 }),
             );
             return Err("transferencia cancelada".to_string());
+        }
+
+        // En FTP/FTPS el copy es serie sobre un stream síncrono. Pausamos
+        // bloqueando el hilo del worker con sleeps cortos: el stream queda
+        // ocioso pero la conexión sigue viva (el server puede tirarla por
+        // idle si la pausa es muy larga; aceptable).
+        let paused = controls.is_paused(transfer_id);
+        if paused {
+            if !was_paused {
+                let _ = app.emit(
+                    &event,
+                    serde_json::json!({
+                        "transferred": transferred, "total": total, "done": false, "paused": true,
+                    }),
+                );
+                was_paused = true;
+            }
+            std::thread::sleep(Duration::from_millis(150));
+            continue;
+        } else if was_paused {
+            let _ = app.emit(
+                &event,
+                serde_json::json!({
+                    "transferred": transferred, "total": total, "done": false, "paused": false,
+                }),
+            );
+            was_paused = false;
         }
 
         let n = src.read(&mut buf).map_err(|e| e.to_string())?;
@@ -2017,7 +2164,7 @@ async fn do_download_dir(
     conflict_policy: TransferConflictPolicy,
     verify_size: bool,
     app: &AppHandle,
-    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
     tokio::fs::create_dir_all(local)
         .await
@@ -2058,7 +2205,7 @@ async fn do_download_dir(
                         &sub_id,
                         verify_size,
                         app,
-                        canceled_transfers,
+                        controls,
                     )
                     .await?;
             }
@@ -2083,7 +2230,7 @@ async fn do_upload_dir(
     conflict_policy: TransferConflictPolicy,
     verify_size: bool,
     app: &AppHandle,
-    canceled_transfers: &Arc<Mutex<HashSet<String>>>,
+    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
     let _ = backend.mkdir(remote).await; // ignorar si ya existe
     let summary_event = format!("sftp-progress-{transfer_id}");
@@ -2126,7 +2273,7 @@ async fn do_upload_dir(
                         &sub_id,
                         verify_size,
                         app,
-                        canceled_transfers,
+                        controls,
                     )
                     .await?;
             }

@@ -33,6 +33,78 @@ use crate::error::AppError;
 use crate::host_keys;
 use crate::profiles::{AuthType, ConnectionProfile, SshTunnelType};
 
+/// Timeout TCP por defecto al abrir la conexión inicial. Sin techo russh
+/// puede colgarse minutos si el destino no responde (puerto filtrado, host
+/// inalcanzable). 30 s es agresivo pero permite reintentos rápidos.
+pub(crate) const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Intervalo SSH keepalive cuando el perfil no especifica `keep_alive_secs`.
+/// 30 s es suficientemente frecuente para mantener vivas conexiones detrás de
+/// NAT con timeout típico de 60-120 s.
+pub(crate) const DEFAULT_SSH_KEEPALIVE_SECS: u64 = 30;
+/// Tras N keepalives sin respuesta russh tira la conexión. Con keepalive_max=4
+/// y un intervalo de 30 s sobrevivimos a ~2 min de microcortes antes de
+/// declarar la sesión muerta.
+pub(crate) const DEFAULT_SSH_KEEPALIVE_MAX: usize = 4;
+/// Intentos del connect inicial. Con backoff 1s/2s/4s la latencia añadida en
+/// el peor caso es ~7 s.
+pub(crate) const TCP_CONNECT_MAX_ATTEMPTS: u32 = 3;
+
+/// Abre un `TcpStream` al destino con SO_KEEPALIVE activo y timeout. La
+/// detección de microcortes a nivel SO (TCP_KEEPIDLE/INTVL) complementa al
+/// keepalive de SSH cuando el peer no responde a paquetes de aplicación.
+pub(crate) async fn tcp_connect_robust(addr: &str) -> Result<TcpStream, String> {
+    let stream = tokio::time::timeout(TCP_CONNECT_TIMEOUT, TcpStream::connect(addr))
+        .await
+        .map_err(|_| format!("Timeout TCP conectando a {addr}"))?
+        .map_err(|e| format!("TCP {addr}: {e}"))?;
+    apply_socket_keepalive(&stream);
+    Ok(stream)
+}
+
+/// Reemplazo drop-in de `client::connect(config, addr, handler)` que aplica
+/// TCP keepalive del SO + timeout antes de delegar en `connect_stream`. Mismo
+/// tipo de retorno que `client::connect` para no romper los call-sites.
+pub(crate) async fn russh_connect_addr<H>(
+    config: Arc<client::Config>,
+    addr: &str,
+    handler: H,
+) -> Result<client::Handle<H>, russh::Error>
+where
+    H: client::Handler<Error = russh::Error> + Send + 'static,
+{
+    let stream = tcp_connect_robust(addr)
+        .await
+        .map_err(|e| russh::Error::IO(std::io::Error::other(e)))?;
+    client::connect_stream(config, stream, handler).await
+}
+
+/// Activa SO_KEEPALIVE con probes a 30 s de idle y 15 s entre probes en
+/// plataformas donde socket2 lo soporta. Cualquier fallo se ignora: el
+/// socket sigue funcionando, solo perdemos la detección temprana de cortes.
+fn apply_socket_keepalive(stream: &TcpStream) {
+    use socket2::{SockRef, TcpKeepalive};
+    let sock = SockRef::from(stream);
+    let _ = sock.set_nodelay(true);
+    let mut ka = TcpKeepalive::new().with_time(Duration::from_secs(30));
+    // `with_interval` y `with_retries` no están disponibles en todas las
+    // plataformas; aplicamos lo que el target permita.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "android",
+        target_os = "windows"
+    ))]
+    {
+        ka = ka.with_interval(Duration::from_secs(15));
+    }
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "android"))]
+    {
+        ka = ka.with_retries(4);
+    }
+    let _ = sock.set_tcp_keepalive(&ka);
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshTunnelConfig {
@@ -477,7 +549,8 @@ async fn run_connection_test(
     };
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(30)),
-        keepalive_interval: None,
+        keepalive_interval: Some(Duration::from_secs(DEFAULT_SSH_KEEPALIVE_SECS)),
+        keepalive_max: DEFAULT_SSH_KEEPALIVE_MAX,
         preferred,
         ..Default::default()
     });
@@ -516,7 +589,7 @@ async fn run_connection_test(
             "info",
             format!("Verificando host key del bastion {b_host}:{b_port}"),
         );
-        let mut bastion = client::connect(config.clone(), bastion_addr.clone(), bastion_handler)
+        let mut bastion = russh_connect_addr(config.clone(), &bastion_addr, bastion_handler)
             .await
             .map_err(|err| {
                 host_keys::take_failure(&bastion_failure)
@@ -634,7 +707,7 @@ async fn run_connection_test(
             "info",
             format!("Verificando host key de {addr}"),
         );
-        client::connect(config, addr.clone(), client_handler)
+        russh_connect_addr(config, &addr, client_handler)
             .await
             .map_err(|err| {
                 host_keys::take_failure(&host_key_failure)
@@ -774,7 +847,8 @@ async fn run_session(
     let keepalive_interval = profile
         .keep_alive_secs
         .filter(|s| *s > 0)
-        .map(|s| Duration::from_secs(s as u64));
+        .map(|s| Duration::from_secs(s as u64))
+        .unwrap_or_else(|| Duration::from_secs(DEFAULT_SSH_KEEPALIVE_SECS));
     let preferred = if profile.allow_legacy_algorithms {
         legacy_preferred()
     } else {
@@ -782,7 +856,8 @@ async fn run_session(
     };
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
-        keepalive_interval,
+        keepalive_interval: Some(keepalive_interval),
+        keepalive_max: DEFAULT_SSH_KEEPALIVE_MAX,
         preferred,
         ..Default::default()
     });
@@ -823,7 +898,7 @@ async fn run_session(
             format!("Verificando host key del bastion {b_host}:{b_port}"),
         );
         let mut bastion =
-            match client::connect(config.clone(), bastion_addr.clone(), bastion_handler).await {
+            match russh_connect_addr(config.clone(), &bastion_addr, bastion_handler).await {
                 Ok(h) => h,
                 Err(err) => {
                     if let Some(reason) = host_keys::take_failure(&bastion_failure) {
@@ -967,8 +1042,55 @@ async fn run_session(
             "info",
             format!("Verificando host key de {addr}"),
         );
-        match client::connect(config, addr.clone(), client_handler).await {
-            Ok(handle) => {
+        // Reintento del connect inicial con backoff. Solo reintentamos
+        // errores de transporte (timeout TCP, "connection refused", etc.). Un
+        // fallo de host key es fatal y se sale inmediatamente.
+        let mut handle_opt = None;
+        let mut last_err: String = String::new();
+        let mut current_handler = Some(client_handler);
+        let mut current_failure = Some(host_key_failure);
+        for attempt in 0..TCP_CONNECT_MAX_ATTEMPTS {
+            let handler = current_handler.take().unwrap();
+            let failure = current_failure.take().unwrap();
+            match russh_connect_addr(config.clone(), &addr, handler).await {
+                Ok(h) => {
+                    handle_opt = Some(h);
+                    break;
+                }
+                Err(err) => {
+                    if let Some(reason) = host_keys::take_failure(&failure) {
+                        return SessionExit::Fatal(AppError::Auth(reason));
+                    }
+                    last_err = err.to_string();
+                    if attempt + 1 < TCP_CONNECT_MAX_ATTEMPTS {
+                        let backoff = Duration::from_secs(1u64 << attempt);
+                        emit_connection_log(
+                            &app_handle,
+                            &session_id,
+                            "connecting",
+                            "warning",
+                            format!(
+                                "Intento {} fallido ({last_err}). Reintentando en {}s…",
+                                attempt + 1,
+                                backoff.as_secs()
+                            ),
+                        );
+                        tokio::time::sleep(backoff).await;
+                        let next = host_keys::client_with_remote_forwards(
+                            profile.host.clone(),
+                            profile.port,
+                            profile.agent_forwarding,
+                            profile.x11_forwarding,
+                            remote_forwards.clone(),
+                        );
+                        current_handler = Some(next.0);
+                        current_failure = Some(next.1);
+                    }
+                }
+            }
+        }
+        match handle_opt {
+            Some(h) => {
                 emit_connection_log(
                     &app_handle,
                     &session_id,
@@ -976,22 +1098,19 @@ async fn run_session(
                     "ok",
                     format!("TCP/SSH establecido con {addr}"),
                 );
-                handle
+                h
             }
-            Err(err) => {
-                if let Some(reason) = host_keys::take_failure(&host_key_failure) {
-                    return SessionExit::Fatal(AppError::Auth(reason));
-                }
+            None => {
                 emit_connection_log(
                     &app_handle,
                     &session_id,
                     "connecting",
                     "error",
-                    format!("No se puede conectar a {addr}: {err}"),
+                    format!("No se puede conectar a {addr}: {last_err}"),
                 );
                 let _ = app_handle.emit(
                     &format!("ssh-error-{}", session_id),
-                    format!("No se puede conectar a {addr}: {err}"),
+                    format!("No se puede conectar a {addr}: {last_err}"),
                 );
                 return SessionExit::ServerClosed;
             }

@@ -144,6 +144,8 @@ pub fn run() {
             commands::sftp_download_dir,
             commands::sftp_upload_dir,
             commands::sftp_cancel_transfer,
+            commands::sftp_pause_transfer,
+            commands::sftp_resume_transfer,
             // ── FS local (panel SFTP partido)
             commands::local_list_dir,
             commands::local_home_dir,

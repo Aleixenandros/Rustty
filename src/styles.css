@@ -983,6 +983,16 @@ body.window-maximized .win-ctrl .ico-restore { display: block; }
   box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--yellow) 80%, transparent);
 }
 
+/* `disconnect` gana sobre activity/important: la sesión murió o falló. */
+.tab.has-unread-disconnect:not(.active) {
+  background:
+    linear-gradient(90deg,
+      color-mix(in srgb, var(--red) 26%, transparent),
+      transparent 58%),
+    var(--mantle);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--red) 80%, transparent);
+}
+
 .tab.has-unread-activity:not(.active) .tab-dot {
   background: var(--blue);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 18%, transparent);
@@ -991,6 +1001,11 @@ body.window-maximized .win-ctrl .ico-restore { display: block; }
 .tab.has-unread-important:not(.active) .tab-dot {
   background: var(--yellow);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--yellow) 22%, transparent);
+}
+
+.tab.has-unread-disconnect:not(.active) .tab-dot {
+  background: var(--red);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 22%, transparent);
 }
 
 .tab.has-unread-activity:not(.active) .tab-name::after {
@@ -1006,6 +1021,10 @@ body.window-maximized .win-ctrl .ico-restore { display: block; }
 
 .tab.has-unread-important:not(.active) .tab-name::after {
   background: var(--yellow);
+}
+
+.tab.has-unread-disconnect:not(.active) .tab-name::after {
+  background: var(--red);
 }
 
 @keyframes tab-unread-glow {
@@ -1214,6 +1233,33 @@ body.has-session-tabs .tab-home .tab-name {
 
 .terminal-reconnect-btn:hover {
   background: color-mix(in srgb, var(--blue) 28%, transparent);
+}
+
+.terminal-reconnect-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.terminal-reconnect-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--blue) 35%, transparent);
+  border-top-color: var(--blue);
+  display: none;
+  animation: rustty-reconnect-spin 0.8s linear infinite;
+}
+
+.terminal-reconnect-overlay.reconnecting .terminal-reconnect-spinner {
+  display: inline-block;
+}
+
+.terminal-reconnect-overlay.reconnecting .terminal-reconnect-title {
+  color: var(--blue);
+}
+
+@keyframes rustty-reconnect-spin {
+  to { transform: rotate(360deg); }
 }
 
 .connection-log-row-dot {
@@ -4816,7 +4862,9 @@ body.sftp-log-resizing {
 }
 
 .sftp-transfer-close,
-.sftp-transfer-retry {
+.sftp-transfer-retry,
+.sftp-transfer-pause,
+.sftp-transfer-resume {
   background: transparent;
   border: none;
   color: var(--overlay0);
@@ -4828,7 +4876,18 @@ body.sftp-log-resizing {
   border-radius: 2px;
 }
 .sftp-transfer-close:hover,
-.sftp-transfer-retry:hover { background: var(--surface0); color: var(--text); }
+.sftp-transfer-retry:hover,
+.sftp-transfer-pause:hover,
+.sftp-transfer-resume:hover { background: var(--surface0); color: var(--text); }
+
+.sftp-transfer.paused .sftp-transfer-fill {
+  background: var(--yellow);
+  opacity: 0.7;
+}
+.sftp-transfer.paused .sftp-transfer-text::after {
+  content: " · en pausa";
+  color: var(--yellow);
+}
 
 .sftp-transfer.done .sftp-transfer-fill {
   background: var(--green);

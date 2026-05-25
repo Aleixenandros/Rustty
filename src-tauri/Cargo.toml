@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.7.1"
+version = "1.8.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -30,6 +30,9 @@ russh-sftp = "2"
 suppaftp = { version = "8.0.3", features = ["rustls-ring"] }
 webpki-roots = "1"
 tokio = { version = "1", features = ["rt", "net", "io-util", "io-std", "sync", "fs", "macros", "time"] }
+# Configuración fina de sockets TCP (SO_KEEPALIVE + TCP_KEEPIDLE/INTVL) para
+# detectar caídas de NAT/microcortes en sesiones SSH/SFTP idle.
+socket2 = { version = "0.5", features = ["all"] }
 # CLI SSH sin interfaz gráfica: modo raw del terminal y prompts secretos.
 crossterm = "0.29"
 rpassword = "7"

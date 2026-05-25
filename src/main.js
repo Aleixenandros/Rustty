@@ -5304,19 +5304,33 @@ function updateBroadcastClasses() {
   if (btn) btn.classList.toggle("active", on);
 }
 
-function markTabActivity(sessionId, { important = false } = {}) {
+// Niveles de aviso en la pestaña, de menor a mayor severidad:
+//   - actividad normal: output del terminal → azul/naranja (CSS por tema)
+//   - important: aviso (reconectando, transfer terminada, etc.) → amarillo
+//   - disconnect: la sesión murió o tuvo un error fatal → rojo
+// `disconnect` gana sobre `important`; `important` gana sobre actividad normal.
+function markTabActivity(sessionId, { important = false, kind = null } = {}) {
   if (!sessionId) return;
   if (sessionId === activeSessionId && !document.hidden) return;
   const tab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
   if (!tab) return;
   tab.classList.add("has-unread-activity");
-  tab.classList.toggle("has-unread-important", Boolean(important));
+  if (kind === "disconnect") {
+    tab.classList.add("has-unread-disconnect");
+    tab.classList.remove("has-unread-important");
+  } else if (important && !tab.classList.contains("has-unread-disconnect")) {
+    tab.classList.add("has-unread-important");
+  }
 }
 
 function clearTabActivity(sessionId) {
   if (!sessionId) return;
   const tab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
-  tab?.classList.remove("has-unread-activity", "has-unread-important");
+  tab?.classList.remove(
+    "has-unread-activity",
+    "has-unread-important",
+    "has-unread-disconnect",
+  );
 }
 
 /**
@@ -5548,7 +5562,12 @@ function setSftpFollow(sessionId, enabled, button = null) {
 async function reconnectSession(sessionId) {
   const s = sessions.get(sessionId);
   if (!s || !["closed", "error"].includes(s.status)) return;
-  hideReconnectOverlay(sessionId);
+  // Mostramos el overlay en modo "Reconectando…" inmediatamente para que el
+  // usuario vea feedback al pulsar Intro/Reconectar. El handler de
+  // `ssh-connected-*` (o el de éxito de local_shell_open) lo ocultará; si
+  // falla, las catch blocks de reconnect*InPlace lo vuelven a mostrar como
+  // error con botón activo.
+  showReconnectingOverlay(sessionId);
   if (s._closeOverride) {
     await reconnectLocalInPlace(s);
   } else if (s.profileId) {
@@ -5588,7 +5607,7 @@ async function reconnectLocalInPlace(s) {
       renderDashboard();
       showReconnectOverlay(sessionId, "Consola cerrada");
       s.terminal.writeln(`\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
-      markTabActivity(sessionId, { important: true });
+      markTabActivity(sessionId, { kind: "disconnect" });
     });
     s.unlisteners.push(ul, ulClose);
   } catch (err) {
@@ -5981,6 +6000,7 @@ function buildReconnectOverlay(sessionId) {
   overlay.className = "terminal-reconnect-overlay hidden";
   overlay.innerHTML = `
     <div class="terminal-reconnect-box">
+      <span class="terminal-reconnect-spinner" aria-hidden="true"></span>
       <div class="terminal-reconnect-title">Sesión cerrada</div>
       <button type="button" class="terminal-reconnect-btn">Reconectar</button>
     </div>
@@ -5995,14 +6015,41 @@ function showReconnectOverlay(sessionId, title = "Sesión cerrada") {
   const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
   const overlay = pane?.querySelector(".terminal-reconnect-overlay");
   if (!overlay) return;
+  overlay.classList.remove("reconnecting");
   overlay.querySelector(".terminal-reconnect-title").textContent = title;
+  overlay.querySelector(".terminal-reconnect-btn").disabled = false;
+  overlay.querySelector(".terminal-reconnect-btn").textContent = "Reconectar";
+  overlay.classList.remove("hidden");
+}
+
+// Reutiliza el mismo overlay para mostrar feedback "Reconectando…" mientras
+// dura el invoke. El botón se deshabilita (con etiqueta "…") y aparece un
+// spinner. `hideReconnectOverlay` lo retira al recibir `ssh-connected`; si
+// falla, `showReconnectOverlay` lo vuelve a poner en su estado anterior.
+function showReconnectingOverlay(sessionId, title = "Reconectando…") {
+  const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
+  const overlay = pane?.querySelector(".terminal-reconnect-overlay");
+  if (!overlay) return;
+  overlay.classList.add("reconnecting");
+  overlay.querySelector(".terminal-reconnect-title").textContent = title;
+  const btn = overlay.querySelector(".terminal-reconnect-btn");
+  btn.disabled = true;
+  btn.textContent = "…";
   overlay.classList.remove("hidden");
 }
 
 function hideReconnectOverlay(sessionId) {
-  document
-    .querySelector(`.terminal-pane[data-session="${sessionId}"] .terminal-reconnect-overlay`)
-    ?.classList.add("hidden");
+  const overlay = document.querySelector(
+    `.terminal-pane[data-session="${sessionId}"] .terminal-reconnect-overlay`,
+  );
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+  overlay.classList.remove("reconnecting");
+  const btn = overlay.querySelector(".terminal-reconnect-btn");
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "Reconectar";
+  }
 }
 
 function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
@@ -6244,6 +6291,12 @@ async function registerSshListeners(sessionId, terminal) {
     });
     hideReconnectOverlay(sessionId);
     updateTabStatus(sessionId, "connected");
+    // Al recuperar la sesión, el marcador rojo de desconexión deja de ser
+    // cierto. Mantenemos el resto de activity flags (lo que pase tras el
+    // reconnect sigue siendo "actividad").
+    document
+      .querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`)
+      ?.classList.remove("has-unread-disconnect");
     if (s?.profileId) recordRecentConnection(s.profileId);
     renderConnectionList();
     s?.fitAddon.fit();
@@ -6263,7 +6316,7 @@ async function registerSshListeners(sessionId, terminal) {
     updateTabStatus(sessionId, "error");
     showReconnectOverlay(sessionId, "Error de conexión");
     terminal.writeln(`\r\n\x1b[31m✗ Error: ${e.payload}\x1b[0m\r\n`);
-    markTabActivity(sessionId, { important: true });
+    markTabActivity(sessionId, { kind: "disconnect" });
     toast(`Error SSH: ${e.payload}`, "error");
   }));
 
@@ -6295,7 +6348,7 @@ async function registerSshListeners(sessionId, terminal) {
     updateTabStatus(sessionId, "error");
     showReconnectOverlay(sessionId, "Sesión cerrada");
     terminal.writeln(`\r\n\x1b[33m• ${t("terminal.closed")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
-    markTabActivity(sessionId, { important: true });
+    markTabActivity(sessionId, { kind: "disconnect" });
     renderConnectionList();
   }));
 
@@ -7036,7 +7089,7 @@ async function openLocalShell() {
       updateTabStatus(sessionId, "error");
       showReconnectOverlay(sessionId, "Consola cerrada");
       s.terminal.writeln(`\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
-      markTabActivity(sessionId, { important: true });
+      markTabActivity(sessionId, { kind: "disconnect" });
     });
     s.unlisteners.push(ul, ulClose);
 
@@ -8842,10 +8895,20 @@ function addTransfer(panel, label, transferId, detail = "") {
     <div class="sftp-transfer-bar"><div class="sftp-transfer-fill" style="width:0%"></div></div>
     <div class="sftp-transfer-detail">${escHtml(detail)}</div>
     <div class="sftp-transfer-actions">
+      <button class="sftp-transfer-pause hidden" title="Pausar">⏸</button>
+      <button class="sftp-transfer-resume hidden" title="Reanudar">▶</button>
       <button class="sftp-transfer-retry hidden" title="Reintentar">↻</button>
       <button class="sftp-transfer-close" title="Descartar / cancelar">✕</button>
     </div>
   `;
+  el.querySelector(".sftp-transfer-pause").addEventListener("click", () => {
+    const sessionId = panel.closest(".terminal-pane")?.dataset.session;
+    if (sessionId) pauseSftpTransfer(sessionId, transferId);
+  });
+  el.querySelector(".sftp-transfer-resume").addEventListener("click", () => {
+    const sessionId = panel.closest(".terminal-pane")?.dataset.session;
+    if (sessionId) resumeSftpTransfer(sessionId, transferId);
+  });
   el.querySelector(".sftp-transfer-retry").addEventListener("click", () => {
     const sessionId = panel.closest(".terminal-pane")?.dataset.session;
     if (sessionId) retrySftpTransfer(sessionId, transferId);
@@ -8857,7 +8920,7 @@ function addTransfer(panel, label, transferId, detail = "") {
       cancelQueuedSftpTransfer(sessionId, transferId);
       return;
     }
-    if (job?.status === "running") {
+    if (job?.status === "running" || job?.status === "paused") {
       setTransferState(el, "running", "Cancelando…");
       invoke("sftp_cancel_transfer", {
         sessionId: sessions.get(sessionId)?.sftp?.sftpSessionId,
@@ -8875,7 +8938,7 @@ function addTransfer(panel, label, transferId, detail = "") {
 
 function setTransferState(el, state, detail = "") {
   if (!el) return;
-  el.classList.remove("queued", "running", "done", "error", "skipped", "canceled");
+  el.classList.remove("queued", "running", "paused", "done", "error", "skipped", "canceled");
   el.classList.add(state);
   if (["done", "error", "skipped", "canceled"].includes(state)) el.classList.add("done");
   else el.classList.remove("done");
@@ -8884,18 +8947,47 @@ function setTransferState(el, state, detail = "") {
     "hidden",
     !["error", "skipped", "canceled"].includes(state),
   );
-  if (state === "running") {
+  el.querySelector(".sftp-transfer-pause")?.classList.toggle(
+    "hidden",
+    state !== "running",
+  );
+  el.querySelector(".sftp-transfer-resume")?.classList.toggle(
+    "hidden",
+    state !== "paused",
+  );
+  if (state === "queued") {
+    delete el.dataset.startedAt;
+  }
+  if (state === "running" && !el.dataset.startedAt) {
     el.dataset.startedAt = String(Date.now());
   }
 }
 
-function updateTransfer(el, { transferred, total, done }) {
+function updateTransfer(el, { transferred, total, done, paused }) {
+  // El backend envía `paused: true|false` al cambiar de estado. Reflejamos el
+  // estado visual aquí en vez de en setTransferState para no perder el flag
+  // si llega entremedias de otros eventos de progreso.
+  if (paused === true && !el.classList.contains("paused") && !el.classList.contains("done")) {
+    el.classList.remove("running");
+    el.classList.add("paused");
+    el.querySelector(".sftp-transfer-pause")?.classList.add("hidden");
+    el.querySelector(".sftp-transfer-resume")?.classList.remove("hidden");
+  } else if (paused === false && el.classList.contains("paused")) {
+    el.classList.remove("paused");
+    el.classList.add("running");
+    el.querySelector(".sftp-transfer-pause")?.classList.remove("hidden");
+    el.querySelector(".sftp-transfer-resume")?.classList.add("hidden");
+  }
   const pct = total > 0 ? Math.min(100, Math.round((transferred / total) * 100)) : 0;
   el.querySelector(".sftp-transfer-fill").style.width = pct + "%";
   const startedAt = parseInt(el.dataset.startedAt || "0", 10);
-  const elapsed = Math.max(0.001, (Date.now() - startedAt) / 1000);
+  const pausedAccumMs = parseInt(el.dataset.pausedMs || "0", 10);
+  const elapsed = Math.max(
+    0.001,
+    (Date.now() - startedAt - pausedAccumMs) / 1000,
+  );
   const speed = transferred > 0 ? transferred / elapsed : 0;
-  const eta = speed > 0 && total > transferred
+  const eta = speed > 0 && total > transferred && !el.classList.contains("paused")
     ? ` · ${formatDuration((total - transferred) / speed)}`
     : "";
   el.querySelector(".sftp-transfer-text").textContent =
@@ -8907,6 +8999,38 @@ function updateTransfer(el, { transferred, total, done }) {
     el.dataset.lastTransferred = String(transferred);
   }
   if (done) el.classList.add("done");
+}
+
+function pauseSftpTransfer(sessionId, transferId) {
+  const s = sessions.get(sessionId);
+  const job = s?.sftp?.transfers?.get(transferId);
+  if (!job || job.status !== "running") return;
+  job.status = "paused";
+  job.pausedAt = Date.now();
+  job.transferEl.dataset.pausedAt = String(job.pausedAt);
+  setTransferState(job.transferEl, "paused", "En pausa");
+  invoke("sftp_pause_transfer", {
+    sessionId: s.sftp.sftpSessionId,
+    transferId,
+  }).catch((err) => toast(`No se pudo pausar: ${err}`, "error"));
+}
+
+function resumeSftpTransfer(sessionId, transferId) {
+  const s = sessions.get(sessionId);
+  const job = s?.sftp?.transfers?.get(transferId);
+  if (!job || job.status !== "paused") return;
+  job.status = "running";
+  const pausedAt = parseInt(job.transferEl.dataset.pausedAt || "0", 10);
+  if (pausedAt > 0) {
+    const prev = parseInt(job.transferEl.dataset.pausedMs || "0", 10);
+    job.transferEl.dataset.pausedMs = String(prev + (Date.now() - pausedAt));
+    delete job.transferEl.dataset.pausedAt;
+  }
+  setTransferState(job.transferEl, "running", "Reanudando…");
+  invoke("sftp_resume_transfer", {
+    sessionId: s.sftp.sftpSessionId,
+    transferId,
+  }).catch((err) => toast(`No se pudo reanudar: ${err}`, "error"));
 }
 
 function markTransferSuccess(el, detail) {
