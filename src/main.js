@@ -8978,6 +8978,21 @@ function updateTransfer(el, { transferred, total, done, paused }) {
     el.querySelector(".sftp-transfer-pause")?.classList.remove("hidden");
     el.querySelector(".sftp-transfer-resume")?.classList.add("hidden");
   }
+  // En cuanto entra el primer byte real, el detalle "Preparando…" deja de
+  // ser cierto. Mostramos el estado descriptivo ("Descargando…" / "Subiendo…")
+  // o vaciamos si ya estamos en pausa (paused tiene su propio texto).
+  if (
+    transferred > 0 &&
+    !done &&
+    !el.classList.contains("paused") &&
+    el.classList.contains("running")
+  ) {
+    const detail = el.querySelector(".sftp-transfer-detail");
+    if (detail && (detail.textContent === "Preparando…" || detail.textContent === "Reanudando…")) {
+      const label = el.dataset.label || "";
+      detail.textContent = label.startsWith("⬇") ? "Descargando…" : "Subiendo…";
+    }
+  }
   const pct = total > 0 ? Math.min(100, Math.round((transferred / total) * 100)) : 0;
   el.querySelector(".sftp-transfer-fill").style.width = pct + "%";
   const startedAt = parseInt(el.dataset.startedAt || "0", 10);

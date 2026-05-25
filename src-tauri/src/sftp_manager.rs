@@ -742,6 +742,19 @@ async fn connect_and_open_sftp(
     // independientemente del pipelining SFTP. Subimos la ventana del canal a
     // 32 MiB y el paquete máximo al tope permitido (65535) para que el
     // pipeline de 16 × 256 KiB no se vea estrangulado por WINDOW_ADJUST.
+    //
+    // Además, russh hace rekey en 1 GiB exactos (RFC 4253 §9) y con
+    // pipelining + servidores reales se queda colgado en esa transición. Los
+    // campos `rekey_*_limit` de `Limits` son `pub` aunque `Limits::new()`
+    // tenga un `assert!(<= 1<<30)`. Los subimos a `usize::MAX` para
+    // desactivar el rekey por bytes durante la sesión SFTP (el rekey por
+    // tiempo de 1 h sigue activo). OpenSSH permite lo mismo con `RekeyLimit
+    // none`. Para sesiones SFTP de descarga/subida grande es la solución
+    // limpia: para sesiones SSH interactivas dejamos el default por
+    // higiene criptográfica en sesiones de días.
+    let mut limits = russh::Limits::default();
+    limits.rekey_write_limit = usize::MAX;
+    limits.rekey_read_limit = usize::MAX;
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
         window_size: 32 * 1024 * 1024,
@@ -750,6 +763,7 @@ async fn connect_and_open_sftp(
             crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_SECS,
         )),
         keepalive_max: crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_MAX,
+        limits,
         ..Default::default()
     });
 
@@ -1536,7 +1550,7 @@ const SFTP_CHUNK: u64 = 256 * 1024;
 // Peticiones SFTP simultáneas en vuelo durante una transferencia. Mantener N
 // peticiones a la vez satura el ancho de banda real cuando el RTT no es
 // despreciable (sin pipelining el techo es chunk_size / RTT).
-const SFTP_PIPELINE: usize = 16;
+const SFTP_PIPELINE: usize = 32;
 // russh renegocia claves al cruzar 1 GiB (límite recomendado por RFC 4253).
 // Durante esa ventana alguna petición SFTP puede tardar bastante más que los
 // 10s por defecto de russh-sftp, especialmente con pipeline y servidores lentos.
