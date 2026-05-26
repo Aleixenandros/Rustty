@@ -27,10 +27,11 @@ En **Preferencias → Terminal** puedes ajustar:
 - Tamaño de fuente.
 - Altura de línea.
 - Espaciado entre letras.
+- **Ligaduras tipográficas** (opcional). Requieren una fuente con soporte de ligaduras (FiraCode, JetBrains Mono, Cascadia Code, Iosevka, …). Se aplican únicamente a las sesiones nuevas que abras después de activarlas.
 - Scrollback.
 - Tema del terminal independiente.
 
-Los cambios se aplican a las sesiones abiertas cuando es posible.
+Los cambios se aplican a las sesiones abiertas cuando es posible. Además del atajo `Ctrl +/-/0`, puedes ajustar el tamaño de fuente con `Ctrl+Rueda` del ratón.
 
 ## Temas personalizados
 

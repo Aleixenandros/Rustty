@@ -46,6 +46,19 @@ sudo zypper install ./Rustty-*-1.x86_64.rpm     # openSUSE
 sudo pacman -U Rustty-*-1-x86_64.pkg.tar.zst
 ```
 
+### Flatpak
+
+A partir de la **v1.10.2** Rustty publica un bundle Flatpak independiente. No requiere añadir un remoto: el `.flatpak` se descarga del release y se instala con un comando.
+
+```bash
+flatpak install ./Rustty-*-x86_64.flatpak
+flatpak run es.rustty.Rustty
+```
+
+Requiere el runtime `org.freedesktop.Platform 24.08`; si no lo tienes lo descargará Flatpak la primera vez. El bundle pide acceso a `$HOME` (claves SSH, KeePass, known_hosts), al keyring del sistema (gnome-keyring / KWallet) y a los portales XDG para diálogos y notificaciones.
+
+> El paquete todavía no está en Flathub. Se publicará allí cuando migremos el manifest a un build offline reproducible (con `flatpak-cargo-generator` y `flatpak-node-generator`) y se cree la cuenta del proyecto.
+
 ## Windows
 
 En Windows 10 22H2 y Windows 11 el runtime **Microsoft Edge WebView2** viene preinstalado. Si tu sistema no lo tiene, el instalador MSI o NSIS lo descargará automáticamente.

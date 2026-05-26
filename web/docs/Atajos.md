@@ -25,14 +25,28 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl++`       | Aumentar tamaño de fuente                           |
 | `Ctrl+-`       | Disminuir tamaño de fuente                          |
 | `Ctrl+0`       | Restablecer tamaño de fuente                        |
+| `Ctrl+Rueda`   | Zoom del terminal con la rueda del ratón            |
 
 La búsqueda en el buffer abre una barra flotante con next/prev y un toggle de **case-sensitive**. Resalta todas las coincidencias sobre `@xterm/addon-search`.
 
+## Presets predefinidos
+
+Desde **Preferencias → Atajos** puedes aplicar de golpe un preset entero al mapa de atajos:
+
+- **Por defecto**: limpia overrides y deja cada acción con su atajo por omisión.
+- **Vim-like**: navegación entre paneles y pestañas con `Ctrl+Alt+H/J/K/L`; nueva conexión `Ctrl+Alt+N`, nueva consola `Ctrl+Alt+T`, cerrar pestaña `Ctrl+Alt+Q`, buscar en terminal `Ctrl+Alt+F`.
+- **Tmux-like**: aproxima la convención del prefix `C-b` con combinaciones `Alt+letra` sin chord — `Alt+N`/`Alt+P` para pestañas, `Alt+O` / `Alt+Shift+O` para paneles, `Alt+C` para nueva consola, `Alt+X` para cerrar pestaña, `Alt+/` para buscar.
+
+Al aplicar un preset Rustty pide confirmación y sustituye el mapa actual; los atajos sustituidos siguen siendo editables individualmente después.
+
 ## Sidebar
 
-La cabecera de la barra lateral incluye un campo de búsqueda rápida que filtra los perfiles por nombre, host, usuario o grupo y oculta las carpetas vacías mientras escribes.
+La cabecera de la barra lateral tiene dos iconos junto al logo:
 
-`Ctrl+K` enfoca esa búsqueda de forma global: funciona desde inicio, desde una sesión SSH/RDP o desde un split activo. Si estás dentro de una sesión, Rustty abre la barra lateral si hace falta y te deja buscar por nombre, IP/host, usuario o grupo sin volver al dashboard.
+- **🔍 Lupa** — abre un popover compacto con solo el cuadro de búsqueda; filtra los perfiles por nombre, host, usuario o grupo y oculta las carpetas vacías mientras escribes.
+- **≡ Filtros** — abre el popover completo con switcher de workspace, modos de vista (workspace actual / todos / favoritos), toggle de vista compacta y el mismo buscador.
+
+`Ctrl+K` enfoca la búsqueda de forma global y se comporta exactamente como pulsar el icono 🔍: funciona desde inicio, desde una sesión SSH/RDP o desde un split activo. Si estás dentro de una sesión, Rustty abre la barra lateral si hace falta y te deja buscar por nombre, IP/host, usuario o grupo sin volver al dashboard.
 
 ## Captura de nuevos atajos
 

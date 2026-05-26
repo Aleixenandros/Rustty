@@ -24,7 +24,9 @@ Si marcas **Contraseñas guardadas (cifradas E2E)**, Rustty lee del keyring loca
 
 ## Verificación de host SSH
 
-Rustty usa verificación de `known_hosts` con modelo TOFU: la primera huella conocida de un servidor se recuerda, y si más adelante cambia, la app avisa antes de continuar. Un cambio inesperado de fingerprint puede indicar una reinstalación legítima del servidor o un ataque de intermediario.
+Rustty usa verificación de `known_hosts` con modelo TOFU: la primera huella conocida de un servidor se recuerda, y si más adelante cambia, la app rechaza la conexión y muestra un aviso explícito ("Host key cambiada") con el fingerprint anterior y el recibido, además de la línea de `~/.ssh/known_hosts` a limpiar. Un cambio inesperado puede indicar una reinstalación legítima del servidor o un ataque de intermediario.
+
+La verificación se aplica también cuando el servidor **cambia de algoritmo de host key** (por ejemplo `ssh-rsa` → `ssh-ed25519`): Rustty compara la clave recibida con todas las entradas previas del host, no solo con las del mismo algoritmo, así rotaciones de tipo de clave no se aprenden en silencio.
 
 ## Datos excluidos
 
