@@ -2,6 +2,29 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.10.2] - 2026-05-26
+
+### Añadido
+
+- Paquete Flatpak (`Rustty-<ver>-x86_64.flatpak`) generado en CI sobre el
+  binario ya compilado. Manifest mínimo en `packaging/flatpak/`. Pendiente
+  de migrar a un build offline reproducible cuando se publique en Flathub.
+- El botón de búsqueda de la sidebar abre el popover en modo compacto que
+  solo muestra el campo de búsqueda; el botón ≡ sigue abriendo el popover
+  completo con workspace y filtros.
+
+### Cambiado
+
+- La pestaña anclada de Inicio se compacta a su icono en cuanto hay otras
+  pestañas abiertas y vuelve al tamaño normal al cerrar la última. Antes
+  podía quedar un instante sin compactar al abrir la primera sesión.
+
+### Eliminado
+
+- El indicador global de sincronización junto a los controles de ventana
+  (minimizar/maximizar/cerrar). El estado de sync sigue disponible en la
+  parte inferior de la sidebar y en la pestaña Copias de seguridad.
+
 ## [1.10.1] - 2026-05-26
 
 ### Corregido

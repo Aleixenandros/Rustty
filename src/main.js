@@ -1438,38 +1438,7 @@ function updateSidebarSyncStatus() {
     label.textContent = enabled ? t(_syncSidebarTextKey) : t("prefs_sync.status_disabled");
     meta.textContent = enabled ? `${backend} · ${last}` : backend;
   }
-  updateTopbarSyncIndicator({ enabled, state, backend, lastSyncAt });
   renderDashboard();
-}
-
-/**
- * Indicador compacto de sync en la topbar. Se oculta cuando la sync está
- * deshabilitada (no añade ruido para usuarios que no la usan). Al hacer
- * clic abre Preferencias → Copias de seguridad.
- */
-function updateTopbarSyncIndicator({ enabled, state, backend, lastSyncAt }) {
-  const btn = document.getElementById("topbar-sync");
-  if (!btn) return;
-  if (!enabled) {
-    btn.classList.add("hidden");
-    return;
-  }
-  btn.classList.remove("hidden");
-  const dot = btn.querySelector(".topbar-sync-dot");
-  if (dot) {
-    dot.classList.remove("idle", "busy", "success", "error");
-    dot.classList.add(state || "idle");
-  }
-  btn.classList.toggle("is-busy", state === "busy");
-  const relative = lastSyncAt ? formatRelativeTimeShort(lastSyncAt) : null;
-  const statusText = t(_syncSidebarTextKey);
-  const lastText = relative ? `${t("prefs_sync.last_at")} ${relative}` : t("prefs_sync.last_never");
-  const tooltip = `${statusText} · ${backend} · ${lastText}`;
-  // Custom tooltip (CSS-only, ver data-tooltip-pos="bottom" en el HTML).
-  btn.setAttribute("data-tooltip", tooltip);
-  btn.removeAttribute("title");
-  // aria-label completo para lectores de pantalla.
-  btn.setAttribute("aria-label", tooltip);
 }
 
 /**
@@ -2815,19 +2784,27 @@ function renderWorkspaceSwitcher() {
     <button class="ws-item danger" data-ws-action="delete" ${canDelete ? "" : "disabled"}><span>✕ ${escHtml(t("sidebar.workspace_delete"))}</span></button>`;
 }
 
-function toggleSidebarTools(open) {
+/**
+ * Abre/cierra el popover de herramientas de la sidebar.
+ * @param {boolean | undefined} open – fuerza estado abierto/cerrado.
+ * @param {{ mode?: "full" | "search", anchor?: string }} [opts] – `mode: "search"`
+ *   oculta workspace/vista y solo deja el buscador; `anchor` indica el id del
+ *   botón al que se alinea (default `btn-sidebar-tools`).
+ */
+function toggleSidebarTools(open, opts = {}) {
   const popover = document.getElementById("sidebar-tools-popover");
   if (!popover) return;
   if (open === undefined) popover.classList.toggle("hidden");
   else popover.classList.toggle("hidden", !open);
   if (!popover.classList.contains("hidden")) {
-    renderWorkspaceSwitcher();
-    positionSidebarToolsPopover();
+    popover.classList.toggle("search-only", opts.mode === "search");
+    if (opts.mode !== "search") renderWorkspaceSwitcher();
+    positionSidebarToolsPopover(opts.anchor);
   }
 }
 
-function positionSidebarToolsPopover() {
-  const trigger = document.getElementById("btn-sidebar-tools");
+function positionSidebarToolsPopover(anchorId = "btn-sidebar-tools") {
+  const trigger = document.getElementById(anchorId);
   const popover = document.getElementById("sidebar-tools-popover");
   if (!trigger || !popover) return;
 
@@ -3314,7 +3291,7 @@ function focusConnectionSearch() {
     refitVisibleTerminalsSoon();
   }
 
-  toggleSidebarTools(true);
+  toggleSidebarTools(true, { mode: "search", anchor: "btn-sidebar-search" });
   requestAnimationFrame(() => {
     const search = document.getElementById("sidebar-search");
     if (!search) return;
@@ -5741,6 +5718,10 @@ function createTab(sessionId, profile, initialStatus, { sftp = true } = {}) {
   });
   attachTabDragHandlers(tab);
   document.getElementById("tabs-container").appendChild(tab);
+  // Compactar al instante la pestaña de Inicio: aplicamos body.has-session-tabs
+  // en el mismo tick que insertamos la .tab en el DOM (la siguiente llamada a
+  // selectSession/renderView llega más tarde, así no parpadea).
+  updateTabSelectionClasses();
   return tab;
 }
 
@@ -7102,6 +7083,9 @@ async function closeSession(sessionId, opts = {}) {
 function removeTab(sessionId) {
   document.querySelector(`.tab[data-session="${sessionId}"]`)?.remove();
   document.querySelector(`.terminal-pane[data-session="${sessionId}"]`)?.remove();
+  // Expandir al instante la pestaña de Inicio si era la última sesión
+  // (sin esperar al ciclo renderView, que llega tras varias operaciones).
+  updateTabSelectionClasses();
 
   // Quitar de la vista
   const idx = viewSelection.indexOf(sessionId);
@@ -10350,13 +10334,6 @@ function bindUIEvents() {
   window.addEventListener("contextmenu", (e) => e.preventDefault());
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && activeSessionId) clearTabActivity(activeSessionId);
-  });
-
-  // Indicador global de sync en la topbar → abre Preferencias en la
-  // pestaña Copias de seguridad.
-  document.getElementById("topbar-sync")?.addEventListener("click", () => {
-    openSettingsModal();
-    switchPrefsTab("data");
   });
 
   // Botón flotante para salir del modo zen (también se sale con el atajo).

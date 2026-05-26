@@ -480,6 +480,17 @@ body.sidebar-collapsed #sidebar-resize-handle {
 
 .sidebar-tools-popover.hidden { display: none; }
 
+/* Modo "solo buscar": el botón 🔍 abre el popover con solo el input.
+   Oculta secciones de vista, perfil y sus títulos asociados. */
+.sidebar-tools-popover.search-only .tools-view-modes,
+.sidebar-tools-popover.search-only #btn-sidebar-compact,
+.sidebar-tools-popover.search-only #workspace-menu,
+.sidebar-tools-popover.search-only .tools-section-title[data-i18n="sidebar.tools_view"],
+.sidebar-tools-popover.search-only .tools-section-title[data-i18n="sidebar.tools_workspace"],
+.sidebar-tools-popover.search-only .tools-section-title[data-i18n="sidebar.tools_search"] {
+  display: none;
+}
+
 .sidebar-tools-popover .tools-section-title {
   font-size: 10px;
   text-transform: uppercase;
@@ -1146,6 +1157,13 @@ body.window-maximized .win-ctrl .ico-restore { display: block; }
   border-left: 0;
 }
 
+/* Cuando hay al menos una pestaña en #tabs-container, la pestaña anclada
+   de Inicio se compacta a solo icono. Usamos :has() para no depender de
+   que el JS aplique la clase body.has-session-tabs en el momento exacto
+   del DOM-update (la lógica antigua dejaba un instante visible la pestaña
+   sin compactar al abrir la primera sesión). Compatible con WebKit2GTK
+   moderno (target safari16) y Chrome 105+. */
+#tab-bar:has(#tabs-container .tab) .tab-home,
 body.has-session-tabs .tab-home {
   min-width: 40px;
   width: 40px;
@@ -1155,6 +1173,7 @@ body.has-session-tabs .tab-home {
   gap: 0;
 }
 
+#tab-bar:has(#tabs-container .tab) .tab-home .tab-name,
 body.has-session-tabs .tab-home .tab-name {
   display: none;
 }
@@ -5774,50 +5793,6 @@ body.sftp-log-resizing {
 
 .tab.is-pinned .tab-close { display: none; }
 
-/* ─── Indicador global de sync — slice estético #5 ─────────────
-   Pequeño botón a la derecha del tab bar (antes de los controles
-   de ventana). Solo aparece cuando la sync está activa. */
-.topbar-sync {
-  flex: 0 0 auto;
-  width: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  color: var(--subtext0);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  -webkit-app-region: no-drag;
-  transition: background var(--motion-fast) var(--motion-ease),
-              color var(--motion-fast) var(--motion-ease);
-}
-
-.topbar-sync:hover {
-  background: var(--surface0);
-  color: var(--text);
-}
-
-.topbar-sync-dot {
-  position: absolute;
-  top: 8px;
-  right: 6px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--overlay0);
-  box-shadow: 0 0 0 2px var(--mantle);
-}
-
-.topbar-sync-dot.success { background: var(--green); }
-.topbar-sync-dot.busy    { background: var(--yellow); }
-.topbar-sync-dot.error   { background: var(--red); }
-.topbar-sync-dot.idle    { background: var(--overlay0); }
-
-.topbar-sync.is-busy .topbar-sync-icon {
-  animation: rustty-reconnect-spin 1.4s linear infinite;
-}
-
 /* ─── Estado ocupado global — slice estético #6 ────────────────
    Aplica cursor: progress a cualquier elemento (y sus hijos) que
    tenga la clase .is-busy o el atributo aria-busy. Útil mientras
@@ -6414,22 +6389,19 @@ body.zen-mode #zen-exit-btn {
    confusión más común (deuteranopia/protanopia). */
 body.color-blind-safe .tab-dot.connected,
 body.color-blind-safe #status-bar .status-dot.connected,
-body.color-blind-safe .sync-dot.success,
-body.color-blind-safe .topbar-sync-dot.success {
+body.color-blind-safe .sync-dot.success {
   background: var(--sky) !important;
 }
 
 body.color-blind-safe .tab-dot.error,
 body.color-blind-safe #status-bar .status-dot.error,
-body.color-blind-safe .sync-dot.error,
-body.color-blind-safe .topbar-sync-dot.error {
+body.color-blind-safe .sync-dot.error {
   border-radius: 2px;
 }
 
 body.color-blind-safe .tab-dot.connecting,
 body.color-blind-safe #status-bar .status-dot.reconnecting,
-body.color-blind-safe .sync-dot.busy,
-body.color-blind-safe .topbar-sync-dot.busy {
+body.color-blind-safe .sync-dot.busy {
   border-radius: 1px;
   transform: rotate(45deg);
 }

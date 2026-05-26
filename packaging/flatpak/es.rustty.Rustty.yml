@@ -1,0 +1,52 @@
+# Manifest mínimo de Flatpak para Rustty.
+#
+# Estrategia: parte del binario y los assets ya compilados por tauri-action
+# (no recompila Rust dentro del sandbox). El CI los coloca en este directorio
+# antes de invocar `flatpak-builder`. Este enfoque NO cumple las reglas de
+# Flathub (reproducibilidad sin red, fuentes verificables); cuando llegue
+# ese momento migraremos a un manifest con `flatpak-cargo-generator` y
+# `flatpak-node-generator`.
+app-id: es.rustty.Rustty
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+command: rustty
+
+finish-args:
+  # Red para SSH/SFTP/RDP/sync; sandbox de IPC para clipboard y portales.
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # KeePass, claves SSH, known_hosts → necesitan acceso al $HOME del usuario.
+  - --filesystem=home
+  # Acceso al keyring (gnome-keyring / kwallet) para guardar contraseñas.
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.kwalletd5
+  - --talk-name=org.kde.kwalletd6
+  # Notificaciones del sistema (transferencias SFTP completas, errores).
+  - --talk-name=org.freedesktop.Notifications
+  # Portales para abrir URLs externas (web-links addon de xterm).
+  - --talk-name=org.freedesktop.portal.OpenURI
+  - --talk-name=org.freedesktop.portal.Desktop
+  # XDG dialogs (open/save) — portales de freedesktop.
+  - --talk-name=org.freedesktop.portal.FileChooser
+
+modules:
+  - name: rustty
+    buildsystem: simple
+    sources:
+      - type: file
+        path: rustty
+      - type: file
+        path: icon-512.png
+      - type: file
+        path: es.rustty.Rustty.desktop
+      - type: file
+        path: es.rustty.Rustty.metainfo.xml
+    build-commands:
+      - install -Dm755 rustty /app/bin/rustty
+      - install -Dm644 icon-512.png /app/share/icons/hicolor/512x512/apps/es.rustty.Rustty.png
+      - install -Dm644 es.rustty.Rustty.desktop /app/share/applications/es.rustty.Rustty.desktop
+      - install -Dm644 es.rustty.Rustty.metainfo.xml /app/share/metainfo/es.rustty.Rustty.metainfo.xml

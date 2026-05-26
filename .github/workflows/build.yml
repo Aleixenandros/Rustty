@@ -164,6 +164,57 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           gh release upload "${{ github.ref_name }}" "$OUT" --clobber --repo "$GITHUB_REPOSITORY"
 
+      # ── Extras de Linux: paquete Flatpak ──────────────────────
+      # Versión mínima: usa el binario y assets ya compilados por tauri-action,
+      # no recompila Rust dentro del sandbox. No es Flathub-ready (sin lockfiles
+      # de cargo/npm) — el objetivo aquí es ofrecer un .flatpak instalable.
+      # Cuando se cree la cuenta de Flathub migraremos a un manifest con
+      # flatpak-cargo-generator / flatpak-node-generator.
+      - name: Build Flatpak (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          FP_DIR="packaging/flatpak"
+          BIN="src-tauri/target/${{ matrix.target }}/release/rustty"
+          ICON="src-tauri/icons/icon.png"
+
+          # Instalar flatpak + flatpak-builder y añadir el remote flathub
+          # (para descargar runtime/sdk org.freedesktop.Platform 24.08).
+          sudo apt-get install -y flatpak flatpak-builder
+          sudo flatpak remote-add --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y --noninteractive flathub \
+            org.freedesktop.Platform//24.08 \
+            org.freedesktop.Sdk//24.08
+
+          # Copiar binario + icono al directorio del manifest. Flatpak-builder
+          # rechaza rutas fuera del directorio del manifest cuando
+          # `--disable-cache` no se usa, así que centralizamos aquí.
+          cp "$BIN"  "$FP_DIR/rustty"
+          cp "$ICON" "$FP_DIR/icon-512.png"
+          chmod +x "$FP_DIR/rustty"
+
+          # Compilar el repo OSTree y exportar el bundle final.
+          BUILD_DIR="$(mktemp -d)/build"
+          REPO_DIR="$(mktemp -d)/repo"
+          OUT="src-tauri/target/${{ matrix.target }}/release/bundle/Rustty-${VERSION}-x86_64.flatpak"
+          mkdir -p "$(dirname "$OUT")"
+
+          flatpak-builder \
+            --force-clean \
+            --repo="$REPO_DIR" \
+            --default-branch=stable \
+            "$BUILD_DIR" \
+            "$FP_DIR/es.rustty.Rustty.yml"
+
+          flatpak build-bundle "$REPO_DIR" "$OUT" es.rustty.Rustty stable
+
+          ls -la "$OUT"
+          gh release upload "${{ github.ref_name }}" "$OUT" --clobber --repo "$GITHUB_REPOSITORY"
+
       # ── Extras de Windows: MSI sin sufijo _en-US + .exe portable ──
       - name: Rename MSI and publish portable exe (Windows)
         if: matrix.platform == 'windows-latest'

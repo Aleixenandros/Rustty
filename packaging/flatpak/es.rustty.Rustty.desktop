@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Rustty
+GenericName=SSH/SFTP/RDP Client
+Comment=Cliente de acceso remoto multiplataforma (SSH, SFTP, RDP, shell local)
+Exec=rustty
+Icon=es.rustty.Rustty
+Terminal=false
+Categories=Network;RemoteAccess;System;TerminalEmulator;
+Keywords=SSH;SFTP;RDP;Terminal;Remote;
+StartupNotify=true
+StartupWMClass=Rustty

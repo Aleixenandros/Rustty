@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>es.rustty.Rustty</id>
+  <name>Rustty</name>
+  <summary>Cliente de acceso remoto multiplataforma (SSH/SFTP/RDP)</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <developer id="es.rustty">
+    <name>Aleixenandros</name>
+  </developer>
+
+  <description>
+    <p>
+      Rustty es un cliente de acceso remoto de escritorio escrito en Rust y Tauri 2.
+      Permite gestionar sesiones SSH interactivas, transferencias SFTP con cola y
+      reanudación, conexiones RDP (vía cliente externo) y consolas locales.
+    </p>
+    <p>Características principales:</p>
+    <ul>
+      <li>Backend SSH/SFTP puro en Rust (russh / russh-sftp), sin libssh2.</li>
+      <li>Soporte de ProxyJump (bastion / jump host) con TOFU independiente.</li>
+      <li>Túneles SSH locales, remotos y dinámicos (SOCKS) por sesión.</li>
+      <li>Panel SFTP con vista local/remoto, drag &amp; drop y cola de transferencias.</li>
+      <li>Sincronización opcional en la nube (Google Drive, iCloud, WebDAV, NAS) cifrada end-to-end.</li>
+      <li>Más de 230 temas precargados y editor visual de paletas.</li>
+      <li>Soporte de KeePass (.kdbx) y keyring del sistema para credenciales.</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">es.rustty.Rustty.desktop</launchable>
+
+  <url type="homepage">https://rustty.es</url>
+  <url type="bugtracker">https://github.com/Aleixenandros/Rustty/issues</url>
+  <url type="vcs-browser">https://github.com/Aleixenandros/Rustty</url>
+
+  <categories>
+    <category>Network</category>
+    <category>RemoteAccess</category>
+    <category>System</category>
+  </categories>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="1.10.1" date="2026-05-26">
+      <description>
+        <p>Fix del aviso de host key cambiada (incluye rotación de algoritmo). Zoom de terminal con Ctrl+Rueda.</p>
+      </description>
+    </release>
+    <release version="1.10.0" date="2026-05-26">
+      <description>
+        <p>Ligaduras tipográficas, perfiles de atajos (Vim/Tmux), botón de búsqueda en la sidebar y confirmaciones destructivas tipadas.</p>
+      </description>
+    </release>
+  </releases>
+</component>
