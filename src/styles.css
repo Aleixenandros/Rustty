@@ -6190,6 +6190,26 @@ body.zen-mode #zen-exit-btn {
   color: var(--text);
 }
 
+.theme-tone-filter .theme-picker-reset {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px dashed var(--surface2);
+  background: transparent;
+  color: var(--subtext0);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--motion-ease),
+              color var(--motion-fast) var(--motion-ease);
+}
+
+.theme-tone-filter .theme-picker-reset:hover {
+  border-color: var(--blue);
+  color: var(--text);
+}
+
 /* ─── Sistema de tooltips consistente — slice estético #18 ──────
    Tooltip CSS-only basado en [data-tooltip]. Aparece tras 400 ms
    de hover; convive con `title=""` (lo deja para a11y). Para evitar

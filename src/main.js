@@ -764,18 +764,21 @@ function filterThemePickerOptions(root) {
 }
 
 /**
- * Detecta tonalidad (light/dark) de una option por la luminancia del
- * background del preview principal. Si no se puede leer el color, cae
- * a una heurística por nombre/id.
+ * Detecta tonalidad de una option. Devuelve "light", "dark" o "hc"
+ * (alto contraste). La detección de alto contraste se basa en el id/nombre
+ * porque depende de la intención del autor del tema, no de un umbral
+ * automático de luminancia.
  */
 function detectThemeOptionTone(option) {
+  const id = (option.dataset.theme || "").toLowerCase();
+  const label = (option.querySelector(".theme-label")?.textContent || "").toLowerCase();
+  if (/(^|-)hc($|-)|high[-_ ]?contrast|alto[-_ ]?contraste/.test(id + " " + label)) return "hc";
   const preview = option.querySelector(".theme-preview-main") || option.querySelector(".theme-preview");
   if (preview) {
     const bg = getComputedStyle(preview).backgroundColor;
     const lum = relativeLuminanceFromColor(bg);
     if (Number.isFinite(lum)) return lum > 0.55 ? "light" : "dark";
   }
-  const id = (option.dataset.theme || "").toLowerCase();
   if (/light|day|lotus|latte|dawn|gruvbox-light|solarized-light/.test(id)) return "light";
   return "dark";
 }
@@ -839,6 +842,8 @@ function enhanceThemePickers() {
         <button type="button" class="theme-tone-chip active" data-tone="all" role="tab" aria-selected="true">${escHtml(t("prefs_appearance.tone_all"))}</button>
         <button type="button" class="theme-tone-chip" data-tone="dark" role="tab" aria-selected="false">${escHtml(t("prefs_appearance.tone_dark"))}</button>
         <button type="button" class="theme-tone-chip" data-tone="light" role="tab" aria-selected="false">${escHtml(t("prefs_appearance.tone_light"))}</button>
+        <button type="button" class="theme-tone-chip" data-tone="hc" role="tab" aria-selected="false">${escHtml(t("prefs_appearance.tone_hc"))}</button>
+        <button type="button" class="theme-picker-reset" data-action="reset-theme">${escHtml(t("prefs_appearance.theme_reset_system"))}</button>
       </div>
       <div class="theme-options-list" role="listbox"></div>
     `;
@@ -861,6 +866,15 @@ function enhanceThemePickers() {
         });
         filterThemePickerOptions(root);
       });
+    });
+    panel.querySelector(".theme-picker-reset")?.addEventListener("click", () => {
+      const targetId = picker === "ui" ? "system" : "inherit";
+      const radio = root.querySelector(`.theme-option[data-theme="${CSS.escape(targetId)}"] input[type="radio"]`);
+      if (radio) {
+        radio.checked = true;
+        radio.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      setThemePickerOpen(root, false);
     });
     panel.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
