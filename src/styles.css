@@ -185,6 +185,17 @@ a:focus-visible,
   overflow: hidden;
 }
 
+/* Zoom de UI: solo afecta al chrome (rail, sidebar y tab-bar). El terminal y
+   sus paneles quedan fuera del zoom porque tienen su propio control de fuente.
+   Compatible con WebKit/Chromium; `zoom` reescala tanto el tamaño visual como
+   el espacio ocupado dentro del flex padre, así que la barra lateral y el rail
+   acompañan al usuario de forma proporcional. */
+#rail,
+#sidebar,
+#tab-bar {
+  zoom: var(--ui-zoom, 1);
+}
+
 /* ─── Rail vertical de iconos ────────────────────────────────── */
 #rail {
   width: 44px;
@@ -665,6 +676,23 @@ body.sidebar-collapsed #sidebar-resize-handle {
   scrollbar-color: var(--surface1) transparent;
 }
 
+/* Scrollbar WebKit explícita: las reglas estándar `scrollbar-*` no siempre
+   se respetan en WebKit2GTK con tema claro del sistema, lo que dejaba una
+   franja casi blanca entre la sidebar y el terminal. */
+#connection-list::-webkit-scrollbar {
+  width: 8px;
+}
+#connection-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+#connection-list::-webkit-scrollbar-thumb {
+  background: var(--surface1);
+  border-radius: 4px;
+}
+#connection-list::-webkit-scrollbar-thumb:hover {
+  background: var(--surface2);
+}
+
 #connection-list.compact {
   padding: 4px 0;
 }
@@ -747,22 +775,28 @@ body.sidebar-collapsed #sidebar-resize-handle {
 }
 
 .conn-item.active {
-  background: color-mix(in srgb, var(--blue) 12%, transparent);
+  background: color-mix(in srgb, var(--blue) 22%, transparent);
 }
 
 .conn-item.active.selected {
-  background: color-mix(in srgb, var(--blue) 18%, transparent);
+  background: color-mix(in srgb, var(--blue) 30%, transparent);
 }
 
 .conn-item.active::before {
   content: "";
   position: absolute;
   left: 0;
-  top: 4px;
-  bottom: 4px;
-  width: 3px;
+  top: 3px;
+  bottom: 3px;
+  width: 4px;
   background: var(--blue);
-  border-radius: 0 2px 2px 0;
+  border-radius: 0 3px 3px 0;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--blue) 55%, transparent);
+}
+
+.conn-item.active .conn-item-name {
+  font-weight: 600;
+  color: var(--text);
 }
 
 .conn-item-icon {
@@ -2867,6 +2901,24 @@ input[type="checkbox"] {
   background: rgba(0, 0, 0, 0.12);
 }
 
+/* Toasts apilados: cuando hay más de TOAST_VISIBLE_LIMIT, los antiguos
+   se ocultan y un contador "+N" abre el centro de actividad. */
+.toast.toast-hidden {
+  display: none;
+}
+.toast.toast-overflow {
+  background: var(--surface1);
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 600;
+  border: 1px dashed var(--overlay0);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+  padding: 8px 14px;
+}
+.toast.toast-overflow:hover {
+  background: var(--surface2);
+}
+
 /* ─── Centro de actividad global ────────────────────────────── */
 #activity-center-overlay {
   position: fixed;
@@ -2961,6 +3013,20 @@ input[type="checkbox"] {
   color: var(--overlay1);
   font-size: 13px;
   text-align: center;
+}
+
+.activity-group-header {
+  position: sticky;
+  top: 0;
+  padding: 6px 8px;
+  background: var(--mantle);
+  color: var(--overlay1);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  border-bottom: 1px solid var(--surface0);
+  z-index: 1;
 }
 
 .activity-item {
@@ -3432,6 +3498,68 @@ input[type="checkbox"] {
   margin: 0 0 16px;
   line-height: 1.5;
 }
+
+.sync-backend-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+  margin: 12px 0 18px;
+}
+
+.sync-backend-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--surface0);
+  background: var(--mantle);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--motion-ease),
+              background var(--motion-fast) var(--motion-ease);
+}
+
+.sync-backend-card:hover {
+  border-color: var(--surface2);
+  background: var(--surface0);
+}
+
+.sync-backend-card.active {
+  border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 10%, var(--mantle));
+}
+
+.sync-backend-card-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.sync-backend-card-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.sync-backend-card-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--subtext0);
+}
+
+.sync-backend-card-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--overlay0);
+}
+
+.sync-backend-card-status.success .sync-backend-card-dot { background: var(--green); }
+.sync-backend-card-status.busy    .sync-backend-card-dot { background: var(--yellow); }
+.sync-backend-card-status.error   .sync-backend-card-dot { background: var(--red); }
 
 .prefs-panel-hint code {
   background: var(--surface0);
@@ -3930,6 +4058,32 @@ input[type="checkbox"] {
 
 .theme-preview-sidebar::before { top: 9px; }
 .theme-preview-sidebar::after { top: 17px; opacity: 0.7; }
+
+/* El mini terminal del preview real ocupa el main del theme-preview.
+   Las líneas usan la paleta xterm.js del tema (foreground, green/cyan...). */
+.theme-preview-term {
+  position: absolute;
+  inset: 6px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 8px;
+  line-height: 1.15;
+  overflow: hidden;
+}
+.theme-preview-term .tp-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+/* Si el tema tiene preview real (`.theme-preview-term`), suprimimos los
+   pseudo-elementos de respaldo del main para no duplicar contenido. */
+.theme-preview-main:has(.theme-preview-term)::before,
+.theme-preview-main:has(.theme-preview-term)::after {
+  content: none;
+}
 
 .theme-preview-main::before {
   content: "";

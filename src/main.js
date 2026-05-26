@@ -360,10 +360,23 @@ const DEFAULT_PREFS = {
   activeWorkspaceId: "default",
   // IDs de conexiones marcadas como favoritas.
   favorites:       [],
+  // IDs de conexiones ancladas en el dashboard como tiles grandes.
+  pinnedProfiles:  [],
   // Modo de la vista de la sidebar: "current" | "all" | "favorites".
   sidebarViewMode: "current",
   // Densidad compacta para listas largas de conexiones en la sidebar.
   sidebarCompact:  false,
+  // Zoom de la UI (rail, sidebar, tabs, status, modales) sin afectar al
+  // buffer xterm. Rango clampeado en `adjustUiZoom`. Atajos Ctrl+Alt +/-/0.
+  uiZoom:          1.0,
+  // Orden de las conexiones en la sidebar: "alpha" (alfabético, por defecto)
+  // o "manual" (subir/bajar con flechas, persistido en `connectionOrder`).
+  connectionSortMode: "alpha",
+  // Orden manual de conexiones por contenedor. Clave = `${workspaceId}|${group}`,
+  // valor = array de profileId en el orden deseado. Las conexiones no listadas
+  // se añaden al final ordenadas alfabéticamente. Solo se usa con
+  // `connectionSortMode === "manual"`.
+  connectionOrder: {},
   // Color por carpeta. Mapa { folderPath: colorId } donde colorId es uno de
   // los presets en FOLDER_COLOR_PRESETS o null para "sin color".
   folderColors:    {},
@@ -445,6 +458,7 @@ function loadPrefs() {
   registerAllCustomThemes();
   applyTheme(prefs.theme);
   applyUiDensity(prefs.uiDensity);
+  applyUiZoom(prefs.uiZoom);
   applyColorBlindSafe(prefs.colorBlindSafe);
   if (loadZenMode()) applyZenMode(true);
 }
@@ -539,6 +553,33 @@ function applyUiDensity(density) {
   const d = density === "compact" ? "compact" : "comfortable";
   document.body.classList.toggle("density-compact", d === "compact");
   document.body.classList.toggle("density-comfortable", d === "comfortable");
+}
+
+/**
+ * Aplica el zoom del chrome (rail/sidebar/tabs/status) sin tocar xterm.
+ * Se escribe como CSS var `--ui-zoom` que consumen las reglas de estos
+ * contenedores; el rango se clampa a [0.6, 1.6]. El default 1.0 deja
+ * exactamente el render de siempre.
+ */
+function applyUiZoom(zoom) {
+  const z = clampUiZoom(Number(zoom));
+  document.documentElement.style.setProperty("--ui-zoom", String(z));
+}
+
+function clampUiZoom(z) {
+  if (!Number.isFinite(z)) return 1;
+  return Math.min(1.6, Math.max(0.6, Math.round(z * 100) / 100));
+}
+
+function adjustUiZoom(delta) {
+  const current = clampUiZoom(prefs.uiZoom ?? 1);
+  let next;
+  if (delta === "reset") next = 1;
+  else next = clampUiZoom(current + (Number(delta) || 0) * 0.1);
+  if (next === current) return;
+  prefs.uiZoom = next;
+  applyUiZoom(next);
+  savePrefs();
 }
 
 /**
@@ -721,10 +762,7 @@ function appendCustomSwatch(picker, theme) {
   const inputName = picker === "ui" ? "pref-theme" : "pref-terminal-theme";
   label.innerHTML = `
     <input type="radio" name="${inputName}" value="${escHtml(theme.id)}" />
-    <div class="theme-preview" style="background:${escHtml(theme.ui.base || "#222")}">
-      <div class="theme-preview-sidebar" style="background:${escHtml(theme.ui.mantle || "#1a1a1a")}"></div>
-      <div class="theme-preview-main" style="background:${escHtml(theme.ui.base || "#222")}"></div>
-    </div>
+    ${renderThemePreviewHtml(theme)}
     <span class="theme-label">${escHtml(theme.name)}</span>`;
   const radio = label.querySelector("input");
   radio.addEventListener("change", () => {
@@ -737,6 +775,38 @@ function appendCustomSwatch(picker, theme) {
 
 function getThemeOptionLabel(option) {
   return option?.querySelector(".theme-label")?.textContent?.trim() || option?.dataset.theme || "";
+}
+
+/**
+ * Pinta un mini terminal con la paleta xterm real del tema: una línea de
+ * prompt (verde), un comando (foreground) y dos líneas de salida (cyan,
+ * subtext) con una "selección" simulada usando los colores `selectionForeground`
+ * / `selectionBackground` del tema. Sustituye al placeholder estático que era
+ * solo sidebar + main coloreado.
+ */
+function renderThemePreviewHtml(theme) {
+  const ui = theme.ui || {};
+  const term = theme.terminal || {};
+  const base = escHtml(ui.base || term.background || "#222");
+  const mantle = escHtml(ui.mantle || ui.base || "#1a1a1a");
+  const fg = escHtml(term.foreground || ui.text || "#cdd6f4");
+  const green = escHtml(term.green || "#a6e3a1");
+  const blue = escHtml(term.cyan || term.blue || "#89b4fa");
+  const dim = escHtml(term.brightBlack || ui.subtext0 || "#a6adc8");
+  const accent = escHtml(term.yellow || term.peach || "#f9e2af");
+  const selBg = escHtml(term.selectionBackground || ui.surface1 || "rgba(255,255,255,0.18)");
+  const selFg = escHtml(term.selectionForeground || term.foreground || "#1e1e2e");
+  return `
+    <div class="theme-preview" style="background:${base}">
+      <div class="theme-preview-sidebar" style="background:${mantle}"></div>
+      <div class="theme-preview-main" style="background:${base}">
+        <div class="theme-preview-term" style="color:${fg}">
+          <span class="tp-line"><span style="color:${green}">~</span><span style="color:${dim}">$</span> <span style="color:${blue}">ls</span> <span style="background:${selBg};color:${selFg}">-la</span></span>
+          <span class="tp-line" style="color:${accent}">drwx</span>
+          <span class="tp-line" style="color:${dim}">total 12</span>
+        </div>
+      </div>
+    </div>`;
 }
 
 function updateThemePickerButton(picker, value) {
@@ -1438,7 +1508,56 @@ function updateSidebarSyncStatus() {
     label.textContent = enabled ? t(_syncSidebarTextKey) : t("prefs_sync.status_disabled");
     meta.textContent = enabled ? `${backend} · ${last}` : backend;
   }
+  renderSyncBackendCards();
   renderDashboard();
+}
+
+/**
+ * Render del grid de tarjetas en Preferencias → Copias de seguridad. Cada
+ * tarjeta muestra icono, nombre, dot de estado y última sync relativa; al
+ * clicar selecciona el backend en el `<select>` existente y desencadena
+ * `change` para que el formulario se reorganice.
+ */
+function renderSyncBackendCards() {
+  const grid = document.getElementById("sync-backend-cards");
+  if (!grid) return;
+  const backends = [
+    { id: "local",        icon: "📁", labelKey: "prefs_sync.backend_local" },
+    { id: "icloud",       icon: "☁",  labelKey: "prefs_sync.backend_icloud" },
+    { id: "webdav",       icon: "🌐", labelKey: "prefs_sync.backend_webdav" },
+    { id: "google_drive", icon: "🅖", labelKey: "prefs_sync.backend_google_drive" },
+  ];
+  const activeBackend = _syncConfigCache?.backend || "none";
+  const enabled = !!_syncConfigCache?.enabled;
+  const lastSyncAt = syncLastSyncAt();
+  const lastRel = lastSyncAt ? formatRelativeTimeShort(lastSyncAt) : null;
+  grid.innerHTML = backends.map((b) => {
+    const isActive = activeBackend === b.id;
+    const state = isActive && enabled
+      ? (_syncSidebarState === "error" ? "error" : _syncSidebarState === "busy" ? "busy" : "success")
+      : "idle";
+    const lastText = isActive
+      ? (lastRel ? `${t("prefs_sync.last_at")} ${lastRel}` : t("prefs_sync.last_never"))
+      : t("prefs_sync.backend_card_inactive");
+    return `
+      <button type="button" class="sync-backend-card${isActive ? " active" : ""}" role="listitem" data-backend="${escHtml(b.id)}">
+        <span class="sync-backend-card-icon">${b.icon}</span>
+        <span class="sync-backend-card-name">${escHtml(t(b.labelKey))}</span>
+        <span class="sync-backend-card-status ${escHtml(state)}">
+          <span class="sync-backend-card-dot"></span>
+          <span>${escHtml(lastText)}</span>
+        </span>
+      </button>`;
+  }).join("");
+  grid.querySelectorAll(".sync-backend-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const id = card.dataset.backend;
+      const select = document.getElementById("sync-backend");
+      if (!select || !id) return;
+      select.value = id;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  });
 }
 
 /**
@@ -2002,6 +2121,34 @@ function persistActivityHistory() {
   }
 }
 
+/**
+ * Devuelve la lista de entradas del centro de actividad agrupada por día
+ * relativo: "Hoy", "Ayer", "Esta semana" (3-7 días) y fechas absolutas
+ * para todo lo anterior.
+ */
+function groupActivityByDay(items) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const groups = new Map();
+  for (const it of items) {
+    const ts = it.timestamp ? new Date(it.timestamp).getTime() : Date.now();
+    const dayStart = new Date(new Date(ts).getFullYear(), new Date(ts).getMonth(), new Date(ts).getDate()).getTime();
+    const diffDays = Math.round((startOfToday - dayStart) / dayMs);
+    let key, label;
+    if (diffDays <= 0) { key = "today"; label = "Hoy"; }
+    else if (diffDays === 1) { key = "yesterday"; label = "Ayer"; }
+    else if (diffDays < 7) { key = "week"; label = "Esta semana"; }
+    else {
+      key = `d${dayStart}`;
+      label = new Date(dayStart).toLocaleDateString();
+    }
+    if (!groups.has(key)) groups.set(key, { label, sort: dayStart, items: [] });
+    groups.get(key).items.push(it);
+  }
+  return [...groups.values()].sort((a, b) => b.sort - a.sort);
+}
+
 function recordActivity({ kind = "toast", status = "info", title, detail = "", actionLabel = "", action = null } = {}) {
   if (!title) return;
   const item = normalizeActivityItem({
@@ -2044,19 +2191,25 @@ function renderActivityCenter() {
     list.innerHTML = `<div class="activity-empty">Sin actividad reciente</div>`;
     return;
   }
-  list.innerHTML = visible.map((item) => `
-    <div class="activity-item ${escHtml(item.status)}" data-activity-id="${escHtml(item.id)}">
-      <span class="activity-dot"></span>
-      <div class="activity-body">
-        <div class="activity-main">
-          <span class="activity-kind">${escHtml(activityKindLabel(item.kind))}</span>
-          <span class="activity-title">${escHtml(item.title)}</span>
-          <span class="activity-time">${escHtml(activityTime(item.timestamp))}</span>
+  // Agrupar por día relativo (Hoy / Ayer / Esta semana / fecha) para que la
+  // lista no sea un muro indistinguible cuando hay >100 entradas.
+  const groups = groupActivityByDay(visible);
+  list.innerHTML = groups.map((g) => `
+    <div class="activity-group-header">${escHtml(g.label)}</div>
+    ${g.items.map((item) => `
+      <div class="activity-item ${escHtml(item.status)}" data-activity-id="${escHtml(item.id)}">
+        <span class="activity-dot"></span>
+        <div class="activity-body">
+          <div class="activity-main">
+            <span class="activity-kind">${escHtml(activityKindLabel(item.kind))}</span>
+            <span class="activity-title">${escHtml(item.title)}</span>
+            <span class="activity-time">${escHtml(activityTime(item.timestamp))}</span>
+          </div>
+          ${item.detail ? `<div class="activity-detail">${escHtml(item.detail)}</div>` : ""}
         </div>
-        ${item.detail ? `<div class="activity-detail">${escHtml(item.detail)}</div>` : ""}
+        ${item.actionLabel && typeof item.action === "function" ? `<button type="button" class="activity-action">${escHtml(item.actionLabel)}</button>` : ""}
       </div>
-      ${item.actionLabel && typeof item.action === "function" ? `<button type="button" class="activity-action">${escHtml(item.actionLabel)}</button>` : ""}
-    </div>
+    `).join("")}
   `).join("");
   list.querySelectorAll(".activity-item").forEach((row) => {
     const item = activityItems.find((entry) => entry.id === row.dataset.activityId);
@@ -2186,6 +2339,7 @@ function savePrefsFromModal() {
   uiThemePreview = null;
   applyTheme(prefs.theme);
   applyUiDensity(prefs.uiDensity);
+  applyUiZoom(prefs.uiZoom);
   applyColorBlindSafe(prefs.colorBlindSafe);
   applyPrefsToAllTerminals();
   closeSettingsModal();
@@ -2356,7 +2510,7 @@ async function init() {
  * Las carpetas son rutas separadas por "/" (ej: "Producción/Web").
  */
 function buildFolderTree() {
-  const root = { connections: [], folders: {} };
+  const root = { connections: [], folders: {}, path: "" };
 
   // Primero añadir las carpetas creadas manualmente (pueden estar vacías)
   for (const folderPath of userFolders) {
@@ -2374,7 +2528,95 @@ function buildFolderTree() {
     }
   }
 
+  sortTreeConnections(root, getActiveWorkspaceId(), "");
   return root;
+}
+
+/**
+ * Ordena en sitio las `connections` de cada nodo según `prefs.connectionSortMode`.
+ * - "alpha": comparación case-insensitive por nombre, con desempate por host.
+ * - "manual": respeta `prefs.connectionOrder[key]` (key = `wsId|folderPath`).
+ *   Las conexiones no listadas se añaden al final por orden alfabético.
+ */
+function sortTreeConnections(node, wsId, folderPath) {
+  const mode = prefs.connectionSortMode === "manual" ? "manual" : "alpha";
+  if (node.connections?.length) {
+    const alphaSort = (a, b) => {
+      const an = (a?.name || "").toLowerCase();
+      const bn = (b?.name || "").toLowerCase();
+      if (an < bn) return -1;
+      if (an > bn) return 1;
+      const ah = (a?.host || "").toLowerCase();
+      const bh = (b?.host || "").toLowerCase();
+      return ah < bh ? -1 : ah > bh ? 1 : 0;
+    };
+    if (mode === "alpha") {
+      node.connections.sort(alphaSort);
+    } else {
+      const key = connectionOrderKey(wsId, folderPath);
+      const orderArr = Array.isArray(prefs.connectionOrder?.[key])
+        ? prefs.connectionOrder[key]
+        : [];
+      const rank = new Map(orderArr.map((id, idx) => [id, idx]));
+      const known = [];
+      const unknown = [];
+      for (const p of node.connections) {
+        if (rank.has(p.id)) known.push(p);
+        else unknown.push(p);
+      }
+      known.sort((a, b) => rank.get(a.id) - rank.get(b.id));
+      unknown.sort(alphaSort);
+      node.connections = [...known, ...unknown];
+    }
+  }
+  if (node.folders) {
+    for (const [name, child] of Object.entries(node.folders)) {
+      const childPath = folderPath ? `${folderPath}/${name}` : name;
+      sortTreeConnections(child, wsId, childPath);
+    }
+  }
+}
+
+function connectionOrderKey(wsId, folderPath) {
+  return `${wsId || "default"}|${folderPath || ""}`;
+}
+
+/**
+ * Mueve un perfil arriba o abajo dentro de su contenedor (mismo workspace y
+ * carpeta). Cambia automáticamente a modo manual la primera vez que se invoca.
+ * @param {string} profileId
+ * @param {-1 | 1} delta
+ */
+function moveConnectionInOrder(profileId, delta) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+  const wsId = profileWorkspaceId(profile);
+  const folder = profile.group || "";
+  const peers = profiles
+    .filter((p) => profileWorkspaceId(p) === wsId && (p.group || "") === folder);
+  if (peers.length < 2) return;
+
+  // Activar modo manual al primer reorder explícito.
+  if (prefs.connectionSortMode !== "manual") {
+    prefs.connectionSortMode = "manual";
+  }
+  prefs.connectionOrder = prefs.connectionOrder || {};
+  const key = connectionOrderKey(wsId, folder);
+
+  // Lista ordenada actual según el modo previo (alpha o manual). La usamos
+  // como base para mover el ítem y luego persistir el nuevo orden completo.
+  const current = [...peers];
+  sortTreeConnections({ connections: current, folders: {} }, wsId, folder);
+
+  const idx = current.findIndex((p) => p.id === profileId);
+  const target = idx + delta;
+  if (idx < 0 || target < 0 || target >= current.length) return;
+  [current[idx], current[target]] = [current[target], current[idx]];
+  prefs.connectionOrder[key] = current.map((p) => p.id);
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+  renderConnectionList();
+  scheduleProfileAutoSync();
 }
 
 /**
@@ -2760,8 +3002,12 @@ function renderWorkspaceSwitcher() {
   }
 
   // Marcar el modo de vista activo
-  document.querySelectorAll(".tools-view-btn").forEach((btn) => {
+  document.querySelectorAll("[data-view-mode]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.viewMode === prefs.sidebarViewMode);
+  });
+  const sortMode = prefs.connectionSortMode === "manual" ? "manual" : "alpha";
+  document.querySelectorAll("[data-sort-mode]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.sortMode === sortMode);
   });
   const compactBtn = document.getElementById("btn-sidebar-compact");
   if (compactBtn) {
@@ -2846,6 +3092,16 @@ function setSidebarCompact(enabled) {
   renderConnectionList();
 }
 
+function setConnectionSortMode(mode) {
+  if (mode !== "manual") mode = "alpha";
+  if (prefs.connectionSortMode === mode) return;
+  prefs.connectionSortMode = mode;
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+  renderConnectionList();
+  scheduleProfileAutoSync();
+}
+
 function switchToWorkspace(wsId) {
   if (!prefs.workspaces.some((w) => w.id === wsId)) return;
   prefs.activeWorkspaceId = wsId;
@@ -2867,7 +3123,7 @@ function updateRailActiveState() {
   });
 }
 
-function handleWorkspaceMenuClick(action, wsId) {
+async function handleWorkspaceMenuClick(action, wsId) {
   if (action === "select" && wsId) {
     if (wsId !== getActiveWorkspaceId()) {
       prefs.activeWorkspaceId = wsId;
@@ -2880,10 +3136,14 @@ function handleWorkspaceMenuClick(action, wsId) {
     return;
   }
   if (action === "new") {
-    const name = prompt(t("sidebar.workspace_prompt_new"));
-    if (name && name.trim()) {
+    toggleWorkspaceMenu(false);
+    const name = await promptTextValue({
+      title: t("sidebar.workspace_new"),
+      label: t("sidebar.workspace_prompt_new"),
+    });
+    if (name) {
       const id = `ws-${crypto.randomUUID()}`;
-      prefs.workspaces.push({ id, name: name.trim() });
+      prefs.workspaces.push({ id, name });
       prefs.userFoldersByWorkspace = prefs.userFoldersByWorkspace || {};
       prefs.userFoldersByWorkspace[id] = [];
       prefs.activeWorkspaceId = id;
@@ -2892,19 +3152,22 @@ function handleWorkspaceMenuClick(action, wsId) {
       savePrefs();
       renderConnectionList();
     }
-    toggleWorkspaceMenu(false);
     return;
   }
   if (action === "rename") {
     const cur = prefs.workspaces.find((w) => w.id === getActiveWorkspaceId());
     if (!cur) return;
-    const name = prompt(t("sidebar.workspace_prompt_rename"), cur.name);
-    if (name && name.trim()) {
-      cur.name = name.trim();
+    toggleWorkspaceMenu(false);
+    const name = await promptTextValue({
+      title: t("sidebar.workspace_rename"),
+      label: t("sidebar.workspace_prompt_rename"),
+      initialValue: cur.name,
+    });
+    if (name) {
+      cur.name = name;
       savePrefs();
       renderConnectionList();
     }
-    toggleWorkspaceMenu(false);
     return;
   }
   if (action === "delete") {
@@ -3149,7 +3412,52 @@ function renderDashboard() {
   }
 
   renderDashboardWorkspaceChip();
+  renderDashboardPinnedTiles();
   renderDashboardFavoritesTiles();
+}
+
+/**
+ * Tiles grandes en el dashboard para conexiones ancladas (prefs.pinnedProfiles).
+ * Si no hay ninguna, oculta la sección completa. Útil para tener a mano los
+ * 4-6 servidores que se abren a diario sin depender del filtro de favoritos.
+ */
+function renderDashboardPinnedTiles() {
+  const card = document.getElementById("dashboard-pinned-card");
+  const root = document.getElementById("dashboard-pinned-list");
+  if (!card || !root) return;
+  const ids = Array.isArray(prefs.pinnedProfiles) ? prefs.pinnedProfiles : [];
+  const list = ids
+    .map((id) => profiles.find((p) => p.id === id))
+    .filter(Boolean)
+    .slice(0, 6);
+  if (list.length === 0) {
+    card.classList.add("hidden");
+    root.innerHTML = "";
+    return;
+  }
+  card.classList.remove("hidden");
+  root.innerHTML = list.map((p) => {
+    const proto = dashboardProtocol(p);
+    return `
+      <button class="dashboard-fav-tile dashboard-pinned-tile" data-profile-id="${escHtml(p.id)}" title="${escHtml(dashboardProfileHost(p))}">
+        <span class="dashboard-fav-proto ${escHtml(proto.toLowerCase())}">${escHtml(proto)}</span>
+        <span class="dashboard-fav-name">${escHtml(p.name)}</span>
+        <span class="dashboard-fav-host">${escHtml(dashboardProfileHost(p))}</span>
+      </button>`;
+  }).join("");
+  bindDashboardCards(root);
+}
+
+function togglePinnedProfile(profileId) {
+  if (!profileId) return;
+  prefs.pinnedProfiles = Array.isArray(prefs.pinnedProfiles) ? prefs.pinnedProfiles : [];
+  const idx = prefs.pinnedProfiles.indexOf(profileId);
+  if (idx >= 0) prefs.pinnedProfiles.splice(idx, 1);
+  else prefs.pinnedProfiles.push(profileId);
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+  renderDashboard();
+  scheduleProfileAutoSync();
 }
 
 /**
@@ -3909,6 +4217,15 @@ function handleContextMenuAction(action) {
     case "toggle-favorite":
       if (id) toggleFavoriteProfile(id);
       break;
+    case "toggle-pinned":
+      if (id) togglePinnedProfile(id);
+      break;
+    case "move-conn-up":
+      if (id) moveConnectionInOrder(id, -1);
+      break;
+    case "move-conn-down":
+      if (id) moveConnectionInOrder(id, +1);
+      break;
     case "delete-conn":
       deleteProfile(id);
       break;
@@ -3930,12 +4247,16 @@ function handleContextMenuAction(action) {
   }
 }
 
-function renameWorkspaceById(wsId) {
+async function renameWorkspaceById(wsId) {
   const ws = prefs.workspaces.find((w) => w.id === wsId);
   if (!ws) return;
-  const name = prompt(t("sidebar.workspace_prompt_rename"), ws.name);
-  if (!name || !name.trim()) return;
-  ws.name = name.trim();
+  const name = await promptTextValue({
+    title: t("sidebar.workspace_rename"),
+    label: t("sidebar.workspace_prompt_rename"),
+    initialValue: ws.name,
+  });
+  if (!name) return;
+  ws.name = name;
   prefs._prefsUpdatedAt = new Date().toISOString();
   savePrefs();
   renderConnectionList();
@@ -4055,10 +4376,14 @@ function startInlineFolderCreation(parentPath = null, workspaceId = getActiveWor
 async function renameFolder(folderPath, workspaceId = getActiveWorkspaceId()) {
   const parts = folderPath.split("/");
   const currentName = parts.at(-1);
-  const newName = window.prompt("Nuevo nombre de carpeta:", currentName);
-  if (!newName || newName.trim() === currentName) return;
+  const newName = await promptTextValue({
+    title: t("sidebar.rename_folder"),
+    label: t("sidebar.folder_prompt_rename"),
+    initialValue: currentName,
+  });
+  if (!newName || newName === currentName) return;
 
-  const newPath = [...parts.slice(0, -1), newName.trim()].join("/") || newName.trim();
+  const newPath = [...parts.slice(0, -1), newName].join("/") || newName;
   const prefix    = folderPath + "/";
   const newPrefix = newPath + "/";
   const updatedAt = new Date().toISOString();
@@ -10385,9 +10710,15 @@ function bindUIEvents() {
         handleWorkspaceMenuClick(wsBtn.dataset.wsAction, wsBtn.dataset.wsId);
         return;
       }
-      const viewBtn = e.target.closest(".tools-view-btn");
+      const viewBtn = e.target.closest("[data-view-mode]");
       if (viewBtn) {
         setSidebarViewMode(viewBtn.dataset.viewMode);
+        renderWorkspaceSwitcher();
+        return;
+      }
+      const sortBtn = e.target.closest("[data-sort-mode]");
+      if (sortBtn) {
+        setConnectionSortMode(sortBtn.dataset.sortMode);
         renderWorkspaceSwitcher();
         return;
       }
@@ -10509,10 +10840,6 @@ function bindUIEvents() {
       else if (action === "tunnels") openGlobalTunnelsModal();
       else if (action === "activity") openActivityCenter();
       else if (action === "settings") openSettingsModal();
-      else if (action === "sync") {
-        prefsActiveTab = "data";
-        openSettingsModal();
-      }
     });
   });
   document.querySelectorAll("#rail [data-rail-view]").forEach((btn) => {
@@ -10934,6 +11261,10 @@ const SHORTCUT_ACTIONS = {
   zoom_in:           { default: "Ctrl+=",         run: () => adjustTerminalFontSize(+1) },
   zoom_out:          { default: "Ctrl+-",         run: () => adjustTerminalFontSize(-1) },
   zoom_reset:        { default: "Ctrl+0",         run: () => adjustTerminalFontSize("reset") },
+  ui_zoom_in:        { default: "Ctrl+Alt+=",     run: () => adjustUiZoom(+1) },
+  ui_zoom_out:       { default: "Ctrl+Alt+-",     run: () => adjustUiZoom(-1) },
+  ui_zoom_reset:     { default: "Ctrl+Alt+0",     run: () => adjustUiZoom("reset") },
+  reconnect_session: { default: "Ctrl+Shift+R",   run: () => { if (activeSessionId) reconnectSession(activeSessionId); } },
   find_in_terminal:  { default: "Ctrl+F",         run: () => toggleTerminalSearch() },
   clear_terminal:    { default: null,             run: () => clearActiveTerminal() },
   sftp_toggle_panel: { default: "Ctrl+Shift+F",   run: () => toggleActiveSftpPanel() },
@@ -12029,6 +12360,8 @@ function escHtml(str) {
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+const TOAST_VISIBLE_LIMIT = 3;
+
 function toast(message, type = "info", ms = 3500, options = {}) {
   if (typeof ms === "object" && ms !== null) {
     options = ms;
@@ -12064,11 +12397,50 @@ function toast(message, type = "info", ms = 3500, options = {}) {
     btn.addEventListener("click", () => {
       options.onAction();
       el.remove();
+      refreshToastOverflowCounter();
     });
     el.appendChild(btn);
   }
-  document.getElementById("toast-container").appendChild(el);
-  setTimeout(() => el.remove(), ms);
+  const container = document.getElementById("toast-container");
+  container.appendChild(el);
+  setTimeout(() => {
+    el.remove();
+    refreshToastOverflowCounter();
+  }, ms);
+  refreshToastOverflowCounter();
+}
+
+/**
+ * Apila los toasts: solo se muestran a la vez `TOAST_VISIBLE_LIMIT`; los
+ * demás quedan colapsados detrás de un contador "+N" que abre el centro de
+ * actividad (donde queda registrado el histórico). El counter se mantiene
+ * sincronizado siempre que un toast aparece o desaparece.
+ */
+function refreshToastOverflowCounter() {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+  const all = [...container.querySelectorAll(".toast:not(.toast-overflow)")];
+  const overflow = all.length - TOAST_VISIBLE_LIMIT;
+  all.forEach((t, idx) => {
+    t.classList.toggle("toast-hidden", idx < all.length - TOAST_VISIBLE_LIMIT);
+  });
+  let counter = container.querySelector(".toast.toast-overflow");
+  if (overflow > 0) {
+    if (!counter) {
+      counter = document.createElement("div");
+      counter.className = "toast toast-overflow";
+      counter.setAttribute("role", "status");
+      counter.addEventListener("click", () => {
+        openActivityCenter();
+        all.forEach((t) => t.remove());
+        counter?.remove();
+      });
+      container.prepend(counter);
+    }
+    counter.textContent = t("toast.more", { n: overflow });
+  } else if (counter) {
+    counter.remove();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════

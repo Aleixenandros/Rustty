@@ -2,6 +2,49 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.10.4] - 2026-05-27
+
+### Añadido
+
+- Zoom de la UI independiente del terminal con `Ctrl+Alt +/-/0`
+  (`prefs.uiZoom`, escala el rail, sidebar y tab-bar sin tocar el buffer xterm).
+- Toasts apilados: solo se muestran los últimos 3 y aparece un contador
+  "+N más" que abre el centro de actividad para ver el histórico.
+- Conexiones ancladas al dashboard (tiles grandes en el welcome screen,
+  acción "Anclar / desanclar del dashboard" en el menú contextual).
+- Centro de actividad agrupado por día (Hoy, Ayer, Esta semana, fecha
+  absoluta) con headers sticky.
+- Preview real de los temas en la galería: mini terminal con líneas de
+  prompt, comando y salida pintadas con la paleta xterm del tema.
+- Tarjetas de backend en Preferencias → Copias de seguridad con icono,
+  estado y última sync relativa.
+- Atajo `Ctrl+Shift+R` para reconectar la sesión activa.
+- Orden de conexiones en la sidebar: alfabético (por defecto) y manual
+  con flechas "Mover arriba / Mover abajo" en el menú contextual y
+  persistencia por workspace + carpeta.
+- Unificada la pestaña Autenticación dentro de General en el modal de
+  conexión (tres pestañas en lugar de cuatro: General, Avanzado, Notas).
+- SVG propio del logo en el footer del sitio (sustituye el emoji).
+
+### Corregido
+
+- Al renombrar workspace o carpeta ya no aparece el cuadro nativo
+  "JavaScript - tauri://localhost"; se usa el modal interno temático.
+- La franja blanca entre la sidebar y el terminal (scrollbar nativa de
+  WebKit2GTK con tema claro del sistema) ahora respeta la paleta.
+- El perfil activo en la sidebar se distingue con más claridad: franja
+  izquierda más ancha con halo, fondo con más contraste y nombre en
+  negrita.
+
+### Cambiado
+
+- El icono de Preferencias en el rail pasa a un engranaje claro (antes
+  parecía un sol / toggle de tema).
+- Eliminado el botón de Sincronización del rail (redundante con el dot
+  inferior y la pestaña de Copias).
+- El botón 🔍 de la sidebar abre el popover en modo compacto con solo
+  el cuadro de búsqueda; el botón ≡ mantiene el popover completo.
+
 ## [1.10.3] - 2026-05-26
 
 ### Corregido
