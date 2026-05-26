@@ -106,6 +106,8 @@ const DICTIONARIES = {
       close_others: "Cerrar las demás",
       close_right: "Cerrar las de la derecha",
       close_all: "Cerrar todas",
+      pin: "Anclar pestaña",
+      unpin: "Desanclar pestaña",
     },
     modal_conn: {
       title_new: "Nueva conexión",
@@ -293,6 +295,8 @@ const DICTIONARIES = {
       density_comfortable: "Cómoda",
       density_compact: "Compacta",
       density_hint: "Reduce el padding y la altura de filas en la barra lateral, pestañas y modales. No afecta al tamaño del terminal.",
+      color_blind_safe: "Modo daltónico",
+      color_blind_safe_hint: "Diferencia los dots de estado (pestañas, sync, barra inferior) también por forma además de por color.",
     },
     prefs_keepass: {
       title: "KeePass",
@@ -587,9 +591,11 @@ const DICTIONARIES = {
       layout_rows: "Split in rows",
       layout_grid: "Arrange in grid",
       close: "Close",
+      pin: "Pin / unpin tab",
       close_others: "Close others",
       close_right: "Close to the right",
       close_all: "Close all",
+      unpin: "Unpin tab",
     },
     modal_conn: {
       title_new: "New connection",
@@ -777,6 +783,8 @@ const DICTIONARIES = {
       density_comfortable: "Comfortable",
       density_compact: "Compact",
       density_hint: "Reduces padding and row height across the sidebar, tabs and modals. Doesn't affect terminal size.",
+      color_blind_safe: "Color-blind mode",
+      color_blind_safe_hint: "Differentiates status dots (tabs, sync, status bar) by shape in addition to color.",
     },
     prefs_keepass: {
       title: "KeePass",
@@ -1074,6 +1082,8 @@ const DICTIONARIES = {
       close_others: "Fermer les autres",
       close_right: "Fermer ceux à droite",
       close_all: "Tout fermer",
+      pin: "Épingler l'onglet",
+      unpin: "Désépingler l'onglet",
     },
     modal_conn: {
       title_new: "Nouvelle connexion",
@@ -1452,6 +1462,8 @@ const DICTIONARIES = {
       close_others: "Fechar os outros",
       close_right: "Fechar à direita",
       close_all: "Fechar tudo",
+      pin: "Fixar separador",
+      unpin: "Desfixar separador",
     },
     modal_conn: {
       title_new: "Nova conexão",

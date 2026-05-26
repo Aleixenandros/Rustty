@@ -24,16 +24,51 @@
       <!-- ── Rail vertical de iconos ── -->
       <aside id="rail" aria-label="Navegación">
         <div class="rail-section rail-top">
-          <button class="rail-btn" data-rail-view="profiles" data-i18n-title="rail.view_profiles" data-tooltip="Perfiles" data-tooltip-pos="right" aria-label="Perfiles">📁</button>
-          <button class="rail-btn" data-rail-view="favorites" data-i18n-title="rail.view_favorites" data-tooltip="Favoritos" data-tooltip-pos="right" aria-label="Favoritos">★</button>
-          <button class="rail-btn" data-rail-action="tunnels" data-i18n-title="rail.tunnels" data-tooltip="Túneles SSH" data-tooltip-pos="right" aria-label="Túneles SSH">⇄</button>
-          <button class="rail-btn rail-btn-logs" data-rail-action="activity" data-tooltip="Historial y logs" data-tooltip-pos="right" aria-label="Historial y logs">LOGS</button>
-          <button class="rail-btn" data-rail-action="sync" data-i18n-title="rail.sync" data-tooltip="Sincronización" data-tooltip-pos="right" aria-label="Sincronización">⇅</button>
-          <button class="rail-btn" id="rail-btn-settings" data-rail-action="settings" data-i18n-title="sidebar.prefs_title" data-tooltip="Preferencias" data-tooltip-pos="right" aria-label="Preferencias">⚙</button>
+          <button class="rail-btn" data-rail-view="profiles" data-i18n-title="rail.view_profiles" data-tooltip="Perfiles" data-tooltip-pos="right" aria-label="Perfiles">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 5.5a1.5 1.5 0 0 1 1.5-1.5h3l1.5 1.8h6.5A1.5 1.5 0 0 1 16 7.3v6.2A1.5 1.5 0 0 1 14.5 15h-11A1.5 1.5 0 0 1 2 13.5z"/>
+            </svg>
+          </button>
+          <button class="rail-btn" data-rail-view="favorites" data-i18n-title="rail.view_favorites" data-tooltip="Favoritos" data-tooltip-pos="right" aria-label="Favoritos">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+              <path d="M9 2.4 11.06 6.6l4.64.67-3.36 3.27.79 4.6L9 12.96 4.86 15.14l.79-4.6L2.3 7.27l4.64-.67z"/>
+            </svg>
+          </button>
+          <button class="rail-btn" data-rail-action="tunnels" data-i18n-title="rail.tunnels" data-tooltip="Túneles SSH" data-tooltip-pos="right" aria-label="Túneles SSH">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2.5 6.5h11l-2 -2M15.5 11.5h-11l2 2"/>
+            </svg>
+          </button>
+          <button class="rail-btn rail-btn-logs" data-rail-action="activity" data-tooltip="Historial y logs" data-tooltip-pos="right" aria-label="Historial y logs">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+              <path d="M3 4.5h12M3 9h12M3 13.5h8"/>
+            </svg>
+          </button>
+          <button class="rail-btn" data-rail-action="sync" data-i18n-title="rail.sync" data-tooltip="Sincronización" data-tooltip-pos="right" aria-label="Sincronización">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3.5 8.5a5.5 5.5 0 0 1 9.4-3.7L15 3v4h-4M14.5 9.5a5.5 5.5 0 0 1-9.4 3.7L3 15v-4h4"/>
+            </svg>
+          </button>
+          <button class="rail-btn" id="rail-btn-settings" data-rail-action="settings" data-i18n-title="sidebar.prefs_title" data-tooltip="Preferencias" data-tooltip-pos="right" aria-label="Preferencias">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="9" cy="9" r="2.1"/>
+              <path d="M9 2.6v1.6M9 13.8v1.6M2.6 9h1.6M13.8 9h1.6M4.4 4.4l1.13 1.13M12.47 12.47l1.13 1.13M4.4 13.6l1.13-1.13M12.47 5.53l1.13-1.13"/>
+            </svg>
+          </button>
         </div>
         <div class="rail-section rail-bottom">
-          <button class="rail-btn" id="rail-btn-local" data-rail-action="local-shell" data-i18n-title="sidebar.local_shell_title" data-tooltip="Consola local" data-tooltip-pos="right" aria-label="Consola local">$_</button>
-          <button class="rail-btn rail-btn-primary" id="rail-btn-new" data-rail-action="new-connection" data-i18n-title="sidebar.new_conn_title" data-tooltip="Nueva conexión" data-tooltip-pos="right" aria-label="Nueva conexión">＋</button>
+          <button class="rail-btn" id="rail-btn-local" data-rail-action="local-shell" data-i18n-title="sidebar.local_shell_title" data-tooltip="Consola local" data-tooltip-pos="right" aria-label="Consola local">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 4.5h12v9h-12z"/>
+              <path d="M5.5 8 7.5 10 5.5 12"/>
+              <path d="M9 12h3.5"/>
+            </svg>
+          </button>
+          <button class="rail-btn rail-btn-primary" id="rail-btn-new" data-rail-action="new-connection" data-i18n-title="sidebar.new_conn_title" data-tooltip="Nueva conexión" data-tooltip-pos="right" aria-label="Nueva conexión">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M9 3.5v11M3.5 9h11"/>
+            </svg>
+          </button>
         </div>
       </aside>
 
@@ -373,6 +408,9 @@
       </button>
 
       <div class="ctx-sep"></div>
+      <button class="ctx-item tabctx-pin" data-tabctx="pin">
+        <span class="ctx-icon">📌</span><span class="tabctx-pin-label" data-i18n="tabctx.pin">Anclar pestaña</span>
+      </button>
       <button class="ctx-item" data-tabctx="close">
         <span class="ctx-icon">✕</span><span data-i18n="tabctx.close">Cerrar</span>
       </button>
@@ -1164,6 +1202,14 @@
                   <option value="compact" data-i18n="prefs_appearance.density_compact">Compacta</option>
                 </select>
                 <p class="settings-hint" data-i18n="prefs_appearance.density_hint">Reduce padding y altura de filas en la barra lateral, pestañas y modales sin tocar el tamaño del terminal.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-color-blind-safe" />
+                  <span data-i18n="prefs_appearance.color_blind_safe">Modo daltónico</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_appearance.color_blind_safe_hint">Diferencia los indicadores de estado (pestañas, sync, barra inferior) también por forma además de por color.</p>
               </div>
 
               <div class="settings-row">

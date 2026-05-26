@@ -370,6 +370,9 @@ const DEFAULT_PREFS = {
   // Densidad de la interfaz: "comfortable" (por defecto) o "compact".
   // Reduce padding/altura en sidebar, tabs y modales sin tocar xterm.
   uiDensity:       "comfortable",
+  // Modo daltónico: dots de estado se diferencian también por forma
+  // (círculo / cuadrado / diamante) además de por color.
+  colorBlindSafe:  false,
 };
 
 // Paleta de colores predefinidos para las carpetas. Cada entrada es el id que
@@ -437,6 +440,7 @@ function loadPrefs() {
   registerAllCustomThemes();
   applyTheme(prefs.theme);
   applyUiDensity(prefs.uiDensity);
+  applyColorBlindSafe(prefs.colorBlindSafe);
   if (loadZenMode()) applyZenMode(true);
 }
 
@@ -530,6 +534,15 @@ function applyUiDensity(density) {
   const d = density === "compact" ? "compact" : "comfortable";
   document.body.classList.toggle("density-compact", d === "compact");
   document.body.classList.toggle("density-comfortable", d === "comfortable");
+}
+
+/**
+ * Activa el modo daltónico: los dots de estado se diferencian también
+ * por forma (círculo conectado / cuadrado error / diamante reconectando)
+ * además de por color.
+ */
+function applyColorBlindSafe(enabled) {
+  document.body.classList.toggle("color-blind-safe", !!enabled);
 }
 
 // ─── Export / Import de temas ─────────────────────────────────
@@ -1204,6 +1217,8 @@ function openSettingsModal() {
   document.getElementById("pref-cursor-style").value        = prefs.cursorStyle;
   const _densitySel = document.getElementById("pref-ui-density");
   if (_densitySel) _densitySel.value = prefs.uiDensity === "compact" ? "compact" : "comfortable";
+  const _cbSafe = document.getElementById("pref-color-blind-safe");
+  if (_cbSafe) _cbSafe.checked = !!prefs.colorBlindSafe;
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
   document.getElementById("pref-bell").value                = prefs.bell;
@@ -2127,6 +2142,7 @@ function savePrefsFromModal() {
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     bell:            document.getElementById("pref-bell").value,
     uiDensity:       (document.getElementById("pref-ui-density")?.value === "compact" ? "compact" : "comfortable"),
+    colorBlindSafe:  !!document.getElementById("pref-color-blind-safe")?.checked,
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
     lang:            newLang === null ? null : (SUPPORTED_LANGS.includes(newLang) ? newLang : "es"),
@@ -2179,6 +2195,7 @@ function savePrefsFromModal() {
   uiThemePreview = null;
   applyTheme(prefs.theme);
   applyUiDensity(prefs.uiDensity);
+  applyColorBlindSafe(prefs.colorBlindSafe);
   applyPrefsToAllTerminals();
   closeSettingsModal();
   toast(t("toast.prefs_saved"), "success");
@@ -6559,6 +6576,10 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     bellStyle: prefs.bell,
     theme: getTerminalTheme(),
     allowProposedApi: true,
+    // Selección inteligente con doble clic: trata como parte de la palabra
+    // los caracteres comunes de rutas, URLs, SHAs y nombres con guiones.
+    // El default de xterm corta por /, :, -, etc. Slice estético #22.
+    wordSeparator: " ()[]{}'\"`,;<>",
   });
   const fitAddon = new FitAddon();
   const searchAddon = new SearchAddon();
@@ -8364,7 +8385,11 @@ function renderSftpFiles(sessionId, side, entries) {
     filesDiv.innerHTML = `<div class="sftp-empty">Carpeta vacía</div>`;
     return;
   }
-  filesDiv.innerHTML = sorted.map((e) => `
+  filesDiv.innerHTML = sorted.map((e) => {
+    const permsText = formatSftpPermissions(e.permissions);
+    const permsOctal = formatSftpPermissionsOctal(e.permissions);
+    const permsTip = permsOctal ? `${permsText} · ${permsOctal}` : permsText;
+    return `
     <div class="sftp-row ${e.is_dir ? "is-dir" : "is-file"} ${sftpFileIconClass(e)}"
          draggable="${e.is_symlink ? "false" : "true"}"
          data-path="${escHtml(e.path)}"
@@ -8374,6 +8399,7 @@ function renderSftpFiles(sessionId, side, entries) {
          data-permissions="${e.permissions ?? ""}">
       <span class="sftp-icon">${sftpFileIconChar(e)}</span>
       <span class="sftp-name">${escHtml(e.name)}</span>
+      <span class="sftp-perms" title="${escHtml(permsTip)}">${escHtml(permsText)}</span>
       <span class="sftp-size">${e.is_dir ? "" : formatSize(e.size)}</span>
       <span class="sftp-modified">${formatTime(e.modified)}</span>
       <span class="sftp-row-actions">
@@ -8382,7 +8408,8 @@ function renderSftpFiles(sessionId, side, entries) {
       </span>
       <div class="sftp-row-progress" aria-hidden="true"><span class="sftp-row-progress-bar"></span></div>
     </div>
-  `).join("");
+  `;
+  }).join("");
 
   filesDiv.querySelectorAll(".sftp-row").forEach((row) => {
     // Selección con click. Ctrl/Cmd toggle multi.
@@ -9736,6 +9763,32 @@ function sftpFileIconChar(entry) {
     case "ftype-exec":    return "▶";
     default:              return "📄";
   }
+}
+
+/**
+ * Permisos POSIX en formato compacto "rwxr-x---". Si no hay modo
+ * (carpeta sin info, Windows local) devuelve cadena vacía.
+ */
+function formatSftpPermissions(mode) {
+  if (mode == null) return "";
+  const m = Number(mode) & 0o777;
+  if (!Number.isFinite(m)) return "";
+  const parts = [m >> 6, (m >> 3) & 7, m & 7];
+  return parts.map((p) => (
+    (p & 4 ? "r" : "-") +
+    (p & 2 ? "w" : "-") +
+    (p & 1 ? "x" : "-")
+  )).join("");
+}
+
+/**
+ * Permisos en formato octal "0750" para el tooltip.
+ */
+function formatSftpPermissionsOctal(mode) {
+  if (mode == null) return "";
+  const m = Number(mode) & 0o777;
+  if (!Number.isFinite(m)) return "";
+  return "0" + m.toString(8).padStart(3, "0");
 }
 
 function formatSize(bytes) {
@@ -11661,6 +11714,11 @@ function showTabContextMenu(x, y, sessionId) {
   });
   menu.querySelector(".tabctx-layout-sep").classList.toggle("hidden", !showLayout);
 
+  const targetTab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
+  const isPinned = !!targetTab?.classList.contains("is-pinned");
+  const pinLabel = menu.querySelector(".tabctx-pin-label");
+  if (pinLabel) pinLabel.textContent = isPinned ? t("tabctx.unpin") : t("tabctx.pin");
+
   menu.style.left = "0px";
   menu.style.top  = "0px";
   menu.classList.remove("hidden");
@@ -11679,6 +11737,23 @@ async function handleTabContextAction(action) {
   hideTabContextMenu();
   if (!targetId) return;
 
+  if (action === "pin") {
+    const tab = document.querySelector(`.tab[data-session="${CSS.escape(targetId)}"]`);
+    if (tab) {
+      tab.classList.toggle("is-pinned");
+      // Movemos las pestañas ancladas al principio para mantenerlas
+      // siempre visibles. Estado solo en runtime; no persiste entre sesiones.
+      const container = document.getElementById("tabs-container");
+      if (container) {
+        const pinned = [...container.querySelectorAll(".tab.is-pinned")];
+        const others = [...container.querySelectorAll(".tab:not(.is-pinned)")];
+        pinned.forEach((el) => container.appendChild(el));
+        others.forEach((el) => container.appendChild(el));
+      }
+    }
+    return;
+  }
+
   if (action === "close") {
     await closeSession(targetId);
     return;
@@ -11696,6 +11771,11 @@ async function handleTabContextAction(action) {
       if (idx < 0) return;
       ids = order.slice(idx + 1);
     }
+    // Las pestañas ancladas no se cierran con acciones en lote.
+    ids = ids.filter((sid) => {
+      const tab = document.querySelector(`.tab[data-session="${CSS.escape(sid)}"]`);
+      return !tab?.classList.contains("is-pinned");
+    });
     const liveCount = ids.filter((sid) => {
       const s = sessions.get(sid);
       return isSessionLive(s) || sessionHasActiveTransfers(s);

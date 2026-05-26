@@ -4793,6 +4793,12 @@ body.sftp-panel-resizing {
   outline: 2px dashed var(--blue);
   outline-offset: -4px;
   background: color-mix(in srgb, var(--blue) 8%, transparent);
+  animation: sftp-dropzone-pulse 1.4s var(--motion-ease) infinite;
+}
+
+@keyframes sftp-dropzone-pulse {
+  0%, 100% { background: color-mix(in srgb, var(--blue) 8%, transparent); }
+  50%      { background: color-mix(in srgb, var(--blue) 18%, transparent); }
 }
 
 .sftp-empty {
@@ -4806,7 +4812,7 @@ body.sftp-panel-resizing {
 
 .sftp-row {
   display: grid;
-  grid-template-columns: 48px 1fr 90px 150px auto;
+  grid-template-columns: 48px 1fr 84px 80px 130px auto;
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
@@ -4814,6 +4820,24 @@ body.sftp-panel-resizing {
   cursor: default;
   user-select: none;
   color: var(--text);
+}
+
+/* Columna permisos compactada — slice estético #21. */
+.sftp-perms {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--subtext0);
+  letter-spacing: 0.04em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .sftp-row {
+    grid-template-columns: 40px 1fr 70px auto;
+  }
+  .sftp-perms,
+  .sftp-modified { display: none; }
 }
 
 .sftp-row:hover {
@@ -5707,6 +5731,24 @@ body.sftp-log-resizing {
 .tab.drop-before::before { left: -1px; }
 .tab.drop-after::before  { right: -1px; }
 
+/* ─── Tabs pinned — slice estético #21 ──────────────────────────
+   La pestaña anclada lleva un icono de alfiler a la izquierda y
+   oculta el botón ✕ para que un clic distraído no la cierre. */
+.tab.is-pinned {
+  min-width: 80px;
+  max-width: 130px;
+  font-style: normal;
+}
+
+.tab.is-pinned::before {
+  content: "📌";
+  margin-right: 4px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.tab.is-pinned .tab-close { display: none; }
+
 /* ─── Indicador global de sync — slice estético #5 ─────────────
    Pequeño botón a la derecha del tab bar (antes de los controles
    de ventana). Solo aparece cuando la sync está activa. */
@@ -6316,4 +6358,33 @@ body.zen-mode #zen-exit-btn {
   background: color-mix(in srgb, var(--peach) 14%, var(--base));
   color: var(--peach);
   border-color: color-mix(in srgb, var(--peach) 36%, transparent);
+}
+
+/* ─── Modo daltónico — slice estético #20 ──────────────────────
+   Diferencia los dots de estado por forma además de por color.
+   - connected   → círculo (sin cambio)
+   - error       → cuadrado redondeado (border-radius pequeño)
+   - reconnecting/busy → diamante (rotate 45deg)
+   También sustituye el "verde" por "sky" porque verde/rojo es la
+   confusión más común (deuteranopia/protanopia). */
+body.color-blind-safe .tab-dot.connected,
+body.color-blind-safe #status-bar .status-dot.connected,
+body.color-blind-safe .sync-dot.success,
+body.color-blind-safe .topbar-sync-dot.success {
+  background: var(--sky) !important;
+}
+
+body.color-blind-safe .tab-dot.error,
+body.color-blind-safe #status-bar .status-dot.error,
+body.color-blind-safe .sync-dot.error,
+body.color-blind-safe .topbar-sync-dot.error {
+  border-radius: 2px;
+}
+
+body.color-blind-safe .tab-dot.connecting,
+body.color-blind-safe #status-bar .status-dot.reconnecting,
+body.color-blind-safe .sync-dot.busy,
+body.color-blind-safe .topbar-sync-dot.busy {
+  border-radius: 1px;
+  transform: rotate(45deg);
 }
