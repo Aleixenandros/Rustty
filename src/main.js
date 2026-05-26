@@ -367,6 +367,9 @@ const DEFAULT_PREFS = {
   // Se aplican en orden — la primera coincidencia gana.
   highlightRules:  defaultHighlightRules(),
   _highlightRulesSeeded: true,
+  // Densidad de la interfaz: "comfortable" (por defecto) o "compact".
+  // Reduce padding/altura en sidebar, tabs y modales sin tocar xterm.
+  uiDensity:       "comfortable",
 };
 
 // Paleta de colores predefinidos para las carpetas. Cada entrada es el id que
@@ -433,6 +436,8 @@ function loadPrefs() {
   applyTranslations();
   registerAllCustomThemes();
   applyTheme(prefs.theme);
+  applyUiDensity(prefs.uiDensity);
+  if (loadZenMode()) applyZenMode(true);
 }
 
 function getActiveWorkspaceId() {
@@ -515,6 +520,16 @@ function applyTheme(theme) {
     root.classList.add(`theme-${effective}`);
   }
   applyPrefsToAllTerminals();
+}
+
+/**
+ * Aplica la densidad de UI configurada (cómoda / compacta) al <body>.
+ * Solo afecta al chrome: sidebar, tabs y modales. No toca el terminal.
+ */
+function applyUiDensity(density) {
+  const d = density === "compact" ? "compact" : "comfortable";
+  document.body.classList.toggle("density-compact", d === "compact");
+  document.body.classList.toggle("density-comfortable", d === "comfortable");
 }
 
 // ─── Export / Import de temas ─────────────────────────────────
@@ -725,10 +740,49 @@ function updateThemePickerButton(picker, value) {
 function filterThemePickerOptions(root) {
   if (!root) return;
   const query = root.querySelector(".theme-picker-search")?.value.trim().toLowerCase() || "";
+  const tone = root.dataset.themeTone || "all";
   root.querySelectorAll(".theme-option").forEach((option) => {
+    if (!option.dataset.themeTone) option.dataset.themeTone = detectThemeOptionTone(option);
     const haystack = `${getThemeOptionLabel(option)} ${option.dataset.theme || ""}`.toLowerCase();
-    option.classList.toggle("is-filtered-out", Boolean(query) && !haystack.includes(query));
+    const matchesText = !query || haystack.includes(query);
+    const matchesTone = tone === "all" || option.dataset.themeTone === tone;
+    option.classList.toggle("is-filtered-out", !(matchesText && matchesTone));
   });
+}
+
+/**
+ * Detecta tonalidad (light/dark) de una option por la luminancia del
+ * background del preview principal. Si no se puede leer el color, cae
+ * a una heurística por nombre/id.
+ */
+function detectThemeOptionTone(option) {
+  const preview = option.querySelector(".theme-preview-main") || option.querySelector(".theme-preview");
+  if (preview) {
+    const bg = getComputedStyle(preview).backgroundColor;
+    const lum = relativeLuminanceFromColor(bg);
+    if (Number.isFinite(lum)) return lum > 0.55 ? "light" : "dark";
+  }
+  const id = (option.dataset.theme || "").toLowerCase();
+  if (/light|day|lotus|latte|dawn|gruvbox-light|solarized-light/.test(id)) return "light";
+  return "dark";
+}
+
+/**
+ * Devuelve la luminancia relativa [0..1] de un color CSS `rgb(r,g,b)`.
+ * Acepta rgb / rgba. Si no se puede parsear, devuelve NaN.
+ */
+function relativeLuminanceFromColor(css) {
+  if (!css) return NaN;
+  const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(css);
+  if (!m) return NaN;
+  const toLin = (c) => {
+    const s = +c / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const r = toLin(m[1]);
+  const g = toLin(m[2]);
+  const b = toLin(m[3]);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
 function setThemePickerOpen(root, open) {
@@ -768,15 +822,33 @@ function enhanceThemePickers() {
     panel.className = "theme-picker-panel hidden";
     panel.innerHTML = `
       <input type="search" class="theme-picker-search" data-i18n-placeholder="prefs_appearance.theme_search" placeholder="${escHtml(t("prefs_appearance.theme_search"))}" />
+      <div class="theme-tone-filter" role="tablist" aria-label="${escHtml(t("prefs_appearance.tone_filter"))}">
+        <button type="button" class="theme-tone-chip active" data-tone="all" role="tab" aria-selected="true">${escHtml(t("prefs_appearance.tone_all"))}</button>
+        <button type="button" class="theme-tone-chip" data-tone="dark" role="tab" aria-selected="false">${escHtml(t("prefs_appearance.tone_dark"))}</button>
+        <button type="button" class="theme-tone-chip" data-tone="light" role="tab" aria-selected="false">${escHtml(t("prefs_appearance.tone_light"))}</button>
+      </div>
       <div class="theme-options-list" role="listbox"></div>
     `;
     const list = panel.querySelector(".theme-options-list");
     options.forEach((option) => list.appendChild(option));
     root.append(toggle, panel);
     root.classList.add("enhanced");
+    root.dataset.themeTone = "all";
 
     toggle.addEventListener("click", () => setThemePickerOpen(root, !root.classList.contains("open")));
     panel.querySelector(".theme-picker-search")?.addEventListener("input", () => filterThemePickerOptions(root));
+    panel.querySelectorAll(".theme-tone-chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const tone = chip.dataset.tone || "all";
+        root.dataset.themeTone = tone;
+        panel.querySelectorAll(".theme-tone-chip").forEach((c) => {
+          const active = c.dataset.tone === tone;
+          c.classList.toggle("active", active);
+          c.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        filterThemePickerOptions(root);
+      });
+    });
     panel.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         setThemePickerOpen(root, false);
@@ -1130,6 +1202,8 @@ function openSettingsModal() {
   document.getElementById("pref-line-height").value         = prefs.lineHeight;
   document.getElementById("pref-letter-spacing").value      = prefs.letterSpacing;
   document.getElementById("pref-cursor-style").value        = prefs.cursorStyle;
+  const _densitySel = document.getElementById("pref-ui-density");
+  if (_densitySel) _densitySel.value = prefs.uiDensity === "compact" ? "compact" : "comfortable";
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
   document.getElementById("pref-bell").value                = prefs.bell;
@@ -1315,19 +1389,68 @@ function updateSidebarSyncStatus() {
   const dot = document.getElementById("sidebar-sync-dot");
   const label = document.getElementById("sidebar-sync-label");
   const meta = document.getElementById("sidebar-sync-meta");
-  if (!dot || !label || !meta) return;
   const enabled = !!_syncConfigCache?.enabled && _syncConfigCache.backend !== "none";
   const state = enabled ? _syncSidebarState : "idle";
-  dot.classList.remove("idle", "busy", "success", "error");
-  dot.classList.add(state);
-  label.textContent = enabled ? t(_syncSidebarTextKey) : t("prefs_sync.status_disabled");
   const backend = syncBackendLabel(_syncConfigCache?.backend || "none");
   const lastSyncAt = syncLastSyncAt();
   const last = lastSyncAt
     ? new Date(lastSyncAt).toLocaleString()
     : t("prefs_sync.last_never");
-  meta.textContent = enabled ? `${backend} · ${last}` : backend;
+  if (dot && label && meta) {
+    dot.classList.remove("idle", "busy", "success", "error");
+    dot.classList.add(state);
+    label.textContent = enabled ? t(_syncSidebarTextKey) : t("prefs_sync.status_disabled");
+    meta.textContent = enabled ? `${backend} · ${last}` : backend;
+  }
+  updateTopbarSyncIndicator({ enabled, state, backend, lastSyncAt });
   renderDashboard();
+}
+
+/**
+ * Indicador compacto de sync en la topbar. Se oculta cuando la sync está
+ * deshabilitada (no añade ruido para usuarios que no la usan). Al hacer
+ * clic abre Preferencias → Copias de seguridad.
+ */
+function updateTopbarSyncIndicator({ enabled, state, backend, lastSyncAt }) {
+  const btn = document.getElementById("topbar-sync");
+  if (!btn) return;
+  if (!enabled) {
+    btn.classList.add("hidden");
+    return;
+  }
+  btn.classList.remove("hidden");
+  const dot = btn.querySelector(".topbar-sync-dot");
+  if (dot) {
+    dot.classList.remove("idle", "busy", "success", "error");
+    dot.classList.add(state || "idle");
+  }
+  btn.classList.toggle("is-busy", state === "busy");
+  const relative = lastSyncAt ? formatRelativeTimeShort(lastSyncAt) : null;
+  const statusText = t(_syncSidebarTextKey);
+  const lastText = relative ? `${t("prefs_sync.last_at")} ${relative}` : t("prefs_sync.last_never");
+  const tooltip = `${statusText} · ${backend} · ${lastText}`;
+  // Custom tooltip (CSS-only, ver data-tooltip-pos="bottom" en el HTML).
+  btn.setAttribute("data-tooltip", tooltip);
+  btn.removeAttribute("title");
+  // aria-label completo para lectores de pantalla.
+  btn.setAttribute("aria-label", tooltip);
+}
+
+/**
+ * Formato relativo conciso ("ahora", "5 min", "2 h", "3 d"). Para el
+ * tooltip de la topbar; usa el último timestamp de sync conocido.
+ */
+function formatRelativeTimeShort(iso) {
+  const ts = new Date(iso).getTime();
+  if (!Number.isFinite(ts)) return null;
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return t("time.now");
+  const min = Math.floor(diff / 60_000);
+  if (min < 60) return t("time.minutes_ago", { n: min });
+  const h = Math.floor(min / 60);
+  if (h < 24) return t("time.hours_ago", { n: h });
+  const d = Math.floor(h / 24);
+  return t("time.days_ago", { n: d });
 }
 
 function currentOAuthProvider() {
@@ -2003,6 +2126,7 @@ function savePrefsFromModal() {
     cursorBlink:     document.getElementById("pref-cursor-blink").checked,
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     bell:            document.getElementById("pref-bell").value,
+    uiDensity:       (document.getElementById("pref-ui-density")?.value === "compact" ? "compact" : "comfortable"),
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
     lang:            newLang === null ? null : (SUPPORTED_LANGS.includes(newLang) ? newLang : "es"),
@@ -2054,6 +2178,7 @@ function savePrefsFromModal() {
   _typographySnapshot = null;
   uiThemePreview = null;
   applyTheme(prefs.theme);
+  applyUiDensity(prefs.uiDensity);
   applyPrefsToAllTerminals();
   closeSettingsModal();
   toast(t("toast.prefs_saved"), "success");
@@ -2170,12 +2295,22 @@ async function init() {
   await registerBundledThemePacks();
   enhanceThemePickers();
 
+  // Skeleton durante la carga inicial: evita el flash vacío de la sidebar
+  // mientras get_profiles termina. Si la carga es instantánea el usuario
+  // apenas lo verá; con KeePass o muchos perfiles aporta feedback.
+  const _connListBoot = document.getElementById("connection-list");
+  if (_connListBoot) {
+    _connListBoot.innerHTML = renderSidebarSkeleton();
+    _connListBoot.setAttribute("aria-busy", "true");
+  }
+
   try {
     profiles = await invoke("get_profiles");
   } catch {
     profiles = [];
   }
 
+  if (_connListBoot) _connListBoot.removeAttribute("aria-busy");
   renderConnectionList();
   bindUIEvents();
   await initTrayQuickLauncher().catch((e) => console.debug("[tray] init", e));
@@ -2329,6 +2464,24 @@ function applySyncedUserFolders() {
 
 let _sidebarSearchQuery = "";
 
+/**
+ * Devuelve HTML de placeholders shimmer para la sidebar durante la carga
+ * inicial (clase utilitaria .skeleton definida en styles.css).
+ */
+function renderSidebarSkeleton(rows = 6) {
+  const items = [];
+  for (let i = 0; i < rows; i += 1) {
+    const widthClass = i % 3 === 0 ? "is-medium" : "";
+    items.push(
+      `<div class="skeleton--row" aria-hidden="true">
+         <span class="skeleton skeleton--avatar" style="width:14px;height:14px;border-radius:3px"></span>
+         <span class="skeleton skeleton--text ${widthClass}"></span>
+       </div>`,
+    );
+  }
+  return `<div class="sidebar-skeleton" role="status" aria-label="${escHtml(t("sidebar.loading"))}">${items.join("")}</div>`;
+}
+
 function renderConnectionList() {
   const container = document.getElementById("connection-list");
   container?.classList.toggle("compact", Boolean(prefs.sidebarCompact));
@@ -2355,9 +2508,13 @@ function renderConnectionList() {
   const activeProfiles = profiles.filter(profileBelongsToActiveWorkspace);
   if (activeProfiles.length === 0 && userFolders.size === 0) {
     container.innerHTML = `
-      <div class="empty-state">
-        <p>Sin conexiones guardadas</p>
-        <button class="btn-link" id="btn-first-connection">Añadir la primera</button>
+      <div class="empty-state empty-state--rich">
+        <div class="empty-state__icon" aria-hidden="true">⊕</div>
+        <div class="empty-state__title">${escHtml(t("sidebar.empty_title"))}</div>
+        <p class="empty-state__hint">${escHtml(t("sidebar.empty_hint"))}</p>
+        <div class="empty-state__actions">
+          <button class="btn-link" id="btn-first-connection">${escHtml(t("sidebar.empty_cta"))}</button>
+        </div>
       </div>`;
     container.querySelector("#btn-first-connection")
       ?.addEventListener("click", () => openNewConnectionModal());
@@ -2524,7 +2681,12 @@ function renderAllWorkspacesTree() {
 function renderFavoritesTree() {
   const favs = profiles.filter((p) => isFavoriteProfile(p.id));
   if (favs.length === 0) {
-    return `<div class="empty-state"><p>${escHtml(t("sidebar.favorites_empty"))}</p></div>`;
+    return `
+      <div class="empty-state empty-state--rich">
+        <div class="empty-state__icon" aria-hidden="true">★</div>
+        <div class="empty-state__title">${escHtml(t("sidebar.favorites_empty"))}</div>
+        <p class="empty-state__hint">${escHtml(t("sidebar.favorites_empty_hint"))}</p>
+      </div>`;
   }
   favs.sort((a, b) => a.name.localeCompare(b.name));
   return favs.map((p) => renderConnectionItem(p, 0)).join("");
@@ -2805,6 +2967,24 @@ function getRecentProfiles() {
     .filter((item) => item.profile);
 }
 
+/**
+ * Variante del historial filtrada según la vista activa de la sidebar.
+ *   - "current"   → solo perfiles del workspace activo.
+ *   - "all"       → historial global (sin filtro de workspace).
+ *   - "favorites" → solo perfiles favoritos (transversal entre workspaces).
+ * El quick launcher del tray usa `getRecentProfiles()` (global) para que
+ * desde la bandeja se pueda conectar a cualquier perfil reciente.
+ */
+function getRecentProfilesForActiveView() {
+  const mode = prefs.sidebarViewMode || "current";
+  const activeWs = getActiveWorkspaceId();
+  return getRecentProfiles().filter(({ profile }) => {
+    if (mode === "favorites") return isFavoriteProfile(profile.id);
+    if (mode === "all") return true;
+    return profileWorkspaceId(profile) === activeWs;
+  });
+}
+
 function trayProfileLabel(profile) {
   const user = profile.username ? `${profile.username}@` : "";
   const host = profile.host ? `${user}${profile.host}` : "";
@@ -2937,13 +3117,72 @@ function renderDashboard() {
 
   const activity = document.getElementById("dashboard-activity-list");
   if (activity) {
-    const rows = getRecentProfiles().slice(0, 5);
+    const rows = getRecentProfilesForActiveView().slice(0, 5);
+    const mode = prefs.sidebarViewMode || "current";
+    const emptyMsg = rows.length
+      ? null
+      : (mode === "current"
+          ? "Sin actividad en este workspace"
+          : mode === "favorites"
+            ? "Sin actividad en favoritos"
+            : "La actividad aparecerá aquí al conectar perfiles");
     activity.innerHTML = rows.length
       ? rows.map(({ profile, lastConnectedAt }) => renderDashboardActivityRow(profile, lastConnectedAt)).join("")
-      : `<div class="dashboard-empty-line">La actividad aparecerá aquí al conectar perfiles</div>`;
+      : `<div class="dashboard-empty-line">${escHtml(emptyMsg)}</div>`;
     bindDashboardCards(activity);
   }
 
+  renderDashboardWorkspaceChip();
+  renderDashboardFavoritesTiles();
+}
+
+/**
+ * Chip discreto en la cabecera del dashboard con el workspace activo y el
+ * conteo de conexiones. Se oculta si solo existe el workspace "Default" y
+ * tiene 0 conexiones (estado inicial limpio).
+ */
+function renderDashboardWorkspaceChip() {
+  const chip = document.getElementById("dashboard-workspace-chip");
+  if (!chip) return;
+  const mode = prefs.sidebarViewMode || "current";
+  const ws = (prefs.workspaces || []).find((w) => w.id === getActiveWorkspaceId());
+  const totalInWs = profiles.filter(profileBelongsToActiveWorkspace).length;
+  let label = "";
+  if (mode === "all") {
+    label = `Todos los perfiles · ${profiles.length}`;
+  } else if (mode === "favorites") {
+    const favCount = (prefs.favorites || []).length;
+    label = `Favoritos · ${favCount}`;
+  } else if (ws) {
+    label = `${ws.name || "Default"} · ${totalInWs}`;
+  }
+  chip.textContent = label;
+  chip.classList.toggle("hidden", !label);
+}
+
+/**
+ * Tarjetas de favoritos en el dashboard (hasta 6). Si no hay, muestra un
+ * estado vacío con CTA para anclar conexiones desde el menú contextual.
+ */
+function renderDashboardFavoritesTiles() {
+  const root = document.getElementById("dashboard-favorites-list");
+  if (!root) return;
+  const favIds = new Set(Array.isArray(prefs.favorites) ? prefs.favorites : []);
+  const favs = profiles.filter((p) => favIds.has(p.id)).slice(0, 6);
+  if (favs.length === 0) {
+    root.innerHTML = `<div class="dashboard-empty-line">${escHtml(t("sidebar.favorites_empty"))}</div>`;
+    return;
+  }
+  root.innerHTML = favs.map((p) => {
+    const proto = dashboardProtocol(p);
+    return `
+      <button class="dashboard-fav-tile" data-profile-id="${escHtml(p.id)}" title="${escHtml(dashboardProfileHost(p))}">
+        <span class="dashboard-fav-proto ${escHtml(proto.toLowerCase())}">${escHtml(proto)}</span>
+        <span class="dashboard-fav-name">${escHtml(p.name)}</span>
+        <span class="dashboard-fav-host">${escHtml(dashboardProfileHost(p))}</span>
+      </button>`;
+  }).join("");
+  bindDashboardCards(root);
 }
 
 function renderDashboardResultRow(profile, lastConnectedAt) {
@@ -3953,9 +4192,127 @@ function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiv
   });
   populateFolderSelect(preselectedFolder, workspaceId);
   populateWorkspaceFormSelect(workspaceId);
+  setConnectionModalPane("general");
+  clearAllConnectionModalErrors();
+  renderConnectionSummary();
   applyConnectionModalSize();
   document.getElementById("modal-overlay").classList.remove("hidden");
   document.getElementById("f-name").focus();
+}
+
+/**
+ * Cambia la pestaña activa del modal de conexión. Slice estético #19.
+ * Sincroniza la clase `active` de las tabs y el atributo
+ * `data-active-pane` del form; CSS oculta los demás panes.
+ */
+function setConnectionModalPane(pane) {
+  const form = document.getElementById("form-connection");
+  if (!form) return;
+  form.setAttribute("data-active-pane", pane);
+  document.querySelectorAll(".modal-tab").forEach((btn) => {
+    const active = btn.dataset.modalTab === pane;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+}
+
+/**
+ * Validación inline de un campo concreto. Escribe (o limpia) un mensaje
+ * bajo el input usando el contenedor .form-error con `data-error-for`.
+ * Devuelve true si el campo es válido. No es bloqueante: el guardado
+ * sigue validándose por el flujo existente; esto solo da feedback visual.
+ */
+function validateConnectionField(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) return true;
+  const errEl = document.querySelector(`.form-error[data-error-for="${inputId}"]`);
+  const value = (input.value || "").trim();
+  let error = null;
+  if (inputId === "f-host" && !value) error = t("modal_conn.err_host_required");
+  if (inputId === "f-port") {
+    const n = parseInt(value, 10);
+    if (!Number.isFinite(n) || n < 1 || n > 65535) error = t("modal_conn.err_port_range");
+  }
+  if (inputId === "f-proxy-jump" && value && !/^([^\s@]+@)?[^\s:]+(:\d{1,5})?$/.test(value)) {
+    error = t("modal_conn.err_proxy_jump_format");
+  }
+  if (inputId === "f-mac-address" && value && !/^([0-9a-fA-F]{2}[:\-]){5}[0-9a-fA-F]{2}$/.test(value)) {
+    error = t("modal_conn.err_mac_format");
+  }
+  input.classList.toggle("input-invalid", !!error);
+  if (errEl) {
+    errEl.textContent = error || "";
+    errEl.classList.toggle("hidden", !error);
+  }
+  return !error;
+}
+
+/**
+ * Si el form tiene un campo inválido, salta a la pestaña que lo contiene
+ * (subiendo en el DOM hasta encontrar el wrapper con `data-modal-pane`).
+ * Útil para que `reportValidity()` nativo pueda enfocar el campo aunque
+ * estuviera en un pane oculto por CSS.
+ */
+function revealFirstInvalidPane(form) {
+  const invalid = form.querySelector(":invalid");
+  if (!invalid) return;
+  const paneWrap = invalid.closest("[data-modal-pane]");
+  const pane = paneWrap?.getAttribute("data-modal-pane");
+  if (pane) setConnectionModalPane(pane);
+}
+
+function clearAllConnectionModalErrors() {
+  document.querySelectorAll("#form-connection .input-invalid").forEach((el) => el.classList.remove("input-invalid"));
+  document.querySelectorAll("#form-connection .form-error").forEach((el) => {
+    el.textContent = "";
+    el.classList.add("hidden");
+  });
+}
+
+/**
+ * Renderiza el resumen "Lo que se va a usar" bajo el formulario.
+ * Mira los campos críticos y muestra badges con la configuración
+ * efectiva. Slice estético #19 (fase B).
+ */
+function renderConnectionSummary() {
+  const root = document.getElementById("modal-conn-summary");
+  if (!root) return;
+  const connType = document.getElementById("f-conn-type")?.value || "ssh";
+  const badges = [];
+
+  if (connType === "ssh") {
+    const authType = document.getElementById("f-auth-type")?.value || "password";
+    const useKeepass = document.getElementById("f-use-keepass")?.checked;
+    if (useKeepass) badges.push({ kind: "info", label: t("modal_conn.summary_auth_keepass") });
+    else if (authType === "password") badges.push({ kind: "info", label: t("modal_conn.summary_auth_password") });
+    else if (authType === "public_key") badges.push({ kind: "info", label: t("modal_conn.summary_auth_publickey") });
+    else if (authType === "agent") badges.push({ kind: "info", label: t("modal_conn.summary_auth_agent") });
+
+    const bastion = (document.getElementById("f-proxy-jump")?.value || "").trim();
+    if (bastion) badges.push({ kind: "info", label: t("modal_conn.summary_bastion", { host: bastion }) });
+
+    const ka = parseInt(document.getElementById("f-keep-alive")?.value || "0", 10);
+    if (Number.isFinite(ka) && ka > 0) badges.push({ kind: "info", label: t("modal_conn.summary_keepalive", { n: ka }) });
+
+    const recon = parseInt(document.getElementById("f-auto-reconnect")?.value || "0", 10);
+    if (Number.isFinite(recon) && recon > 0) badges.push({ kind: "info", label: t("modal_conn.summary_reconnect", { n: recon }) });
+
+    if (document.getElementById("f-allow-legacy")?.checked) badges.push({ kind: "warn", label: t("modal_conn.summary_legacy") });
+    if (document.getElementById("f-agent-forwarding")?.checked) badges.push({ kind: "info", label: t("modal_conn.summary_agent_fwd") });
+    if (document.getElementById("f-x11-forwarding")?.checked) badges.push({ kind: "info", label: t("modal_conn.summary_x11_fwd") });
+    if (document.getElementById("f-session-log")?.checked) badges.push({ kind: "info", label: t("modal_conn.summary_session_log") });
+    if ((document.getElementById("f-mac-address")?.value || "").trim()) badges.push({ kind: "info", label: t("modal_conn.summary_wol") });
+  }
+
+  if (badges.length === 0) {
+    root.innerHTML = "";
+    root.classList.add("hidden");
+    return;
+  }
+  root.classList.remove("hidden");
+  root.innerHTML = badges
+    .map((b) => `<span class="modal-summary-badge ${b.kind === "warn" ? "warn" : ""}">${escHtml(b.label)}</span>`)
+    .join("");
 }
 
 function populateWorkspaceFormSelect(selectedId) {
@@ -4016,7 +4373,11 @@ function openEditConnectionModal(profileId) {
     document.getElementById("f-use-keepass").checked = !!profile.keepass_entry_uuid;
     populateKeepassEntrySelect(profile.keepass_entry_uuid || null);
     updateConnTypeFields(connType);
+    renderConnectionSummary();
   });
+  setConnectionModalPane("general");
+  clearAllConnectionModalErrors();
+  renderConnectionSummary();
   applyConnectionModalSize();
   document.getElementById("modal-overlay").classList.remove("hidden");
 }
@@ -4233,6 +4594,12 @@ function updateConnTypeFields(type, adjustPort = false) {
   document.getElementById("field-passphrase").classList.add("hidden");
   document.getElementById("field-save-passphrase").classList.add("hidden");
   document.getElementById("field-advanced").classList.toggle("hidden", isPasswordOnly);
+  // Ocultar la pestaña "Avanzado" del modal cuando no aplique (RDP/FTP/FTPS).
+  document.querySelectorAll('.modal-tab[data-modal-tab="advanced"]').forEach((tab) => {
+    tab.classList.toggle("hidden", isPasswordOnly);
+    // Si la tab activa quedó oculta, vuelve a "general".
+    if (isPasswordOnly && tab.classList.contains("active")) setConnectionModalPane("general");
+  });
 
   if (isPasswordOnly) {
     document.getElementById("f-auth-type").value = "password";
@@ -5232,6 +5599,8 @@ function createTab(sessionId, profile, initialStatus, { sftp = true } = {}) {
   const tab = document.createElement("div");
   tab.className = "tab";
   tab.dataset.session = sessionId;
+  tab.title = buildTabTooltip(profile);
+  tab.draggable = true;
   const sftpBtn = sftp ? `<button class="tab-sftp" title="Panel SFTP">⇅</button>` : "";
   const tunnelBtn = sftp ? `<button class="tab-tunnels" title="Túneles SSH">⇄</button>` : "";
   tab.innerHTML = `
@@ -5255,8 +5624,74 @@ function createTab(sessionId, profile, initialStatus, { sftp = true } = {}) {
     e.stopPropagation();
     toggleTunnelPanel(tab.dataset.session);
   });
+  attachTabDragHandlers(tab);
   document.getElementById("tabs-container").appendChild(tab);
   return tab;
+}
+
+/**
+ * Construye el tooltip del tab. Para SSH/SFTP/FTP/RDP muestra "user@host:port".
+ * Para shell local solo el nombre. Si falta info se omite.
+ */
+function buildTabTooltip(profile) {
+  if (!profile) return "";
+  const parts = [profile.name];
+  if (profile.host) {
+    const user = profile.username ? `${profile.username}@` : "";
+    const port = profile.port ? `:${profile.port}` : "";
+    parts.push(`${user}${profile.host}${port}`);
+  }
+  if (profile.connection_type) {
+    parts.push(profile.connection_type.toUpperCase());
+  }
+  return parts.join(" · ");
+}
+
+/**
+ * Drag & drop entre tabs para reordenarlos. Mantiene el orden visual en el
+ * contenedor — no persiste todavía (cada reapertura recolocaría según el
+ * orden de los perfiles). Para persistir habría que guardar el orden en
+ * prefs.tabOrder y aplicarlo al recrear sesiones.
+ */
+function attachTabDragHandlers(tab) {
+  tab.addEventListener("dragstart", (e) => {
+    if (e.target.closest(".tab-close, .tab-sftp, .tab-tunnels")) {
+      e.preventDefault();
+      return;
+    }
+    tab.classList.add("is-dragging");
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/x-rustty-tab", tab.dataset.session); } catch {}
+  });
+  tab.addEventListener("dragend", () => {
+    tab.classList.remove("is-dragging");
+    document.querySelectorAll(".tab.drop-before, .tab.drop-after")
+      .forEach((el) => el.classList.remove("drop-before", "drop-after"));
+  });
+  tab.addEventListener("dragover", (e) => {
+    const dragging = document.querySelector(".tab.is-dragging");
+    if (!dragging || dragging === tab) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const rect = tab.getBoundingClientRect();
+    const before = (e.clientX - rect.left) < rect.width / 2;
+    tab.classList.toggle("drop-before", before);
+    tab.classList.toggle("drop-after", !before);
+  });
+  tab.addEventListener("dragleave", () => {
+    tab.classList.remove("drop-before", "drop-after");
+  });
+  tab.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const dragging = document.querySelector(".tab.is-dragging");
+    tab.classList.remove("drop-before", "drop-after");
+    if (!dragging || dragging === tab) return;
+    const rect = tab.getBoundingClientRect();
+    const before = (e.clientX - rect.left) < rect.width / 2;
+    const parent = tab.parentNode;
+    if (before) parent.insertBefore(dragging, tab);
+    else parent.insertBefore(dragging, tab.nextSibling);
+  });
 }
 
 function viewKey(selection = viewSelection) {
@@ -5781,6 +6216,16 @@ function toggleActiveConnectionLogPanel() {
   toggleConnectionLogPanel(activeSessionId);
 }
 
+/**
+ * Si la ruta empieza por /home/<user> o /Users/<user>, lo sustituye por ~.
+ * Cosmético para que la status bar no quede atestada en sesiones con cwd
+ * dentro del home.
+ */
+function collapseHomePath(path) {
+  if (typeof path !== "string") return path;
+  return path.replace(/^\/(?:home|Users)\/[^/]+/, "~");
+}
+
 function updateStatusBar() {
   const bar = document.getElementById("status-bar");
   if (!bar) return;
@@ -5805,6 +6250,35 @@ function updateStatusBar() {
     else if (s.status === "reconnecting") dot.classList.add("reconnecting");
     else if (s.status === "error" || s.status === "closed") dot.classList.add("error");
   }
+
+  // CWD remoto detectado vía OSC 7 (solo si el shell lo emite).
+  const cwdWrap = document.getElementById("status-cwd-wrap");
+  const cwdSep  = document.querySelector(".status-cwd-sep");
+  const cwdEl   = document.getElementById("status-cwd");
+  if (cwdWrap && cwdEl && cwdSep) {
+    if (s.remoteCwd) {
+      cwdEl.textContent = collapseHomePath(s.remoteCwd);
+      cwdEl.title = s.remoteCwd;
+      cwdWrap.classList.remove("hidden");
+      cwdSep.classList.remove("hidden");
+    } else {
+      cwdWrap.classList.add("hidden");
+      cwdSep.classList.add("hidden");
+    }
+  }
+
+  // Dimensiones cols × rows del xterm activo.
+  const dimsEl = document.getElementById("status-dims");
+  if (dimsEl && s.terminal) {
+    dimsEl.textContent = `${s.terminal.cols}×${s.terminal.rows}`;
+  } else if (dimsEl) {
+    dimsEl.textContent = "—";
+  }
+
+  // Badge REC si el perfil tiene session_log activado.
+  const recWrap = document.getElementById("status-rec-wrap");
+  if (recWrap) recWrap.classList.toggle("hidden", !profile.session_log);
+
   renderStatusConnectionLog();
 
   // Reanudar el probe de latencia cada vez que cambiamos de sesión activa
@@ -6126,6 +6600,46 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     if (sessionObj.sftp?.follow && sessionObj.sftp.cwd !== sessionObj.remoteCwd) {
       navigateSftp(sessionObj.id, sessionObj.remoteCwd);
     }
+    // Refrescar el cwd en la barra inferior si esta sesión es la activa.
+    if (sessionObj.id === activeSessionId) updateStatusBar();
+    return true;
+  });
+
+  // OSC 133 (FinalTerm semantic prompts): A=prompt start, B=command start,
+  // C=output start, D[;code]=command end. bash/zsh/fish modernos los
+  // emiten cuando están configurados; Rustty marca la línea del prompt
+  // actual con una franja izquierda de 2 px usando una decoración del
+  // marker correspondiente. Slice estético #15.
+  terminal.parser.registerOscHandler(133, (data) => {
+    const kind = (data || "")[0];
+    if (kind === "A") {
+      try {
+        // Dispose del marker/decoración previos.
+        sessionObj._oscPromptDecoration?.dispose?.();
+        sessionObj._oscPromptMarker?.dispose?.();
+        const marker = terminal.registerMarker(0);
+        if (!marker) return true;
+        sessionObj._oscPromptMarker = marker;
+        sessionObj._oscPromptDecoration = terminal.registerDecoration({
+          marker,
+          width: 1,
+          height: 1,
+          x: 0,
+          layer: "top",
+          backgroundColor: undefined,
+        });
+        if (sessionObj._oscPromptDecoration) {
+          sessionObj._oscPromptDecoration.onRender((el) => {
+            el.classList.add("osc133-prompt-decoration");
+          });
+        }
+      } catch (err) {
+        // xterm no expone decoraciones en versiones antiguas: no-op.
+        console.debug("[osc133]", err);
+      }
+    }
+    // B/C/D no necesitan acción visual ahora; futuras iteraciones podrían
+    // medir tiempo de comando o capturar bloques.
     return true;
   });
 
@@ -7851,14 +8365,14 @@ function renderSftpFiles(sessionId, side, entries) {
     return;
   }
   filesDiv.innerHTML = sorted.map((e) => `
-    <div class="sftp-row ${e.is_dir ? "is-dir" : "is-file"}"
+    <div class="sftp-row ${e.is_dir ? "is-dir" : "is-file"} ${sftpFileIconClass(e)}"
          draggable="${e.is_symlink ? "false" : "true"}"
          data-path="${escHtml(e.path)}"
          data-name="${escHtml(e.name)}"
          data-is-dir="${e.is_dir}"
          data-is-symlink="${e.is_symlink}"
          data-permissions="${e.permissions ?? ""}">
-      <span class="sftp-icon">${e.is_dir ? "📁" : (e.is_symlink ? "🔗" : "📄")}</span>
+      <span class="sftp-icon">${sftpFileIconChar(e)}</span>
       <span class="sftp-name">${escHtml(e.name)}</span>
       <span class="sftp-size">${e.is_dir ? "" : formatSize(e.size)}</span>
       <span class="sftp-modified">${formatTime(e.modified)}</span>
@@ -7866,6 +8380,7 @@ function renderSftpFiles(sessionId, side, entries) {
         <button class="sftp-row-btn" data-op="rename" title="Renombrar">✎</button>
         <button class="sftp-row-btn danger" data-op="delete" title="Eliminar">✕</button>
       </span>
+      <div class="sftp-row-progress" aria-hidden="true"><span class="sftp-row-progress-bar"></span></div>
     </div>
   `).join("");
 
@@ -8488,8 +9003,17 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
   const startedAt = Date.now();
   const resultStatus = resolved.renamed ? "renamed" : (resolved.overwrite ? "overwritten" : "ok");
   let finalTargetPath = "";
+  // Lado de la fila a marcar con la mini barra: para upload, la fila
+  // origen vive en local (el panel local muestra el fichero que se sube);
+  // para download, la fila origen vive en remoto.
+  const rowSide = direction === "upload" ? "local" : "remote";
+  const rowName = name;
+  setSftpRowProgress(panel, rowSide, rowName, 0, true);
   const ul = await listen(`sftp-progress-${transferId}`, (ev) => {
     updateTransfer(transferEl, ev.payload);
+    const { transferred = 0, total = 0, done = false } = ev.payload || {};
+    const pct = total > 0 ? Math.min(100, Math.round((transferred / total) * 100)) : (done ? 100 : 0);
+    setSftpRowProgress(panel, rowSide, rowName, pct, !done);
   });
 
   try {
@@ -8589,8 +9113,33 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
     return canceled ? "canceled" : "error";
   } finally {
     try { ul(); } catch {}
+    setSftpRowProgress(panel, rowSide, rowName, 0, false);
   }
   return "done";
+}
+
+/**
+ * Actualiza la mini barra de progreso de una fila SFTP (local o remoto)
+ * por nombre del fichero. `active=true` la muestra, `false` la oculta.
+ * Si la fila no existe (porque el usuario navegó), no hace nada.
+ */
+function setSftpRowProgress(panel, side, name, pct, active) {
+  if (!panel || !name) return;
+  const row = panel.querySelector(
+    `.sftp-files[data-side="${side}"] .sftp-row[data-name="${cssAttrEscape(name)}"]`
+  );
+  if (!row) return;
+  row.classList.toggle("is-transferring", !!active);
+  const bar = row.querySelector(".sftp-row-progress-bar");
+  if (bar) bar.style.width = `${Math.max(0, Math.min(100, pct || 0))}%`;
+}
+
+/**
+ * Escapado mínimo para usar un string como valor en un selector CSS de
+ * atributo. Evita romper si el nombre tiene comillas, barras o llaves.
+ */
+function cssAttrEscape(value) {
+  return String(value).replace(/["\\]/g, "\\$&");
 }
 
 async function promptMkdir(sessionId, side) {
@@ -9145,6 +9694,50 @@ function joinRemote(base, name) {
   return base + "/" + name;
 }
 
+/**
+ * Devuelve la clase CSS para colorear el icono según el tipo de fichero.
+ * El glifo lo da sftpFileIconChar(); aquí solo decidimos el tinte.
+ */
+function sftpFileIconClass(entry) {
+  if (entry.is_dir) return "ftype-dir";
+  if (entry.is_symlink) return "ftype-link";
+  const name = (entry.name || "").toLowerCase();
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot + 1) : "";
+  if (["png","jpg","jpeg","gif","webp","svg","bmp","ico","tiff","avif"].includes(ext)) return "ftype-image";
+  if (["mp4","mkv","mov","webm","avi","flv","wmv","m4v"].includes(ext)) return "ftype-video";
+  if (["mp3","wav","flac","ogg","aac","m4a","opus"].includes(ext)) return "ftype-audio";
+  if (["zip","tar","gz","bz2","xz","7z","rar","zst","tgz","tbz","tbz2","txz"].includes(ext)) return "ftype-archive";
+  if (["pdf","epub","mobi"].includes(ext)) return "ftype-doc";
+  if (["md","txt","log","cfg","conf","ini","yaml","yml","toml","env"].includes(ext)) return "ftype-text";
+  if (["js","ts","jsx","tsx","py","rs","go","rb","php","java","kt","swift","c","cpp","h","hpp","cs","sh","bash","zsh","fish","lua","sql","json","xml","html","css","scss","vue","svelte"].includes(ext)) return "ftype-code";
+  // Ejecutable Unix: ningún punto y permiso x; aproximación por permisos.
+  if (entry.permissions && /[1357]/.test(String(entry.permissions))) return "ftype-exec";
+  return "";
+}
+
+/**
+ * Glifo del icono. Mantiene los emoji originales para directorio/symlink
+ * (forma reconocible) y usa caracteres planos por categoría para
+ * fichero. Acompañado por el color de sftpFileIconClass.
+ */
+function sftpFileIconChar(entry) {
+  if (entry.is_dir) return "📁";
+  if (entry.is_symlink) return "🔗";
+  const cls = sftpFileIconClass(entry);
+  switch (cls) {
+    case "ftype-image":   return "🖼";
+    case "ftype-video":   return "🎬";
+    case "ftype-audio":   return "🎵";
+    case "ftype-archive": return "📦";
+    case "ftype-doc":     return "📕";
+    case "ftype-text":    return "📝";
+    case "ftype-code":    return "⟨/⟩";
+    case "ftype-exec":    return "▶";
+    default:              return "📄";
+  }
+}
+
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + " B";
   const units = ["KB", "MB", "GB", "TB"];
@@ -9590,6 +10183,35 @@ function bindUIEvents() {
     if (!document.hidden && activeSessionId) clearTabActivity(activeSessionId);
   });
 
+  // Indicador global de sync en la topbar → abre Preferencias en la
+  // pestaña Copias de seguridad.
+  document.getElementById("topbar-sync")?.addEventListener("click", () => {
+    openSettingsModal();
+    switchPrefsTab("data");
+  });
+
+  // Botón flotante para salir del modo zen (también se sale con el atajo).
+  document.getElementById("zen-exit-btn")?.addEventListener("click", () => applyZenMode(false));
+
+  // Tabs del modal de conexión (General / Autenticación / Avanzado / Notas).
+  document.querySelectorAll(".modal-tab").forEach((btn) => {
+    btn.addEventListener("click", () => setConnectionModalPane(btn.dataset.modalTab));
+  });
+
+  // Validación inline y resumen reactivo del modal de conexión.
+  const _connForm = document.getElementById("form-connection");
+  if (_connForm) {
+    _connForm.addEventListener("input", (e) => {
+      if (e.target?.id) {
+        if (["f-host", "f-port", "f-proxy-jump", "f-mac-address"].includes(e.target.id)) {
+          validateConnectionField(e.target.id);
+        }
+      }
+      renderConnectionSummary();
+    });
+    _connForm.addEventListener("change", () => renderConnectionSummary());
+  }
+
   // Reemplazar todos los <select> nativos por el dropdown personalizado
   document.querySelectorAll("select").forEach(enhanceSelect);
   enhanceNumberSteppers();
@@ -10001,14 +10623,22 @@ function bindUIEvents() {
   // Botones del modal
   document.getElementById("btn-modal-test")?.addEventListener("click", runConnectionTestFromModal);
   document.getElementById("btn-modal-save-only").addEventListener("click", () => {
-    if (!document.getElementById("form-connection").checkValidity()) {
-      document.getElementById("form-connection").reportValidity();
+    const form = document.getElementById("form-connection");
+    if (!form.checkValidity()) {
+      revealFirstInvalidPane(form);
+      form.reportValidity();
       return;
     }
     saveAndClose(false);
   });
   document.getElementById("form-connection").addEventListener("submit", (e) => {
     e.preventDefault();
+    const form = e.currentTarget;
+    if (!form.checkValidity()) {
+      revealFirstInvalidPane(form);
+      form.reportValidity();
+      return;
+    }
     saveAndClose(true);
   });
 
@@ -10149,6 +10779,7 @@ const SHORTCUT_ACTIONS = {
   sftp_toggle_panel: { default: "Ctrl+Shift+F",   run: () => toggleActiveSftpPanel() },
   sftp_toggle_follow:{ default: null,             run: () => toggleActiveSftpFollow() },
   sftp_toggle_sudo:  { default: null,             run: () => toggleActiveSftpElevated() },
+  toggle_zen_mode:   { default: "F11",            run: () => toggleZenMode() },
 };
 
 const SHORTCUT_IDS = Object.keys(SHORTCUT_ACTIONS);
@@ -10533,16 +11164,62 @@ function clearActiveTerminal() {
  * Después del cambio hace `fit` de los terminales visibles porque el
  * área principal cambia de anchura.
  */
+/**
+ * Modo zen / distraction-free: oculta rail + sidebar + tab-bar y deja solo
+ * el área del terminal. Persiste en localStorage para que el atajo recuerde
+ * el estado entre sesiones (útil si la app queda en una pantalla secundaria
+ * para presentar / grabar).
+ */
+const ZEN_MODE_KEY = "rustty-zen-mode";
+
+function loadZenMode() {
+  return localStorage.getItem(ZEN_MODE_KEY) === "1";
+}
+
+function applyZenMode(enabled) {
+  document.body.classList.toggle("zen-mode", !!enabled);
+  localStorage.setItem(ZEN_MODE_KEY, enabled ? "1" : "0");
+  requestAnimationFrame(() => {
+    for (const sid of viewSelection) {
+      const s = sessions.get(sid);
+      if (s?.fitAddon) { try { s.fitAddon.fit(); notifyResize(sid, s.terminal); } catch {} }
+    }
+  });
+}
+
+function toggleZenMode() {
+  applyZenMode(!document.body.classList.contains("zen-mode"));
+}
+
+const SIDEBAR_MODE_KEY = "rustty-sidebar-mode";
+const SIDEBAR_MODES = ["expanded", "rail", "hidden"];
+
+function loadSidebarMode() {
+  const stored = localStorage.getItem(SIDEBAR_MODE_KEY);
+  if (SIDEBAR_MODES.includes(stored)) return stored;
+  // Migración del flag binario antiguo.
+  if (localStorage.getItem("rustty-sidebar-collapsed") === "1") return "hidden";
+  return "expanded";
+}
+
+function applySidebarMode(mode) {
+  const m = SIDEBAR_MODES.includes(mode) ? mode : "expanded";
+  document.body.classList.toggle("sidebar-collapsed", m === "hidden");
+  document.body.classList.toggle("sidebar-mode-rail", m === "rail");
+  document.body.classList.toggle("sidebar-mode-expanded", m === "expanded");
+  localStorage.setItem(SIDEBAR_MODE_KEY, m);
+}
+
 function initSidebarToggle() {
   const btn = document.getElementById("btn-toggle-sidebar");
   if (!btn) return;
 
-  const saved = localStorage.getItem("rustty-sidebar-collapsed") === "1";
-  if (saved) document.body.classList.add("sidebar-collapsed");
+  applySidebarMode(loadSidebarMode());
 
   btn.addEventListener("click", () => {
-    const collapsed = document.body.classList.toggle("sidebar-collapsed");
-    localStorage.setItem("rustty-sidebar-collapsed", collapsed ? "1" : "0");
+    const current = loadSidebarMode();
+    const next = SIDEBAR_MODES[(SIDEBAR_MODES.indexOf(current) + 1) % SIDEBAR_MODES.length];
+    applySidebarMode(next);
     // Los xterms necesitan re-fit cuando cambia la anchura del contenedor
     requestAnimationFrame(() => {
       for (const sid of viewSelection) {

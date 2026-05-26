@@ -41,6 +41,75 @@
   --font-ui:  "Inter", "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
   --font-size-base: 13px;
+
+  /* ─── Tokens de diseño (escala consistente) ───────────────────
+     Slice estético #1 — aditivo: estos tokens se consumen
+     progresivamente. Las reglas antiguas con valores duros
+     siguen funcionando hasta que se migren. */
+
+  /* Espaciado (escala 4 px) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+
+  /* Radios */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* Sombras (oscuras por defecto; los temas claros las pueden suavizar) */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.36);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.46);
+
+  /* Movimiento */
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-slow: 280ms;
+  --motion-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* z-index */
+  --z-base: 1;
+  --z-dropdown: 100;
+  --z-popover: 200;
+  --z-tooltip: 300;
+  --z-toast: 400;
+  --z-modal: 500;
+  --z-drag-overlay: 600;
+
+  /* Anillo de foco accesible (keyboard-only) */
+  --focus-ring-color: color-mix(in srgb, var(--blue) 70%, transparent);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* Tipografía extendida */
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.45;
+  --line-height-relaxed: 1.6;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+}
+
+/* Temas claros: sombras más sutiles para no oscurecer la UI */
+html.theme-light,
+html.theme-solarized-light,
+html.theme-gruvbox-light {
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.10);
+  --shadow-2: 0 4px 12px rgba(15, 23, 42, 0.14);
+  --shadow-3: 0 12px 32px rgba(15, 23, 42, 0.18);
 }
 
 /* ─── Reset ──────────────────────────────────────────────────── */
@@ -77,6 +146,27 @@ input, select, textarea {
 }
 
 .hidden { display: none !important; }
+
+/* ─── Foco accesible (slice estético #1) ────────────────────────
+   Anillo visible solo en navegación por teclado. No afecta al
+   clic con ratón porque :focus-visible no se activa con puntero
+   en navegadores modernos. */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-sm);
+}
+
+/* Algunos contenedores cortan el anillo si va por fuera; cuando
+   sea problemático, los componentes individuales pueden usar
+   box-shadow inset en su lugar. */
+button:focus-visible,
+[role="button"]:focus-visible,
+a:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
 
 /* ─── Layout principal ───────────────────────────────────────── */
 #app {
@@ -1569,6 +1659,60 @@ body.terminal-bell-visual::after {
   display: none;
 }
 
+/* ─── Status bar densificada — slice estético #13 ──────────────
+   Bloques cwd / dims / REC añadidos a la barra inferior. */
+#status-bar .status-cwd,
+#status-bar .status-dims {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: min(30vw, 320px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--subtext0);
+}
+
+#status-bar .status-cwd .status-cwd-icon {
+  font-size: 11px;
+  filter: grayscale(0.4);
+  opacity: 0.85;
+}
+
+#status-bar .mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#status-bar .status-rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--red);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.05em;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+
+#status-bar .status-rec-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: status-pulse 1.4s infinite;
+}
+
+#status-bar .hidden {
+  display: none !important;
+}
+
 #status-bar .status-log-trigger:hover,
 #status-bar .status-dot:hover {
   background: var(--surface0);
@@ -1643,10 +1787,31 @@ body.terminal-bell-visual::after {
   background: var(--surface1);
 }
 
-/* Indicador visual cuando una pane forma parte de un grupo de broadcast */
+/* Indicador visual cuando una pane forma parte de un grupo de broadcast.
+   Slice estético #8: añade una franja superior de 2 px + label "BROADCAST"
+   en la esquina superior izquierda para que el estado sea inequívoco. */
 .terminal-pane.pane-broadcasting {
   outline: 2px solid var(--peach, #fab387);
   outline-offset: -2px;
+  position: relative;
+}
+
+.terminal-pane.pane-broadcasting::before {
+  content: "BROADCAST";
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.08em;
+  padding: 2px 7px 2px 6px;
+  color: var(--crust);
+  background: var(--peach, #fab387);
+  border-bottom-right-radius: var(--radius-sm);
+  pointer-events: none;
+  animation: motion-fade-in var(--motion-fast) var(--motion-ease-out);
 }
 
 .term-area {
@@ -1963,8 +2128,22 @@ body.terminal-bell-visual::after {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: 0.9fr 1.1fr;
+  grid-template-columns: 0.9fr 1.1fr 1.1fr;
   gap: 14px;
+}
+
+@media (max-width: 1100px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .dashboard-favorites { grid-column: 1 / -1; }
+}
+
+@media (max-width: 720px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-favorites { grid-column: auto; }
 }
 
 .dashboard-card {
@@ -3552,6 +3731,13 @@ input[type="checkbox"] {
   flex-shrink: 0;
 }
 
+/* En el botón cerrado del picker el preview se mantiene compacto;
+   la galería grande vive dentro del panel desplegable. */
+.theme-picker-toggle .theme-preview {
+  width: 76px;
+  height: 38px;
+}
+
 .theme-picker-toggle-label {
   flex: 1;
   min-width: 0;
@@ -3592,53 +3778,62 @@ input[type="checkbox"] {
 }
 
 .theme-options-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 280px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: var(--space-2);
+  max-height: min(60vh, 520px);
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--surface1) transparent;
+  padding: 2px;
 }
 
 .theme-option {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 7px 10px;
-  border-radius: 6px;
-  border: 1px solid transparent;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  min-height: 96px;
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--surface0);
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-  background: transparent;
+  transition: border-color var(--motion-fast) var(--motion-ease),
+              background var(--motion-fast) var(--motion-ease),
+              transform var(--motion-fast) var(--motion-ease);
+  background: var(--base);
   position: relative;
 }
 
 .theme-option:hover {
-  border-color: var(--surface1);
+  border-color: var(--surface2);
   background: var(--surface0);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-1);
 }
 
 .theme-option.selected {
   border-color: var(--blue);
-  background: color-mix(in srgb, var(--blue) 10%, transparent);
+  background: color-mix(in srgb, var(--blue) 12%, var(--base));
+  box-shadow: 0 0 0 1px var(--blue);
 }
 
 .theme-option.selected::after {
   content: "✓";
+  position: absolute;
+  top: 6px;
+  right: 6px;
   width: 18px;
   height: 18px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
   color: var(--base);
   background: var(--blue);
   font-size: 11px;
   font-weight: 800;
+  box-shadow: var(--shadow-1);
 }
 
 .theme-option.is-filtered-out {
@@ -3649,14 +3844,25 @@ input[type="checkbox"] {
   display: none;
 }
 
+.theme-option .theme-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text);
+  line-height: var(--line-height-tight);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 var(--space-1);
+}
+
 .theme-preview {
-  width: 76px;
-  height: 38px;
-  border-radius: 5px;
+  width: 100%;
+  height: 64px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--surface1);
   overflow: hidden;
   display: grid;
-  grid-template-columns: 30% 70%;
+  grid-template-columns: 28% 72%;
   flex-shrink: 0;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
 }
@@ -5310,4 +5516,804 @@ body.sftp-log-resizing {
   .tunnel-traffic {
     grid-column: 2 / 3;
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Slice estético #1 — utilidades y reglas globales
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── Respeto a prefers-reduced-motion ──────────────────────────
+   Reduce a 0 toda animación/transición salvo las que sean
+   esenciales para feedback (focus/hover de color sigue siendo
+   instantáneo, lo cual es correcto). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─── Skeleton loaders ─────────────────────────────────────────
+   Marcador visual para datos en carga. Uso:
+     <div class="skeleton" style="width:140px;height:14px"></div>
+     <div class="skeleton skeleton--text"></div>
+     <div class="skeleton skeleton--avatar"></div> */
+.skeleton {
+  display: inline-block;
+  background-color: var(--surface0);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--surface2) 55%, transparent) 40%,
+    color-mix(in srgb, var(--surface2) 55%, transparent) 60%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  background-position: 100% 0;
+  border-radius: var(--radius-sm);
+  animation: skeleton-shimmer 1.2s var(--motion-ease) infinite;
+  color: transparent;
+  user-select: none;
+  pointer-events: none;
+}
+
+.skeleton--text {
+  width: 100%;
+  height: 12px;
+  margin: 4px 0;
+  border-radius: var(--radius-pill);
+}
+
+.skeleton--text.is-short { width: 40%; }
+.skeleton--text.is-medium { width: 70%; }
+
+.skeleton--avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.skeleton--row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+@keyframes skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to   { background-position: -100% 0; }
+}
+
+/* ─── Empty state enriquecido ──────────────────────────────────
+   Variante .empty-state--rich con icono grande y CTA. La clase
+   base .empty-state ya existe; este selector la extiende sin
+   romper su uso actual. */
+.empty-state--rich {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-7) var(--space-4);
+  text-align: center;
+  color: var(--subtext0);
+  min-height: 180px;
+}
+
+.empty-state--rich .empty-state__icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  color: var(--overlay1);
+  background: color-mix(in srgb, var(--surface0) 70%, transparent);
+  border-radius: 50%;
+  margin-bottom: var(--space-1);
+}
+
+.empty-state--rich .empty-state__title {
+  color: var(--text);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-tight);
+}
+
+.empty-state--rich .empty-state__hint {
+  color: var(--subtext0);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  max-width: 32ch;
+}
+
+.empty-state--rich .empty-state__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ─── Motion helpers ──────────────────────────────────────────── */
+.motion-fade-in {
+  animation: motion-fade-in var(--motion-normal) var(--motion-ease-out);
+}
+
+.motion-rise-in {
+  animation: motion-rise-in var(--motion-normal) var(--motion-ease-out);
+}
+
+@keyframes motion-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes motion-rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Microanimaciones — slice estético #2 ─────────────────────
+   Overlays de modal y los modales interiores. La animación
+   arranca cuando el overlay pasa de display:none a display:flex
+   (al quitar la clase .hidden). Solo aplica al overlay visible. */
+[id$="-overlay"]:not(.hidden) {
+  animation: motion-fade-in var(--motion-fast) var(--motion-ease-out);
+}
+
+#modal-connection,
+#modal-prefs,
+#modal-keepass {
+  animation: motion-rise-in var(--motion-normal) var(--motion-ease-out);
+}
+
+/* Toasts: actualizar curva y duración para alinear con el sistema */
+.toast {
+  animation: motion-rise-in var(--motion-normal) var(--motion-ease-out);
+}
+
+/* Expansión de carpeta: fade-in suave al pasar de oculto a visible.
+   No se anima la altura porque las carpetas pueden contener subárbol
+   variable; la transición de altura provocaría saltos. */
+.folder-children:not(.hidden) {
+  animation: motion-fade-in var(--motion-fast) var(--motion-ease-out);
+}
+
+/* ─── Drag & drop de tabs — slice estético #3 ──────────────────
+   Estado del tab que se está arrastrando y guías visuales finas
+   entre tabs para señalar la posición de inserción. */
+.tab.is-dragging {
+  opacity: 0.4;
+}
+
+.tab.drop-before::before,
+.tab.drop-after::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--blue);
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+}
+
+.tab.drop-before::before { left: -1px; }
+.tab.drop-after::before  { right: -1px; }
+
+/* ─── Indicador global de sync — slice estético #5 ─────────────
+   Pequeño botón a la derecha del tab bar (antes de los controles
+   de ventana). Solo aparece cuando la sync está activa. */
+.topbar-sync {
+  flex: 0 0 auto;
+  width: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  color: var(--subtext0);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background var(--motion-fast) var(--motion-ease),
+              color var(--motion-fast) var(--motion-ease);
+}
+
+.topbar-sync:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+.topbar-sync-dot {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--overlay0);
+  box-shadow: 0 0 0 2px var(--mantle);
+}
+
+.topbar-sync-dot.success { background: var(--green); }
+.topbar-sync-dot.busy    { background: var(--yellow); }
+.topbar-sync-dot.error   { background: var(--red); }
+.topbar-sync-dot.idle    { background: var(--overlay0); }
+
+.topbar-sync.is-busy .topbar-sync-icon {
+  animation: rustty-reconnect-spin 1.4s linear infinite;
+}
+
+/* ─── Estado ocupado global — slice estético #6 ────────────────
+   Aplica cursor: progress a cualquier elemento (y sus hijos) que
+   tenga la clase .is-busy o el atributo aria-busy. Útil mientras
+   se ejecutan operaciones bloqueantes en un modal o panel. */
+.is-busy,
+.is-busy *,
+[aria-busy="true"]:not(html),
+[aria-busy="true"]:not(html) * {
+  cursor: progress !important;
+}
+
+/* Modal entero en estado busy: bloquea pointer-events excepto en
+   el botón de cancelar (si lo hay), oscurece ligeramente. */
+.modal-is-busy {
+  position: relative;
+}
+
+.modal-is-busy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--crust) 35%, transparent);
+  pointer-events: none;
+  z-index: var(--z-base);
+  animation: motion-fade-in var(--motion-fast) var(--motion-ease-out);
+}
+
+/* ─── Densidad UI — slice estético #7 ──────────────────────────
+   body.density-compact reduce alturas/padding del chrome sin tocar
+   el terminal ni los valores del usuario en xterm. Es aditivo:
+   solo redefine variables cuando la clase está presente. */
+body.density-compact {
+  --tab-height: 32px;
+  --space-2: 6px;
+  --space-3: 9px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 20px;
+  --space-7: 26px;
+}
+
+body.density-compact #rail { padding: 4px 0; }
+body.density-compact .rail-section { gap: 2px; }
+
+body.density-compact .tab {
+  min-width: 116px;
+  padding: 0 10px;
+  font-size: 11.5px;
+}
+
+body.density-compact .conn-item,
+body.density-compact .folder-header {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  min-height: 24px;
+  font-size: 12px;
+}
+
+body.density-compact .modal-header { padding: 12px 16px 10px; }
+body.density-compact #form-connection { padding: 14px 16px; gap: 10px; }
+body.density-compact .modal-actions { padding-top: 4px; gap: 6px; }
+
+body.density-compact .settings-row { gap: 6px; }
+body.density-compact .settings-row + .settings-row { margin-top: 10px; }
+
+body.density-compact .toast { padding: 8px 12px; font-size: 12px; }
+
+body.density-compact .theme-option { min-height: 84px; padding: 6px 6px 8px; }
+body.density-compact .theme-preview { height: 56px; }
+
+/* ─── Botón destructivo + confirmación por nombre — slice #9 ────
+   Estilo para confirmar acciones destructivas (borrar workspace,
+   carpeta no vacía, etc.). El botón primario queda rojo y se
+   habilita sólo cuando el usuario teclea el nombre exacto. */
+.btn-destructive {
+  background: var(--red);
+  color: var(--crust);
+  border: 1px solid var(--red);
+  padding: 7px 14px;
+  border-radius: var(--radius-md);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: filter var(--motion-fast) var(--motion-ease);
+}
+
+.btn-destructive:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.btn-destructive:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.confirm-name-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--surface1);
+  border-radius: var(--radius-md);
+  background: var(--base);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.confirm-name-input:focus {
+  outline: none;
+  border-color: var(--red);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 30%, transparent);
+}
+
+/* ─── Iconos SFTP por tipo de fichero — slice #10 ───────────────
+   Colorea el glifo según la categoría. Conserva las dimensiones
+   y posición existentes de .sftp-icon. */
+.sftp-row.ftype-image   .sftp-icon { color: var(--mauve); }
+.sftp-row.ftype-video   .sftp-icon { color: var(--lavender); }
+.sftp-row.ftype-audio   .sftp-icon { color: var(--pink, var(--mauve)); }
+.sftp-row.ftype-archive .sftp-icon { color: var(--peach); }
+.sftp-row.ftype-doc     .sftp-icon { color: var(--red); }
+.sftp-row.ftype-text    .sftp-icon { color: var(--subtext1); }
+.sftp-row.ftype-code    .sftp-icon { color: var(--blue); font-family: var(--font-mono); }
+.sftp-row.ftype-exec    .sftp-icon { color: var(--green); }
+.sftp-row.ftype-link    .sftp-icon { color: var(--sky); }
+.sftp-row.ftype-dir     .sftp-icon { color: var(--yellow); }
+
+/* ─── Sidebar modo "rail" — slice estético #11 ──────────────────
+   Estado intermedio entre expandida y oculta: solo iconos, ~56 px
+   de ancho. Mantiene los tooltips nativos para los nombres. */
+body.sidebar-mode-rail #sidebar {
+  width: 56px;
+  min-width: 56px;
+}
+
+body.sidebar-mode-rail #sidebar-header {
+  padding: 0 8px;
+  justify-content: center;
+}
+
+body.sidebar-mode-rail #sidebar-header .sidebar-logo,
+body.sidebar-mode-rail #sidebar-header h1,
+body.sidebar-mode-rail #sidebar-context-bar .ctx-label,
+body.sidebar-mode-rail .conn-item-info,
+body.sidebar-mode-rail .conn-item-actions,
+body.sidebar-mode-rail .folder-name,
+body.sidebar-mode-rail .folder-count,
+body.sidebar-mode-rail #sidebar-sync-label,
+body.sidebar-mode-rail #sidebar-sync-meta {
+  display: none;
+}
+
+body.sidebar-mode-rail .conn-item {
+  justify-content: center;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+body.sidebar-mode-rail .folder-header {
+  justify-content: center;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+body.sidebar-mode-rail .folder-children {
+  /* Indentación cero: en modo rail no hay anidamiento visible */
+  margin-left: 0;
+}
+
+body.sidebar-mode-rail .conn-item-icon,
+body.sidebar-mode-rail .folder-icon {
+  font-size: 18px;
+}
+
+/* ─── Modo zen / distraction-free — slice estético #12 ──────────
+   Oculta rail + sidebar + tab-bar y deja solo el área del
+   terminal a pantalla completa. Se sale con F11 (configurable) o
+   con el botón flotante en la esquina superior derecha. */
+body.zen-mode #rail,
+body.zen-mode #sidebar,
+body.zen-mode #sidebar-resize-handle,
+body.zen-mode #tab-bar {
+  display: none !important;
+}
+
+#zen-exit-btn {
+  display: none;
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--surface1);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--mantle) 88%, transparent);
+  color: var(--subtext0);
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: var(--z-toast);
+  backdrop-filter: blur(6px);
+  transition: background var(--motion-fast) var(--motion-ease),
+              color var(--motion-fast) var(--motion-ease),
+              transform var(--motion-fast) var(--motion-ease);
+}
+
+#zen-exit-btn:hover {
+  background: var(--surface0);
+  color: var(--text);
+  transform: scale(1.08);
+}
+
+body.zen-mode #zen-exit-btn {
+  display: inline-flex;
+  animation: motion-fade-in var(--motion-normal) var(--motion-ease-out);
+}
+
+/* ─── Dashboard rico — slice estético #14 ──────────────────────
+   Chip de workspace activo en la cabecera + tarjetas de
+   favoritos como tiles 3×2. */
+.dashboard-workspace-chip {
+  display: inline-block;
+  margin-top: var(--space-1);
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--subtext0);
+  background: var(--surface0);
+  border: 1px solid var(--surface1);
+  letter-spacing: 0.02em;
+}
+
+.dashboard-workspace-chip.hidden {
+  display: none;
+}
+
+.dashboard-favorites {
+  min-width: 0;
+}
+
+.dashboard-favorites-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.dashboard-fav-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--surface1);
+  border-radius: var(--radius-md);
+  background: var(--mantle);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--motion-ease),
+              transform var(--motion-fast) var(--motion-ease),
+              box-shadow var(--motion-fast) var(--motion-ease);
+  font: inherit;
+  min-width: 0;
+}
+
+.dashboard-fav-tile:hover {
+  border-color: var(--blue);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-1);
+}
+
+.dashboard-fav-proto {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  font-weight: var(--font-weight-semibold);
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--blue) 18%, var(--base));
+  color: var(--blue);
+}
+
+.dashboard-fav-proto.rdp {
+  background: color-mix(in srgb, var(--peach) 18%, var(--base));
+  color: var(--peach);
+}
+
+.dashboard-fav-proto.sftp,
+.dashboard-fav-proto.ftp,
+.dashboard-fav-proto.ftps {
+  background: color-mix(in srgb, var(--green) 18%, var(--base));
+  color: var(--green);
+}
+
+.dashboard-fav-name {
+  margin-top: var(--space-1);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.dashboard-fav-host {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--subtext0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+/* ─── OSC 133 prompt highlight — slice estético #15 ────────────
+   Decoración aplicada al marker del último prompt detectado.
+   xterm la ancla a la línea: pintamos una franja izquierda 2 px
+   en el acento principal para que el usuario localice de un
+   vistazo dónde empieza el prompt actual. */
+.osc133-prompt-decoration {
+  width: 2px !important;
+  background: var(--blue);
+  border-radius: var(--radius-pill);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* ─── Mini barra de progreso por fila SFTP — slice #16 ─────────
+   Visible bajo la fila origen durante la transferencia activa.
+   Se oculta sola al terminar. */
+.sftp-row {
+  position: relative;
+}
+
+.sftp-row-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--surface0);
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-ease);
+  pointer-events: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  overflow: hidden;
+}
+
+.sftp-row.is-transferring .sftp-row-progress {
+  opacity: 1;
+}
+
+.sftp-row-progress-bar {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--blue), var(--teal));
+  transition: width var(--motion-fast) var(--motion-ease);
+}
+
+.sftp-row.is-transferring {
+  background: color-mix(in srgb, var(--blue) 6%, transparent);
+}
+
+/* ─── Filtro de tono en la galería de temas — slice #17 ────────
+   Chips Todos / Oscuros / Claros sobre la lista de temas. */
+.theme-tone-filter {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.theme-tone-chip {
+  flex: 0 0 auto;
+  padding: 3px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--surface1);
+  background: transparent;
+  color: var(--subtext0);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease),
+              color var(--motion-fast) var(--motion-ease),
+              border-color var(--motion-fast) var(--motion-ease);
+}
+
+.theme-tone-chip:hover {
+  border-color: var(--blue);
+  color: var(--text);
+}
+
+.theme-tone-chip.active {
+  background: color-mix(in srgb, var(--blue) 18%, var(--base));
+  border-color: var(--blue);
+  color: var(--text);
+}
+
+/* ─── Sistema de tooltips consistente — slice estético #18 ──────
+   Tooltip CSS-only basado en [data-tooltip]. Aparece tras 400 ms
+   de hover; convive con `title=""` (lo deja para a11y). Para evitar
+   el doble tooltip del navegador, los elementos que usan data-tooltip
+   pueden no tener title, o tener uno equivalente (a11y). */
+:root {
+  --tooltip-bg: color-mix(in srgb, var(--crust) 92%, transparent);
+  --tooltip-fg: var(--text);
+  --tooltip-border: var(--surface1);
+  --tooltip-delay: 400ms;
+}
+
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: var(--z-tooltip);
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translate(-50%, 4px);
+  padding: 4px 8px;
+  border: 1px solid var(--tooltip-border);
+  border-radius: var(--radius-sm);
+  background: var(--tooltip-bg);
+  color: var(--tooltip-fg);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-ease),
+              transform var(--motion-fast) var(--motion-ease);
+  transition-delay: 0ms;
+  box-shadow: var(--shadow-1);
+  backdrop-filter: blur(4px);
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition-delay: var(--tooltip-delay);
+}
+
+/* Variante de posición: tooltips que deben aparecer abajo (cuando el
+   elemento está en la parte superior de la ventana, p. ej. la topbar). */
+[data-tooltip][data-tooltip-pos="bottom"]::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+  transform: translate(-50%, -4px);
+}
+
+[data-tooltip][data-tooltip-pos="bottom"]:hover::after,
+[data-tooltip][data-tooltip-pos="bottom"]:focus-visible::after {
+  transform: translate(-50%, 0);
+}
+
+[data-tooltip][data-tooltip-pos="right"]::after {
+  left: calc(100% + 6px);
+  top: 50%;
+  bottom: auto;
+  transform: translate(-4px, -50%);
+}
+
+[data-tooltip][data-tooltip-pos="right"]:hover::after,
+[data-tooltip][data-tooltip-pos="right"]:focus-visible::after {
+  transform: translate(0, -50%);
+}
+
+/* ─── Modal de conexión rediseñado — slice estético #19 ────────
+   Tabs internas + paneles + validación inline + resumen al pie. */
+.modal-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-4) 0;
+  border-bottom: 1px solid var(--surface0);
+  background: var(--mantle);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-base);
+}
+
+.modal-tab {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  margin-bottom: -1px;
+  border: none;
+  background: transparent;
+  color: var(--subtext0);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color var(--motion-fast) var(--motion-ease),
+              border-color var(--motion-fast) var(--motion-ease);
+}
+
+.modal-tab:hover {
+  color: var(--text);
+}
+
+.modal-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--blue);
+}
+
+/* Paneado: oculta las rows que no pertenecen al pane activo */
+.modal-paned[data-active-pane="general"]  [data-modal-pane]:not([data-modal-pane="general"]),
+.modal-paned[data-active-pane="auth"]     [data-modal-pane]:not([data-modal-pane="auth"]),
+.modal-paned[data-active-pane="advanced"] [data-modal-pane]:not([data-modal-pane="advanced"]),
+.modal-paned[data-active-pane="notes"]    [data-modal-pane]:not([data-modal-pane="notes"]) {
+  display: none !important;
+}
+
+/* Estilos heredados del antiguo <details class="form-advanced">. El nuevo
+   contenedor inline ya no necesita summary, pero conservamos un padding
+   superior para que las rows respiren respecto al separador. */
+.form-advanced-inline {
+  display: contents;
+}
+
+/* Validación inline: input rojo + mensaje bajo */
+.input-invalid {
+  border-color: var(--red) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 28%, transparent);
+}
+
+.form-error {
+  margin-top: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--red);
+  line-height: var(--line-height-tight);
+}
+
+.form-error.hidden { display: none; }
+
+/* Resumen "Lo que se va a usar" */
+.modal-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--surface0);
+  background: color-mix(in srgb, var(--surface0) 50%, transparent);
+}
+
+.modal-summary.hidden { display: none; }
+
+.modal-summary-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  background: color-mix(in srgb, var(--blue) 14%, var(--base));
+  color: var(--blue);
+  border: 1px solid color-mix(in srgb, var(--blue) 32%, transparent);
+}
+
+.modal-summary-badge.warn {
+  background: color-mix(in srgb, var(--peach) 14%, var(--base));
+  color: var(--peach);
+  border-color: color-mix(in srgb, var(--peach) 36%, transparent);
 }

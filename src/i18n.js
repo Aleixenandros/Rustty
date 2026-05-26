@@ -43,6 +43,11 @@ const DICTIONARIES = {
       compact_view: "Vista compacta",
       compact_title: "Mostrar una lista de conexiones más compacta",
       favorites_empty: "Aún no has marcado ninguna conexión como favorita.",
+      empty_title: "Sin conexiones guardadas",
+      empty_hint: "Crea tu primer perfil SSH, RDP, SFTP o FTP para empezar.",
+      empty_cta: "Añadir la primera",
+      favorites_empty_hint: "Marca una conexión como favorita desde su menú contextual para que aparezca aquí.",
+      loading: "Cargando conexiones…",
     },
     rail: {
       view_profiles: "Perfiles",
@@ -157,6 +162,26 @@ const DICTIONARIES = {
       follow_cwd: "Seguir CWD del terminal en el panel SFTP",
       follow_cwd_hint: "Al activar CWD en el panel SFTP inyecta un hook en el shell (bash/zsh) para reportar el directorio actual. Desactívalo si prefieres no modificar PROMPT_COMMAND.",
       advanced: "Opciones avanzadas",
+      tab_general: "General",
+      tab_auth: "Autenticación",
+      tab_advanced: "Avanzado",
+      tab_notes: "Notas",
+      summary_auth_password: "Auth: contraseña",
+      summary_auth_publickey: "Auth: clave",
+      summary_auth_agent: "Auth: agente",
+      summary_auth_keepass: "Auth: KeePass",
+      summary_bastion: "Bastion: {host}",
+      summary_keepalive: "Keep-alive {n}s",
+      summary_reconnect: "Reconexión ×{n}",
+      summary_legacy: "Algoritmos legacy",
+      summary_session_log: "Grabación",
+      summary_agent_fwd: "Agent fwd",
+      summary_x11_fwd: "X11 fwd",
+      summary_wol: "Wake On LAN",
+      err_host_required: "El host es obligatorio.",
+      err_port_range: "Puerto fuera de rango (1-65535).",
+      err_proxy_jump_format: "Formato esperado: [usuario@]host[:puerto].",
+      err_mac_format: "MAC no válida (XX:XX:XX:XX:XX:XX).",
       keep_alive: "Keep-alive (segundos)",
       keep_alive_hint: "0 = desactivado. Envía un paquete keepalive al servidor cada N segundos para evitar caídas por NAT.",
       allow_legacy: "Permitir cifrados / kex / MAC antiguos",
@@ -252,6 +277,10 @@ const DICTIONARIES = {
       theme_light: "Claro",
       theme_system: "Sistema",
       theme_search: "Buscar tema…",
+      tone_filter: "Filtrar por tonalidad",
+      tone_all: "Todos",
+      tone_dark: "Oscuros",
+      tone_light: "Claros",
       theme_inherit: "Igual que la interfaz",
       terminal_theme: "Tema del terminal",
       terminal_theme_hint: "Si se deja en \"Igual que la interfaz\", el terminal hereda el tema de arriba.",
@@ -260,6 +289,10 @@ const DICTIONARIES = {
       export_theme_template: "Exportar plantilla",
       import_theme: "Importar tema…",
       theme_io_hint: "El formato nuevo usa tokens sencillos como base, text, blue o red. Copia la plantilla, cambia colores e impórtala.",
+      density: "Densidad de la interfaz",
+      density_comfortable: "Cómoda",
+      density_compact: "Compacta",
+      density_hint: "Reduce el padding y la altura de filas en la barra lateral, pestañas y modales. No afecta al tamaño del terminal.",
     },
     prefs_keepass: {
       title: "KeePass",
@@ -350,6 +383,7 @@ const DICTIONARIES = {
       device_id: "Dispositivo",
       last_sync: "Última sincronización",
       last_never: "Nunca sincronizado",
+      last_at: "hace",
       status_idle: "Listo",
       status_busy: "Sincronizando…",
       status_success: "Sincronizado",
@@ -456,6 +490,12 @@ const DICTIONARIES = {
       theme_imported: "Tema \"{name}\" importado",
       theme_import_invalid: "Formato de tema no válido",
     },
+    time: {
+      now: "ahora",
+      minutes_ago: "hace {n} min",
+      hours_ago: "hace {n} h",
+      days_ago: "hace {n} d",
+    },
   },
 
   en: {
@@ -487,6 +527,11 @@ const DICTIONARIES = {
       compact_view: "Compact list",
       compact_title: "Show a denser connection list",
       favorites_empty: "You haven't favorited any connection yet.",
+      empty_title: "No saved connections",
+      empty_hint: "Create your first SSH, RDP, SFTP or FTP profile to get started.",
+      empty_cta: "Add the first one",
+      favorites_empty_hint: "Mark a connection as favorite from its context menu and it'll show up here.",
+      loading: "Loading connections…",
     },
     rail: {
       view_profiles: "Profiles",
@@ -601,6 +646,26 @@ const DICTIONARIES = {
       follow_cwd: "Track terminal CWD in the SFTP panel",
       follow_cwd_hint: "When CWD is enabled in the SFTP panel, inject a shell hook (bash/zsh) that reports the current directory. Turn it off if you don't want PROMPT_COMMAND modified.",
       advanced: "Advanced options",
+      tab_general: "General",
+      tab_auth: "Authentication",
+      tab_advanced: "Advanced",
+      tab_notes: "Notes",
+      summary_auth_password: "Auth: password",
+      summary_auth_publickey: "Auth: key",
+      summary_auth_agent: "Auth: agent",
+      summary_auth_keepass: "Auth: KeePass",
+      summary_bastion: "Bastion: {host}",
+      summary_keepalive: "Keep-alive {n}s",
+      summary_reconnect: "Reconnect ×{n}",
+      summary_legacy: "Legacy algorithms",
+      summary_session_log: "Recording",
+      summary_agent_fwd: "Agent fwd",
+      summary_x11_fwd: "X11 fwd",
+      summary_wol: "Wake On LAN",
+      err_host_required: "Host is required.",
+      err_port_range: "Port out of range (1-65535).",
+      err_proxy_jump_format: "Expected: [user@]host[:port].",
+      err_mac_format: "Invalid MAC (XX:XX:XX:XX:XX:XX).",
       keep_alive: "Keep-alive (seconds)",
       keep_alive_hint: "0 = disabled. Sends a keepalive packet to the server every N seconds to prevent NAT timeouts.",
       allow_legacy: "Allow legacy ciphers / kex / MAC",
@@ -696,6 +761,10 @@ const DICTIONARIES = {
       theme_light: "Light",
       theme_system: "System",
       theme_search: "Search theme…",
+      tone_filter: "Filter by tone",
+      tone_all: "All",
+      tone_dark: "Dark",
+      tone_light: "Light",
       theme_inherit: "Same as UI",
       terminal_theme: "Terminal theme",
       terminal_theme_hint: "If left on \"Same as UI\", the terminal inherits the theme above.",
@@ -704,6 +773,10 @@ const DICTIONARIES = {
       export_theme_template: "Export template",
       import_theme: "Import theme…",
       theme_io_hint: "The new format uses simple tokens like base, text, blue, or red. Copy the template, change colors, and import it.",
+      density: "UI density",
+      density_comfortable: "Comfortable",
+      density_compact: "Compact",
+      density_hint: "Reduces padding and row height across the sidebar, tabs and modals. Doesn't affect terminal size.",
     },
     prefs_keepass: {
       title: "KeePass",
@@ -794,6 +867,7 @@ const DICTIONARIES = {
       device_id: "Device",
       last_sync: "Last sync",
       last_never: "Never synced",
+      last_at: "synced",
       status_idle: "Ready",
       status_busy: "Syncing…",
       status_success: "Synced",
@@ -900,6 +974,12 @@ const DICTIONARIES = {
       theme_imported: "Theme \"{name}\" imported",
       theme_import_invalid: "Invalid theme format",
     },
+    time: {
+      now: "just now",
+      minutes_ago: "{n} min ago",
+      hours_ago: "{n} h ago",
+      days_ago: "{n} d ago",
+    },
   },
 
   fr: {
@@ -931,6 +1011,11 @@ const DICTIONARIES = {
       compact_view: "Liste compacte",
       compact_title: "Afficher une liste de connexions plus compacte",
       favorites_empty: "Aucune connexion n'est marquée comme favorite.",
+      empty_title: "Aucune connexion enregistrée",
+      empty_hint: "Créez votre premier profil SSH, RDP, SFTP ou FTP pour commencer.",
+      empty_cta: "Ajouter la première",
+      favorites_empty_hint: "Marquez une connexion comme favorite depuis son menu contextuel pour qu'elle apparaisse ici.",
+      loading: "Chargement des connexions…",
     },
     rail: {
       view_profiles: "Profils",
@@ -1304,6 +1389,11 @@ const DICTIONARIES = {
       compact_view: "Vista compacta",
       compact_title: "Mostrar uma lista de conexões mais compacta",
       favorites_empty: "Ainda não marcaste nenhuma conexão como favorita.",
+      empty_title: "Sem conexões guardadas",
+      empty_hint: "Cria o teu primeiro perfil SSH, RDP, SFTP ou FTP para começar.",
+      empty_cta: "Adicionar a primeira",
+      favorites_empty_hint: "Marca uma conexão como favorita a partir do menu contextual para que apareça aqui.",
+      loading: "A carregar conexões…",
     },
     rail: {
       view_profiles: "Perfis",
@@ -1719,7 +1809,16 @@ export function applyTranslations(root = document) {
     el.textContent = t(el.dataset.i18n);
   });
   root.querySelectorAll("[data-i18n-title]").forEach((el) => {
-    el.setAttribute("title", t(el.dataset.i18nTitle));
+    const value = t(el.dataset.i18nTitle);
+    // Si el elemento usa el sistema custom de tooltips (marcado con
+    // data-tooltip-pos), escribimos también data-tooltip y eliminamos el
+    // title nativo para evitar el doble tooltip del navegador.
+    if (el.hasAttribute("data-tooltip-pos")) {
+      el.setAttribute("data-tooltip", value);
+      el.removeAttribute("title");
+    } else {
+      el.setAttribute("title", value);
+    }
   });
   root.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
     el.setAttribute("placeholder", t(el.dataset.i18nPlaceholder));
