@@ -7,6 +7,9 @@
 - Abrir varias sesiones SSH a la vez y organizarlas en pestañas o vistas divididas.
 - Listar, abrir conexiones SSH guardadas y ejecutar comandos remotos desde terminal con el [CLI SSH](?page=CLI), sin abrir la interfaz gráfica.
 - Agrupar tus conexiones en **perfiles-contenedor (workspaces)** independientes con sus propias carpetas, mover conexiones en lote con selección múltiple, marcarlas como **favoritas** y alternar la sidebar entre *Workspace actual*, *Todos los perfiles* y *Favoritos* desde el botón ≡ de la cabecera. La cabecera incluye un icono 🔍 de búsqueda rápida que abre solo el cuadro de filtro y un atajo global `Ctrl+K`. Al cambiar de pestaña, Rustty selecciona automáticamente la conexión asociada en la barra lateral y recuerda el árbol de carpetas abierto entre reinicios.
+- **Ordenar conexiones** alfabéticamente (por defecto) o de forma **manual** con flechas *Mover arriba / abajo* en el menú contextual. El orden manual se guarda por carpeta y workspace.
+- **Anclar conexiones al dashboard** para tenerlas como tiles grandes en la pantalla de bienvenida desde el menú contextual ("Anclar / desanclar del dashboard").
+- **Zoom de UI** con `Ctrl+Alt +/-/0` para escalar el rail, la sidebar y las pestañas sin afectar al tamaño del terminal.
 - Probar una conexión desde el modal antes de guardarla, ver el diagnóstico SSH por etapas en la barra inferior y consultar el centro global de actividad desde el acceso **Historial y logs** del rail.
 - Transferir ficheros con un **panel SFTP** integrado de **vista dividida remoto / local**, transferencia recursiva de carpetas, seguimiento del directorio del terminal y elevación a `sudo` cuando el servidor lo permita.
 - Crear **túneles SSH** locales, remotos y dinámicos / SOCKS desde una sesión activa o desde el acceso global **⇄** del rail, con panel de estado, tráfico, túneles guardados y autoconexión opcional por perfil.

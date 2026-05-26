@@ -26,6 +26,10 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl+-`       | Disminuir tamaño de fuente                          |
 | `Ctrl+0`       | Restablecer tamaño de fuente                        |
 | `Ctrl+Rueda`   | Zoom del terminal con la rueda del ratón            |
+| `Ctrl+Alt++`   | Aumentar tamaño de la UI (rail, sidebar, tabs)      |
+| `Ctrl+Alt+-`   | Disminuir tamaño de la UI                           |
+| `Ctrl+Alt+0`   | Restablecer tamaño de la UI                         |
+| `Ctrl+Shift+R` | Reconectar la sesión activa                         |
 
 La búsqueda en el buffer abre una barra flotante con next/prev y un toggle de **case-sensitive**. Resalta todas las coincidencias sobre `@xterm/addon-search`.
 
