@@ -2,6 +2,17 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.10.3] - 2026-05-26
+
+### Corregido
+
+- Build del bundle Flatpak en CI: el manifest dejaba el `metainfo.xml` en
+  `/app/share/metainfo/`, lo que hacía que `flatpak-builder 1.2.2` (Ubuntu
+  22.04) ejecutase `appstream-compose` automáticamente. Ese binario no está
+  disponible en el sandbox `bwrap` de esa versión, así que el build fallaba.
+  El metainfo se reincorporará cuando migremos a `org.flatpak.Builder` para
+  Flathub-ready.
+
 ## [1.10.2] - 2026-05-26
 
 ### Añadido

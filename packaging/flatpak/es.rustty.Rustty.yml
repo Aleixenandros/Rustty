@@ -43,10 +43,13 @@ modules:
         path: icon-512.png
       - type: file
         path: es.rustty.Rustty.desktop
-      - type: file
-        path: es.rustty.Rustty.metainfo.xml
     build-commands:
       - install -Dm755 rustty /app/bin/rustty
       - install -Dm644 icon-512.png /app/share/icons/hicolor/512x512/apps/es.rustty.Rustty.png
       - install -Dm644 es.rustty.Rustty.desktop /app/share/applications/es.rustty.Rustty.desktop
-      - install -Dm644 es.rustty.Rustty.metainfo.xml /app/share/metainfo/es.rustty.Rustty.metainfo.xml
+      # NOTA: el `metainfo.xml` queda fuera a propósito hasta que migremos a
+      # `org.flatpak.Builder` (flatpak-builder modernizado vía Flatpak), que sí
+      # trae `appstream-compose`. La versión del paquete `flatpak-builder` en
+      # Ubuntu 22.04 (1.2.2) intenta lanzarlo automáticamente y rompe el build.
+      # El fichero `es.rustty.Rustty.metainfo.xml` se mantiene en el repo para
+      # cuando preparemos la submission a Flathub.
