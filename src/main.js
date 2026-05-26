@@ -6947,17 +6947,28 @@ async function registerSshListeners(sessionId, terminal) {
   ul.push(await listen(`ssh-error-${sessionId}`, (e) => {
     const s = sessions.get(sessionId);
     if (s) s.status = "error";
+    const message = String(e.payload || "Error SSH");
+    // Avisos de cambio de host key: mensaje destacado, toast más largo y
+    // overlay con título explícito para que el usuario decida si reconectar.
+    const isHostKeyAlert = message.includes("host key") && message.includes("cambiado");
     appendConnectionLog(sessionId, {
-      stage: "error",
+      stage: isHostKeyAlert ? "host_key_changed" : "error",
       status: "error",
-      message: String(e.payload || "Error SSH"),
+      message,
       timestamp: new Date().toISOString(),
     });
     updateTabStatus(sessionId, "error");
-    showReconnectOverlay(sessionId, "Error de conexión");
-    terminal.writeln(`\r\n\x1b[31m✗ Error: ${e.payload}\x1b[0m\r\n`);
+    showReconnectOverlay(sessionId, isHostKeyAlert ? "Host key cambiada" : "Error de conexión");
+    if (isHostKeyAlert) {
+      terminal.writeln(
+        `\r\n\x1b[1;41;97m  ⚠ HOST KEY CAMBIADA  \x1b[0m\r\n\x1b[31m${message}\x1b[0m\r\n`,
+      );
+      toast(message, "error", 12000);
+    } else {
+      terminal.writeln(`\r\n\x1b[31m✗ Error: ${message}\x1b[0m\r\n`);
+      toast(`Error SSH: ${message}`, "error");
+    }
     markTabActivity(sessionId, { kind: "disconnect" });
-    toast(`Error SSH: ${e.payload}`, "error");
   }));
 
   ul.push(await listen(`ssh-reconnecting-${sessionId}`, (e) => {
@@ -10916,6 +10927,9 @@ function bindUIEvents() {
 
   // Atajos de teclado globales (capture phase para preempt a xterm)
   document.addEventListener("keydown", handleGlobalShortcut, { capture: true });
+  // Ctrl+Rueda → zoom del terminal. passive:false para poder preventDefault y
+  // así evitar el zoom de la WebView. capture para ganarle a xterm.
+  document.addEventListener("wheel", handleZoomWheel, { capture: true, passive: false });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -11029,14 +11043,37 @@ function getShortcut(id) {
 function handleGlobalShortcut(e) {
   const combo = comboFromEvent(e);
   if (!combo) return;
-  for (const id of SHORTCUT_IDS) {
-    if (getShortcut(id) === combo) {
-      e.preventDefault();
-      e.stopPropagation();
-      SHORTCUT_ACTIONS[id].run();
-      return;
+  // En layouts con +/= compartidos (US, ES…) "Ctrl++" se teclea como
+  // Ctrl+Shift+=. Lo aceptamos como alias del combo que tenga el usuario
+  // asignado a Ctrl+= (por defecto zoom_in) para que el "Ctrl con +" funcione
+  // sin tener que recordar la variante sin Shift.
+  const candidates = combo === "Ctrl+Shift+=" ? [combo, "Ctrl+="] : [combo];
+  for (const candidate of candidates) {
+    for (const id of SHORTCUT_IDS) {
+      if (getShortcut(id) === candidate) {
+        e.preventDefault();
+        e.stopPropagation();
+        SHORTCUT_ACTIONS[id].run();
+        return;
+      }
     }
   }
+}
+
+/**
+ * Zoom del terminal con Ctrl+Rueda. Solo cuando el cursor no está sobre un
+ * campo editable (input/textarea/contenteditable) para no interferir con la
+ * navegación por scroll en el resto de la UI.
+ */
+function handleZoomWheel(e) {
+  if (!e.ctrlKey || e.deltaY === 0) return;
+  const target = e.target;
+  if (target instanceof HTMLElement) {
+    if (target.closest("input, textarea, [contenteditable=\"true\"]")) return;
+  }
+  e.preventDefault();
+  if (e.deltaY < 0) adjustTerminalFontSize(+1);
+  else adjustTerminalFontSize(-1);
 }
 
 // ─── Editor de atajos ─────────────────────────────────────────

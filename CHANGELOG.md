@@ -2,6 +2,25 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.10.1] - 2026-05-26
+
+### Corregido
+
+- Aviso real cuando cambia la host key del servidor: la detección anterior
+  solo comparaba claves del mismo algoritmo, así que rotaciones de tipo
+  `ssh-rsa` → `ssh-ed25519` se aprendían en silencio. Ahora `host_keys` mira
+  todas las entradas del host y rechaza la conexión con un mensaje que
+  incluye fingerprints previos y recibido.
+
+### Cambiado
+
+- El error de host key cambiada aparece como bloque rojo destacado en el
+  terminal, overlay específico ("Host key cambiada") y toast persistente
+  durante 12 s, en vez de un toast normal.
+- Zoom del terminal con `Ctrl+Rueda`. Los atajos configurables (`Ctrl+=`,
+  `Ctrl+-`, `Ctrl+0`) admiten también la variante `Ctrl+Shift+=` para que
+  "Ctrl++" funcione en teclados US/ES sin reconfigurar.
+
 ## [1.10.0] - 2026-05-26
 
 ### Añadido

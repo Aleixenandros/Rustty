@@ -97,22 +97,63 @@ impl client::Handler for KnownHostsClient {
         server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
         match known_hosts::check_known_hosts(&self.host, self.port, server_public_key) {
+            // Coincide exactamente con una entrada existente (mismo algoritmo
+            // y misma clave): aceptamos.
             Ok(true) => Ok(true),
             Ok(false) => {
-                match known_hosts::learn_known_hosts(&self.host, self.port, server_public_key) {
-                    Ok(()) => Ok(true),
-                    Err(err) => {
+                // `check_known_hosts` solo compara claves del mismo algoritmo.
+                // Si el servidor pasa de p. ej. ssh-rsa a ssh-ed25519, llegamos
+                // aquí aunque hubiese una entrada previa para el host. Antes de
+                // aprender la clave nueva, comprobamos si ya teníamos alguna
+                // entrada registrada para este host:puerto: si la había, la
+                // clave realmente ha cambiado y debemos avisar en vez de
+                // aceptarla en silencio.
+                match known_hosts::known_host_keys(&self.host, self.port) {
+                    Ok(recorded) if !recorded.is_empty() => {
+                        let previous = recorded
+                            .iter()
+                            .map(|(line, key)| {
+                                format!("línea {}: {}", line, fingerprint_sha256(key))
+                            })
+                            .collect::<Vec<_>>()
+                            .join("; ");
                         self.set_failure(format!(
-                            "No se pudo guardar la host key de {}:{} en known_hosts: {err}",
-                            self.host, self.port
+                            "ALERTA: la host key de {}:{} ha cambiado. \
+                             Fingerprint recibido: {}. \
+                             Entradas previas en known_hosts → {}. \
+                             Si reconoces el cambio, elimina las líneas correspondientes de ~/.ssh/known_hosts y vuelve a conectar.",
+                            self.host,
+                            self.port,
+                            fingerprint_sha256(server_public_key),
+                            previous,
                         ));
                         Ok(false)
+                    }
+                    Ok(_) | Err(_) => {
+                        // No hay entradas previas (o no se pudo leer): aplicar TOFU
+                        // y aprender la clave actual.
+                        match known_hosts::learn_known_hosts(
+                            &self.host,
+                            self.port,
+                            server_public_key,
+                        ) {
+                            Ok(()) => Ok(true),
+                            Err(err) => {
+                                self.set_failure(format!(
+                                    "No se pudo guardar la host key de {}:{} en known_hosts: {err}",
+                                    self.host, self.port
+                                ));
+                                Ok(false)
+                            }
+                        }
                     }
                 }
             }
             Err(russh::keys::Error::KeyChanged { line }) => {
                 self.set_failure(format!(
-                    "ALERTA: la host key de {}:{} ha cambiado (known_hosts línea {}). Fingerprint recibido: {}",
+                    "ALERTA: la host key de {}:{} ha cambiado (known_hosts línea {}). \
+                     Fingerprint recibido: {}. \
+                     Si reconoces el cambio, elimina esa línea de ~/.ssh/known_hosts y vuelve a conectar.",
                     self.host,
                     self.port,
                     line,
