@@ -77,6 +77,12 @@
         <div id="sidebar-header">
           <span class="app-logo">Rustty</span>
           <div class="sidebar-header-actions">
+            <button id="btn-sidebar-search" data-i18n-title="sidebar.search_title" title="Buscar conexiones" aria-label="Buscar conexiones">
+              <svg viewBox="0 0 18 18" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8" cy="8" r="5"></circle>
+                <line x1="12" y1="12" x2="15" y2="15"></line>
+              </svg>
+            </button>
             <button id="btn-sidebar-tools" data-i18n-title="sidebar.tools_title" title="Filtrar y cambiar de perfil">≡</button>
           </div>
         </div>
@@ -916,6 +922,14 @@
                 </div>
               </div>
 
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-terminal-ligatures" />
+                  <span data-i18n="prefs_terminal.ligatures">Ligaduras tipográficas</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.ligatures_hint">Requiere una fuente con soporte (FiraCode, JetBrains Mono, Cascadia Code…). Se aplica a sesiones nuevas.</p>
+              </div>
+
               <div class="settings-row settings-row-inline">
                 <label for="pref-cursor-style" data-i18n="prefs_terminal.cursor_style">Estilo de cursor</label>
                 <select id="pref-cursor-style">
@@ -1279,6 +1293,18 @@
             <section class="prefs-panel" role="tabpanel" data-prefs-panel="shortcuts">
               <h3 class="prefs-panel-title" data-i18n="prefs_shortcuts.title">Atajos de teclado</h3>
               <p class="prefs-panel-hint" data-i18n="prefs_shortcuts.hint">Pulsa "Editar" y la nueva combinación de teclas. Escape cancela la captura.</p>
+
+              <div class="settings-row settings-row-inline">
+                <label data-i18n="prefs_shortcuts.preset_label" for="shortcuts-preset-select">Preset</label>
+                <div class="settings-control">
+                  <select id="shortcuts-preset-select">
+                    <option value="default" data-i18n="prefs_shortcuts.preset_default">Por defecto</option>
+                    <option value="vim" data-i18n="prefs_shortcuts.preset_vim">Vim-like</option>
+                    <option value="tmux" data-i18n="prefs_shortcuts.preset_tmux">Tmux-like</option>
+                  </select>
+                  <button type="button" class="btn-secondary" id="btn-shortcuts-apply-preset" data-i18n="prefs_shortcuts.preset_apply">Aplicar</button>
+                </div>
+              </div>
 
               <div class="settings-row settings-row-inline">
                 <label data-i18n="prefs_shortcuts.import_export">Importar / exportar</label>

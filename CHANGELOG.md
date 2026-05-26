@@ -2,6 +2,29 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.10.0] - 2026-05-26
+
+### Añadido
+
+- Ligaduras tipográficas opcionales en el terminal (toggle en Preferencias →
+  Terminal). Requiere una fuente con soporte (FiraCode, JetBrains Mono,
+  Cascadia Code…) y se aplica a sesiones nuevas.
+- Perfiles de atajos predefinidos en Preferencias → Atajos: *Por defecto*,
+  *Vim-like* (HJKL bajo `Ctrl+Alt`) y *Tmux-like* (combinaciones `Alt+letra`
+  inspiradas en el prefix `C-b`). Aplicar uno sobreescribe el mapa actual con
+  confirmación previa.
+- Botón de búsqueda con icono de lupa en la cabecera de la sidebar, al lado
+  del botón ≡. Abre el popover y enfoca el buscador (equivalente a `Ctrl+K`).
+
+### Cambiado
+
+- Confirmaciones de borrado destructivo con varios elementos (workspace o
+  carpeta con perfiles dentro) piden teclear el nombre exacto antes de
+  habilitar el botón rojo. Borrados de un solo elemento siguen siendo un clic.
+- Los indicadores de arrastrar y soltar de la sidebar, las pestañas y el panel
+  SFTP comparten ahora los mismos tokens de color, grosor y opacidad.
+- Dependencias `@tauri-apps/*` y `tauri` actualizadas a la última 2.x compatible.
+
 ## [1.7.1] - 2026-05-15
 
 ### Corregido

@@ -12,6 +12,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
+import { LigaturesAddon } from "@xterm/addon-ligatures";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import {
@@ -331,6 +332,10 @@ const DEFAULT_PREFS = {
   fontFamily:      "",        // "" = usar cadena por defecto con fallback monospace
   lineHeight:      1.0,       // 1.0 = normal; xterm.js admite >0
   letterSpacing:   0,         // píxeles; positivo separa, negativo junta
+  // Ligaduras tipográficas en el terminal (==, =>, ->, !=, ===, etc.).
+  // Requiere fuente con soporte (FiraCode, JetBrains Mono, Cascadia Code, …).
+  // Solo se aplica a sesiones nuevas: cambiar el toggle no afecta a las ya abiertas.
+  terminalLigatures: false,
   cursorStyle:     "block",   // "block" | "bar" | "underline"
   cursorBlink:     true,
   scrollback:      5000,
@@ -1234,6 +1239,8 @@ function openSettingsModal() {
   const _cbSafe = document.getElementById("pref-color-blind-safe");
   if (_cbSafe) _cbSafe.checked = !!prefs.colorBlindSafe;
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
+  const _ligEl = document.getElementById("pref-terminal-ligatures");
+  if (_ligEl) _ligEl.checked = !!prefs.terminalLigatures;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
   document.getElementById("pref-bell").value                = prefs.bell;
   renderHighlightRulesEditor();
@@ -2153,6 +2160,7 @@ function savePrefsFromModal() {
     })(),
     cursorStyle:     document.getElementById("pref-cursor-style").value,
     cursorBlink:     document.getElementById("pref-cursor-blink").checked,
+    terminalLigatures: !!document.getElementById("pref-terminal-ligatures")?.checked,
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     bell:            document.getElementById("pref-bell").value,
     uiDensity:       (document.getElementById("pref-ui-density")?.value === "compact" ? "compact" : "comfortable"),
@@ -3956,15 +3964,28 @@ function renameWorkspaceById(wsId) {
   renderConnectionList();
 }
 
-function deleteWorkspaceById(wsId) {
+async function deleteWorkspaceById(wsId) {
   if (prefs.workspaces.length <= 1) return;
   const ws = prefs.workspaces.find((w) => w.id === wsId);
   if (!ws) return;
   const inUse = profiles.some((p) => (p.workspace_id || "default") === ws.id);
-  const msg = inUse
-    ? t("sidebar.workspace_confirm_delete_full")
-    : t("sidebar.workspace_confirm_delete");
-  if (!confirm(msg)) return;
+  if (inUse) {
+    const ok = await confirmDestructiveTyped({
+      title: t("sidebar.workspace_delete"),
+      message: t("sidebar.workspace_confirm_delete_full"),
+      expectedText: ws.name,
+      danger: true,
+    });
+    if (!ok) return;
+  } else {
+    const ok = await confirmThemed({
+      title: t("sidebar.workspace_delete"),
+      message: t("sidebar.workspace_confirm_delete"),
+      submitLabel: t("modal_destructive.submit"),
+      danger: true,
+    });
+    if (!ok) return;
+  }
   const finalize = () => {
     if (prefs.userFoldersByWorkspace) delete prefs.userFoldersByWorkspace[ws.id];
     prefs.workspaces = prefs.workspaces.filter((w) => w.id !== ws.id);
@@ -4117,11 +4138,27 @@ async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiv
     (p) => profileWorkspaceId(p) === workspaceId && folderContainsPath(p.group, folderPath)
   ).length;
 
-  const msg = count > 0
-    ? `¿Eliminar la carpeta "${folderPath}"?\n${count} conexión(es) se moverán a la raíz.`
-    : `¿Eliminar la carpeta vacía "${folderPath}"?`;
+  const folderName = folderPath.includes("/")
+    ? folderPath.slice(folderPath.lastIndexOf("/") + 1)
+    : folderPath;
 
-  if (!window.confirm(msg)) return;
+  if (count > 0) {
+    const ok = await confirmDestructiveTyped({
+      title: t("sidebar.delete_folder"),
+      message: `¿Eliminar la carpeta "${folderPath}"?\n${count} conexión(es) se moverán a la raíz.`,
+      expectedText: folderName,
+      danger: true,
+    });
+    if (!ok) return;
+  } else {
+    const ok = await confirmThemed({
+      title: t("sidebar.delete_folder"),
+      message: `¿Eliminar la carpeta vacía "${folderPath}"?`,
+      submitLabel: t("modal_destructive.submit"),
+      danger: true,
+    });
+    if (!ok) return;
+  }
 
   const prefix = folderPath + "/";
   const updatedAt = new Date().toISOString();
@@ -4851,6 +4888,53 @@ async function confirmThemed({ title, message, submitLabel = "Aceptar", danger =
     danger,
   });
   return !!result;
+}
+
+/**
+ * Confirmación destructiva con doble texto (estilo GitHub).
+ * El usuario debe teclear `expectedText` para habilitar el botón de borrado.
+ * Usar solo cuando la acción afecta a varios elementos (workspace con perfiles,
+ * carpeta con perfiles, etc.).
+ */
+async function confirmDestructiveTyped({ title, message, expectedText, submitLabel, danger = true }) {
+  const expected = String(expectedText || "").trim();
+  if (!expected) {
+    return confirmThemed({ title, message, submitLabel, danger });
+  }
+  const input = document.getElementById("credential-modal-input");
+  const submitBtn = document.getElementById("btn-credential-submit");
+  const labelEl = document.getElementById("credential-modal-label");
+
+  let inputHandler = null;
+  const cleanup = () => {
+    if (inputHandler && input) input.removeEventListener("input", inputHandler);
+    if (submitBtn) submitBtn.disabled = false;
+    if (input) input.placeholder = "";
+  };
+
+  const promise = promptCredential({
+    title,
+    message,
+    label: t("modal_destructive.type_to_confirm", { name: expected }),
+    submitLabel: submitLabel || t("modal_destructive.submit"),
+    danger,
+    inputType: "text",
+  });
+
+  if (input && submitBtn) {
+    submitBtn.disabled = true;
+    input.placeholder = t("modal_destructive.type_to_confirm_placeholder", { name: expected });
+    if (labelEl) labelEl.textContent = t("modal_destructive.type_to_confirm", { name: expected });
+    inputHandler = () => {
+      submitBtn.disabled = input.value.trim() !== expected;
+    };
+    input.addEventListener("input", inputHandler);
+  }
+
+  const result = await promise;
+  cleanup();
+  if (!result) return false;
+  return String(result.value || "").trim() === expected;
 }
 
 async function chooseThemed({
@@ -6601,6 +6685,13 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   terminal.loadAddon(new WebLinksAddon());
   terminal.loadAddon(searchAddon);
   terminal.open(xtermDiv);
+  // Ligaduras: el addon requiere que el terminal ya esté abierto en el DOM.
+  // Solo carga si el toggle está activo; cambios en caliente no se aplican
+  // a sesiones ya abiertas (avisado en el hint de Preferencias).
+  if (prefs.terminalLigatures) {
+    try { terminal.loadAddon(new LigaturesAddon()); }
+    catch (err) { console.warn("[ligatures] addon failed to load:", err); }
+  }
   fitAddon.fit();
 
   const sessionObj = {
@@ -10283,6 +10374,15 @@ function bindUIEvents() {
   document.querySelectorAll("select").forEach(enhanceSelect);
   enhanceNumberSteppers();
 
+  // Botón 🔍 → abre el popover y enfoca el buscador (atajo equivalente Ctrl+K)
+  const searchBtn = document.getElementById("btn-sidebar-search");
+  if (searchBtn) {
+    searchBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      focusConnectionSearch();
+    });
+  }
+
   // Botón ≡ → popover compacto con switcher + modos de vista + buscador
   const toolsBtn = document.getElementById("btn-sidebar-tools");
   const popover  = document.getElementById("sidebar-tools-popover");
@@ -10493,6 +10593,8 @@ function bindUIEvents() {
     ?.addEventListener("click", () => exportShortcuts());
   document.getElementById("btn-shortcuts-import")
     ?.addEventListener("click", () => importShortcuts());
+  document.getElementById("btn-shortcuts-apply-preset")
+    ?.addEventListener("click", () => applyShortcutPresetFromUi());
 
   // Acerca de: enlaces externos (pasan por el opener del sistema)
   document.querySelectorAll(".about-link").forEach((a) => {
@@ -10851,6 +10953,38 @@ const SHORTCUT_ACTIONS = {
 
 const SHORTCUT_IDS = Object.keys(SHORTCUT_ACTIONS);
 
+/**
+ * Presets de atajos. Al aplicar uno, los valores definidos sobreescriben
+ * `prefs.shortcuts`; los `id` ausentes se borran (vuelven al default de
+ * cada acción). El preset `default` deja el mapa vacío.
+ *
+ * Sin soporte de chord (Ctrl+B,N estilo tmux), `tmux` aproxima la
+ * convención con combos Alt+letra: prefix C-b queda implícito.
+ */
+const SHORTCUT_PRESETS = {
+  default: {},
+  vim: {
+    next_pane: "Ctrl+Alt+L",
+    prev_pane: "Ctrl+Alt+H",
+    next_tab:  "Ctrl+Alt+J",
+    prev_tab:  "Ctrl+Alt+K",
+    new_connection:   "Ctrl+Alt+N",
+    new_local_shell:  "Ctrl+Alt+T",
+    find_in_terminal: "Ctrl+Alt+F",
+    close_tab:        "Ctrl+Alt+Q",
+  },
+  tmux: {
+    next_tab:         "Alt+N",
+    prev_tab:         "Alt+P",
+    next_pane:        "Alt+O",
+    prev_pane:        "Alt+Shift+O",
+    new_local_shell:  "Alt+C",
+    new_connection:   "Alt+Shift+N",
+    close_tab:        "Alt+X",
+    find_in_terminal: "Alt+/",
+  },
+};
+
 // Mapa de códigos "extraños" a etiqueta legible. Las teclas KeyA → A,
 // DigitN → N se tratan fuera del map. NumpadAdd/-Subtract/-0 se
 // normalizan a =/-/0 para que Ctrl+= también dispare con el numpad.
@@ -11017,6 +11151,37 @@ async function importShortcuts() {
   renderShortcutsList();
   scheduleProfileAutoSync();
   toast(t("prefs_shortcuts.import_done"), "success");
+}
+
+async function applyShortcutPresetFromUi() {
+  const select = document.getElementById("shortcuts-preset-select");
+  if (!select) return;
+  const presetId = select.value;
+  const preset = SHORTCUT_PRESETS[presetId];
+  if (!preset) return;
+
+  const ok = await confirmThemed({
+    title: t("prefs_shortcuts.preset_apply_title"),
+    message: t("prefs_shortcuts.preset_apply_confirm", {
+      preset: t(`prefs_shortcuts.preset_${presetId}`),
+    }),
+    submitLabel: t("prefs_shortcuts.preset_apply"),
+    danger: true,
+  });
+  if (!ok) return;
+
+  const now = new Date().toISOString();
+  prefs.shortcuts = { ...preset };
+  prefs._shortcutsTs = Object.fromEntries(
+    Object.keys(prefs.shortcuts).map((id) => [id, now])
+  );
+  prefs._prefsUpdatedAt = now;
+  savePrefs();
+  renderShortcutsList();
+  scheduleProfileAutoSync();
+  toast(t("prefs_shortcuts.preset_applied", {
+    preset: t(`prefs_shortcuts.preset_${presetId}`),
+  }), "success");
 }
 
 let _captureState = null; // { id, row, comboEl }

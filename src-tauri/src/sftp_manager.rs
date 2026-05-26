@@ -31,7 +31,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use russh::client::{self, AuthResult};
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
 use russh_sftp::client::fs::File as SftpFile;
-use russh_sftp::client::SftpSession;
+use russh_sftp::client::{Config as SftpConfig, SftpSession};
 use russh_sftp::protocol::{FileAttributes, OpenFlags};
 
 use crate::host_keys;
@@ -918,8 +918,11 @@ async fn connect_and_open_sftp(
         })?;
     }
 
-    let sftp = SftpSession::new_opts(channel.into_stream(), Some(SFTP_REQUEST_TIMEOUT_SECS))
-        .await
+    let sftp = SftpSession::new_with_config(
+        channel.into_stream(),
+        SftpConfig { request_timeout_secs: SFTP_REQUEST_TIMEOUT_SECS, ..SftpConfig::default() },
+    )
+    .await
         .map_err(|e| {
             let msg = if elevated {
                 format!(

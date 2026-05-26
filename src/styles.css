@@ -89,6 +89,15 @@
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 
+  /* Drag & drop: indicadores unificados (sidebar, tabs, SFTP) */
+  --drag-color: var(--blue);
+  --drag-bg-soft: color-mix(in srgb, var(--blue) 10%, transparent);
+  --drag-bg-strong: color-mix(in srgb, var(--blue) 22%, transparent);
+  --drag-outline-width: 2px;
+  --drag-outline-offset: -2px;
+  --drag-insertion-width: 2px;
+  --dragging-opacity: 0.45;
+
   /* Tipografía extendida */
   --font-size-xs: 11px;
   --font-size-sm: 12px;
@@ -387,7 +396,8 @@ body.sidebar-collapsed #sidebar-resize-handle {
 #btn-new-connection,
 #btn-settings,
 #btn-local-shell,
-#btn-sidebar-tools {
+#btn-sidebar-tools,
+#btn-sidebar-search {
   width: 26px;
   height: 26px;
   border-radius: var(--border-radius);
@@ -403,7 +413,8 @@ body.sidebar-collapsed #sidebar-resize-handle {
 
 #btn-new-connection { font-size: 18px; }
 #btn-sidebar-tools { font-size: 16px; }
-#btn-sidebar-tools:hover {
+#btn-sidebar-tools:hover,
+#btn-sidebar-search:hover {
   background: var(--surface1);
   color: var(--text);
 }
@@ -621,17 +632,17 @@ body.sidebar-collapsed #sidebar-resize-handle {
 /* ─── Drag & drop en la sidebar ──────────────────────────────── */
 .conn-item.dragging,
 .folder-item.dragging {
-  opacity: 0.45;
+  opacity: var(--dragging-opacity);
 }
 
 .folder-header.drag-over {
-  background: color-mix(in srgb, var(--blue) 22%, transparent);
-  outline: 1px dashed var(--blue);
-  outline-offset: -2px;
+  background: var(--drag-bg-strong);
+  outline: var(--drag-outline-width) dashed var(--drag-color);
+  outline-offset: var(--drag-outline-offset);
 }
 
 #connection-list.drag-over-root {
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--blue) 60%, transparent);
+  box-shadow: inset 0 0 0 var(--drag-outline-width) var(--drag-color);
 }
 
 /* ─── Lista de conexiones ────────────────────────────────────── */
@@ -2312,6 +2323,20 @@ body.terminal-bell-visual::after {
 .btn-primary:hover {
   filter: brightness(1.1);
   box-shadow: 0 2px 8px color-mix(in srgb, var(--blue) 25%, transparent);
+}
+
+.btn-primary:disabled,
+.btn-primary[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: none;
+  box-shadow: none;
+}
+
+.btn-primary:disabled:hover,
+.btn-primary[disabled]:hover {
+  filter: none;
+  box-shadow: none;
 }
 
 .btn-secondary {
@@ -4790,15 +4815,15 @@ body.sftp-panel-resizing {
 }
 
 .sftp-files.sftp-dragover {
-  outline: 2px dashed var(--blue);
-  outline-offset: -4px;
-  background: color-mix(in srgb, var(--blue) 8%, transparent);
+  outline: var(--drag-outline-width) dashed var(--drag-color);
+  outline-offset: var(--drag-outline-offset);
+  background: var(--drag-bg-soft);
   animation: sftp-dropzone-pulse 1.4s var(--motion-ease) infinite;
 }
 
 @keyframes sftp-dropzone-pulse {
-  0%, 100% { background: color-mix(in srgb, var(--blue) 8%, transparent); }
-  50%      { background: color-mix(in srgb, var(--blue) 18%, transparent); }
+  0%, 100% { background: color-mix(in srgb, var(--drag-color) 10%, transparent); }
+  50%      { background: color-mix(in srgb, var(--drag-color) 22%, transparent); }
 }
 
 .sftp-empty {
@@ -4845,7 +4870,7 @@ body.sftp-panel-resizing {
 }
 
 .sftp-row.dragging {
-  opacity: 0.55;
+  opacity: var(--dragging-opacity);
 }
 
 .sftp-row.is-dir .sftp-name {
@@ -5713,7 +5738,7 @@ body.sftp-log-resizing {
    Estado del tab que se está arrastrando y guías visuales finas
    entre tabs para señalar la posición de inserción. */
 .tab.is-dragging {
-  opacity: 0.4;
+  opacity: var(--dragging-opacity);
 }
 
 .tab.drop-before::before,
@@ -5722,8 +5747,8 @@ body.sftp-log-resizing {
   position: absolute;
   top: 6px;
   bottom: 6px;
-  width: 2px;
-  background: var(--blue);
+  width: var(--drag-insertion-width);
+  background: var(--drag-color);
   border-radius: var(--radius-pill);
   pointer-events: none;
 }
