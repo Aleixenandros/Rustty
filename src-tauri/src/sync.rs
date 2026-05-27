@@ -365,7 +365,8 @@ mod tests {
 
 pub fn encrypt(passphrase: &str, plaintext: &[u8]) -> Result<Vec<u8>, AppError> {
     use age::secrecy::SecretString;
-    let encryptor = age::Encryptor::with_user_passphrase(SecretString::new(passphrase.to_string()));
+    let encryptor =
+        age::Encryptor::with_user_passphrase(SecretString::new(passphrase.to_string().into()));
     let mut out = Vec::new();
     let mut writer = encryptor
         .wrap_output(&mut out)
@@ -383,14 +384,9 @@ pub fn decrypt(passphrase: &str, ciphertext: &[u8]) -> Result<Vec<u8>, AppError>
     use age::secrecy::SecretString;
     let decryptor =
         age::Decryptor::new(ciphertext).map_err(|e| AppError::Sync(format!("decryptor: {e}")))?;
-    let decryptor = match decryptor {
-        age::Decryptor::Passphrase(d) => d,
-        age::Decryptor::Recipients(_) => {
-            return Err(AppError::Sync("El blob no es passphrase-encrypted".into()));
-        }
-    };
+    let identity = age::scrypt::Identity::new(SecretString::new(passphrase.to_string().into()));
     let mut reader = decryptor
-        .decrypt(&SecretString::new(passphrase.to_string()), None)
+        .decrypt(std::iter::once(&identity as &dyn age::Identity))
         .map_err(|e| AppError::Sync(format!("decrypt (¿passphrase incorrecta?): {e}")))?;
     let mut plain = Vec::new();
     reader

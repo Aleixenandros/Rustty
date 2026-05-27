@@ -121,6 +121,7 @@ pub fn run() {
             commands::keepass_lock,
             commands::keepass_status,
             commands::keepass_list_entries,
+            commands::keepass_get_property,
             // ── Sesiones RDP
             commands::rdp_connect,
             commands::rdp_disconnect,

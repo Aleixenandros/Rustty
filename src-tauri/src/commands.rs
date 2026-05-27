@@ -172,8 +172,9 @@ pub fn ssh_test_connection(
 }
 
 /// Si el perfil tiene `keepass_entry_uuid` y la DB está desbloqueada, devuelve
-/// la contraseña de KeePass. Si el uuid está pero la DB bloqueada, devuelve error.
-/// En cualquier otro caso, pasa a través la contraseña recibida del frontend.
+/// el valor de la propiedad configurada (por defecto `password`) de KeePass.
+/// Si el uuid está pero la DB bloqueada, devuelve error. En cualquier otro
+/// caso, pasa a través la contraseña recibida del frontend.
 fn resolve_password_from_keepass(
     profile: &ConnectionProfile,
     password: Option<String>,
@@ -187,7 +188,12 @@ fn resolve_password_from_keepass(
     if !keepass_manager::status().unlocked {
         return Err("KeePass está bloqueada; desbloquéala en Preferencias".to_string());
     }
-    match keepass_manager::get_password(entry_uuid).map_err(|e| e.to_string())? {
+    let property = profile
+        .keepass_property
+        .as_deref()
+        .and_then(keepass_manager::EntryProperty::from_str)
+        .unwrap_or(keepass_manager::EntryProperty::Password);
+    match keepass_manager::get_property(entry_uuid, property).map_err(|e| e.to_string())? {
         Some(pw) => Ok(Some(pw)),
         None => Err(format!("Entrada KeePass {} no encontrada", entry_uuid)),
     }
@@ -222,7 +228,12 @@ pub fn get_profile_password(
         if !keepass_manager::status().unlocked {
             return Err("KeePass está bloqueada; desbloquéala en Preferencias".into());
         }
-        return keepass_manager::get_password(uuid).map_err(|e| e.to_string());
+        let property = profile
+            .keepass_property
+            .as_deref()
+            .and_then(keepass_manager::EntryProperty::from_str)
+            .unwrap_or(keepass_manager::EntryProperty::Password);
+        return keepass_manager::get_property(uuid, property).map_err(|e| e.to_string());
     }
 
     // 2) keyring (si el usuario guardó la contraseña al crear el perfil)
@@ -815,6 +826,20 @@ pub fn keepass_status() -> keepass_manager::KeepassStatus {
 #[tauri::command]
 pub fn keepass_list_entries() -> Result<Vec<keepass_manager::EntrySummary>, String> {
     keepass_manager::list_entries().map_err(|e| e.to_string())
+}
+
+/// Devuelve el valor de una propiedad de una entrada KeePass.
+/// `property` ∈ {"password", "username", "title", "url", "notes"}.
+/// El frontend lo usa para previsualizar referencias por propiedad antes de
+/// guardarlas en el perfil; siempre requiere la DB desbloqueada.
+#[tauri::command]
+pub fn keepass_get_property(
+    entry_uuid: String,
+    property: String,
+) -> Result<Option<String>, String> {
+    let property = keepass_manager::EntryProperty::from_str(&property)
+        .ok_or_else(|| format!("Propiedad KeePass desconocida: {property}"))?;
+    keepass_manager::get_property(&entry_uuid, property).map_err(|e| e.to_string())
 }
 
 // ─── Directorio de datos ──────────────────────────────────────────────────────

@@ -3247,6 +3247,98 @@ input[type="checkbox"] {
   gap: 6px;
 }
 
+/* ─── Selector avanzado de entradas KeePass (combobox + tabla) ─── */
+.keepass-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.keepass-picker > input[type="text"] {
+  flex: 1;
+  padding-right: 36px;
+}
+
+.keepass-picker-clear {
+  position: absolute;
+  right: 4px;
+  width: 26px;
+  height: 26px;
+  border-radius: calc(var(--border-radius) - 2px);
+  color: var(--subtext0);
+  font-size: 12px;
+}
+
+.keepass-picker-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 9000;
+  max-height: 320px;
+  overflow: auto;
+  background: var(--mantle);
+  border: 1px solid var(--surface1);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+}
+
+.keepass-picker-section-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--subtext0);
+  padding: 6px 8px 2px;
+  user-select: none;
+}
+
+.keepass-picker-item {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(120px, 1.4fr) minmax(80px, 1fr) minmax(80px, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.keepass-picker-item:hover,
+.keepass-picker-item.active,
+.keepass-picker-item[aria-selected="true"] {
+  background: var(--surface0);
+}
+
+.keepass-picker-item .kp-col {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.keepass-picker-item .kp-col-group {
+  color: var(--subtext0);
+  font-size: 11px;
+}
+
+.keepass-picker-item .kp-col-title {
+  font-weight: 500;
+}
+
+.keepass-picker-item .kp-col-user,
+.keepass-picker-item .kp-col-url {
+  color: var(--subtext1);
+  font-size: 12px;
+}
+
+.keepass-picker-empty {
+  padding: 12px 10px;
+  color: var(--subtext0);
+  font-size: 12px;
+  text-align: center;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    MENÚ CONTEXTUAL
 ════════════════════════════════════════════════════════════════ */

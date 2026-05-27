@@ -96,6 +96,10 @@ pub struct ConnectionProfile {
     /// Solo aplica cuando `auth_type == Password` y la DB está desbloqueada.
     #[serde(default)]
     pub keepass_entry_uuid: Option<String>,
+    /// Propiedad de la entrada KeePass a resolver (`password` por defecto).
+    /// Permite usar `username`/`title`/`url`/`notes` como valor del campo.
+    #[serde(default)]
+    pub keepass_property: Option<String>,
     /// Si true, inyecta el hook OSC 7 tras conectar para que el panel SFTP
     /// pueda seguir el cwd del terminal. Solo aplica a conexiones SSH.
     #[serde(default = "default_true")]

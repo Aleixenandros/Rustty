@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.10.4"
+version = "1.11.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -25,14 +25,14 @@ serde_json = "1"
 # russh + russh-sftp: cliente SSH/SFTP puro en Rust. Lo usan tanto el shell
 # interactivo (ssh_manager) como el explorador de ficheros (sftp_manager);
 # nos permite arrancar un sftp-server elevado con `sudo` sobre un canal exec.
-russh = "0.50"
-russh-sftp = "2"
+russh = "0.61"
+russh-sftp = "2.3"
 suppaftp = { version = "8.0.3", features = ["rustls-ring"] }
 webpki-roots = "1"
 tokio = { version = "1", features = ["rt", "net", "io-util", "io-std", "sync", "fs", "macros", "time"] }
 # Configuración fina de sockets TCP (SO_KEEPALIVE + TCP_KEEPIDLE/INTVL) para
 # detectar caídas de NAT/microcortes en sesiones SSH/SFTP idle.
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 # CLI SSH sin interfaz gráfica: modo raw del terminal y prompts secretos.
 crossterm = "0.29"
 rpassword = "7"
@@ -52,7 +52,7 @@ dirs = "6"
 # Manejo ergonómico de errores
 thiserror = "2"
 # Lectura de bases de datos KeePass (.kdbx)
-keepass = "0.10"
+keepass = "0.13"
 # Enumeración de fuentes del sistema para el selector de familia del terminal
 fontdb = "0.23"
 # Sincronización en la nube: crypto + HTTP + timestamps
@@ -60,7 +60,7 @@ fontdb = "0.23"
 # en formato estándar. `chrono` para timestamps de los items con LWW.
 # `reqwest` con rustls (sin openssl) para WebDAV/APIs cloud. `urlencoding`
 # para escapar rutas/queries y `sha2`/`base64` para PKCE OAuth.
-age = "0.10"
+age = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "query", "form"] }
 urlencoding = "2"

@@ -869,7 +869,7 @@ async fn connect_and_open_sftp(
         AuthResult::Success => {
             emit_sftp_log(app_handle, session_id, "auth", "ok", "Autenticado");
         }
-        AuthResult::Failure { remaining_methods } => {
+        AuthResult::Failure { remaining_methods, .. } => {
             let msg = format!(
                 "Autenticación fallida. Métodos restantes: {:?}",
                 remaining_methods
@@ -979,7 +979,8 @@ async fn authenticate_with_agent(
         .flatten()
         .flatten();
     let mut last_failure = None;
-    for key in identities {
+    for identity in identities {
+        let key = identity.public_key().into_owned();
         let res = handle
             .authenticate_publickey_with(username, key, hash_alg, &mut agent)
             .await;
@@ -991,6 +992,7 @@ async fn authenticate_with_agent(
     }
     Ok(last_failure.unwrap_or(AuthResult::Failure {
         remaining_methods: russh::MethodSet::empty(),
+        partial_success: false,
     }))
 }
 

@@ -491,29 +491,6 @@
             </div>
           </div>
 
-          <div class="form-row form-row-split" data-modal-pane="general">
-            <div class="form-group">
-              <label for="f-user" data-i18n="modal_conn.user">Usuario</label>
-              <input id="f-user" type="text" data-i18n-placeholder="modal_conn.user_ph" placeholder="Administrador" required />
-            </div>
-            <div class="form-group auth-field" id="field-password">
-              <label for="f-password" data-i18n="modal_conn.password">Contraseña</label>
-              <div class="password-field">
-                <input id="f-password" type="password" placeholder="••••••••" />
-                <button
-                  type="button"
-                  class="btn-icon password-toggle"
-                  id="btn-toggle-password"
-                  data-i18n-title="modal_conn.show_password"
-                  data-i18n-aria-label="modal_conn.show_password"
-                  title="Ver contraseña"
-                  aria-label="Ver contraseña"
-                  aria-pressed="false"
-                >◉</button>
-              </div>
-            </div>
-          </div>
-
           <div class="form-row hidden" id="field-domain" data-modal-pane="general">
             <label for="f-domain"><span data-i18n="modal_conn.domain">Dominio</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
             <input id="f-domain" type="text" data-i18n-placeholder="modal_conn.domain_ph" placeholder="WORKGROUP" />
@@ -554,6 +531,29 @@
             </select>
           </div>
 
+          <div class="form-row form-row-split" data-modal-pane="general">
+            <div class="form-group">
+              <label for="f-user" data-i18n="modal_conn.user">Usuario</label>
+              <input id="f-user" type="text" data-i18n-placeholder="modal_conn.user_ph" placeholder="Administrador" required />
+            </div>
+            <div class="form-group auth-field" id="field-password">
+              <label for="f-password" data-i18n="modal_conn.password">Contraseña</label>
+              <div class="password-field">
+                <input id="f-password" type="password" placeholder="••••••••" />
+                <button
+                  type="button"
+                  class="btn-icon password-toggle"
+                  id="btn-toggle-password"
+                  data-i18n-title="modal_conn.show_password"
+                  data-i18n-aria-label="modal_conn.show_password"
+                  title="Ver contraseña"
+                  aria-label="Ver contraseña"
+                  aria-pressed="false"
+                >◉</button>
+              </div>
+            </div>
+          </div>
+
           <div class="form-row auth-field" id="field-keepass-toggle" data-modal-pane="general">
             <label class="checkbox-label">
               <input id="f-use-keepass" type="checkbox" />
@@ -565,11 +565,51 @@
           </div>
 
           <div class="form-row auth-field hidden" id="field-keepass-entry" data-modal-pane="general">
-            <label for="f-keepass-entry" data-i18n="modal_conn.keepass_entry">Entrada KeePass</label>
-            <select id="f-keepass-entry">
-              <option value="" data-i18n="modal_conn.keepass_entry_pick">— Selecciona una entrada —</option>
-            </select>
+            <label for="f-keepass-search" data-i18n="modal_conn.keepass_entry">Entrada KeePass</label>
+            <div class="keepass-picker" id="keepass-picker">
+              <input
+                id="f-keepass-search"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                data-i18n-placeholder="modal_conn.keepass_search_ph"
+                placeholder="Buscar por título, usuario, URL o grupo…"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="keepass-picker-list"
+              />
+              <input id="f-keepass-entry" type="hidden" />
+              <button
+                type="button"
+                class="btn-icon keepass-picker-clear hidden"
+                id="btn-keepass-clear"
+                data-i18n-title="modal_conn.keepass_clear"
+                data-i18n-aria-label="modal_conn.keepass_clear"
+                title="Limpiar selección"
+                aria-label="Limpiar selección"
+              >✕</button>
+              <div
+                id="keepass-picker-list"
+                class="keepass-picker-list hidden"
+                role="listbox"
+                aria-label="Entradas KeePass"
+              ></div>
+            </div>
             <p class="form-hint keepass-entry-status hidden" id="keepass-entry-status"></p>
+          </div>
+
+          <div class="form-row auth-field hidden" id="field-keepass-property" data-modal-pane="general">
+            <label for="f-keepass-property" data-i18n="modal_conn.keepass_property">Propiedad a usar</label>
+            <select id="f-keepass-property">
+              <option value="password" data-i18n="modal_conn.keepass_property_password">Contraseña</option>
+              <option value="username" data-i18n="modal_conn.keepass_property_username">Usuario</option>
+              <option value="title" data-i18n="modal_conn.keepass_property_title">Título</option>
+              <option value="url" data-i18n="modal_conn.keepass_property_url">URL</option>
+              <option value="notes" data-i18n="modal_conn.keepass_property_notes">Notas</option>
+            </select>
+            <p class="form-hint" data-i18n="modal_conn.keepass_property_hint">
+              Por defecto se usa la contraseña. Cambiar este campo permite referenciar cualquier propiedad de la entrada KeePass.
+            </p>
           </div>
 
           <div class="form-row auth-field" id="field-save-password" data-modal-pane="general">

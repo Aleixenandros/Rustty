@@ -794,7 +794,7 @@ async fn connect_handle(
         .map_err(|e| format!("Bastion: {e}"))?
         {
             AuthResult::Success => {}
-            AuthResult::Failure { remaining_methods } => {
+            AuthResult::Failure { remaining_methods, .. } => {
                 return Err(format!(
                     "Autenticacion contra bastion fallida. Metodos restantes: {:?}",
                     remaining_methods
@@ -860,7 +860,7 @@ async fn authenticate_target(
     .map_err(|e| e.to_string())?
     {
         AuthResult::Success => Ok(()),
-        AuthResult::Failure { remaining_methods } => Err(format!(
+        AuthResult::Failure { remaining_methods, .. } => Err(format!(
             "Autenticacion fallida. Metodos restantes: {:?}",
             remaining_methods
         )),

@@ -84,7 +84,7 @@ where
 fn apply_socket_keepalive(stream: &TcpStream) {
     use socket2::{SockRef, TcpKeepalive};
     let sock = SockRef::from(stream);
-    let _ = sock.set_nodelay(true);
+    let _ = sock.set_tcp_nodelay(true);
     let mut ka = TcpKeepalive::new().with_time(Duration::from_secs(30));
     // `with_interval` y `with_retries` no están disponibles en todas las
     // plataformas; aplicamos lo que el target permita.
@@ -626,7 +626,7 @@ async fn run_connection_test(
         .await?
         {
             AuthResult::Success => {}
-            AuthResult::Failure { remaining_methods } => {
+            AuthResult::Failure { remaining_methods, .. } => {
                 return Err(AppError::Auth(format!(
                     "Autenticación contra bastion fallida. Métodos restantes: {:?}",
                     remaining_methods
@@ -743,7 +743,7 @@ async fn run_connection_test(
     .await?
     {
         AuthResult::Success => {}
-        AuthResult::Failure { remaining_methods } => {
+        AuthResult::Failure { remaining_methods, .. } => {
             return Err(AppError::Auth(format!(
                 "Autenticación fallida. Métodos restantes: {:?}",
                 remaining_methods
@@ -944,7 +944,7 @@ async fn run_session(
         .await
         {
             Ok(AuthResult::Success) => {}
-            Ok(AuthResult::Failure { remaining_methods }) => {
+            Ok(AuthResult::Failure { remaining_methods, .. }) => {
                 return SessionExit::Fatal(AppError::Auth(format!(
                     "Autenticación contra bastion fallida. Métodos restantes: {:?}",
                     remaining_methods
@@ -1149,7 +1149,7 @@ async fn run_session(
                 "Autenticación completada",
             );
         }
-        AuthResult::Failure { remaining_methods } => {
+        AuthResult::Failure { remaining_methods, .. } => {
             return SessionExit::Fatal(AppError::Auth(format!(
                 "Autenticación fallida. Métodos restantes: {:?}",
                 remaining_methods
@@ -1663,7 +1663,8 @@ async fn authenticate_with_agent(
         .flatten()
         .flatten();
     let mut last_failure = None;
-    for key in identities {
+    for identity in identities {
+        let key = identity.public_key().into_owned();
         let res = handle
             .authenticate_publickey_with(username, key, hash_alg, &mut agent)
             .await;
@@ -1675,6 +1676,7 @@ async fn authenticate_with_agent(
     }
     Ok(last_failure.unwrap_or(AuthResult::Failure {
         remaining_methods: russh::MethodSet::empty(),
+        partial_success: false,
     }))
 }
 

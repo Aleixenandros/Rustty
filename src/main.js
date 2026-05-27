@@ -391,6 +391,9 @@ const DEFAULT_PREFS = {
   // Modo daltónico: dots de estado se diferencian también por forma
   // (círculo / cuadrado / diamante) además de por color.
   colorBlindSafe:  false,
+  // UUIDs de las últimas entradas KeePass seleccionadas (más reciente primero,
+  // máx 8). Usado por el selector avanzado para sugerir entradas habituales.
+  recentKeepassEntries: [],
 };
 
 // Paleta de colores predefinidos para las carpetas. Cada entrada es el id que
@@ -4741,6 +4744,8 @@ function openEditConnectionModal(profileId) {
   populateWorkspaceFormSelect(profile.workspace_id || getActiveWorkspaceId());
   refreshKeepassStatus().then(() => {
     document.getElementById("f-use-keepass").checked = !!profile.keepass_entry_uuid;
+    const propEl = document.getElementById("f-keepass-property");
+    if (propEl) propEl.value = profile.keepass_property || "password";
     populateKeepassEntrySelect(profile.keepass_entry_uuid || null);
     updateConnTypeFields(connType);
     renderConnectionSummary();
@@ -4752,19 +4757,35 @@ function openEditConnectionModal(profileId) {
   document.getElementById("modal-overlay").classList.remove("hidden");
 }
 
+/**
+ * Selector avanzado de entradas KeePass. Combina:
+ * - un input de búsqueda (filtra título/usuario/URL/grupo)
+ * - un hidden input que guarda el UUID seleccionado (el modelo del perfil)
+ * - una lista desplegable con columnas Grupo / Título / Usuario / URL y
+ *   sección de "Recientes" persistida en `prefs.recentKeepassEntries`.
+ */
 function populateKeepassEntrySelect(selectedUuid) {
-  const sel = document.getElementById("f-keepass-entry");
-  if (!sel) return;
-  let opts = `<option value="">${escHtml(t("modal_conn.keepass_entry_pick"))}</option>`;
-  for (const e of keepassEntries) {
-    const label = e.group
-      ? `${e.group} / ${e.title || "(sin título)"}`
-      : (e.title || "(sin título)");
-    const suffix = e.username ? ` — ${e.username}` : "";
-    opts += `<option value="${escHtml(e.uuid)}"${e.uuid === selectedUuid ? " selected" : ""}>${escHtml(label + suffix)}</option>`;
+  const search = document.getElementById("f-keepass-search");
+  const hidden = document.getElementById("f-keepass-entry");
+  const clearBtn = document.getElementById("btn-keepass-clear");
+  if (!search || !hidden) return;
+  hidden.value = selectedUuid || "";
+  if (selectedUuid) {
+    const entry = keepassEntries.find((e) => e.uuid === selectedUuid);
+    search.value = entry ? formatKeepassEntryLine(entry) : "";
+  } else {
+    search.value = "";
   }
-  sel.innerHTML = opts;
+  if (clearBtn) clearBtn.classList.toggle("hidden", !selectedUuid);
+  closeKeepassPicker();
   updateKeepassEntryValidation();
+}
+
+function formatKeepassEntryLine(entry) {
+  if (!entry) return "";
+  const title = entry.title || "(sin título)";
+  const userPart = entry.username ? ` — ${entry.username}` : "";
+  return entry.group ? `${entry.group} / ${title}${userPart}` : `${title}${userPart}`;
 }
 
 function keepassEntryLabel(entry) {
@@ -4773,12 +4794,99 @@ function keepassEntryLabel(entry) {
   return entry.group ? `${entry.group} / ${title}` : title;
 }
 
+function filterKeepassEntries(query) {
+  const q = (query || "").trim().toLowerCase();
+  if (!q) return keepassEntries.slice();
+  return keepassEntries.filter((e) => {
+    return (
+      (e.title || "").toLowerCase().includes(q) ||
+      (e.username || "").toLowerCase().includes(q) ||
+      (e.url || "").toLowerCase().includes(q) ||
+      (e.group || "").toLowerCase().includes(q)
+    );
+  });
+}
+
+function recordKeepassRecent(uuid) {
+  if (!uuid) return;
+  const list = Array.isArray(prefs.recentKeepassEntries) ? prefs.recentKeepassEntries : [];
+  const next = [uuid, ...list.filter((id) => id !== uuid)].slice(0, 8);
+  prefs.recentKeepassEntries = next;
+  try { savePrefs(); } catch { /* tolerable */ }
+}
+
+function renderKeepassPickerList(query) {
+  const list = document.getElementById("keepass-picker-list");
+  if (!list) return;
+  if (!keepassUnlocked) {
+    list.innerHTML = `<div class="keepass-picker-empty">${escHtml(t("modal_conn.keepass_entry_status_locked"))}</div>`;
+    return;
+  }
+  const all = filterKeepassEntries(query);
+  const recentIds = Array.isArray(prefs.recentKeepassEntries) ? prefs.recentKeepassEntries : [];
+  const recent = !query
+    ? recentIds
+        .map((id) => keepassEntries.find((e) => e.uuid === id))
+        .filter(Boolean)
+    : [];
+  const recentSet = new Set(recent.map((e) => e.uuid));
+  const allOther = all.filter((e) => !recentSet.has(e.uuid));
+
+  if (all.length === 0 && recent.length === 0) {
+    list.innerHTML = `<div class="keepass-picker-empty">${escHtml(t("modal_conn.keepass_no_results"))}</div>`;
+    return;
+  }
+
+  const renderItem = (e) => `
+    <div class="keepass-picker-item" role="option" data-uuid="${escHtml(e.uuid)}" title="${escHtml(formatKeepassEntryLine(e))}">
+      <span class="kp-col kp-col-group">${escHtml(e.group || "")}</span>
+      <span class="kp-col kp-col-title">${escHtml(e.title || "(sin título)")}</span>
+      <span class="kp-col kp-col-user">${escHtml(e.username || "")}</span>
+      <span class="kp-col kp-col-url">${escHtml(e.url || "")}</span>
+    </div>`;
+
+  let html = "";
+  if (recent.length) {
+    html += `<div class="keepass-picker-section-label">${escHtml(t("modal_conn.keepass_recent_label"))}</div>`;
+    html += recent.map(renderItem).join("");
+    if (allOther.length) {
+      html += `<div class="keepass-picker-section-label">${escHtml(t("modal_conn.keepass_all_label"))}</div>`;
+    }
+  }
+  html += allOther.map(renderItem).join("");
+  list.innerHTML = html;
+}
+
+function openKeepassPicker() {
+  const list = document.getElementById("keepass-picker-list");
+  const search = document.getElementById("f-keepass-search");
+  if (!list || !search) return;
+  list.classList.remove("hidden");
+  search.setAttribute("aria-expanded", "true");
+  renderKeepassPickerList(search.value);
+}
+
+function closeKeepassPicker() {
+  const list = document.getElementById("keepass-picker-list");
+  const search = document.getElementById("f-keepass-search");
+  if (!list || !search) return;
+  list.classList.add("hidden");
+  search.setAttribute("aria-expanded", "false");
+}
+
+function selectKeepassEntry(uuid) {
+  const entry = keepassEntries.find((e) => e.uuid === uuid);
+  if (!entry) return;
+  recordKeepassRecent(uuid);
+  populateKeepassEntrySelect(uuid);
+}
+
 function updateKeepassEntryValidation() {
   const status = document.getElementById("keepass-entry-status");
-  const sel = document.getElementById("f-keepass-entry");
+  const hidden = document.getElementById("f-keepass-entry");
   const useKp = document.getElementById("f-use-keepass")?.checked;
   const authType = document.getElementById("f-auth-type")?.value;
-  if (!status || !sel) return;
+  if (!status || !hidden) return;
 
   status.classList.remove("ok", "warning", "error");
   const visible = authType === "password" && useKp;
@@ -4794,7 +4902,7 @@ function updateKeepassEntryValidation() {
     return;
   }
 
-  const uuid = sel.value;
+  const uuid = hidden.value;
   if (!uuid) {
     status.textContent = t("modal_conn.keepass_entry_status_select");
     status.classList.add("warning");
@@ -4808,17 +4916,44 @@ function updateKeepassEntryValidation() {
     return;
   }
 
+  const property = document.getElementById("f-keepass-property")?.value || "password";
   const user = entry.username
     ? t("modal_conn.keepass_entry_status_user", { username: entry.username })
     : t("modal_conn.keepass_entry_status_no_user");
-  const textKey = entry.has_password
-    ? "modal_conn.keepass_entry_status_ok"
-    : "modal_conn.keepass_entry_status_no_password";
-  status.textContent = t(textKey, {
-    entry: keepassEntryLabel(entry),
-    user,
-  });
-  status.classList.add(entry.has_password ? "ok" : "error");
+  const entryLabel = keepassEntryLabel(entry);
+
+  if (property === "password") {
+    const textKey = entry.has_password
+      ? "modal_conn.keepass_entry_status_ok"
+      : "modal_conn.keepass_entry_status_no_password";
+    status.textContent = t(textKey, { entry: entryLabel, user });
+    status.classList.add(entry.has_password ? "ok" : "error");
+    return;
+  }
+
+  const propertyHasValue = (() => {
+    switch (property) {
+      case "username": return !!entry.username;
+      case "title":    return !!entry.title;
+      case "url":      return !!entry.url;
+      case "notes":    return !!entry.has_notes;
+      default:         return false;
+    }
+  })();
+  const propertyLabel = t(`modal_conn.keepass_property_${property}`);
+  if (propertyHasValue) {
+    status.textContent = t("modal_conn.keepass_entry_status_property_ok", {
+      entry: entryLabel,
+      user,
+      property: propertyLabel,
+    });
+    status.classList.add("ok");
+  } else {
+    status.textContent = t("modal_conn.keepass_entry_status_property_empty", {
+      entry: entryLabel,
+    });
+    status.classList.add("error");
+  }
 }
 
 function closeModal() {
@@ -4826,6 +4961,10 @@ function closeModal() {
   document.getElementById("form-connection").reset();
   setPasswordVisible(false);
   resetConnectionTestPanel();
+  closeKeepassPicker();
+  const hiddenKp = document.getElementById("f-keepass-entry");
+  if (hiddenKp) hiddenKp.value = "";
+  document.getElementById("btn-keepass-clear")?.classList.add("hidden");
   editingProfileId = null;
 }
 
@@ -4938,6 +5077,7 @@ function updateAuthFields(authType) {
   const useKp = document.getElementById("f-use-keepass").checked;
   document.getElementById("field-keepass-toggle").classList.toggle("hidden", !isPwd);
   document.getElementById("field-keepass-entry").classList.toggle("hidden", !isPwd || !useKp);
+  document.getElementById("field-keepass-property")?.classList.toggle("hidden", !isPwd || !useKp);
   // Si KeePass está activo, ocultar los campos de contraseña
   if (isPwd && useKp) {
     setPasswordVisible(false);
@@ -4976,6 +5116,7 @@ function updateConnTypeFields(type, adjustPort = false) {
     const useKp = document.getElementById("f-use-keepass").checked;
     document.getElementById("field-keepass-toggle").classList.remove("hidden");
     document.getElementById("field-keepass-entry").classList.toggle("hidden", !useKp);
+    document.getElementById("field-keepass-property")?.classList.toggle("hidden", !useKp);
     document.getElementById("field-password").classList.toggle("hidden", useKp);
     document.getElementById("field-save-password").classList.toggle("hidden", useKp);
     if (adjustPort) {
@@ -5332,6 +5473,9 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
   const keepassEntryUuid = useKeepass
     ? (document.getElementById("f-keepass-entry").value || null)
     : null;
+  const keepassProperty = useKeepass && keepassEntryUuid
+    ? (document.getElementById("f-keepass-property")?.value || "password")
+    : null;
   const wsSelect = document.getElementById("f-workspace");
   const wsFromForm = wsSelect && !wsSelect.closest(".form-row").classList.contains("hidden")
     ? wsSelect.value
@@ -5356,6 +5500,7 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     notes: (document.getElementById("f-notes").value || "").trim() || null,
     workspace_id: workspaceId,
     keepass_entry_uuid: keepassEntryUuid,
+    keepass_property: keepassProperty,
     follow_cwd: true,
     keep_alive_secs: keepAliveFromInput(document.getElementById("f-keep-alive").value),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
@@ -5536,6 +5681,9 @@ async function saveAndClose(shouldConnect) {
   const keepassEntryUuid = useKeepass
     ? (document.getElementById("f-keepass-entry").value || null)
     : null;
+  const keepassProperty = useKeepass && keepassEntryUuid
+    ? (document.getElementById("f-keepass-property")?.value || "password")
+    : null;
 
   const wsSelect = document.getElementById("f-workspace");
   const wsFromForm = wsSelect && !wsSelect.closest(".form-row").classList.contains("hidden")
@@ -5560,6 +5708,7 @@ async function saveAndClose(shouldConnect) {
     notes:               (document.getElementById("f-notes").value || "").trim() || null,
     workspace_id:        workspaceId,
     keepass_entry_uuid:  keepassEntryUuid,
+    keepass_property:    keepassProperty,
     follow_cwd:          true,
     keep_alive_secs:     keepAliveFromInput(document.getElementById("f-keep-alive").value),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
@@ -10620,6 +10769,7 @@ async function importFromSshConfig() {
       notes: null,
       workspace_id: wsId,
       keepass_entry_uuid: null,
+      keepass_property: null,
       follow_cwd: true,
       keep_alive_secs: null,
       allow_legacy_algorithms: false,
@@ -11083,7 +11233,49 @@ function bindUIEvents() {
   document.getElementById("f-use-keepass").addEventListener("change", () =>
     updateAuthFields(document.getElementById("f-auth-type").value)
   );
-  document.getElementById("f-keepass-entry").addEventListener("change", () =>
+
+  // Selector avanzado KeePass: abrir/cerrar + filtrar + seleccionar
+  const kpSearch = document.getElementById("f-keepass-search");
+  const kpList   = document.getElementById("keepass-picker-list");
+  const kpClear  = document.getElementById("btn-keepass-clear");
+  const kpPicker = document.getElementById("keepass-picker");
+  if (kpSearch && kpList && kpPicker) {
+    kpSearch.addEventListener("focus", () => openKeepassPicker());
+    kpSearch.addEventListener("input", () => {
+      // Al teclear, el usuario está filtrando: la selección previa queda invalidada.
+      document.getElementById("f-keepass-entry").value = "";
+      if (kpClear) kpClear.classList.add("hidden");
+      openKeepassPicker();
+      updateKeepassEntryValidation();
+    });
+    kpSearch.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        closeKeepassPicker();
+      } else if (e.key === "Enter") {
+        const first = kpList.querySelector(".keepass-picker-item");
+        if (first) {
+          e.preventDefault();
+          selectKeepassEntry(first.dataset.uuid);
+        }
+      }
+    });
+    kpList.addEventListener("mousedown", (e) => {
+      const item = e.target.closest(".keepass-picker-item");
+      if (!item) return;
+      // mousedown (en vez de click) para no perder el foco antes de procesar.
+      e.preventDefault();
+      selectKeepassEntry(item.dataset.uuid);
+    });
+    document.addEventListener("mousedown", (e) => {
+      if (!kpPicker.contains(e.target)) closeKeepassPicker();
+    });
+  }
+  if (kpClear) {
+    kpClear.addEventListener("click", () => {
+      populateKeepassEntrySelect(null);
+    });
+  }
+  document.getElementById("f-keepass-property")?.addEventListener("change", () =>
     updateKeepassEntryValidation()
   );
 

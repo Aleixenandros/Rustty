@@ -1,9 +1,9 @@
 use std::fs::File;
 use std::sync::Mutex;
 
-use keepass::db::Group;
+use keepass::db::{EntryId, EntryRef, GroupRef};
 use keepass::{Database, DatabaseKey};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
@@ -22,12 +22,36 @@ pub struct EntrySummary {
     pub url: String,
     pub group: String,
     pub has_password: bool,
+    pub has_notes: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct KeepassStatus {
     pub unlocked: bool,
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryProperty {
+    Password,
+    Username,
+    Title,
+    Url,
+    Notes,
+}
+
+impl EntryProperty {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "password" => Some(Self::Password),
+            "username" | "user" => Some(Self::Username),
+            "title" => Some(Self::Title),
+            "url" => Some(Self::Url),
+            "notes" | "note" => Some(Self::Notes),
+            _ => None,
+        }
+    }
 }
 
 pub fn unlock(
@@ -85,7 +109,7 @@ pub fn list_entries() -> Result<Vec<EntrySummary>, AppError> {
         .as_ref()
         .ok_or_else(|| AppError::Auth("KeePass no desbloqueada".into()))?;
     let mut out = Vec::new();
-    walk(&u.db.root, "", &mut out);
+    walk(u.db.root(), "", &mut out);
     out.sort_by(|a, b| {
         a.group
             .cmp(&b.group)
@@ -94,7 +118,12 @@ pub fn list_entries() -> Result<Vec<EntrySummary>, AppError> {
     Ok(out)
 }
 
-pub fn get_password(entry_uuid: &str) -> Result<Option<String>, AppError> {
+/// Devuelve el valor de la propiedad solicitada para la entrada `entry_uuid`.
+/// `None` si no existe la entrada o si la propiedad no tiene valor.
+pub fn get_property(
+    entry_uuid: &str,
+    property: EntryProperty,
+) -> Result<Option<String>, AppError> {
     let guard = UNLOCKED.lock().unwrap();
     let u = guard
         .as_ref()
@@ -104,23 +133,35 @@ pub fn get_password(entry_uuid: &str) -> Result<Option<String>, AppError> {
         Err(_) => return Ok(None),
     };
     Ok(u.db
-        .root
-        .entry_by_uuid(uuid)
-        .map(|e| e.get_password().unwrap_or("").to_string()))
+        .entry(EntryId::from_uuid(uuid))
+        .map(|e| read_property(&e, property)))
 }
 
-fn walk(group: &Group, path: &str, out: &mut Vec<EntrySummary>) {
-    for e in &group.entries {
+fn read_property(e: &EntryRef<'_>, property: EntryProperty) -> String {
+    let raw = match property {
+        EntryProperty::Password => e.get_password(),
+        EntryProperty::Username => e.get_username(),
+        EntryProperty::Title => e.get_title(),
+        EntryProperty::Url => e.get_url(),
+        EntryProperty::Notes => e.get("Notes"),
+    };
+    raw.unwrap_or("").to_string()
+}
+
+fn walk(group: GroupRef<'_>, path: &str, out: &mut Vec<EntrySummary>) {
+    for e in group.entries() {
+        let notes = e.get("Notes").unwrap_or("");
         out.push(EntrySummary {
-            uuid: e.uuid.to_string(),
+            uuid: e.id().uuid().to_string(),
             title: e.get_title().unwrap_or("").to_string(),
             username: e.get_username().unwrap_or("").to_string(),
             url: e.get_url().unwrap_or("").to_string(),
             group: path.to_string(),
             has_password: !e.get_password().unwrap_or("").is_empty(),
+            has_notes: !notes.is_empty(),
         });
     }
-    for g in &group.groups {
+    for g in group.groups() {
         let next_path = if path.is_empty() {
             g.name.clone()
         } else {

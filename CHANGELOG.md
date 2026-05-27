@@ -2,6 +2,28 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.11.0] - 2026-05-27
+
+### Añadido
+
+- Selector avanzado de entradas KeePass: buscador con columnas
+  (grupo · título · usuario · URL), sección de recientes persistida y
+  filtrado por título/usuario/URL/grupo, en sustitución del `<select>`
+  plano del formulario de conexión.
+- Referencias KeePass por propiedad: el perfil puede usar
+  `password`, `username`, `title`, `url` o `notes` de una entrada como
+  valor; el valor se resuelve en el momento de conectar contra la base
+  desbloqueada. Nuevo comando Tauri `keepass_get_property`.
+- Formulario de conexión: el bloque Usuario/Contraseña ahora se muestra
+  agrupado bajo el selector "Autenticación".
+
+### Cambiado
+
+- Actualizada la pila de dependencias Rust: `russh 0.50 → 0.61`,
+  `russh-sftp 2 → 2.3`, `keepass 0.10 → 0.13`, `age 0.10 → 0.11`,
+  `socket2 0.5 → 0.6`. La actualización de russh corrige el cuelgue
+  de transferencias SFTP grandes al cruzar el límite de rekey de 1 GiB.
+
 ## [1.10.4] - 2026-05-27
 
 ### Añadido
