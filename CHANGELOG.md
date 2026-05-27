@@ -2,6 +2,29 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.12.0] - 2026-05-27
+
+### Añadido
+
+- Panel SFTP: autocompletado de rutas en los inputs Local y Remoto.
+  `Tab` completa al prefijo común; mientras se escribe aparece un
+  desplegable con sugerencias navegable con flechas/`Enter`.
+- Panel SFTP: botón "Nuevo archivo" en la barra de herramientas y en
+  el menú contextual, junto a "Nueva carpeta". Nuevos comandos
+  `sftp_create_file` y `local_create_file` (fallan si el archivo
+  existe para no sobrescribir contenido).
+- Icono de mostrar/ocultar contraseña del formulario de conexión
+  reemplazado por un par ojo abierto / ojo tachado en SVG.
+
+### Arreglado
+
+- Panel SFTP: el botón ⇅ de la pestaña cierra ahora el panel aunque
+  la sesión SSH ya no esté conectada.
+- Panel SFTP: cuando la conexión SSH se cierra, el panel se cierra
+  automáticamente en lugar de quedar huérfano.
+- Panel SFTP: botón ✕ del toolbar reestilizado en rojo para que sea
+  inmediatamente identificable como acción de cierre.
+
 ## [1.11.0] - 2026-05-27
 
 ### Añadido

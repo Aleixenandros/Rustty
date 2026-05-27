@@ -2616,6 +2616,14 @@ select:hover {
   border-radius: calc(var(--border-radius) - 2px);
   color: var(--subtext0);
   font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.password-toggle svg {
+  width: 18px;
+  height: 18px;
 }
 
 .password-toggle[aria-pressed="true"] {
@@ -4981,6 +4989,7 @@ body.sftp-panel-resizing {
   padding: 6px;
   background: var(--crust);
   border-bottom: 1px solid var(--surface0);
+  position: relative;
 }
 
 .sftp-nav-btn {
@@ -5006,6 +5015,15 @@ body.sftp-panel-resizing {
   color: var(--blue);
 }
 
+.sftp-close-btn {
+  color: var(--red);
+  font-weight: bold;
+}
+
+.sftp-close-btn:hover {
+  background: color-mix(in srgb, var(--red) 22%, transparent);
+}
+
 .sftp-path {
   flex: 1;
   background: var(--base);
@@ -5020,6 +5038,55 @@ body.sftp-panel-resizing {
 
 .sftp-path:focus {
   border-color: var(--blue);
+}
+
+/* Popup de autocompletado de rutas (Tab / mientras se escribe) */
+.sftp-ac-popup {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--mantle);
+  border: 1px solid var(--surface1);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px;
+}
+
+.sftp-ac-popup.hidden {
+  display: none;
+}
+
+.sftp-ac-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.sftp-ac-item:hover,
+.sftp-ac-item.active {
+  background: color-mix(in srgb, var(--blue) 22%, transparent);
+}
+
+.sftp-ac-icon {
+  width: 18px;
+  text-align: center;
+}
+
+.sftp-ac-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sftp-columns {

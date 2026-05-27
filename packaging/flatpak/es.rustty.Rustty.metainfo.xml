@@ -42,6 +42,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="1.12.0" date="2026-05-27">
+      <description>
+        <p>Autocompletado de rutas y creación de archivos en el panel SFTP. Cierre automático del panel al desconectar y nuevo icono de ojo para la contraseña.</p>
+      </description>
+    </release>
     <release version="1.10.1" date="2026-05-26">
       <description>
         <p>Fix del aviso de host key cambiada (incluye rotación de algoritmo). Zoom de terminal con Ctrl+Rueda.</p>

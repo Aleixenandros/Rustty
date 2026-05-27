@@ -4530,6 +4530,9 @@ function wolPortFromInput(value) {
   return Math.min(n, 65535);
 }
 
+const EYE_OPEN_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const EYE_CLOSED_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-6.5 0-10-7-10-7a18.54 18.54 0 0 1 4.93-5.66"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c6.5 0 10 7 10 7a18.6 18.6 0 0 1-2.06 3.06"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><line x1="3" y1="3" x2="21" y2="21"/></svg>`;
+
 function setPasswordVisible(visible) {
   const input = document.getElementById("f-password");
   const btn = document.getElementById("btn-toggle-password");
@@ -4537,7 +4540,7 @@ function setPasswordVisible(visible) {
 
   input.type = visible ? "text" : "password";
   btn.setAttribute("aria-pressed", visible ? "true" : "false");
-  btn.textContent = visible ? "◎" : "◉";
+  btn.innerHTML = visible ? EYE_CLOSED_SVG : EYE_OPEN_SVG;
 
   const label = t(visible ? "modal_conn.hide_password" : "modal_conn.show_password");
   btn.title = label;
@@ -7455,6 +7458,8 @@ async function registerSshListeners(sessionId, terminal) {
     showReconnectOverlay(sessionId, "Sesión cerrada");
     terminal.writeln(`\r\n\x1b[33m• ${t("terminal.closed")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
     markTabActivity(sessionId, { kind: "disconnect" });
+    // El subsistema SFTP muere con el canal SSH; cerrar el panel para no dejarlo huérfano.
+    if (s?.sftp?.panel) closeSftpPanel(sessionId).catch(() => {});
     renderConnectionList();
   }));
 
@@ -8234,11 +8239,14 @@ async function getShellName() {
 
 async function toggleSftpPanel(sessionId) {
   const s = sessions.get(sessionId);
-  if (!s || s.status !== "connected") {
-    toast("La sesión debe estar conectada", "warning");
-    return;
-  }
+  if (!s) return;
+  // Si el panel ya existe, permitir cerrarlo incluso si la sesión ya no está
+  // conectada — así un panel huérfano se cierra con el mismo botón que lo abrió.
   if (s.sftp?.panel) {
+    if (s.status !== "connected" && s.status !== "reconnecting") {
+      await closeSftpPanel(sessionId);
+      return;
+    }
     const panel = s.sftp.panel;
     if (panel.classList.contains("hidden")) {
       panel.classList.remove("hidden");
@@ -8247,6 +8255,10 @@ async function toggleSftpPanel(sessionId) {
       panel.classList.add("hidden");
       s.fitAddon?.fit();
     }
+    return;
+  }
+  if (s.status !== "connected") {
+    toast("La sesión debe estar conectada", "warning");
     return;
   }
   await openSftpPanel(sessionId);
@@ -8528,6 +8540,205 @@ function toggleActiveSftpElevated() {
   toggleSftpElevated(activeSessionId);
 }
 
+// ───── Autocompletado de rutas en los inputs sftp-path ─────
+//
+// Tab → completa al prefijo común más largo de los hijos del directorio padre
+// que empiezan por el texto tras la última `/`. Si solo hay un candidato y es
+// directorio, añade `/` para encadenar otro Tab. Mientras se escribe muestra
+// un dropdown con las coincidencias (debounce 120 ms); flechas y Enter
+// permiten escoger sin navegar todavía.
+
+function splitPathPrefix(side, fullPath) {
+  if (side === "local") {
+    const sep = fullPath.lastIndexOf("\\") > fullPath.lastIndexOf("/") ? "\\" : "/";
+    const idx = Math.max(fullPath.lastIndexOf("/"), fullPath.lastIndexOf("\\"));
+    if (idx < 0) return { parent: fullPath, prefix: "", sep };
+    const parent = idx === 0 ? (fullPath.startsWith("/") ? "/" : fullPath.slice(0, 1) + sep)
+                             : fullPath.slice(0, idx) || sep;
+    return { parent, prefix: fullPath.slice(idx + 1), sep };
+  }
+  const idx = fullPath.lastIndexOf("/");
+  if (idx < 0) return { parent: ".", prefix: fullPath, sep: "/" };
+  const parent = idx === 0 ? "/" : fullPath.slice(0, idx);
+  return { parent, prefix: fullPath.slice(idx + 1), sep: "/" };
+}
+
+function longestCommonPrefix(strings) {
+  if (!strings.length) return "";
+  let prefix = strings[0];
+  for (let i = 1; i < strings.length && prefix; i++) {
+    while (!strings[i].startsWith(prefix)) {
+      prefix = prefix.slice(0, -1);
+      if (!prefix) return "";
+    }
+  }
+  return prefix;
+}
+
+async function fetchSftpPathCandidates(sessionId, side, fullPath) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return null;
+  const { parent, prefix, sep } = splitPathPrefix(side, fullPath);
+  try {
+    const entries = side === "local"
+      ? await invoke("local_list_dir", { path: parent })
+      : (s.sftp.sftpSessionId
+          ? await invoke("sftp_list_dir", { sessionId: s.sftp.sftpSessionId, path: parent })
+          : []);
+    const lower = prefix.toLowerCase();
+    const matches = (entries || [])
+      .filter((e) => e.name.toLowerCase().startsWith(lower))
+      .sort((a, b) => {
+        if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+    return { parent, prefix, sep, matches };
+  } catch {
+    return null;
+  }
+}
+
+function buildSftpAutocompletePath(parent, name, sep) {
+  if (parent === "/" || parent === "") return `/${name}`;
+  if (sep === "\\") {
+    return parent.endsWith("\\") || parent.endsWith("/") ? `${parent}${name}` : `${parent}\\${name}`;
+  }
+  return parent.endsWith("/") ? `${parent}${name}` : `${parent}/${name}`;
+}
+
+function closeSftpAutocomplete(input) {
+  const popup = input._sftpAcPopup;
+  if (popup) {
+    popup.classList.add("hidden");
+    popup.innerHTML = "";
+  }
+  input._sftpAcItems = [];
+  input._sftpAcIndex = -1;
+}
+
+function renderSftpAutocompletePopup(input, items, parent, sep) {
+  let popup = input._sftpAcPopup;
+  if (!popup) {
+    popup = document.createElement("div");
+    popup.className = "sftp-ac-popup hidden";
+    input.parentElement.appendChild(popup);
+    input._sftpAcPopup = popup;
+  }
+  if (!items.length) {
+    closeSftpAutocomplete(input);
+    return;
+  }
+  input._sftpAcItems = items;
+  input._sftpAcIndex = -1;
+  popup.innerHTML = items.map((e, i) => `
+    <div class="sftp-ac-item" data-ac-idx="${i}">
+      <span class="sftp-ac-icon">${e.is_dir ? "📁" : "📄"}</span>
+      <span class="sftp-ac-name">${escHtml(e.name)}${e.is_dir ? "/" : ""}</span>
+    </div>
+  `).join("");
+  popup.classList.remove("hidden");
+  popup.querySelectorAll(".sftp-ac-item").forEach((el) => {
+    el.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      const idx = Number(el.dataset.acIdx);
+      const entry = items[idx];
+      if (!entry) return;
+      const next = buildSftpAutocompletePath(parent, entry.name, sep);
+      input.value = entry.is_dir ? next + (sep === "\\" ? "\\" : "/") : next;
+      closeSftpAutocomplete(input);
+      input.focus();
+    });
+  });
+}
+
+function setupSftpPathAutocomplete(panel, input, sessionId) {
+  let debounceId = 0;
+
+  const triggerSuggestions = async () => {
+    const side = input.dataset.side;
+    const value = input.value;
+    if (!value) { closeSftpAutocomplete(input); return; }
+    const res = await fetchSftpPathCandidates(sessionId, side, value);
+    if (!res || !res.matches.length) { closeSftpAutocomplete(input); return; }
+    if (document.activeElement !== input) return;
+    renderSftpAutocompletePopup(input, res.matches.slice(0, 12), res.parent, res.sep);
+  };
+
+  const doTabComplete = async () => {
+    const side = input.dataset.side;
+    const value = input.value;
+    if (!value) return;
+    const res = await fetchSftpPathCandidates(sessionId, side, value);
+    if (!res || !res.matches.length) return;
+    const names = res.matches.map((e) => e.name);
+    const common = longestCommonPrefix(names);
+    if (common.length > res.prefix.length) {
+      const completedPath = buildSftpAutocompletePath(res.parent, common, res.sep);
+      input.value = completedPath;
+      if (res.matches.length === 1 && res.matches[0].is_dir) {
+        input.value += res.sep === "\\" ? "\\" : "/";
+        closeSftpAutocomplete(input);
+      } else {
+        renderSftpAutocompletePopup(input, res.matches.slice(0, 12), res.parent, res.sep);
+      }
+    } else {
+      renderSftpAutocompletePopup(input, res.matches.slice(0, 12), res.parent, res.sep);
+    }
+  };
+
+  input.addEventListener("input", () => {
+    clearTimeout(debounceId);
+    debounceId = setTimeout(triggerSuggestions, 120);
+  });
+
+  input.addEventListener("keydown", (e) => {
+    const items = input._sftpAcItems || [];
+    const popup = input._sftpAcPopup;
+    const popupVisible = popup && !popup.classList.contains("hidden") && items.length > 0;
+
+    if (e.key === "Tab") {
+      e.preventDefault();
+      doTabComplete();
+      return;
+    }
+    if (e.key === "Escape" && popupVisible) {
+      e.preventDefault();
+      closeSftpAutocomplete(input);
+      return;
+    }
+    if (popupVisible && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      const dir = e.key === "ArrowDown" ? 1 : -1;
+      input._sftpAcIndex = ((input._sftpAcIndex ?? -1) + dir + items.length) % items.length;
+      popup.querySelectorAll(".sftp-ac-item").forEach((el, i) => {
+        el.classList.toggle("active", i === input._sftpAcIndex);
+      });
+      return;
+    }
+    if (e.key === "Enter") {
+      if (popupVisible && input._sftpAcIndex >= 0) {
+        e.preventDefault();
+        const entry = items[input._sftpAcIndex];
+        const { parent, sep } = splitPathPrefix(input.dataset.side, input.value);
+        const next = buildSftpAutocompletePath(parent, entry.name, sep);
+        input.value = entry.is_dir ? next + (sep === "\\" ? "\\" : "/") : next;
+        closeSftpAutocomplete(input);
+        return;
+      }
+      closeSftpAutocomplete(input);
+      const side = input.dataset.side;
+      const path = input.value.trim();
+      if (!path) return;
+      if (side === "local") navigateSftpLocal(sessionId, path);
+      else navigateSftpRemote(sessionId, path);
+    }
+  });
+
+  input.addEventListener("blur", () => {
+    setTimeout(() => closeSftpAutocomplete(input), 150);
+  });
+}
+
 function getStoredSftpPanelHeightPercent() {
   const raw = Number(localStorage.getItem(SFTP_PANEL_HEIGHT_STORAGE_KEY));
   if (!Number.isFinite(raw) || raw <= 0) return SFTP_PANEL_DEFAULT_HEIGHT_PERCENT;
@@ -8709,6 +8920,7 @@ function buildSftpPanel(sessionId) {
         <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="local" title="Refrescar">⟳</button>
         <input class="sftp-path" data-side="local" type="text" spellcheck="false" />
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="local" title="Nueva carpeta">＋</button>
+        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="local" title="Nuevo archivo">📄</button>
       </div>
       <div class="sftp-columns" data-side="local">
         <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="local" data-sftp-sort="type">Tipo</button>
@@ -8742,7 +8954,8 @@ function buildSftpPanel(sessionId) {
                 title="Reconectar SFTP elevado (sudo -n sftp-server). Requiere NOPASSWD en /etc/sudoers">sudo</button>
         <input class="sftp-path" data-side="remote" type="text" spellcheck="false" />
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="remote" title="Nueva carpeta">＋</button>
-        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="close" title="Cerrar panel">✕</button>
+        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="remote" title="Nuevo archivo">📄</button>
+        <button class="sftp-nav-btn sftp-close-btn" data-sftp-act="close" title="Cerrar panel SFTP">✕</button>
       </div>
       <div class="sftp-columns" data-side="remote">
         <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="remote" data-sftp-sort="type">Tipo</button>
@@ -8842,6 +9055,8 @@ function buildSftpPanel(sessionId) {
       const side = btn.dataset.side;
       if (act === "mkdir") {
         promptMkdir(sessionId, side || "remote");
+      } else if (act === "touch") {
+        promptCreateFile(sessionId, side || "remote");
       } else if (act === "close") {
         closeSftpPanel(sessionId);
       }
@@ -8849,14 +9064,7 @@ function buildSftpPanel(sessionId) {
   });
 
   panel.querySelectorAll(".sftp-path").forEach((input) => {
-    input.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter") return;
-      const side = input.dataset.side;
-      const path = e.target.value.trim();
-      if (!path) return;
-      if (side === "local") navigateSftpLocal(sessionId, path);
-      else navigateSftpRemote(sessionId, path);
-    });
+    setupSftpPathAutocomplete(panel, input, sessionId);
   });
 
   panel.querySelectorAll(".sftp-xfer-btn").forEach((btn) => {
@@ -9243,6 +9451,9 @@ async function handleSftpContextMenuAction(action) {
       break;
     case "mkdir":
       await promptMkdir(sessionId, side);
+      break;
+    case "touch":
+      await promptCreateFile(sessionId, side);
       break;
     case "download":
       if (rows.length) transferRows(sessionId, "download", rows);
@@ -9776,6 +9987,44 @@ async function promptMkdir(sessionId, side) {
     appendSftpActivity(s.sftp.panel, {
       status: "error",
       label: `Mkdir ${where}`,
+      detail: `${name}: ${String(err)}`,
+    });
+  }
+}
+
+async function promptCreateFile(sessionId, side) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const name = await promptTextValue({
+    title: "Nuevo archivo",
+    message: `Crear archivo vacío en ${side === "local" ? "Local" : "Remoto"}.`,
+    label: "Nombre",
+    submitLabel: "Crear",
+  });
+  if (!name) return;
+  const where = side === "local" ? "Local" : "Remoto";
+  try {
+    let path;
+    if (side === "local") {
+      path = await invoke("local_path_join", { base: s.sftp.localCwd, name });
+      await invoke("local_create_file", { path });
+      navigateSftpLocal(sessionId, s.sftp.localCwd);
+    } else {
+      if (!s.sftp.sftpSessionId) return;
+      path = joinRemote(s.sftp.cwd, name);
+      await invoke("sftp_create_file", { sessionId: s.sftp.sftpSessionId, path });
+      navigateSftpRemote(sessionId, s.sftp.cwd);
+    }
+    appendSftpActivity(s.sftp.panel, {
+      status: "ok",
+      label: `Nuevo archivo ${where}`,
+      detail: path,
+    });
+  } catch (err) {
+    toast(`Error: ${err}`, "error");
+    appendSftpActivity(s.sftp.panel, {
+      status: "error",
+      label: `Nuevo archivo ${where}`,
       detail: `${name}: ${String(err)}`,
     });
   }
@@ -11961,7 +12210,7 @@ function toggleZenMode() {
 }
 
 const SIDEBAR_MODE_KEY = "rustty-sidebar-mode";
-const SIDEBAR_MODES = ["expanded", "rail", "hidden"];
+const SIDEBAR_MODES = ["expanded", "hidden"];
 
 function loadSidebarMode() {
   const stored = localStorage.getItem(SIDEBAR_MODE_KEY);
@@ -11974,8 +12223,8 @@ function loadSidebarMode() {
 function applySidebarMode(mode) {
   const m = SIDEBAR_MODES.includes(mode) ? mode : "expanded";
   document.body.classList.toggle("sidebar-collapsed", m === "hidden");
-  document.body.classList.toggle("sidebar-mode-rail", m === "rail");
   document.body.classList.toggle("sidebar-mode-expanded", m === "expanded");
+  document.body.classList.remove("sidebar-mode-rail");
   localStorage.setItem(SIDEBAR_MODE_KEY, m);
 }
 
@@ -11987,7 +12236,7 @@ function initSidebarToggle() {
 
   btn.addEventListener("click", () => {
     const current = loadSidebarMode();
-    const next = SIDEBAR_MODES[(SIDEBAR_MODES.indexOf(current) + 1) % SIDEBAR_MODES.length];
+    const next = current === "hidden" ? "expanded" : "hidden";
     applySidebarMode(next);
     // Los xterms necesitan re-fit cuando cambia la anchura del contenedor
     requestAnimationFrame(() => {

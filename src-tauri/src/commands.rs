@@ -469,6 +469,15 @@ pub async fn sftp_mkdir(
 }
 
 #[tauri::command]
+pub async fn sftp_create_file(
+    sftp_state: State<'_, SftpManager>,
+    session_id: String,
+    path: String,
+) -> Result<(), String> {
+    sftp_state.create_file(&session_id, path).await
+}
+
+#[tauri::command]
 pub async fn sftp_remove(
     sftp_state: State<'_, SftpManager>,
     session_id: String,
@@ -691,6 +700,17 @@ pub async fn tcp_ping(host: String, port: u16) -> Result<u64, String> {
 #[tauri::command]
 pub fn local_mkdir(path: String) -> Result<(), String> {
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())
+}
+
+/// Crea un archivo vacío. Falla si ya existe para no sobrescribir contenido.
+#[tauri::command]
+pub fn local_create_file(path: String) -> Result<(), String> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Borra un fichero o directorio local. Si es directorio, borra recursivamente.

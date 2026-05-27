@@ -138,6 +138,10 @@ enum SftpCommand {
         path: String,
         reply: Reply<()>,
     },
+    CreateFile {
+        path: String,
+        reply: Reply<()>,
+    },
     Remove {
         path: String,
         is_dir: bool,
@@ -209,6 +213,7 @@ trait FileTransfer {
     async fn stat(&mut self, path: &str) -> Result<FileEntry, String>;
     async fn home_dir(&mut self) -> Result<String, String>;
     async fn mkdir(&mut self, path: &str) -> Result<(), String>;
+    async fn create_file(&mut self, path: &str) -> Result<(), String>;
     async fn remove(&mut self, path: &str, is_dir: bool) -> Result<(), String>;
     async fn rename(&mut self, from: &str, to: &str) -> Result<(), String>;
     async fn chmod(&mut self, path: &str, mode: u32) -> Result<(), String>;
@@ -369,6 +374,11 @@ impl SftpManager {
 
     pub async fn mkdir(&self, session_id: &str, path: String) -> Result<(), String> {
         self.send(session_id, move |reply| SftpCommand::Mkdir { path, reply })
+            .await
+    }
+
+    pub async fn create_file(&self, session_id: &str, path: String) -> Result<(), String> {
+        self.send(session_id, move |reply| SftpCommand::CreateFile { path, reply })
             .await
     }
 
@@ -574,6 +584,9 @@ async fn run_sftp_worker(
             }
             SftpCommand::Mkdir { path, reply } => {
                 let _ = reply.send(backend.mkdir(&path).await);
+            }
+            SftpCommand::CreateFile { path, reply } => {
+                let _ = reply.send(backend.create_file(&path).await);
             }
             SftpCommand::Remove {
                 path,
@@ -1025,6 +1038,19 @@ impl FileTransfer for SftpBackend {
             .map_err(|e| e.to_string())
     }
 
+    async fn create_file(&mut self, path: &str) -> Result<(), String> {
+        let file = self
+            .sftp
+            .open_with_flags(
+                path.to_string(),
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        drop(file);
+        Ok(())
+    }
+
     async fn remove(&mut self, path: &str, is_dir: bool) -> Result<(), String> {
         let res = if is_dir {
             self.sftp.remove_dir(path.to_string()).await
@@ -1166,6 +1192,24 @@ impl FtpConnection {
             Self::Plain(ftp) => ftp.mkdir(path),
             Self::ExplicitTls(ftp) => ftp.mkdir(path),
         }
+        .map_err(|e| e.to_string())
+    }
+
+    fn create_file(&mut self, path: &str) -> Result<(), String> {
+        // No sobrescribir si existe.
+        let exists = match self {
+            Self::Plain(ftp) => ftp.size(path).is_ok(),
+            Self::ExplicitTls(ftp) => ftp.size(path).is_ok(),
+        };
+        if exists {
+            return Err("ya existe".to_string());
+        }
+        let mut empty: &[u8] = &[];
+        match self {
+            Self::Plain(ftp) => ftp.put_file(path, &mut empty),
+            Self::ExplicitTls(ftp) => ftp.put_file(path, &mut empty),
+        }
+        .map(|_| ())
         .map_err(|e| e.to_string())
     }
 
@@ -1346,6 +1390,10 @@ impl FileTransfer for FtpBackend {
 
     async fn mkdir(&mut self, path: &str) -> Result<(), String> {
         self.ftp.mkdir(path)
+    }
+
+    async fn create_file(&mut self, path: &str) -> Result<(), String> {
+        self.ftp.create_file(path)
     }
 
     async fn remove(&mut self, path: &str, is_dir: bool) -> Result<(), String> {
