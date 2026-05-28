@@ -79,7 +79,7 @@ Los túneles guardados forman parte del perfil y se incluyen en backups y sincro
 
 ## Duplicar perfiles y sesiones
 
-Desde el menú contextual de un perfil de la sidebar puedes **Duplicar conexión**: crea una copia con nuevo UUID, mismo grupo y nombre sufijado con " (copia)" lista para editar antes de guardar.
+Desde el menú contextual de un perfil de la sidebar puedes **Duplicar conexión**: crea una copia con nuevo UUID, mismo grupo y nombre sufijado con " (copia)" lista para editar antes de guardar. Si el perfil original tenía contraseña o passphrase guardadas en el keyring, también se copian a la nueva entrada, así que la copia queda lista para conectar sin reintroducir credenciales.
 
 Sobre la pestaña de una sesión activa, el menú contextual permite **Duplicar sesión**: abre una nueva sesión con el mismo perfil. Para shell local replica con un nuevo PTY; para RDP relanza el cliente externo.
 
@@ -88,6 +88,8 @@ Sobre la pestaña de una sesión activa, el menú contextual permite **Duplicar 
 Los perfiles pueden agruparse en carpetas de la barra lateral. Cada workspace tiene su propio árbol de carpetas; las carpetas manuales, incluidas las vacías, se sincronizan entre equipos cuando está activa la sincronización de perfiles/preferencias.
 
 Las carpetas se guardan como rutas completas dentro de cada workspace, por ejemplo `Producción/Web`. Si tienes subcarpetas con el mismo nombre bajo padres distintos, Rustty opera sobre la ruta completa y el workspace real del nodo seleccionado.
+
+Por defecto las **carpetas se pintan antes que las conexiones** dentro de cada nodo. Puedes invertirlo desde el popover ≡ → "📁 Carpetas primero"; el orden interno de cada grupo (alfabético o manual) se aplica por separado.
 
 Al renombrar, mover o borrar una carpeta en un equipo, el cambio viaja con la sincronización y se refleja en el resto de equipos.
 

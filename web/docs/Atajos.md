@@ -48,9 +48,11 @@ Al aplicar un preset Rustty pide confirmación y sustituye el mapa actual; los a
 La cabecera de la barra lateral tiene dos iconos junto al logo:
 
 - **🔍 Lupa** — abre un popover compacto con solo el cuadro de búsqueda; filtra los perfiles por nombre, host, usuario o grupo y oculta las carpetas vacías mientras escribes.
-- **≡ Filtros** — abre el popover completo con switcher de workspace, modos de vista (workspace actual / todos / favoritos), toggle de vista compacta y el mismo buscador.
+- **≡ Filtros** — abre el popover completo con switcher de workspace, modos de vista (workspace actual / todos / favoritos), toggles de vista compacta y carpetas primero, y el mismo buscador.
 
 `Ctrl+K` enfoca la búsqueda de forma global y se comporta exactamente como pulsar el icono 🔍: funciona desde inicio, desde una sesión SSH/RDP o desde un split activo. Si estás dentro de una sesión, Rustty abre la barra lateral si hace falta y te deja buscar por nombre, IP/host, usuario o grupo sin volver al dashboard.
+
+Dentro del buscador, `Esc` limpia el texto y restablece la lista; un segundo `Esc` cierra el popover. Cerrar el popover por cualquier otra vía (clic fuera, volver a pulsar la lupa…) también descarta el filtro para que la lista no se quede "enganchada". La combinación es reasignable desde **Preferencias → Atajos** como `clear_sidebar_search`.
 
 ## Captura de nuevos atajos
 
