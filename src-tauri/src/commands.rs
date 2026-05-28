@@ -638,9 +638,20 @@ pub struct LocalFileEntry {
 }
 
 /// Lista un directorio local con el mismo formato (forma) que `sftp_list_dir`.
+///
+/// `read_dir` + `stat` por entrada puede tardar cientos de milisegundos en
+/// directorios grandes (`node_modules`, `/usr/lib`, …). En Tauri 2 los
+/// comandos síncronos corren en el hilo principal, así que delegamos en
+/// `spawn_blocking` para no bloquear la UI mientras se hace la I/O.
 #[tauri::command]
-pub fn local_list_dir(path: String) -> Result<Vec<LocalFileEntry>, String> {
-    let read = std::fs::read_dir(&path).map_err(|e| e.to_string())?;
+pub async fn local_list_dir(path: String) -> Result<Vec<LocalFileEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || local_list_dir_sync(&path))
+        .await
+        .map_err(|e| format!("local_list_dir: {e}"))?
+}
+
+fn local_list_dir_sync(path: &str) -> Result<Vec<LocalFileEntry>, String> {
+    let read = std::fs::read_dir(path).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for entry in read.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();

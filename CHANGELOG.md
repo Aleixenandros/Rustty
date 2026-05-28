@@ -2,6 +2,36 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.12.1] - 2026-05-28
+
+### Arreglado
+
+- Bloqueo "Rustty no responde" al abrir SFTP dentro de una sesión SSH.
+  Cada evento `sftp-log-*` reconstruía el centro de actividad completo y
+  reescribía el historial en `localStorage`; ahora `renderActivityCenter`
+  hace early-return si el overlay está oculto y `persistActivityHistory`
+  tiene debounce de 250 ms para colapsar ráfagas.
+- Bloqueo al escribir en el input de ruta del lado Local del panel SFTP.
+  `local_list_dir` era síncrono y bloqueaba el hilo principal en
+  directorios grandes (`node_modules`, `/usr/lib`); ahora corre en
+  `spawn_blocking`.
+- Autocompletado de rutas SFTP: seleccionar una entrada (clic o flecha +
+  Enter) navega al directorio en el acto en lugar de exigir un Enter
+  extra.
+- Panel SFTP: la selección múltiple acepta también `Alt + Clic` además de
+  `Ctrl/Cmd + Clic`.
+- Hook OSC 7 (CWD): la línea de configuración ya no contamina el
+  historial del shell remoto. En bash se borra con `history -d` aunque
+  no haya `HISTCONTROL=ignorespace`; en zsh activa `HIST_IGNORE_SPACE`
+  en la propia sesión SSH.
+
+### Cambiado
+
+- Sidebar: el sombreado azul intenso queda reservado para la conexión
+  cuya pestaña está activa. Las demás conexiones abiertas muestran un
+  indicador tenue (`is-open`) y los estados `connecting`,
+  `reconnecting` y `error` se pintan en amarillo/rojo.
+
 ## [1.12.0] - 2026-05-27
 
 ### Añadido

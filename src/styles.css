@@ -770,16 +770,63 @@ body.sidebar-collapsed #sidebar-resize-handle {
   background: var(--surface0);
 }
 
-.conn-item.selected {
+/* `.selected` solo se aplica visualmente cuando no es la pestaña activa
+   (multi-selección o foco transitorio de la sidebar). Si la conexión es la
+   pestaña activa, gana `.active`. */
+.conn-item.selected:not(.active) {
   background: var(--surface1);
 }
 
+/* Conexión con alguna sesión abierta que NO es la pestaña activa: indicador
+   tenue (barrita y fondo muy sutil) para distinguir abierta de cerrada sin
+   competir con el resaltado de la pestaña activa. */
+.conn-item.is-open {
+  background: color-mix(in srgb, var(--blue) 6%, transparent);
+}
+
+.conn-item.is-open::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--blue);
+  border-radius: 0 2px 2px 0;
+  opacity: 0.7;
+}
+
+.conn-item.is-open.state-connecting,
+.conn-item.is-open.state-reconnecting {
+  background: color-mix(in srgb, var(--yellow) 8%, transparent);
+}
+
+.conn-item.is-open.state-connecting::before,
+.conn-item.is-open.state-reconnecting::before {
+  background: var(--yellow);
+}
+
+.conn-item.is-open.state-error {
+  background: color-mix(in srgb, var(--red) 9%, transparent);
+}
+
+.conn-item.is-open.state-error::before {
+  background: var(--red);
+}
+
+/* Pestaña activa: resaltado fuerte. Es la única conexión que debe sombrearse
+   en azul intenso a la vez. */
 .conn-item.active {
   background: color-mix(in srgb, var(--blue) 22%, transparent);
 }
 
-.conn-item.active.selected {
-  background: color-mix(in srgb, var(--blue) 30%, transparent);
+.conn-item.active.state-connecting,
+.conn-item.active.state-reconnecting {
+  background: color-mix(in srgb, var(--yellow) 26%, transparent);
+}
+
+.conn-item.active.state-error {
+  background: color-mix(in srgb, var(--red) 26%, transparent);
 }
 
 .conn-item.active::before {
@@ -792,6 +839,17 @@ body.sidebar-collapsed #sidebar-resize-handle {
   background: var(--blue);
   border-radius: 0 3px 3px 0;
   box-shadow: 0 0 8px color-mix(in srgb, var(--blue) 55%, transparent);
+}
+
+.conn-item.active.state-connecting::before,
+.conn-item.active.state-reconnecting::before {
+  background: var(--yellow);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--yellow) 55%, transparent);
+}
+
+.conn-item.active.state-error::before {
+  background: var(--red);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--red) 55%, transparent);
 }
 
 .conn-item.active .conn-item-name {

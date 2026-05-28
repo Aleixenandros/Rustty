@@ -2113,7 +2113,18 @@ function loadActivityHistory() {
   }
 }
 
+let _persistActivityHistoryTimer = 0;
 function persistActivityHistory() {
+  // Debounce: ráfagas de eventos (p. ej. las ~7 etapas del handshake SFTP)
+  // generaban un JSON.stringify + localStorage.setItem por cada uno,
+  // bloqueando el hilo principal lo suficiente como para que KWin marcara
+  // la ventana como "no responde". Agrupamos a un único write.
+  clearTimeout(_persistActivityHistoryTimer);
+  _persistActivityHistoryTimer = setTimeout(_persistActivityHistoryNow, 250);
+}
+
+function _persistActivityHistoryNow() {
+  _persistActivityHistoryTimer = 0;
   try {
     localStorage.setItem(
       ACTIVITY_HISTORY_STORAGE_KEY,
@@ -2184,6 +2195,12 @@ function closeActivityCenter() {
 function renderActivityCenter() {
   const list = document.getElementById("activity-center-list");
   if (!list) return;
+  // Si el overlay está oculto el usuario no lo ve, así que evitamos el coste
+  // de groupActivityByDay + innerHTML sobre hasta 250 ítems en cada recordActivity.
+  // Sin esto, cada handshake SFTP (que dispara ~7 eventos seguidos) bloqueaba
+  // el hilo principal lo suficiente para sacar el aviso "no responde".
+  const overlay = document.getElementById("activity-center-overlay");
+  if (overlay && overlay.classList.contains("hidden")) return;
   document.querySelectorAll(".activity-filter").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.activityFilter === _activityFilter);
   });
@@ -3664,10 +3681,28 @@ function setFolderColor(path, colorId) {
   renderConnectionList();
 }
 
+// Prioridad para el "estado dominante" cuando el perfil tiene varias sesiones
+// abiertas a la vez (poco común): mostramos el más llamativo.
+const SESSION_STATE_PRIORITY = { error: 4, reconnecting: 3, connecting: 2, connected: 1, closed: 0 };
+
+function profileSidebarState(profileId) {
+  let dominant = "";
+  let isOpen = false;
+  for (const s of sessions.values()) {
+    if (s.profileId !== profileId) continue;
+    isOpen = true;
+    const st = s.status || "closed";
+    if (!dominant || (SESSION_STATE_PRIORITY[st] ?? 0) > (SESSION_STATE_PRIORITY[dominant] ?? 0)) {
+      dominant = st;
+    }
+  }
+  const activeSession = activeSessionId ? sessions.get(activeSessionId) : null;
+  const isActiveTab = !!(activeSession && activeSession.profileId === profileId);
+  return { isOpen, isActiveTab, dominantState: dominant };
+}
+
 function renderConnectionItem(p, depth) {
-  const isConnected = [...sessions.values()].some(
-    (s) => s.profileId === p.id && s.status === "connected"
-  );
+  const { isOpen, isActiveTab, dominantState } = profileSidebarState(p.id);
   const isSelected = activeProfileId() === p.id || sidebarSelectedConnectionIds.has(p.id);
   const connType = p.connection_type || "ssh";
   const proto = connectionProtocolMeta(connType);
@@ -3676,12 +3711,19 @@ function renderConnectionItem(p, depth) {
   const notesBadge = notes
     ? `<span class="conn-notes-badge" title="${escHtml(notes)}">ⓘ</span>`
     : "";
+  const cls = [
+    "conn-item",
+    isActiveTab ? "active" : "",
+    !isActiveTab && isOpen ? "is-open" : "",
+    isSelected ? "selected" : "",
+    dominantState ? `state-${dominantState}` : "",
+  ].filter(Boolean).join(" ");
   return `
-    <div class="conn-item${isConnected ? " active" : ""}${isSelected ? " selected" : ""}"
+    <div class="${cls}"
          data-id="${p.id}"
          draggable="true"
          style="padding-left:${indent}px">
-      <div class="conn-item-icon ${escHtml(proto.className)}${isConnected ? " connected" : ""}" title="${escHtml(proto.label)}">
+      <div class="conn-item-icon ${escHtml(proto.className)}${isOpen ? " connected" : ""}" title="${escHtml(proto.label)}">
         ${escHtml(proto.icon)}
       </div>
       <div class="conn-item-info">
@@ -3716,6 +3758,18 @@ function updateSidebarSelectionDom(container = document.getElementById("connecti
       "selected",
       sidebarSelectedConnectionIds.has(id) || id === activeId
     );
+    // Estado abierto / pestaña activa / estado dominante. Sin esto, al
+    // cambiar de pestaña sin re-renderizar la sidebar todas las conexiones
+    // abiertas seguirían pintadas como activas.
+    const { isOpen, isActiveTab, dominantState } = profileSidebarState(id);
+    el.classList.toggle("active", isActiveTab);
+    el.classList.toggle("is-open", isOpen && !isActiveTab);
+    for (const cls of [...el.classList]) {
+      if (cls.startsWith("state-")) el.classList.remove(cls);
+    }
+    if (dominantState) el.classList.add(`state-${dominantState}`);
+    const icon = el.querySelector(".conn-item-icon");
+    if (icon) icon.classList.toggle("connected", isOpen);
   });
 }
 
@@ -6530,11 +6584,20 @@ function injectOsc7Setup(sessionId) {
   const s = sessions.get(sessionId);
   if (!s || s.status !== "connected" || s._osc7Injected) return;
   s._osc7Injected = true;
+  // Para no contaminar el historial del shell remoto:
+  //   - El espacio inicial hace que la línea se ignore si el shell tiene
+  //     HISTCONTROL=ignorespace (bash, default en Fedora/Debian/Ubuntu) o
+  //     HIST_IGNORE_SPACE (zsh).
+  //   - Al final, en bash, `history -d $HISTCMD` borra esta línea del
+  //     historial en memoria; cubre shells sin `ignorespace`.
+  //   - En zsh, además activamos `HIST_IGNORE_SPACE` para que futuras
+  //     reinyecciones (si se reconecta) queden silenciadas.
   const setup =
     ` { [ -n "$BASH_VERSION" ] && export PROMPT_COMMAND='printf "\\033]7;file://%s%s\\033\\\\" "$HOSTNAME" "$PWD"'"\${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; ` +
     `[ -n "$ZSH_VERSION" ] && { _osc7() { printf "\\033]7;file://%s%s\\033\\\\" "$HOST" "$PWD"; }; ` +
-    `typeset -ga precmd_functions; precmd_functions+=(_osc7); }; ` +
-    `printf "\\033]7;file://%s%s\\033\\\\" "\${HOSTNAME:-$HOST}" "$PWD"; } 2>/dev/null`;
+    `typeset -ga precmd_functions; precmd_functions+=(_osc7); setopt HIST_IGNORE_SPACE 2>/dev/null; }; ` +
+    `printf "\\033]7;file://%s%s\\033\\\\" "\${HOSTNAME:-$HOST}" "$PWD"; ` +
+    `[ -n "$BASH_VERSION" ] && history -d $((HISTCMD)) 2>/dev/null; } 2>/dev/null`;
   queueTerminalEchoSuppression(s, setup.trimStart());
   sendTerminalInput(s, `${setup}\r`);
 }
@@ -8643,12 +8706,23 @@ function renderSftpAutocompletePopup(input, items, parent, sep) {
       const idx = Number(el.dataset.acIdx);
       const entry = items[idx];
       if (!entry) return;
-      const next = buildSftpAutocompletePath(parent, entry.name, sep);
-      input.value = entry.is_dir ? next + (sep === "\\" ? "\\" : "/") : next;
-      closeSftpAutocomplete(input);
-      input.focus();
+      acceptSftpAutocompleteEntry(input, parent, entry, sep);
     });
   });
+}
+
+function acceptSftpAutocompleteEntry(input, parent, entry, sep) {
+  const next = buildSftpAutocompletePath(parent, entry.name, sep);
+  const side = input.dataset.side;
+  const sessionId = input.closest(".terminal-pane")?.dataset.session;
+  input.value = entry.is_dir ? next + (sep === "\\" ? "\\" : "/") : next;
+  closeSftpAutocomplete(input);
+  input.focus();
+  // Si es directorio, navegamos al instante en lugar de pedir un Enter extra.
+  if (entry.is_dir && sessionId) {
+    if (side === "local") navigateSftpLocal(sessionId, next);
+    else navigateSftpRemote(sessionId, next);
+  }
 }
 
 function setupSftpPathAutocomplete(panel, input, sessionId) {
@@ -8720,9 +8794,7 @@ function setupSftpPathAutocomplete(panel, input, sessionId) {
         e.preventDefault();
         const entry = items[input._sftpAcIndex];
         const { parent, sep } = splitPathPrefix(input.dataset.side, input.value);
-        const next = buildSftpAutocompletePath(parent, entry.name, sep);
-        input.value = entry.is_dir ? next + (sep === "\\" ? "\\" : "/") : next;
-        closeSftpAutocomplete(input);
+        acceptSftpAutocompleteEntry(input, parent, entry, sep);
         return;
       }
       closeSftpAutocomplete(input);
@@ -9194,10 +9266,11 @@ function renderSftpFiles(sessionId, side, entries) {
   }).join("");
 
   filesDiv.querySelectorAll(".sftp-row").forEach((row) => {
-    // Selección con click. Ctrl/Cmd toggle multi.
+    // Selección con click. Ctrl/Cmd/Alt toggle multi (Alt útil en entornos
+    // como GNOME donde el WM intercepta Ctrl+Click sobre algunas zonas).
     row.addEventListener("click", (e) => {
       if (e.target.closest(".sftp-row-btn")) return;
-      if (!(e.ctrlKey || e.metaKey)) {
+      if (!(e.ctrlKey || e.metaKey || e.altKey)) {
         filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => r.classList.remove("selected"));
       }
       row.classList.toggle("selected");
