@@ -377,6 +377,9 @@ const DEFAULT_PREFS = {
   // se añaden al final ordenadas alfabéticamente. Solo se usa con
   // `connectionSortMode === "manual"`.
   connectionOrder: {},
+  // Si está activo, las carpetas se renderizan antes que las conexiones dentro
+  // de cada nodo del árbol de la sidebar, respetando luego el modo de orden.
+  foldersFirst: true,
   // Color por carpeta. Mapa { folderPath: colorId } donde colorId es uno de
   // los presets en FOLDER_COLOR_PRESETS o null para "sin color".
   folderColors:    {},
@@ -446,6 +449,7 @@ function loadPrefs() {
     prefs.sidebarViewMode = "current";
   }
   prefs.sidebarCompact = Boolean(prefs.sidebarCompact);
+  if (typeof prefs.foldersFirst !== "boolean") prefs.foldersFirst = true;
   if (!Array.isArray(prefs.highlightRules)) {
     prefs.highlightRules = defaultHighlightRules();
   }
@@ -3034,6 +3038,12 @@ function renderWorkspaceSwitcher() {
     compactBtn.classList.toggle("active", Boolean(prefs.sidebarCompact));
     compactBtn.setAttribute("aria-pressed", prefs.sidebarCompact ? "true" : "false");
   }
+  const foldersFirstBtn = document.getElementById("btn-sidebar-folders-first");
+  if (foldersFirstBtn) {
+    const on = prefs.foldersFirst !== false;
+    foldersFirstBtn.classList.toggle("active", on);
+    foldersFirstBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
 
   if (!menu) return;
   const items = prefs.workspaces.map((w) => {
@@ -3060,12 +3070,24 @@ function renderWorkspaceSwitcher() {
 function toggleSidebarTools(open, opts = {}) {
   const popover = document.getElementById("sidebar-tools-popover");
   if (!popover) return;
+  const wasSearchOnly = popover.classList.contains("search-only");
   if (open === undefined) popover.classList.toggle("hidden");
   else popover.classList.toggle("hidden", !open);
   if (!popover.classList.contains("hidden")) {
     popover.classList.toggle("search-only", opts.mode === "search");
     if (opts.mode !== "search") renderWorkspaceSwitcher();
     positionSidebarToolsPopover(opts.anchor);
+  } else if (wasSearchOnly) {
+    // Al cerrar el popover de búsqueda, descartar el filtro para no dejarlo
+    // "enganchado" sobre la lista de conexiones cuando ya no es visible.
+    const sidebarSearch = document.getElementById("sidebar-search");
+    if (sidebarSearch && sidebarSearch.value) {
+      sidebarSearch.value = "";
+    }
+    if (_sidebarSearchQuery) {
+      _sidebarSearchQuery = "";
+      applySidebarSearchFilter();
+    }
   }
 }
 
@@ -3110,6 +3132,14 @@ function setSidebarCompact(enabled) {
   prefs.sidebarCompact = Boolean(enabled);
   savePrefs();
   renderConnectionList();
+}
+
+function setFoldersFirst(enabled) {
+  prefs.foldersFirst = Boolean(enabled);
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+  renderConnectionList();
+  scheduleProfileAutoSync();
 }
 
 function setConnectionSortMode(mode) {
@@ -3630,9 +3660,20 @@ function focusConnectionSearch() {
 
 function renderTreeNode(node, depth) {
   let html = "";
-  for (const p of node.connections) html += renderConnectionItem(p, depth);
-  for (const [name, child] of Object.entries(node.folders)) {
-    html += renderFolderNode(name, child, depth);
+  const renderConnections = () => {
+    for (const p of node.connections) html += renderConnectionItem(p, depth);
+  };
+  const renderFolders = () => {
+    for (const [name, child] of Object.entries(node.folders)) {
+      html += renderFolderNode(name, child, depth);
+    }
+  };
+  if (prefs.foldersFirst !== false) {
+    renderFolders();
+    renderConnections();
+  } else {
+    renderConnections();
+    renderFolders();
   }
   return html;
 }
@@ -3685,19 +3726,32 @@ function setFolderColor(path, colorId) {
 // abiertas a la vez (poco común): mostramos el más llamativo.
 const SESSION_STATE_PRIORITY = { error: 4, reconnecting: 3, connecting: 2, connected: 1, closed: 0 };
 
+// Una sesión "viva" sigue manteniendo la conexión activa con el servidor o
+// está intentándolo. Una vez `status === "closed"` el canal está muerto y la
+// conexión debe pintarse en la sidebar como cerrada aunque la pestaña siga
+// existiendo en el mapa.
+function isLiveSessionStatus(status) {
+  return status === "connected" || status === "connecting" || status === "reconnecting" || status === "error";
+}
+
 function profileSidebarState(profileId) {
   let dominant = "";
   let isOpen = false;
   for (const s of sessions.values()) {
     if (s.profileId !== profileId) continue;
-    isOpen = true;
     const st = s.status || "closed";
+    if (!isLiveSessionStatus(st)) continue;
+    isOpen = true;
     if (!dominant || (SESSION_STATE_PRIORITY[st] ?? 0) > (SESSION_STATE_PRIORITY[dominant] ?? 0)) {
       dominant = st;
     }
   }
   const activeSession = activeSessionId ? sessions.get(activeSessionId) : null;
-  const isActiveTab = !!(activeSession && activeSession.profileId === profileId);
+  const isActiveTab = !!(
+    activeSession &&
+    activeSession.profileId === profileId &&
+    isLiveSessionStatus(activeSession.status || "closed")
+  );
   return { isOpen, isActiveTab, dominantState: dominant };
 }
 
@@ -7685,8 +7739,8 @@ async function deleteProfile(profileId) {
  * el nombre con " (copia)" y deja el modal de edición abierto sobre la
  * copia para que el usuario pueda ajustarla antes de cerrarlo. Las
  * referencias a credenciales (keepass_entry_uuid, key_path) se copian tal
- * cual; las contraseñas guardadas en el keyring NO se duplican (cada perfil
- * tiene su propia clave `password:<id>`).
+ * cual y, si el original tiene contraseña/passphrase en el keyring, también
+ * se replican bajo la nueva clave `password:<id>` / `passphrase:<id>`.
  */
 async function duplicateProfile(profileId) {
   const original = profiles.find((p) => p.id === profileId);
@@ -7700,6 +7754,12 @@ async function duplicateProfile(profileId) {
   };
   try {
     await invoke("save_profile", { profile: copy });
+    const [pw, pp] = await Promise.all([
+      getStoredSecret(passwordKey(original.id)),
+      getStoredSecret(passphraseKey(original.id)),
+    ]);
+    if (pw) await saveStoredSecret(passwordKey(copy.id), pw, "contraseña");
+    if (pp) await saveStoredSecret(passphraseKey(copy.id), pp, "passphrase");
     profiles = await invoke("get_profiles");
     renderConnectionList();
     scheduleProfileAutoSync();
@@ -11200,6 +11260,12 @@ function bindUIEvents() {
         renderWorkspaceSwitcher();
         return;
       }
+      const foldersFirstBtn = e.target.closest("#btn-sidebar-folders-first");
+      if (foldersFirstBtn) {
+        setFoldersFirst(prefs.foldersFirst === false);
+        renderWorkspaceSwitcher();
+        return;
+      }
     });
     document.addEventListener("click", (e) => {
       if (!popover.classList.contains("hidden") &&
@@ -11218,12 +11284,15 @@ function bindUIEvents() {
       applySidebarSearchFilter();
     });
     sidebarSearch.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && sidebarSearch.value) {
-        sidebarSearch.value = "";
-        _sidebarSearchQuery = "";
-        applySidebarSearchFilter();
+      const combo = comboFromEvent(e);
+      const clearCombo = getShortcut("clear_sidebar_search");
+      if (combo && clearCombo && combo === clearCombo) {
+        clearSidebarSearch();
         e.preventDefault();
-      } else if (e.key === "Enter") {
+        e.stopPropagation();
+        return;
+      }
+      if (e.key === "Enter") {
         const first = sidebarSearchCandidates(sidebarSearch.value)[0];
         if (first) {
           connectProfile(first.id);
@@ -11766,6 +11835,7 @@ const SHORTCUT_ACTIONS = {
   new_local_shell:   { default: "Ctrl+Shift+T",   run: () => openLocalShell() },
   new_connection:    { default: "Ctrl+Shift+N",   run: () => openNewConnectionModal() },
   search_connections:{ default: "Ctrl+K",         run: () => focusConnectionSearch() },
+  clear_sidebar_search:{ default: "Escape",       scope: "sidebar-search", run: () => clearSidebarSearch() },
   close_tab:         { default: "Ctrl+W",         run: () => { if (activeSessionId) closeSession(activeSessionId); } },
   next_tab:          { default: "Ctrl+Tab",       run: () => switchTab(1) },
   prev_tab:          { default: "Ctrl+Shift+Tab", run: () => switchTab(-1) },
@@ -11872,6 +11942,9 @@ function handleGlobalShortcut(e) {
   const candidates = combo === "Ctrl+Shift+=" ? [combo, "Ctrl+="] : [combo];
   for (const candidate of candidates) {
     for (const id of SHORTCUT_IDS) {
+      // Las acciones con `scope` solo se ejecutan desde su contexto local
+      // (por ejemplo el input de búsqueda de la sidebar), no como atajo global.
+      if (SHORTCUT_ACTIONS[id].scope) continue;
       if (getShortcut(id) === candidate) {
         e.preventDefault();
         e.stopPropagation();
@@ -11880,6 +11953,23 @@ function handleGlobalShortcut(e) {
       }
     }
   }
+}
+
+function clearSidebarSearch() {
+  const sidebarSearch = document.getElementById("sidebar-search");
+  if (sidebarSearch && sidebarSearch.value) {
+    sidebarSearch.value = "";
+    _sidebarSearchQuery = "";
+    applySidebarSearchFilter();
+    return true;
+  }
+  if (_sidebarSearchQuery) {
+    _sidebarSearchQuery = "";
+    applySidebarSearchFilter();
+    return true;
+  }
+  toggleSidebarTools(false);
+  return false;
 }
 
 /**

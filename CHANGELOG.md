@@ -2,6 +2,32 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.12.2] - 2026-05-28
+
+### Añadido
+
+- Sidebar: nuevo toggle "📁 Carpetas primero" en el popover de filtros,
+  habilitado por defecto. Las carpetas se pintan antes que las conexiones
+  dentro de cada workspace y cada subcarpeta, manteniendo el orden interno
+  (alfabético o manual). Persistido en `prefs.foldersFirst` y sincronizado.
+- Buscador de la sidebar: `Esc` limpia el texto y la lista filtrada en el
+  acto; un segundo `Esc` cierra el popover. Cerrar el popover de búsqueda
+  por cualquier vía descarta el filtro para que la lista no quede
+  "enganchada". El atajo es reasignable desde Preferencias → Atajos como
+  `clear_sidebar_search`.
+- Duplicar conexión también copia la contraseña y la passphrase guardadas
+  en el keyring del perfil original al nuevo perfil. Antes solo se
+  copiaban las referencias (KeePass, clave, auth_type) y había que
+  volver a guardar el secreto a mano.
+
+### Corregido
+
+- Sidebar: al cerrarse una sesión SSH remotamente, la conexión deja de
+  mostrarse en verde y con sombreado azul fuerte. Las sesiones con
+  status `closed` ya no contribuyen al estado "abierta" ni a "pestaña
+  activa" para fines de coloreado, así que la entrada vuelve al aspecto
+  neutro inmediatamente.
+
 ## [1.12.1] - 2026-05-28
 
 ### Arreglado
