@@ -2,6 +2,14 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.12.5] - 2026-05-30
+
+### Cambiado
+
+- La carpeta raíz de cada perfil también admite un color desde su menú
+  contextual. El tono se refleja en el árbol global, la cabecera de la sidebar
+  y el selector de perfiles, y viaja con la sincronización de preferencias.
+
 ## [1.12.4] - 2026-05-30
 
 ### Cambiado

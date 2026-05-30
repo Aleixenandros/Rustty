@@ -31,7 +31,7 @@ const SYNCED_PREF_KEYS = [
   "cursorStyle", "cursorBlink", "scrollback", "bell", "lang",
   "userFolders", "userFoldersByWorkspace",
   "workspaces", "favorites", "searchAllWorkspaces",
-  "folderColors", "highlightRules",
+  "folderColors", "workspaceColors", "highlightRules",
 ];
 
 // Estado local de navegación. No debe viajar ni re-aplicarse desde otra

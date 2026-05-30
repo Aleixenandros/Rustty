@@ -386,6 +386,9 @@ const DEFAULT_PREFS = {
   // Color por carpeta. Mapa { `${workspaceId}|${folderPath}`: colorId } donde
   // colorId es uno de los presets en FOLDER_COLOR_PRESETS o null para "sin color".
   folderColors:    {},
+  // Color del icono de la carpeta raíz de cada perfil-contenedor.
+  // Mapa { workspaceId: colorId }.
+  workspaceColors: {},
   // Reglas de resaltado por regex aplicadas a la salida del terminal.
   // Cada regla: { pattern: string, color: "red"|"yellow"|"green"|"blue"|"magenta"|"cyan"|"white", bold: bool }.
   // Se aplican en orden — la primera coincidencia gana.
@@ -451,6 +454,12 @@ function migrateLegacyFolderColors() {
   return true;
 }
 
+function normalizeWorkspaceColors() {
+  if (!prefs.workspaceColors || typeof prefs.workspaceColors !== "object" || Array.isArray(prefs.workspaceColors)) {
+    prefs.workspaceColors = {};
+  }
+}
+
 function loadPrefs() {
   let stored = null;
   try {
@@ -464,6 +473,7 @@ function loadPrefs() {
     prefs.activeWorkspaceId = prefs.workspaces[0].id;
   }
   migrateLegacyFolderColors();
+  normalizeWorkspaceColors();
   // Migración de carpetas globales → por workspace
   if (!prefs.userFoldersByWorkspace || typeof prefs.userFoldersByWorkspace !== "object") {
     prefs.userFoldersByWorkspace = {};
@@ -1762,6 +1772,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
     migrateLegacyFolderColors();
+    normalizeWorkspaceColors();
     applySyncedUserFolders();
     registerAllCustomThemes();
     // Recargar perfiles del backend (puede haber añadidos/borrados)
@@ -1896,6 +1907,7 @@ async function syncImportFile() {
     });
     if (!summary) return;
     migrateLegacyFolderColors();
+    normalizeWorkspaceColors();
     applySyncedUserFolders();
     registerAllCustomThemes();
     profiles = await invoke("get_profiles");
@@ -1950,6 +1962,7 @@ async function syncRestoreSnapshot() {
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
     migrateLegacyFolderColors();
+    normalizeWorkspaceColors();
     applySyncedUserFolders();
     registerAllCustomThemes();
     profiles = await invoke("get_profiles");
@@ -2372,6 +2385,7 @@ function savePrefsFromModal() {
     activeWorkspaceId: previousPrefs.activeWorkspaceId || "default",
     sidebarViewMode: previousPrefs.sidebarViewMode || "current",
     folderColors:    previousPrefs.folderColors || {},
+    workspaceColors: previousPrefs.workspaceColors || {},
     highlightRules:  readHighlightRulesFromEditor(),
     _highlightRulesSeeded: true,
     tombstones:      previousPrefs.tombstones || {},
@@ -2991,7 +3005,7 @@ function renderAllWorkspacesTree() {
     const open = openFolders.has(`__ws__/${w.id}`) ? "open" : "";
     const childrenHidden = open ? "" : "hidden";
     const count = wsProfiles.length;
-    return `<div class="folder-item ws-folder-item" data-ws-root="${escHtml(w.id)}">
+    return `<div class="folder-item ws-folder-item" data-ws-root="${escHtml(w.id)}"${workspaceTintAttrs(w.id)}>
       <div class="folder-header" data-folder-path="__ws__/${escHtml(w.id)}">
         <span class="folder-arrow ${open}">▶</span>
         <span class="folder-icon">${folderIconSvg()}</span>
@@ -3021,16 +3035,23 @@ function renderFavoritesTree() {
 
 function renderWorkspaceSwitcher() {
   const ctxLabel = document.getElementById("sidebar-context-label");
+  const ctxIcon  = document.querySelector("#sidebar-context-bar .app-folder-icon");
   const menu     = document.getElementById("workspace-menu");
+  const activeWorkspace = prefs.workspaces.find((w) => w.id === getActiveWorkspaceId());
   if (ctxLabel) {
     if (prefs.sidebarViewMode === "all") {
       ctxLabel.textContent = t("sidebar.view_all");
     } else if (prefs.sidebarViewMode === "favorites") {
       ctxLabel.textContent = t("sidebar.view_favorites");
     } else {
-      const active = prefs.workspaces.find((w) => w.id === getActiveWorkspaceId());
-      ctxLabel.textContent = active ? active.name : "Default";
+      ctxLabel.textContent = activeWorkspace ? activeWorkspace.name : "Default";
     }
+  }
+  if (ctxIcon) {
+    const color = prefs.sidebarViewMode === "current"
+      ? getWorkspaceColor(activeWorkspace?.id)?.color
+      : null;
+    ctxIcon.style.color = color || "";
   }
 
   // Marcar el modo de vista activo
@@ -3056,8 +3077,10 @@ function renderWorkspaceSwitcher() {
   if (!menu) return;
   const items = prefs.workspaces.map((w) => {
     const isActive = w.id === getActiveWorkspaceId() && prefs.sidebarViewMode === "current";
+    const color = getWorkspaceColor(w.id)?.color || "var(--overlay1)";
     return `<button class="ws-item${isActive ? " active" : ""}" data-ws-action="select" data-ws-id="${escHtml(w.id)}">
-      <span>${isActive ? "● " : "○ "}${escHtml(w.name)}</span>
+      <span class="ws-color-dot" style="--workspace-tint:${color}">${isActive ? "●" : "○"}</span>
+      <span>${escHtml(w.name)}</span>
     </button>`;
   }).join("");
   const canDelete = prefs.workspaces.length > 1;
@@ -3240,10 +3263,13 @@ async function handleWorkspaceMenuClick(action, wsId) {
     const finalize = () => {
       prefs.workspaces = prefs.workspaces.filter((w) => w.id !== cur.id);
       if (prefs.userFoldersByWorkspace) delete prefs.userFoldersByWorkspace[cur.id];
+      deleteWorkspaceColors(cur.id);
       prefs.activeWorkspaceId = prefs.workspaces[0].id;
       userFolders = new Set(getWorkspaceFolders(prefs.activeWorkspaceId));
+      prefs._prefsUpdatedAt = new Date().toISOString();
       savePrefs();
       renderConnectionList();
+      scheduleProfileAutoSync();
     };
     if (inUse) {
       const toDelete = profiles.filter((p) => (p.workspace_id || "default") === cur.id);
@@ -3719,8 +3745,21 @@ function getFolderColor(path, workspaceId = getActiveWorkspaceId()) {
   return FOLDER_COLOR_PRESETS.find((c) => c.id === id) || null;
 }
 
+function getWorkspaceColor(workspaceId) {
+  if (!workspaceId || !prefs.workspaceColors) return null;
+  const id = prefs.workspaceColors[workspaceId];
+  if (!id) return null;
+  return FOLDER_COLOR_PRESETS.find((c) => c.id === id) || null;
+}
+
 function folderTintAttrs(path, workspaceId = getActiveWorkspaceId()) {
   const c = getFolderColor(path, workspaceId);
+  if (!c) return "";
+  return ` data-folder-tint="${escHtml(c.id)}" style="--folder-tint:${c.color}"`;
+}
+
+function workspaceTintAttrs(workspaceId) {
+  const c = getWorkspaceColor(workspaceId);
   if (!c) return "";
   return ` data-folder-tint="${escHtml(c.id)}" style="--folder-tint:${c.color}"`;
 }
@@ -3734,6 +3773,35 @@ function setFolderColor(path, colorId, workspaceId = getActiveWorkspaceId()) {
   prefs._prefsUpdatedAt = new Date().toISOString();
   savePrefs();
   renderConnectionList();
+  scheduleProfileAutoSync();
+}
+
+function setWorkspaceColor(workspaceId, colorId) {
+  if (!workspaceId) return;
+  prefs.workspaceColors = prefs.workspaceColors || {};
+  if (!colorId) delete prefs.workspaceColors[workspaceId];
+  else prefs.workspaceColors[workspaceId] = colorId;
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+  renderConnectionList();
+  scheduleProfileAutoSync();
+}
+
+function deleteWorkspaceColors(workspaceId) {
+  let mutated = false;
+  if (prefs.workspaceColors?.[workspaceId]) {
+    delete prefs.workspaceColors[workspaceId];
+    mutated = true;
+  }
+  if (prefs.folderColors) {
+    const prefix = `${workspaceId}|`;
+    for (const key of Object.keys(prefs.folderColors)) {
+      if (!key.startsWith(prefix)) continue;
+      delete prefs.folderColors[key];
+      mutated = true;
+    }
+  }
+  if (mutated) prefs._prefsUpdatedAt = new Date().toISOString();
 }
 
 function remapFolderColors(sourceWs, targetWs, folderPath, newPath) {
@@ -4314,6 +4382,9 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   menu.querySelectorAll(".ctx-ws-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "workspace")
   );
+  menu.querySelectorAll(".ctx-colorable").forEach((el) =>
+    el.classList.toggle("hidden", type !== "folder" && type !== "workspace")
+  );
   // "Abrir directorio de datos" solo visible en el clic sobre la zona vacía
   menu.querySelectorAll(".ctx-sidebar-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "sidebar")
@@ -4440,13 +4511,16 @@ async function deleteWorkspaceById(wsId) {
   }
   const finalize = () => {
     if (prefs.userFoldersByWorkspace) delete prefs.userFoldersByWorkspace[ws.id];
+    deleteWorkspaceColors(ws.id);
     prefs.workspaces = prefs.workspaces.filter((w) => w.id !== ws.id);
     if (prefs.activeWorkspaceId === ws.id) {
       prefs.activeWorkspaceId = prefs.workspaces[0].id;
       userFolders = new Set(getWorkspaceFolders(prefs.activeWorkspaceId));
     }
+    prefs._prefsUpdatedAt = new Date().toISOString();
     savePrefs();
     renderConnectionList();
+    scheduleProfileAutoSync();
   };
   if (inUse) {
     const toDelete = profiles.filter((p) => (p.workspace_id || "default") === ws.id);
@@ -11771,9 +11845,14 @@ function bindUIEvents() {
     if (!btn) return;
     if (btn.dataset.ctx === "set-folder-color") {
       const colorId = btn.dataset.colorId || null;
-      const path = ctxTarget.folderPath;
+      const { type, folderPath, workspaceId } = ctxTarget;
       hideContextMenu();
-      if (path) setFolderColor(path, colorId === "none" ? null : colorId, ctxTarget.workspaceId || getActiveWorkspaceId());
+      const nextColor = colorId === "none" ? null : colorId;
+      if (type === "workspace" && workspaceId) {
+        setWorkspaceColor(workspaceId, nextColor);
+      } else if (folderPath) {
+        setFolderColor(folderPath, nextColor, workspaceId || getActiveWorkspaceId());
+      }
       return;
     }
     handleContextMenuAction(btn.dataset.ctx);

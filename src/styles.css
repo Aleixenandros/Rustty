@@ -631,6 +631,10 @@ body.sidebar-collapsed #sidebar-resize-handle {
   font-weight: 600;
 }
 
+.workspace-menu .ws-color-dot {
+  color: var(--workspace-tint, var(--overlay1));
+}
+
 .workspace-menu .ws-item.danger {
   color: var(--red);
 }
