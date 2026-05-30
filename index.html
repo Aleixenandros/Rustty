@@ -84,7 +84,11 @@
 
         <!-- Barra fina con el nombre del perfil/vista actual y el filtro activo -->
         <div id="sidebar-context-bar">
-          <span class="ctx-icon" aria-hidden="true">📁</span>
+          <span class="ctx-icon app-folder-icon" aria-hidden="true">
+            <svg class="folder-icon-svg" viewBox="0 0 18 18" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2.5 4.8A1.8 1.8 0 0 1 4.3 3h2.8l1.6 1.8h5A1.8 1.8 0 0 1 15.5 6.6v5.6a1.8 1.8 0 0 1-1.8 1.8H4.3a1.8 1.8 0 0 1-1.8-1.8z"/>
+            </svg>
+          </span>
           <span id="sidebar-context-label" class="ctx-label">Default</span>
         </div>
 
@@ -107,7 +111,11 @@
             <button class="tools-view-btn" data-sort-mode="manual" data-i18n="sidebar.sort_manual">Manual</button>
           </div>
           <button id="btn-sidebar-folders-first" class="tools-density-btn" type="button" data-i18n-title="sidebar.folders_first_title" title="Mostrar las carpetas antes que las conexiones" aria-pressed="true">
-            <span class="tools-density-icon">📁</span>
+            <span class="tools-density-icon app-folder-icon">
+              <svg class="folder-icon-svg" viewBox="0 0 18 18" aria-hidden="true" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2.5 4.8A1.8 1.8 0 0 1 4.3 3h2.8l1.6 1.8h5A1.8 1.8 0 0 1 15.5 6.6v5.6a1.8 1.8 0 0 1-1.8 1.8H4.3a1.8 1.8 0 0 1-1.8-1.8z"/>
+              </svg>
+            </span>
             <span data-i18n="sidebar.folders_first">Carpetas primero</span>
           </button>
 
@@ -287,7 +295,11 @@
         <span class="ctx-icon">⊕</span><span data-i18n="ctx.new_conn_here">Nueva conexión aquí</span>
       </button>
       <button class="ctx-item" data-ctx="new-folder">
-        <span class="ctx-icon">📁</span><span data-i18n="ctx.new_folder">Nueva carpeta</span>
+        <span class="ctx-icon app-folder-icon">
+          <svg class="folder-icon-svg" viewBox="0 0 18 18" aria-hidden="true" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2.5 4.8A1.8 1.8 0 0 1 4.3 3h2.8l1.6 1.8h5A1.8 1.8 0 0 1 15.5 6.6v5.6a1.8 1.8 0 0 1-1.8 1.8H4.3a1.8 1.8 0 0 1-1.8-1.8z"/>
+          </svg>
+        </span><span data-i18n="ctx.new_folder">Nueva carpeta</span>
       </button>
       <div class="ctx-sep ctx-sidebar-only"></div>
       <button class="ctx-item ctx-sidebar-only" data-ctx="open-data-dir">

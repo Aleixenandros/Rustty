@@ -383,8 +383,8 @@ const DEFAULT_PREFS = {
   // Si está activo, las carpetas se renderizan antes que las conexiones dentro
   // de cada nodo del árbol de la sidebar, respetando luego el modo de orden.
   foldersFirst: true,
-  // Color por carpeta. Mapa { folderPath: colorId } donde colorId es uno de
-  // los presets en FOLDER_COLOR_PRESETS o null para "sin color".
+  // Color por carpeta. Mapa { `${workspaceId}|${folderPath}`: colorId } donde
+  // colorId es uno de los presets en FOLDER_COLOR_PRESETS o null para "sin color".
   folderColors:    {},
   // Reglas de resaltado por regex aplicadas a la salida del terminal.
   // Cada regla: { pattern: string, color: "red"|"yellow"|"green"|"blue"|"magenta"|"cyan"|"white", bold: bool }.
@@ -403,8 +403,8 @@ const DEFAULT_PREFS = {
 };
 
 // Paleta de colores predefinidos para las carpetas. Cada entrada es el id que
-// se persiste en prefs.folderColors[path] y el color (var CSS) que se usa
-// para pintar la franja izquierda del folder-header (--folder-tint).
+// se persiste en prefs.folderColors[workspaceId|path] y el color (var CSS) que se usa
+// para pintar el icono SVG y la franja izquierda del folder-header (--folder-tint).
 const FOLDER_COLOR_PRESETS = [
   { id: "red",     color: "var(--red)" },
   { id: "peach",   color: "var(--peach)" },
@@ -416,7 +416,40 @@ const FOLDER_COLOR_PRESETS = [
   { id: "pink",    color: "var(--pink)" },
 ];
 
+function folderIconSvg() {
+  return `<svg class="folder-icon-svg" viewBox="0 0 18 18" aria-hidden="true" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2.5 4.8A1.8 1.8 0 0 1 4.3 3h2.8l1.6 1.8h5A1.8 1.8 0 0 1 15.5 6.6v5.6a1.8 1.8 0 0 1-1.8 1.8H4.3a1.8 1.8 0 0 1-1.8-1.8z"/>
+  </svg>`;
+}
+
 let prefs = { ...DEFAULT_PREFS };
+
+function folderColorKey(path, workspaceId = getActiveWorkspaceId()) {
+  return `${workspaceId || "default"}|${path}`;
+}
+
+function migrateLegacyFolderColors() {
+  if (!prefs.folderColors || typeof prefs.folderColors !== "object" || Array.isArray(prefs.folderColors)) {
+    prefs.folderColors = {};
+    prefs._prefsUpdatedAt = new Date().toISOString();
+    return true;
+  }
+  const migrated = {};
+  let mutated = false;
+  for (const [key, color] of Object.entries(prefs.folderColors)) {
+    if (key.includes("|")) migrated[key] = color;
+  }
+  for (const [key, color] of Object.entries(prefs.folderColors)) {
+    if (key.includes("|")) continue;
+    mutated = true;
+    const scopedKey = folderColorKey(key);
+    if (!(scopedKey in migrated)) migrated[scopedKey] = color;
+  }
+  if (!mutated) return false;
+  prefs.folderColors = migrated;
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  return true;
+}
 
 function loadPrefs() {
   let stored = null;
@@ -430,6 +463,7 @@ function loadPrefs() {
   if (!prefs.workspaces.some((w) => w.id === prefs.activeWorkspaceId)) {
     prefs.activeWorkspaceId = prefs.workspaces[0].id;
   }
+  migrateLegacyFolderColors();
   // Migración de carpetas globales → por workspace
   if (!prefs.userFoldersByWorkspace || typeof prefs.userFoldersByWorkspace !== "object") {
     prefs.userFoldersByWorkspace = {};
@@ -1727,6 +1761,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     const summary = await sync.runSync({
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
+    migrateLegacyFolderColors();
     applySyncedUserFolders();
     registerAllCustomThemes();
     // Recargar perfiles del backend (puede haber añadidos/borrados)
@@ -1860,6 +1895,7 @@ async function syncImportFile() {
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
     if (!summary) return;
+    migrateLegacyFolderColors();
     applySyncedUserFolders();
     registerAllCustomThemes();
     profiles = await invoke("get_profiles");
@@ -1913,6 +1949,7 @@ async function syncRestoreSnapshot() {
     const summary = await sync.restoreSnapshot(id, {
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
+    migrateLegacyFolderColors();
     applySyncedUserFolders();
     registerAllCustomThemes();
     profiles = await invoke("get_profiles");
@@ -2950,14 +2987,14 @@ function renderAllWorkspacesTree() {
       if (!p.group) root.connections.push(p);
       else ensureFolderPath(root, p.group).connections.push(p);
     }
-    const inner = renderTreeNode(root, 1);
+    const inner = renderTreeNode(root, 1, w.id);
     const open = openFolders.has(`__ws__/${w.id}`) ? "open" : "";
     const childrenHidden = open ? "" : "hidden";
     const count = wsProfiles.length;
     return `<div class="folder-item ws-folder-item" data-ws-root="${escHtml(w.id)}">
       <div class="folder-header" data-folder-path="__ws__/${escHtml(w.id)}">
         <span class="folder-arrow ${open}">▶</span>
-        <span class="folder-icon">📁</span>
+        <span class="folder-icon">${folderIconSvg()}</span>
         <span class="folder-name">${escHtml(w.name)}</span>
         <span class="folder-count">${count}</span>
       </div>
@@ -3634,14 +3671,14 @@ function focusConnectionSearch() {
   });
 }
 
-function renderTreeNode(node, depth) {
+function renderTreeNode(node, depth, workspaceId = getActiveWorkspaceId()) {
   let html = "";
   const renderConnections = () => {
     for (const p of node.connections) html += renderConnectionItem(p, depth);
   };
   const renderFolders = () => {
     for (const [name, child] of Object.entries(node.folders)) {
-      html += renderFolderNode(name, child, depth);
+      html += renderFolderNode(name, child, depth, workspaceId);
     }
   };
   if (prefs.foldersFirst !== false) {
@@ -3654,48 +3691,88 @@ function renderTreeNode(node, depth) {
   return html;
 }
 
-function renderFolderNode(name, node, depth) {
+function renderFolderNode(name, node, depth, workspaceId) {
   const path = node.path;
   const isOpen = openFolders.has(path);
   const count = countConnections(node);
   const indent = 14 + depth * 12;
-  const tintAttrs = folderTintAttrs(path);
+  const tintAttrs = folderTintAttrs(path, workspaceId);
 
   return `
     <div class="folder-item" data-folder-path="${escHtml(path)}" draggable="true"${tintAttrs}>
       <div class="folder-header" style="padding-left:${indent}px; padding-right:14px">
         <span class="folder-arrow ${isOpen ? "open" : ""}">▶</span>
-        <span class="folder-icon">📁</span>
+        <span class="folder-icon">${folderIconSvg()}</span>
         <span class="folder-name">${escHtml(name)}</span>
         <span class="folder-count">${count}</span>
       </div>
       <div class="folder-children${isOpen ? "" : " hidden"}">
-        ${renderTreeNode(node, depth + 1)}
+        ${renderTreeNode(node, depth + 1, workspaceId)}
       </div>
     </div>`;
 }
 
-function getFolderColor(path) {
+function getFolderColor(path, workspaceId = getActiveWorkspaceId()) {
   if (!path || !prefs.folderColors) return null;
-  const id = prefs.folderColors[path];
+  const id = prefs.folderColors[folderColorKey(path, workspaceId)];
   if (!id) return null;
   return FOLDER_COLOR_PRESETS.find((c) => c.id === id) || null;
 }
 
-function folderTintAttrs(path) {
-  const c = getFolderColor(path);
+function folderTintAttrs(path, workspaceId = getActiveWorkspaceId()) {
+  const c = getFolderColor(path, workspaceId);
   if (!c) return "";
   return ` data-folder-tint="${escHtml(c.id)}" style="--folder-tint:${c.color}"`;
 }
 
-function setFolderColor(path, colorId) {
+function setFolderColor(path, colorId, workspaceId = getActiveWorkspaceId()) {
   if (!path) return;
   prefs.folderColors = prefs.folderColors || {};
-  if (!colorId) delete prefs.folderColors[path];
-  else prefs.folderColors[path] = colorId;
+  const key = folderColorKey(path, workspaceId);
+  if (!colorId) delete prefs.folderColors[key];
+  else prefs.folderColors[key] = colorId;
   prefs._prefsUpdatedAt = new Date().toISOString();
   savePrefs();
   renderConnectionList();
+}
+
+function remapFolderColors(sourceWs, targetWs, folderPath, newPath) {
+  if (!prefs.folderColors) return;
+  const sourceKey = folderColorKey(folderPath, sourceWs);
+  const targetKey = folderColorKey(newPath, targetWs);
+  const remapped = {};
+  let mutated = false;
+  for (const [key, color] of Object.entries(prefs.folderColors)) {
+    if (key === sourceKey) {
+      remapped[targetKey] = color;
+      mutated = true;
+    } else if (key.startsWith(sourceKey + "/")) {
+      remapped[targetKey + key.slice(sourceKey.length)] = color;
+      mutated = true;
+    } else {
+      remapped[key] = color;
+    }
+  }
+  if (!mutated) return;
+  prefs.folderColors = remapped;
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+}
+
+function deleteFolderColors(workspaceId, folderPath) {
+  if (!prefs.folderColors) return;
+  const key = folderColorKey(folderPath, workspaceId);
+  let mutated = false;
+  for (const candidate of Object.keys(prefs.folderColors)) {
+    if (candidate === key || candidate.startsWith(key + "/")) {
+      delete prefs.folderColors[candidate];
+      mutated = true;
+    }
+  }
+  if (mutated) {
+    prefs._prefsUpdatedAt = new Date().toISOString();
+    savePrefs();
+  }
 }
 
 // Prioridad para el "estado dominante" cuando el perfil tiene varias sesiones
@@ -4199,16 +4276,7 @@ async function moveFolderTo(folderPath, sourceWs, targetParent, targetWs) {
   if (!sameWs) saveWorkspaceFolders(targetWs, [...targetList]);
 
   // Remapear colores asignados a la carpeta o sus descendientes
-  if (prefs.folderColors) {
-    const remapped = {};
-    for (const [path, color] of Object.entries(prefs.folderColors)) {
-      if (path === folderPath) remapped[newPath] = color;
-      else if (path.startsWith(prefix)) remapped[newPrefix + path.slice(prefix.length)] = color;
-      else remapped[path] = color;
-    }
-    prefs.folderColors = remapped;
-    savePrefs();
-  }
+  remapFolderColors(sourceWs, targetWs, folderPath, newPath);
 
   // Estado de apertura
   if (openFolders.has(folderPath)) {
@@ -4414,7 +4482,7 @@ function startInlineFolderCreation(parentPath = null, workspaceId = getActiveWor
   wrapper.className = "folder-inline-input";
   wrapper.style.paddingLeft = `${indent}px`;
   wrapper.innerHTML = `
-    <span class="folder-icon">📁</span>
+    <span class="folder-icon">${folderIconSvg()}</span>
     <input type="text" placeholder="Nombre de carpeta" data-prefix="${escHtml(prefix)}" />`;
 
   // Si hay carpeta padre, abrir la carpeta padre e insertar al principio de sus hijos
@@ -4502,16 +4570,7 @@ async function renameFolder(folderPath, workspaceId = getActiveWorkspaceId()) {
   saveWorkspaceFolders(workspaceId, [...folders]);
 
   // Remapear colores asignados a la carpeta o sus descendientes
-  if (prefs.folderColors) {
-    const remapped = {};
-    for (const [path, color] of Object.entries(prefs.folderColors)) {
-      if (path === folderPath) remapped[newPath] = color;
-      else if (path.startsWith(prefix)) remapped[newPrefix + path.slice(prefix.length)] = color;
-      else remapped[path] = color;
-    }
-    prefs.folderColors = remapped;
-    savePrefs();
-  }
+  remapFolderColors(workspaceId, workspaceId, folderPath, newPath);
 
   // Actualizar estado de apertura
   if (openFolders.has(folderPath)) { openFolders.delete(folderPath); openFolders.add(newPath); }
@@ -4548,7 +4607,6 @@ async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiv
     if (!ok) return;
   }
 
-  const prefix = folderPath + "/";
   const updatedAt = new Date().toISOString();
   for (const p of profiles) {
     if (profileWorkspaceId(p) !== workspaceId || !folderContainsPath(p.group, folderPath)) continue;
@@ -4566,16 +4624,7 @@ async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiv
   openFolders.delete(folderPath);
 
   // Limpiar colores asignados a la carpeta y sus descendientes
-  if (prefs.folderColors) {
-    let mutated = false;
-    for (const path of Object.keys(prefs.folderColors)) {
-      if (path === folderPath || path.startsWith(prefix)) {
-        delete prefs.folderColors[path];
-        mutated = true;
-      }
-    }
-    if (mutated) savePrefs();
-  }
+  deleteFolderColors(workspaceId, folderPath);
 
   renderConnectionList();
   scheduleProfileAutoSync();
@@ -11724,7 +11773,7 @@ function bindUIEvents() {
       const colorId = btn.dataset.colorId || null;
       const path = ctxTarget.folderPath;
       hideContextMenu();
-      if (path) setFolderColor(path, colorId === "none" ? null : colorId);
+      if (path) setFolderColor(path, colorId === "none" ? null : colorId, ctxTarget.workspaceId || getActiveWorkspaceId());
       return;
     }
     handleContextMenuAction(btn.dataset.ctx);

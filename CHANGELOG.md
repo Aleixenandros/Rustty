@@ -2,6 +2,16 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.12.4] - 2026-05-30
+
+### Cambiado
+
+- Las carpetas y subcarpetas de perfiles dejan de usar el emoji del sistema.
+  La sidebar renderiza un SVG propio de Rustty y el color elegido desde el
+  menú contextual se aplica al icono, además de mantener la franja lateral
+  discreta como apoyo visual. Los colores quedan aislados por workspace para
+  que carpetas con la misma ruta no se afecten entre sí.
+
 ## [1.12.3] - 2026-05-30
 
 ### Corregido

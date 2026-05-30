@@ -465,6 +465,10 @@ body.sidebar-collapsed #sidebar-resize-handle {
 
 #sidebar-context-bar .ctx-icon { font-size: 11px; }
 
+#sidebar-context-bar .app-folder-icon {
+  color: var(--blue);
+}
+
 #sidebar-context-bar .ctx-label {
   font-weight: 600;
   color: var(--text);
@@ -3222,7 +3226,8 @@ input[type="checkbox"] {
 }
 
 #connection-list.compact .folder-icon {
-  font-size: 11px;
+  width: 13px;
+  height: 13px;
 }
 
 #connection-list.compact .folder-name {
@@ -3259,8 +3264,42 @@ input[type="checkbox"] {
 .folder-arrow.open { transform: rotate(90deg); }
 
 .folder-icon {
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  color: var(--yellow);
   flex-shrink: 0;
+}
+
+.folder-icon-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ws-folder-item > .folder-header .folder-icon {
+  color: var(--blue);
+}
+
+.folder-item[data-folder-tint] > .folder-header .folder-icon {
+  color: var(--folder-tint);
+}
+
+.app-folder-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  color: var(--yellow);
+  flex-shrink: 0;
+}
+
+.app-folder-icon .folder-icon-svg {
+  width: 15px;
+  height: 15px;
 }
 
 .folder-name {
@@ -6329,6 +6368,11 @@ body.sidebar-mode-rail .folder-children {
 body.sidebar-mode-rail .conn-item-icon,
 body.sidebar-mode-rail .folder-icon {
   font-size: 18px;
+}
+
+body.sidebar-mode-rail .folder-icon {
+  width: 18px;
+  height: 18px;
 }
 
 /* ─── Modo zen / distraction-free — slice estético #12 ──────────
