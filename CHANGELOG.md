@@ -2,6 +2,18 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.12.3] - 2026-05-30
+
+### Corregido
+
+- Los buscadores de conexiones del inicio y de la sidebar recorren ahora todos
+  los workspaces cuando hay texto escrito. La sidebar muestra una lista plana
+  de coincidencias globales durante la búsqueda y restaura el árbol anterior
+  al limpiar el campo, evitando que perfiles existentes queden invisibles por
+  la vista o el workspace activo. Preferencias → Apariencia incorpora el check
+  "Buscar conexiones en todos los workspaces", activado por defecto, para
+  limitar ambos buscadores al workspace activo cuando se desmarca.
+
 ## [1.12.2] - 2026-05-28
 
 ### Añadido

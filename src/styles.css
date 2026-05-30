@@ -646,11 +646,6 @@ body.sidebar-collapsed #sidebar-resize-handle {
   font-size: 12px;
 }
 
-.conn-item.dimmed,
-.folder-item.dimmed {
-  display: none;
-}
-
 /* ─── Drag & drop en la sidebar ──────────────────────────────── */
 .conn-item.dragging,
 .folder-item.dragging {

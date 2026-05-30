@@ -334,6 +334,8 @@ const DICTIONARIES = {
       density_hint: "Reduce el padding y la altura de filas en la barra lateral, pestañas y modales. No afecta al tamaño del terminal.",
       color_blind_safe: "Modo daltónico",
       color_blind_safe_hint: "Diferencia los dots de estado (pestañas, sync, barra inferior) también por forma además de por color.",
+      search_all_workspaces: "Buscar conexiones en todos los workspaces",
+      search_all_workspaces_hint: "Si se desactiva, los buscadores del inicio y de la sidebar solo muestran conexiones del workspace activo.",
     },
     prefs_keepass: {
       title: "KeePass",
@@ -874,6 +876,8 @@ const DICTIONARIES = {
       density_hint: "Reduces padding and row height across the sidebar, tabs and modals. Doesn't affect terminal size.",
       color_blind_safe: "Color-blind mode",
       color_blind_safe_hint: "Differentiates status dots (tabs, sync, status bar) by shape in addition to color.",
+      search_all_workspaces: "Search connections in all workspaces",
+      search_all_workspaces_hint: "If disabled, the home and sidebar searches only show connections from the active workspace.",
     },
     prefs_keepass: {
       title: "KeePass",
@@ -1368,6 +1372,8 @@ const DICTIONARIES = {
       export_theme_template: "Exporter un modèle",
       import_theme: "Importer un thème…",
       theme_io_hint: "Le nouveau format utilise des tokens simples comme base, text, blue ou red. Copiez le modèle, changez les couleurs puis importez-le.",
+      search_all_workspaces: "Rechercher des connexions dans tous les workspaces",
+      search_all_workspaces_hint: "Si cette option est désactivée, les recherches de l'accueil et de la barre latérale affichent uniquement les connexions du workspace actif.",
     },
     prefs_keepass: {
       title: "KeePass",
@@ -1783,6 +1789,8 @@ const DICTIONARIES = {
       export_theme_template: "Exportar modelo",
       import_theme: "Importar tema…",
       theme_io_hint: "O novo formato usa tokens simples como base, text, blue ou red. Copia o modelo, muda as cores e importa-o.",
+      search_all_workspaces: "Pesquisar conexões em todos os workspaces",
+      search_all_workspaces_hint: "Se estiver desativado, as pesquisas do início e da barra lateral mostram apenas conexões do workspace ativo.",
     },
     prefs_keepass: {
       title: "KeePass",
@@ -1942,6 +1950,8 @@ const DICTIONARIES = {
     },
     prefs_appearance: {
       theme_search: "Theme suchen…",
+      search_all_workspaces: "Verbindungen in allen Workspaces suchen",
+      search_all_workspaces_hint: "Wenn deaktiviert, zeigen die Suche auf der Startseite und in der Seitenleiste nur Verbindungen aus dem aktiven Workspace.",
     },
   },
 };

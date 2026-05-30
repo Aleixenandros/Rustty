@@ -30,7 +30,7 @@ const SYNCED_PREF_KEYS = [
   "fontFamily", "fontSize", "lineHeight", "letterSpacing",
   "cursorStyle", "cursorBlink", "scrollback", "bell", "lang",
   "userFolders", "userFoldersByWorkspace",
-  "workspaces", "favorites",
+  "workspaces", "favorites", "searchAllWorkspaces",
   "folderColors", "highlightRules",
 ];
 

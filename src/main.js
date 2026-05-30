@@ -364,6 +364,9 @@ const DEFAULT_PREFS = {
   pinnedProfiles:  [],
   // Modo de la vista de la sidebar: "current" | "all" | "favorites".
   sidebarViewMode: "current",
+  // Si está activo, las búsquedas de conexiones recorren todos los workspaces.
+  // Si se desactiva, solo consultan el workspace activo.
+  searchAllWorkspaces: true,
   // Densidad compacta para listas largas de conexiones en la sidebar.
   sidebarCompact:  false,
   // Zoom de la UI (rail, sidebar, tabs, status, modales) sin afectar al
@@ -448,6 +451,7 @@ function loadPrefs() {
   if (!["current", "all", "favorites"].includes(prefs.sidebarViewMode)) {
     prefs.sidebarViewMode = "current";
   }
+  prefs.searchAllWorkspaces = prefs.searchAllWorkspaces !== false;
   prefs.sidebarCompact = Boolean(prefs.sidebarCompact);
   if (typeof prefs.foldersFirst !== "boolean") prefs.foldersFirst = true;
   if (!Array.isArray(prefs.highlightRules)) {
@@ -1315,6 +1319,8 @@ function openSettingsModal() {
   if (_densitySel) _densitySel.value = prefs.uiDensity === "compact" ? "compact" : "comfortable";
   const _cbSafe = document.getElementById("pref-color-blind-safe");
   if (_cbSafe) _cbSafe.checked = !!prefs.colorBlindSafe;
+  const _searchAllWorkspaces = document.getElementById("pref-search-all-workspaces");
+  if (_searchAllWorkspaces) _searchAllWorkspaces.checked = prefs.searchAllWorkspaces !== false;
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
   const _ligEl = document.getElementById("pref-terminal-ligatures");
   if (_ligEl) _ligEl.checked = !!prefs.terminalLigatures;
@@ -2311,6 +2317,7 @@ function savePrefsFromModal() {
     bell:            document.getElementById("pref-bell").value,
     uiDensity:       (document.getElementById("pref-ui-density")?.value === "compact" ? "compact" : "comfortable"),
     colorBlindSafe:  !!document.getElementById("pref-color-blind-safe")?.checked,
+    searchAllWorkspaces: document.getElementById("pref-search-all-workspaces")?.checked ?? true,
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
     lang:            newLang === null ? null : (SUPPORTED_LANGS.includes(newLang) ? newLang : "es"),
@@ -2366,6 +2373,7 @@ function savePrefsFromModal() {
   applyUiZoom(prefs.uiZoom);
   applyColorBlindSafe(prefs.colorBlindSafe);
   applyPrefsToAllTerminals();
+  renderConnectionList();
   closeSettingsModal();
   toast(t("toast.prefs_saved"), "success");
 }
@@ -2763,10 +2771,20 @@ function renderConnectionList() {
   scheduleTrayQuickLauncherUpdate();
   renderWorkspaceSwitcher();
 
+  const sidebarQuery = _sidebarSearchQuery.trim();
+  if (sidebarQuery) {
+    const matches = sidebarSearchCandidates(sidebarQuery);
+    container.innerHTML = matches.length
+      ? matches.map((profile) => renderConnectionItem(profile, 0)).join("")
+      : `<div class="empty-state sidebar-empty-search">${escHtml(t("sidebar.search_no_results"))}</div>`;
+    bindTreeEvents(container);
+    renderDashboard();
+    return;
+  }
+
   if (prefs.sidebarViewMode === "all") {
     container.innerHTML = renderAllWorkspacesTree();
     bindTreeEvents(container);
-    applySidebarSearchFilter();
     renderDashboard();
     return;
   }
@@ -2774,7 +2792,6 @@ function renderConnectionList() {
   if (prefs.sidebarViewMode === "favorites") {
     container.innerHTML = renderFavoritesTree();
     bindTreeEvents(container);
-    applySidebarSearchFilter();
     renderDashboard();
     return;
   }
@@ -2799,7 +2816,6 @@ function renderConnectionList() {
   const tree = buildFolderTree();
   container.innerHTML = renderTreeNode(tree, 0);
   bindTreeEvents(container);
-  applySidebarSearchFilter();
   renderDashboard();
 }
 
@@ -2966,51 +2982,6 @@ function renderFavoritesTree() {
   return favs.map((p) => renderConnectionItem(p, 0)).join("");
 }
 
-function applySidebarSearchFilter() {
-  const container = document.getElementById("connection-list");
-  if (!container) return;
-  const q = _sidebarSearchQuery.trim().toLowerCase();
-  // Limpiar estado previo
-  container.querySelectorAll(".conn-item.dimmed, .folder-item.dimmed")
-    .forEach((el) => el.classList.remove("dimmed"));
-  container.querySelectorAll(".sidebar-empty-search")
-    .forEach((el) => el.remove());
-  if (!q) return;
-
-  const matchedConnIds = new Set();
-  for (const p of profiles) {
-    if (profileMatchesSidebarQuery(p, q)) matchedConnIds.add(p.id);
-  }
-
-  // Atenuar perfiles que no matchean
-  container.querySelectorAll(".conn-item").forEach((el) => {
-    if (!matchedConnIds.has(el.dataset.id)) {
-      el.classList.add("dimmed");
-    }
-  });
-
-  // Atenuar carpetas sin coincidencias y abrir las que tienen alguna
-  container.querySelectorAll(".folder-item").forEach((folder) => {
-    const visibleConns = folder.querySelectorAll(".conn-item:not(.dimmed)");
-    if (visibleConns.length === 0) {
-      folder.classList.add("dimmed");
-    } else {
-      folder.classList.remove("dimmed");
-      const arrow = folder.querySelector(".folder-arrow");
-      const children = folder.querySelector(".folder-children");
-      if (arrow) arrow.classList.add("open");
-      if (children) children.classList.remove("hidden");
-    }
-  });
-
-  if (matchedConnIds.size === 0) {
-    const empty = document.createElement("div");
-    empty.className = "empty-state sidebar-empty-search";
-    empty.textContent = t("sidebar.search_no_results");
-    container.appendChild(empty);
-  }
-}
-
 function renderWorkspaceSwitcher() {
   const ctxLabel = document.getElementById("sidebar-context-label");
   const menu     = document.getElementById("workspace-menu");
@@ -3086,7 +3057,7 @@ function toggleSidebarTools(open, opts = {}) {
     }
     if (_sidebarSearchQuery) {
       _sidebarSearchQuery = "";
-      applySidebarSearchFilter();
+      renderConnectionList();
     }
   }
 }
@@ -3403,9 +3374,15 @@ function dashboardProtocol(profile) {
 }
 
 function getDashboardCandidates(query = "") {
-  const recent = getRecentProfiles().filter((item) => profileBelongsToActiveWorkspace(item.profile));
+  const recent = getRecentProfiles().filter(
+    (item) => query
+      ? connectionSearchIncludesProfile(item.profile)
+      : profileBelongsToActiveWorkspace(item.profile)
+  );
   const recentIds = new Set(recent.map((item) => item.profile.id));
-  const scoped = profiles.filter(profileBelongsToActiveWorkspace);
+  const scoped = query
+    ? profiles.filter(connectionSearchIncludesProfile)
+    : profiles.filter(profileBelongsToActiveWorkspace);
   if (query) {
     return scoped
       .filter((profile) => profileMatchesDashboardQuery(profile, query))
@@ -3615,15 +3592,14 @@ function focusDashboardSearch() {
 
 function sidebarSearchCandidates(query = "") {
   const q = String(query || "").trim().toLowerCase();
-  let scoped = profiles;
-  if (prefs.sidebarViewMode === "favorites") {
-    scoped = profiles.filter((profile) => isFavoriteProfile(profile.id));
-  } else if (prefs.sidebarViewMode !== "all") {
-    scoped = profiles.filter(profileBelongsToActiveWorkspace);
-  }
-  return scoped
+  return profiles
+    .filter(connectionSearchIncludesProfile)
     .filter((profile) => !q || profileMatchesSidebarQuery(profile, q))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function connectionSearchIncludesProfile(profile) {
+  return prefs.searchAllWorkspaces !== false || profileBelongsToActiveWorkspace(profile);
 }
 
 function refitVisibleTerminalsSoon() {
@@ -3798,7 +3774,6 @@ function renderConnectionItem(p, depth) {
 
 function getVisibleSidebarConnectionIds(container) {
   return [...container.querySelectorAll(".conn-item")]
-    .filter((el) => !el.classList.contains("dimmed"))
     .map((el) => el.dataset.id)
     .filter(Boolean);
 }
@@ -11281,7 +11256,7 @@ function bindUIEvents() {
   if (sidebarSearch) {
     sidebarSearch.addEventListener("input", () => {
       _sidebarSearchQuery = sidebarSearch.value;
-      applySidebarSearchFilter();
+      renderConnectionList();
     });
     sidebarSearch.addEventListener("keydown", (e) => {
       const combo = comboFromEvent(e);
@@ -11960,12 +11935,12 @@ function clearSidebarSearch() {
   if (sidebarSearch && sidebarSearch.value) {
     sidebarSearch.value = "";
     _sidebarSearchQuery = "";
-    applySidebarSearchFilter();
+    renderConnectionList();
     return true;
   }
   if (_sidebarSearchQuery) {
     _sidebarSearchQuery = "";
-    applySidebarSearchFilter();
+    renderConnectionList();
     return true;
   }
   toggleSidebarTools(false);
