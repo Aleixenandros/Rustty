@@ -2,6 +2,23 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.13.0] - 2026-06-01
+
+### Añadido
+
+- Exportar el historial de una sesión a un fichero de texto desde el menú
+  contextual de la pestaña. Vuelca todo el buffer del terminal (scrollback
+  incluido) con los comandos introducidos y la salida del servidor en texto
+  plano. La opción no aparece en sesiones RDP.
+- Atajos `Ctrl/Cmd+1…9` para saltar directamente a una pestaña (el 9 va a la
+  última). La pestaña activa se desplaza a la vista automáticamente cuando la
+  barra de pestañas desborda en horizontal.
+
+### Cambiado
+
+- La traducción al alemán pasa a estar completa: antes solo cubría unas pocas
+  secciones y el resto de la interfaz recurría al inglés.
+
 ## [1.12.5] - 2026-05-30
 
 ### Cambiado

@@ -7186,6 +7186,10 @@ function updateTabSelectionClasses() {
   });
   document.getElementById("home-tab")
     ?.classList.toggle("active", viewSelection.length === 0);
+  // Mantener visible la pestaña activa cuando la barra desborda horizontalmente.
+  // `nearest` no hace scroll si ya está a la vista, así que es barato en cada render.
+  document.querySelector("#tabs-container .tab.active")
+    ?.scrollIntoView({ block: "nearest", inline: "nearest" });
   if (activeSessionId) clearTabActivity(activeSessionId);
   document.querySelectorAll(".terminal-pane").forEach((p) => {
     p.classList.toggle("pane-focused",
@@ -12056,6 +12060,32 @@ function handleGlobalShortcut(e) {
       }
     }
   }
+
+  // Ctrl/Cmd+1…9 salta a la pestaña N (9 = última, convención de navegadores).
+  // Va después del bucle de atajos configurables para no pisar un combo que el
+  // usuario haya asignado a Ctrl+<dígito>.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && /^Digit[1-9]$/.test(e.code)) {
+    if (jumpToTabByIndex(Number(e.code.slice(5)))) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
+}
+
+/**
+ * Activa la N-ésima pestaña de sesión (1-indexada). `n === 9` salta siempre a la
+ * última, igual que Ctrl+9 en los navegadores. El tab de inicio queda excluido.
+ * Devuelve `true` si se activó alguna pestaña.
+ */
+function jumpToTabByIndex(n) {
+  const tabs = [...document.querySelectorAll("#tabs-container .tab")];
+  if (!tabs.length) return false;
+  const idx = n === 9 ? tabs.length - 1 : Math.min(n - 1, tabs.length - 1);
+  const sid = tabs[idx]?.dataset?.session;
+  if (!sid) return false;
+  setActiveTab(sid);
+  sessions.get(sid)?.terminal?.focus();
+  return true;
 }
 
 function clearSidebarSearch() {
@@ -12945,6 +12975,11 @@ function showTabContextMenu(x, y, sessionId) {
   });
   menu.querySelector(".tabctx-layout-sep").classList.toggle("hidden", !showLayout);
 
+  // "Exportar historial" solo tiene sentido en sesiones con terminal (no RDP).
+  const ctxSession = sessions.get(sessionId);
+  const canExportHistory = !!ctxSession?.terminal;
+  menu.querySelector(".tabctx-export-history")?.classList.toggle("hidden", !canExportHistory);
+
   const targetTab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
   const isPinned = !!targetTab?.classList.contains("is-pinned");
   const pinLabel = menu.querySelector(".tabctx-pin-label");
@@ -12982,6 +13017,11 @@ async function handleTabContextAction(action) {
         others.forEach((el) => container.appendChild(el));
       }
     }
+    return;
+  }
+
+  if (action === "export-history") {
+    await exportSessionHistory(targetId);
     return;
   }
 
@@ -13054,6 +13094,54 @@ async function handleTabContextAction(action) {
   if (action.startsWith("layout-")) {
     setViewLayout(action.slice("layout-".length));
     return;
+  }
+}
+
+/**
+ * Vuelca todo el buffer de la sesión (scrollback incluido) a un fichero `.txt`:
+ * tanto los comandos introducidos como lo que el servidor ha devuelto por
+ * pantalla. Lee el buffer activo de xterm.js en texto plano (sin secuencias SGR).
+ */
+async function exportSessionHistory(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s || !s.terminal) return;
+
+  const buffer = s.terminal.buffer.active;
+  const lines = [];
+  // baseY + rows cubre el scrollback completo más la pantalla visible.
+  const total = buffer.length;
+  for (let i = 0; i < total; i++) {
+    const line = buffer.getLine(i);
+    // translateToString(true) recorta los espacios finales de cada línea.
+    lines.push(line ? line.translateToString(true) : "");
+  }
+  // Eliminar líneas vacías sobrantes al final del buffer.
+  while (lines.length && lines[lines.length - 1] === "") lines.pop();
+
+  const profile = profiles.find((p) => p.id === s.profileId);
+  const baseName = profile?.name || (s._closeOverride ? "consola-local" : (s.type ? s.type.toUpperCase() : "sesion"));
+  const safeName = baseName.replace(/[^\w.-]+/g, "_");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const defaultName = `rustty-${safeName}-${stamp}.txt`;
+
+  let path;
+  try {
+    path = await saveDialog({
+      title: t("tabctx.export_history"),
+      defaultPath: defaultName,
+      filters: [{ name: "Texto", extensions: ["txt"] }],
+    });
+  } catch (err) {
+    toast(`Error al abrir diálogo: ${err}`, "error");
+    return;
+  }
+  if (!path) return; // usuario canceló
+
+  try {
+    await invoke("write_text_file", { path, contents: lines.join("\n") + "\n" });
+    toast(t("toast.history_exported") || "Historial exportado", "success");
+  } catch (err) {
+    toast(`Error al escribir fichero: ${err}`, "error");
   }
 }
 
