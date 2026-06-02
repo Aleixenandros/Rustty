@@ -28,12 +28,19 @@ Rustty usa verificación de `known_hosts` con modelo TOFU: la primera huella con
 
 La verificación se aplica también cuando el servidor **cambia de algoritmo de host key** (por ejemplo `ssh-rsa` → `ssh-ed25519`): Rustty compara la clave recibida con todas las entradas previas del host, no solo con las del mismo algoritmo, así rotaciones de tipo de clave no se aprenden en silencio.
 
+Cuando necesites resolver un conflicto, **Preferencias → Copias de seguridad → Gestionar known_hosts** abre un gestor visual que lista las entradas de `~/.ssh/known_hosts` (host, puerto, algoritmo y huella SHA256) y permite eliminar la línea conflictiva con confirmación, sin editar el fichero a mano. Tras borrarla, la próxima conexión vuelve a aprender la clave nueva (TOFU).
+
 ## Protecciones del terminal
 
 La salida de un servidor remoto es contenido no confiable, así que Rustty añade dos defensas en el propio terminal:
 
 - **Validación de enlaces**: al pulsar un enlace detectado en la salida, Rustty abre directamente solo los esquemas `http`, `https` y `mailto`. Cualquier otro esquema (o una URL que no se pueda interpretar) pide confirmación antes de abrirse, para que la salida remota no pueda lanzar esquemas arbitrarios.
 - **Confirmación de pegado peligroso**: antes de enviar al terminal un texto **multilínea**, **muy largo** o con **caracteres de control**, Rustty muestra una previsualización y pide confirmación. Así se evita ejecutar comandos pegados por error o secuencias de control ocultas. Está activado por defecto, se ajusta en **Preferencias → Terminal** y puede desactivarse por perfil en sus opciones avanzadas.
+- **Aviso al activar agent forwarding**: el reenvío del agente SSH comparte tu agente local con el host remoto, de modo que un servidor comprometido podría usar tus claves para saltar a otros equipos. Por eso, al activar el toggle de *agent forwarding* en un perfil, Rustty muestra una advertencia y pide confirmación; habilítalo solo en hosts de confianza.
+
+## Logs de sesión
+
+La grabación de sesión por perfil vuelca la salida a ficheros en `<data_dir>/session_logs/`. Esos registros pueden contener información sensible (comandos y respuestas del servidor), así que en **Preferencias → Copias de seguridad → Logs de sesión** puedes ver cuántos hay y cuánto ocupan, fijar límites de **retención por edad (días)** y **tamaño total (MB)**, limpiarlos manualmente con un botón y abrir su carpeta directamente.
 
 ## Datos excluidos
 

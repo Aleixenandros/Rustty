@@ -24,6 +24,8 @@ Entre las dos columnas están los botones centrales **⇨ Descargar** y **⇦ Su
 
 Las carpetas se transfieren de forma recursiva en ambos sentidos.
 
+Cada columna tiene además una **caja de búsqueda** por nombre, independiente del autocompletado de rutas: al escribir filtra las entradas del directorio actual y, activando el botón **Recursiva**, recorre los subdirectorios (con cancelación y límite de resultados) para localizar ficheros en niveles inferiores. Pulsa un resultado para ir a su carpeta contenedora; `Esc` limpia la búsqueda y `↑`/`↓` + `Enter` navegan los resultados.
+
 La zona inferior del panel agrupa **Transferencias** y **Actividad** en pestañas. Está pegada a la parte inferior, recuerda su altura y se puede redimensionar hacia arriba para revisar logs largos o colas de transferencia con más comodidad.
 
 Las transferencias y sus errores aparecen también en el centro global de actividad del rail, desde donde puedes volver al log o reintentar una transferencia fallida cuando el contexto sigue disponible.

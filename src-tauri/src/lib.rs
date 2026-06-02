@@ -168,6 +168,9 @@ pub fn run() {
             commands::join_path,
             commands::list_monospace_fonts,
             commands::tcp_ping,
+            // ── Gestor de known_hosts
+            commands::list_known_hosts,
+            commands::remove_known_host_line,
             // ── Sincronización en la nube
             commands::sync_get_config,
             commands::sync_save_config,
@@ -183,6 +186,10 @@ pub fn run() {
             commands::sync_import_file,
             commands::sync_list_snapshots,
             commands::sync_read_snapshot,
+            // ── Retención de logs de sesión
+            commands::session_logs_dir,
+            commands::session_logs_list,
+            commands::session_logs_prune,
         ])
         .run(tauri::generate_context!())
         .expect("Error al iniciar la aplicación Rustty");

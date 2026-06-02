@@ -17,6 +17,7 @@ const ID_NEW_CONNECTION: &str = "tray:new-connection";
 const ID_QUIT: &str = "tray:quit";
 const PREFIX_CONNECT: &str = "tray:connect:";
 const PREFIX_WORKSPACE: &str = "tray:workspace:";
+const PREFIX_WAKE: &str = "tray:wake:";
 
 #[derive(Default)]
 pub struct TrayState {
@@ -28,6 +29,7 @@ struct TrayParts {
     favorites: Submenu<Wry>,
     recent: Submenu<Wry>,
     workspaces: Submenu<Wry>,
+    wake: Submenu<Wry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,6 +41,8 @@ pub struct TrayQuickLauncherPayload {
     recent: Vec<TrayProfileItem>,
     #[serde(default)]
     workspaces: Vec<TrayWorkspaceItem>,
+    #[serde(default)]
+    wake: Vec<TrayProfileItem>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,10 +91,12 @@ fn build_tray(app: &mut App) -> tauri::Result<()> {
     let favorites = Submenu::with_id_and_items(app, "tray:favorites", "Favoritos", true, &[])?;
     let recent = Submenu::with_id_and_items(app, "tray:recent", "Recientes", true, &[])?;
     let workspaces = Submenu::with_id_and_items(app, "tray:workspaces", "Perfiles", true, &[])?;
+    let wake = Submenu::with_id_and_items(app, "tray:wake", "Wake On LAN", true, &[])?;
 
     add_placeholder(app, &favorites, "Sin favoritos")?;
     add_placeholder(app, &recent, "Sin recientes")?;
     add_placeholder(app, &workspaces, "Default")?;
+    add_placeholder(app, &wake, "Sin equipos")?;
 
     let menu = Menu::with_items(
         app,
@@ -104,6 +110,7 @@ fn build_tray(app: &mut App) -> tauri::Result<()> {
             &favorites,
             &recent,
             &workspaces,
+            &wake,
             &sep3,
             &quit,
         ],
@@ -135,6 +142,7 @@ fn build_tray(app: &mut App) -> tauri::Result<()> {
         favorites,
         recent,
         workspaces,
+        wake,
     });
     Ok(())
 }
@@ -167,6 +175,16 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
                 serde_json::json!({
                     "action": "connect-profile",
                     "profileId": id.trim_start_matches(PREFIX_CONNECT),
+                }),
+            );
+        }
+        _ if id.starts_with(PREFIX_WAKE) => {
+            show_main_window(app);
+            emit_action(
+                app,
+                serde_json::json!({
+                    "action": "wake-profile",
+                    "profileId": id.trim_start_matches(PREFIX_WAKE),
                 }),
             );
         }
@@ -229,6 +247,13 @@ impl TrayState {
             "Sin recientes",
         )?;
         replace_workspace_submenu(app, &parts.workspaces, &payload.workspaces)?;
+        replace_profile_submenu(
+            app,
+            &parts.wake,
+            &payload.wake,
+            PREFIX_WAKE,
+            "Sin equipos",
+        )?;
 
         parts
             .favorites
@@ -239,6 +264,9 @@ impl TrayState {
         parts
             .workspaces
             .set_text(format!("Perfiles ({})", payload.workspaces.len()))?;
+        parts
+            .wake
+            .set_text(format!("Wake On LAN ({})", payload.wake.len()))?;
         Ok(())
     }
 }

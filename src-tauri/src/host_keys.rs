@@ -238,7 +238,7 @@ impl client::Handler for KnownHostsClient {
     }
 }
 
-fn fingerprint_sha256(public_key: &PublicKey) -> String {
+pub fn fingerprint_sha256(public_key: &PublicKey) -> String {
     let bytes = public_key.to_bytes().unwrap_or_default();
     let digest = Sha256::digest(bytes);
     format!("SHA256:{}", STANDARD_NO_PAD.encode(digest))

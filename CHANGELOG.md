@@ -2,6 +2,48 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.16.0] - 2026-06-02
+
+### Añadido
+
+- **Wake On LAN en la bandeja del sistema**: submenú «Wake On LAN» que lista los
+  perfiles con dirección MAC configurada y permite despertarlos directamente
+  desde el tray, reutilizando el mismo flujo que el menú contextual.
+- **Aviso al activar agent forwarding**: el formulario de conexión muestra una
+  advertencia junto al toggle y pide confirmación al habilitarlo, recordando que
+  un host comprometido podría usar tu agente SSH para saltar a otros equipos.
+- **Gestor visual de `known_hosts`**: nuevo apartado en Preferencias → Copias de
+  seguridad que lista las huellas registradas (host, puerto, algoritmo y huella
+  SHA256) y permite eliminar entradas conflictivas con confirmación, sin tocar
+  `~/.ssh/known_hosts` a mano.
+- **Retención de logs de sesión**: bloque «Logs de sesión» en Preferencias con
+  el número y tamaño de los registros, límites configurables por edad y tamaño,
+  botón «Limpiar ahora», acceso rápido a la carpeta y aviso de contenido
+  sensible.
+- **Menú de overflow de pestañas**: cuando las pestañas no caben aparece un
+  botón `⋯` que abre un buscador con todas las sesiones abiertas (nombre, host y
+  estado), navegable por teclado; la pestaña activa se mantiene siempre visible.
+- **Timeline del centro de actividad**: los eventos se agrupan por día (Hoy,
+  Ayer, Esta semana y fechas anteriores) con cabeceras fijas, reduciendo el
+  ruido cuando hay muchos elementos.
+- **Búsqueda de ficheros en el panel SFTP**: caja de búsqueda por lado para
+  filtrar el directorio actual y, opcionalmente, buscar de forma recursiva con
+  cancelación y límites, independiente del autocompletado de rutas.
+- **Importación ampliada de `~/.ssh/config`**: se resuelven directivas `Include`,
+  `IdentityAgent`, keepalives (`ServerAliveInterval`) y reenvíos de puertos
+  (`LocalForward`/`RemoteForward`/`DynamicForward`), se listan las directivas no
+  soportadas y se muestra un resumen con los cambios (nuevos / a actualizar /
+  sin cambios) antes de aplicar, actualizando perfiles existentes sin duplicar.
+
+### Cambiado
+
+- **Arranque sin parpadeo**: la ventana principal arranca oculta y se muestra
+  tras restaurar su estado y completar el primer pintado, evitando el flash
+  blanco/sin estilos al iniciar.
+- Los toasts de transferencias, sincronización y errores se agrupan por
+  categoría: un único toast por categoría con un contador «+N más» en lugar de
+  una avalancha de notificaciones.
+
 ## [1.15.0] - 2026-06-02
 
 ### Añadido

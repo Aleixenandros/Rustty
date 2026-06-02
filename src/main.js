@@ -407,6 +407,11 @@ const DEFAULT_PREFS = {
   // UUIDs de las últimas entradas KeePass seleccionadas (más reciente primero,
   // máx 8). Usado por el selector avanzado para sugerir entradas habituales.
   recentKeepassEntries: [],
+  // Retención de logs de sesión. null = sin límite.
+  // sessionLogMaxAgeDays: borra logs más antiguos que N días.
+  // sessionLogMaxTotalMb: si el total supera N MB, borra los más antiguos.
+  sessionLogMaxAgeDays: null,
+  sessionLogMaxTotalMb: null,
 };
 
 // Paleta de colores predefinidos para las carpetas. Cada entrada es el id que
@@ -1428,6 +1433,13 @@ function openSettingsModal() {
   document.getElementById("pref-check-updates-startup").checked =
     prefs.checkUpdatesOnStartup !== false;
 
+  // Logs de sesión: rellenar campos de retención y refrescar el contador.
+  const slAge = document.getElementById("pref-session-log-max-age");
+  const slMb = document.getElementById("pref-session-log-max-mb");
+  if (slAge) slAge.value = prefs.sessionLogMaxAgeDays ?? "";
+  if (slMb) slMb.value = prefs.sessionLogMaxTotalMb ?? "";
+  refreshSessionLogsStats();
+
   // Atajos: (re)render con los valores actuales
   renderShortcutsList();
 
@@ -1807,7 +1819,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
       + (summary.secretsChanged || 0)
       + (summary.prefsChanged ? 1 : 0);
     if (announce) {
-      toast(t("prefs_sync.done_sync").replace("{n}", total), "success");
+      toast(t("prefs_sync.done_sync").replace("{n}", total), "success", { category: "sync" });
     }
     recordActivity({
       kind: "sync",
@@ -1834,9 +1846,9 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
         .catch((e) => console.error("[sync] retry from activity", e)),
     });
     if (String(err).includes("no_passphrase")) {
-      toast(t("prefs_sync.no_passphrase"), "warning", 6000);
+      toast(t("prefs_sync.no_passphrase"), "warning", 6000, { category: "sync" });
     } else if (announce) {
-      toast(`Sync: ${err}`, "error", 6000);
+      toast(`Sync: ${err}`, "error", 6000, { category: "sync" });
     }
     throw err;
   } finally {
@@ -1888,10 +1900,72 @@ async function syncOpenLocalFolder() {
   await openPathInFileManager(path, "carpeta local de sync");
 }
 
+// ─── Logs de sesión: retención y mantenimiento ────────────────────────────────
+
+/** Lee un campo de retención del modal; vacío o inválido → null (sin límite). */
+function readSessionLogLimit(inputId) {
+  const raw = document.getElementById(inputId)?.value?.trim();
+  if (!raw) return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Refresca el texto con el número de logs y su tamaño total. */
+async function refreshSessionLogsStats() {
+  const el = document.getElementById("session-logs-stats");
+  if (!el) return;
+  try {
+    const info = await invoke("session_logs_list");
+    el.textContent = t("prefs_session_logs.stats", {
+      count: info.count,
+      size: formatSize(info.total_bytes),
+    });
+  } catch (err) {
+    console.error("[session-logs] list", err);
+    el.textContent = t("prefs_session_logs.stats_error");
+  }
+}
+
+/** Limpia los logs de sesión aplicando los límites configurados en el modal. */
+async function sessionLogsPruneNow() {
+  const maxAge = readSessionLogLimit("pref-session-log-max-age");
+  const maxMb = readSessionLogLimit("pref-session-log-max-mb");
+  if (maxAge === null && maxMb === null) {
+    toast(t("prefs_session_logs.no_limits_set"), "warning");
+    return;
+  }
+  try {
+    const res = await invoke("session_logs_prune", {
+      maxAgeDays: maxAge,
+      maxTotalMb: maxMb,
+    });
+    toast(
+      t("prefs_session_logs.pruned", {
+        removed: res.removed,
+        size: formatSize(res.freed_bytes),
+      }),
+      "success",
+    );
+    await refreshSessionLogsStats();
+  } catch (err) {
+    toast(t("prefs_session_logs.prune_error", { err: String(err) }), "error", 6000);
+  }
+}
+
+/** Abre la carpeta de logs de sesión en el explorador del sistema. */
+async function sessionLogsOpenFolder() {
+  try {
+    const path = await invoke("session_logs_dir");
+    await openPathInFileManager(path, "carpeta de logs de sesión");
+  } catch (err) {
+    toast(`No se pudo abrir la carpeta de logs: ${err}`, "error", 6000);
+  }
+}
+
 async function syncOpenBackendFolder() {
   await persistSyncConfig().catch((err) => console.error("[sync] save before open backend", err));
   const path = await invoke("sync_get_backend_folder").catch((err) => {
-    toast(`Sync: ${err}`, "error", 6000);
+    toast(`Sync: ${err}`, "error", 6000, { category: "sync" });
     return null;
   });
   await openPathInFileManager(path, "carpeta de sync");
@@ -2223,12 +2297,13 @@ function groupActivityByDay(items) {
     const dayStart = new Date(new Date(ts).getFullYear(), new Date(ts).getMonth(), new Date(ts).getDate()).getTime();
     const diffDays = Math.round((startOfToday - dayStart) / dayMs);
     let key, label;
-    if (diffDays <= 0) { key = "today"; label = "Hoy"; }
-    else if (diffDays === 1) { key = "yesterday"; label = "Ayer"; }
-    else if (diffDays < 7) { key = "week"; label = "Esta semana"; }
+    if (diffDays <= 0) { key = "today"; label = t("activity.today"); }
+    else if (diffDays === 1) { key = "yesterday"; label = t("activity.yesterday"); }
+    else if (diffDays < 7) { key = "week"; label = t("activity.this_week"); }
     else {
       key = `d${dayStart}`;
-      label = new Date(dayStart).toLocaleDateString();
+      // Fecha absoluta localizada según el idioma activo.
+      label = new Date(dayStart).toLocaleDateString(getLanguage());
     }
     if (!groups.has(key)) groups.set(key, { label, sort: dayStart, items: [] });
     groups.get(key).items.push(it);
@@ -2281,7 +2356,7 @@ function renderActivityCenter() {
     ? activityItems
     : activityItems.filter((item) => item.kind === _activityFilter);
   if (!visible.length) {
-    list.innerHTML = `<div class="activity-empty">Sin actividad reciente</div>`;
+    list.innerHTML = `<div class="activity-empty">${escHtml(t("activity.empty"))}</div>`;
     return;
   }
   // Agrupar por día relativo (Hoy / Ayer / Esta semana / fecha) para que la
@@ -2386,6 +2461,9 @@ function savePrefsFromModal() {
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
     lang:            newLang === null ? null : (SUPPORTED_LANGS.includes(newLang) ? newLang : "es"),
     checkUpdatesOnStartup: document.getElementById("pref-check-updates-startup")?.checked ?? true,
+    // Retención de logs de sesión: vacío / inválido → null (sin límite).
+    sessionLogMaxAgeDays: readSessionLogLimit("pref-session-log-max-age"),
+    sessionLogMaxTotalMb: readSessionLogLimit("pref-session-log-max-mb"),
     // Los atajos se editan en vivo (setShortcut/resetShortcut ya guardan), así
     // que aquí solo arrastramos lo que haya en memoria para no sobrescribirlos.
     shortcuts:       previousPrefs.shortcuts || {},
@@ -3385,7 +3463,11 @@ function buildTrayQuickLauncherPayload() {
   const workspaces = (Array.isArray(prefs.workspaces) ? prefs.workspaces : [])
     .slice(0, 12)
     .map((workspace) => ({ id: workspace.id, label: workspace.name || "Default" }));
-  return { favorites, recent, workspaces };
+  const wake = profiles
+    .filter((profile) => (profile.mac_address || "").trim())
+    .slice(0, 8)
+    .map((profile) => ({ id: profile.id, label: trayProfileLabel(profile) }));
+  return { favorites, recent, workspaces, wake };
 }
 
 function scheduleTrayQuickLauncherUpdate() {
@@ -3413,6 +3495,8 @@ async function initTrayQuickLauncher() {
       connectProfile(payload.profileId, { force: true });
     } else if (payload.action === "switch-workspace" && payload.workspaceId) {
       switchToWorkspace(payload.workspaceId);
+    } else if (payload.action === "wake-profile" && payload.profileId) {
+      wakeProfile(payload.profileId);
     }
   });
   scheduleTrayQuickLauncherUpdate();
@@ -7482,11 +7566,158 @@ function updateTabSelectionClasses() {
   // `nearest` no hace scroll si ya está a la vista, así que es barato en cada render.
   document.querySelector("#tabs-container .tab.active")
     ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  updateTabOverflowButton();
   if (activeSessionId) clearTabActivity(activeSessionId);
   document.querySelectorAll(".terminal-pane").forEach((p) => {
     p.classList.toggle("pane-focused",
       viewSelection.length > 1 && p.dataset.session === activeSessionId);
   });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// OVERFLOW DE PESTAÑAS – botón ⋯ con popover (lista + buscador)
+// ═══════════════════════════════════════════════════════════════
+
+// Índice de la fila resaltada en el popover (navegación con ↑/↓).
+let _tabOverflowIndex = -1;
+let _tabOverflowSearchTimer = 0;
+
+/**
+ * Muestra/oculta el botón ⋯ según si la barra de pestañas desborda
+ * horizontalmente. El contenedor scrollable es #tab-bar (overflow-x:auto);
+ * comparamos su scrollWidth con su clientWidth.
+ */
+function updateTabOverflowButton() {
+  const btn = document.getElementById("btn-tab-overflow");
+  if (!btn) return;
+  const bar = document.getElementById("tab-bar");
+  const hasTabs = document.querySelector("#tabs-container .tab") !== null;
+  // +1px de holgura para evitar parpadeos por redondeo subpíxel.
+  const overflowing = !!bar && hasTabs && bar.scrollWidth > bar.clientWidth + 1;
+  btn.classList.toggle("hidden", !overflowing);
+  if (!overflowing && !document.getElementById("tab-overflow-popover")?.classList.contains("hidden")) {
+    toggleTabOverflow(false);
+  }
+}
+
+/** Etiqueta de estado (dot) para una sesión, reutilizando las clases de .tab-dot. */
+function tabOverflowDotClass(sessionId) {
+  const status = sessions.get(sessionId)?.status || "closed";
+  // Las clases de .tab-dot existentes son connected/connecting/reconnecting/error.
+  if (status === "connected" || status === "connecting" || status === "reconnecting" || status === "error") {
+    return status;
+  }
+  return ""; // closed / desconocido → punto neutro
+}
+
+/** Construye la línea "host" que se muestra bajo el nombre en el popover. */
+function tabOverflowHostLine(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s) return "";
+  const profile = profiles.find((p) => p.id === s.profileId);
+  if (!profile?.host) return "";
+  const user = profile.username ? `${profile.username}@` : "";
+  const port = profile.port ? `:${profile.port}` : "";
+  return `${user}${profile.host}${port}`;
+}
+
+/** Pinta la lista del popover filtrando por el texto del buscador. */
+function renderTabOverflowList(query = "") {
+  const list = document.getElementById("tab-overflow-list");
+  if (!list) return;
+  const q = query.trim().toLowerCase();
+  const tabs = [...document.querySelectorAll("#tabs-container .tab")];
+  const rows = tabs
+    .map((tab) => {
+      const sid = tab.dataset.session;
+      const name = getSessionTabLabel(sid);
+      const host = tabOverflowHostLine(sid);
+      return { sid, name, host };
+    })
+    .filter(({ name, host }) =>
+      !q || name.toLowerCase().includes(q) || host.toLowerCase().includes(q));
+
+  if (!rows.length) {
+    list.innerHTML = `<div class="tab-overflow-empty">${escHtml(t("tab_overflow.empty"))}</div>`;
+    _tabOverflowIndex = -1;
+    return;
+  }
+
+  list.innerHTML = rows.map(({ sid, name, host }) => {
+    const dot = tabOverflowDotClass(sid);
+    const isActive = sid === activeSessionId;
+    const hostHtml = host ? `<span class="tab-overflow-host">${escHtml(host)}</span>` : "";
+    return `<button type="button" class="tab-overflow-item${isActive ? " active" : ""}" role="option" data-session="${escHtml(sid)}">
+      <span class="tab-dot ${dot}"></span>
+      <span class="tab-overflow-copy">
+        <span class="tab-overflow-name">${escHtml(name)}</span>
+        ${hostHtml}
+      </span>
+    </button>`;
+  }).join("");
+
+  // Resaltar por defecto la pestaña activa si está en la lista; si no, la primera.
+  const items = [...list.querySelectorAll(".tab-overflow-item")];
+  const activeIdx = items.findIndex((it) => it.dataset.session === activeSessionId);
+  _tabOverflowIndex = activeIdx >= 0 ? activeIdx : 0;
+  highlightTabOverflowRow();
+}
+
+/** Marca visualmente la fila resaltada y la desplaza a la vista. */
+function highlightTabOverflowRow() {
+  const items = [...document.querySelectorAll("#tab-overflow-list .tab-overflow-item")];
+  items.forEach((it, i) => it.classList.toggle("highlighted", i === _tabOverflowIndex));
+  items[_tabOverflowIndex]?.scrollIntoView({ block: "nearest" });
+}
+
+/** Activa la pestaña de la fila indicada (mismo handler que el clic en un tab). */
+function activateTabOverflowRow(sid) {
+  if (!sid) return;
+  selectSession(sid, false);
+  toggleTabOverflow(false);
+}
+
+/**
+ * Abre/cierra el popover de overflow. Al abrir, refresca la lista, posiciona
+ * bajo el botón ⋯ y enfoca el buscador.
+ */
+function toggleTabOverflow(open) {
+  const popover = document.getElementById("tab-overflow-popover");
+  const btn = document.getElementById("btn-tab-overflow");
+  if (!popover || !btn) return;
+  if (open === undefined) open = popover.classList.contains("hidden");
+  popover.classList.toggle("hidden", !open);
+  btn.setAttribute("aria-expanded", String(open));
+  if (!open) return;
+  // Mantener visible la pestaña activa al abrir, por si quedó tras el botón ⋯.
+  document.querySelector("#tabs-container .tab.active")
+    ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  const search = document.getElementById("tab-overflow-search");
+  if (search) search.value = "";
+  renderTabOverflowList("");
+  positionTabOverflowPopover();
+  search?.focus();
+}
+
+/** Coloca el popover bajo el botón ⋯, con flip si se sale del viewport. */
+function positionTabOverflowPopover() {
+  const trigger = document.getElementById("btn-tab-overflow");
+  const popover = document.getElementById("tab-overflow-popover");
+  if (!trigger || !popover) return;
+  const triggerRect = trigger.getBoundingClientRect();
+  const popRect = popover.getBoundingClientRect();
+  const margin = 6;
+  let top = triggerRect.bottom + margin;
+  let left = triggerRect.left;
+  // Por defecto alineado al borde derecho del botón (suele estar a la derecha).
+  if (left + popRect.width > window.innerWidth - margin) {
+    left = Math.max(margin, triggerRect.right - popRect.width);
+  }
+  if (top + popRect.height > window.innerHeight - margin) {
+    top = Math.max(margin, triggerRect.top - popRect.height - margin);
+  }
+  popover.style.top = `${top}px`;
+  popover.style.left = `${left}px`;
 }
 
 /**
@@ -8409,6 +8640,66 @@ function closeGlobalTunnelsModal() {
 function isGlobalTunnelsModalOpen() {
   const overlay = document.getElementById("global-tunnels-overlay");
   return !!overlay && !overlay.classList.contains("hidden");
+}
+
+// ─── Gestor de known_hosts ───────────────────────────────────────
+async function openKnownHostsModal() {
+  const overlay = document.getElementById("known-hosts-overlay");
+  if (!overlay) return;
+  overlay.classList.remove("hidden");
+  await renderKnownHostsList();
+}
+
+function closeKnownHostsModal() {
+  document.getElementById("known-hosts-overlay")?.classList.add("hidden");
+}
+
+async function renderKnownHostsList() {
+  const list = document.getElementById("known-hosts-list");
+  if (!list) return;
+  list.innerHTML = `<div class="tunnel-empty">${escHtml(t("modal_known_hosts.loading"))}</div>`;
+  let entries;
+  try {
+    entries = await invoke("list_known_hosts");
+  } catch (err) {
+    list.innerHTML = `<div class="tunnel-empty">${escHtml(String(err))}</div>`;
+    return;
+  }
+  if (!entries.length) {
+    list.innerHTML = `<div class="tunnel-empty">${escHtml(t("modal_known_hosts.empty"))}</div>`;
+    return;
+  }
+  list.innerHTML = entries
+    .map((e) => {
+      const hostLabel = e.port && e.port !== 22 ? `${e.host}:${e.port}` : e.host;
+      return `
+        <div class="global-tunnel-row" data-line="${e.line}">
+          <span class="tunnel-kind">${escHtml(e.algorithm)}</span>
+          <span class="global-tunnel-profile">${escHtml(hostLabel)}</span>
+          <span class="global-tunnel-desc">${escHtml(e.fingerprint)}</span>
+          <span class="global-tunnel-row-actions">
+            <button type="button" class="global-tunnel-action danger" data-known-host-action="remove">${escHtml(t("modal_known_hosts.remove"))}</button>
+          </span>
+        </div>`;
+    })
+    .join("");
+}
+
+async function removeKnownHostLine(line) {
+  const ok = await confirmThemed({
+    title: t("modal_known_hosts.title"),
+    message: t("modal_known_hosts.confirm_remove"),
+    submitLabel: t("modal_known_hosts.remove"),
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await invoke("remove_known_host_line", { line });
+    toast(t("modal_known_hosts.removed"), "success");
+    await renderKnownHostsList();
+  } catch (err) {
+    toast(`${err}`, "error", 8000);
+  }
 }
 
 function updateGlobalTunnelFields() {
@@ -9568,6 +9859,14 @@ function buildSftpPanel(sessionId) {
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="local" title="Nueva carpeta">＋</button>
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="local" title="Nuevo archivo">📄</button>
       </div>
+      <div class="sftp-search-bar" data-side="local">
+        <span class="sftp-search-icon">🔎</span>
+        <input class="sftp-search-input" data-side="local" type="search" spellcheck="false"
+               placeholder="${escHtml(t("sftp_search.placeholder"))}" />
+        <button type="button" class="sftp-search-recursive" data-side="local"
+                title="${escHtml(t("sftp_search.recursive_title"))}">${escHtml(t("sftp_search.recursive"))}</button>
+        <span class="sftp-search-status" data-side="local"></span>
+      </div>
       <div class="sftp-columns" data-side="local">
         <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="local" data-sftp-sort="type">Tipo</button>
         <button type="button" class="sftp-sort-btn sftp-sort-name" data-side="local" data-sftp-sort="name">Nombre</button>
@@ -9602,6 +9901,14 @@ function buildSftpPanel(sessionId) {
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="remote" title="Nueva carpeta">＋</button>
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="remote" title="Nuevo archivo">📄</button>
         <button class="sftp-nav-btn sftp-close-btn" data-sftp-act="close" title="Cerrar panel SFTP">✕</button>
+      </div>
+      <div class="sftp-search-bar" data-side="remote">
+        <span class="sftp-search-icon">🔎</span>
+        <input class="sftp-search-input" data-side="remote" type="search" spellcheck="false"
+               placeholder="${escHtml(t("sftp_search.placeholder"))}" />
+        <button type="button" class="sftp-search-recursive" data-side="remote"
+                title="${escHtml(t("sftp_search.recursive_title"))}">${escHtml(t("sftp_search.recursive"))}</button>
+        <span class="sftp-search-status" data-side="remote"></span>
       </div>
       <div class="sftp-columns" data-side="remote">
         <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="remote" data-sftp-sort="type">Tipo</button>
@@ -9694,6 +10001,7 @@ function buildSftpPanel(sessionId) {
   setupSftpDropTargets(panel, sessionId);
   setupSftpContextMenus(panel, sessionId);
   setupSftpSortHeaders(panel, sessionId);
+  setupSftpSearch(panel, sessionId);
 
   panel.querySelectorAll("[data-sftp-act]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -9755,6 +10063,7 @@ async function navigateSftpRemote(sessionId, path) {
     });
     s.sftp.cwd = path;
     panel.querySelector('.sftp-path[data-side="remote"]').value = path;
+    resetSftpSearch(sessionId, "remote");
     renderSftpFiles(sessionId, "remote", entries);
     clearSftpStatus(panel);
   } catch (err) {
@@ -9791,6 +10100,7 @@ async function navigateSftpLocal(sessionId, path) {
     const entries = await invoke("local_list_dir", { path });
     s.sftp.localCwd = path;
     panel.querySelector('.sftp-path[data-side="local"]').value = path;
+    resetSftpSearch(sessionId, "local");
     renderSftpFiles(sessionId, "local", entries);
   } catch (err) {
     appendSftpActivity(panel, {
@@ -9915,6 +10225,302 @@ function renderSftpFiles(sessionId, side, entries) {
       });
     });
   });
+}
+
+// ───── Búsqueda fuzzy de ficheros en el panel SFTP/local ─────
+// Función SEPARADA del autocompletado de rutas (sftp-path). Filtra por
+// subcadena (case-insensitive) las entradas ya listadas del directorio
+// actual y, opcionalmente, recorre subdirectorios de forma recursiva con
+// límites y cancelación.
+
+const SFTP_SEARCH_MAX_RESULTS = 500; // tope de resultados recursivos
+const SFTP_SEARCH_MAX_DIRS = 2000;   // tope de directorios visitados
+const SFTP_SEARCH_MAX_DEPTH = 8;     // profundidad máxima
+
+// Estado de búsqueda por sesión y lado: { term, recursive, token }.
+// El token es un contador; al incrementarlo se cancela cualquier recorrido en curso.
+function sftpSearchState(s, side) {
+  s.sftp.search = s.sftp.search || { local: null, remote: null };
+  if (!s.sftp.search[side]) {
+    s.sftp.search[side] = { term: "", recursive: false, token: 0 };
+  }
+  return s.sftp.search[side];
+}
+
+function setupSftpSearch(panel, sessionId) {
+  panel.querySelectorAll(".sftp-search-bar").forEach((bar) => {
+    const side = bar.dataset.side;
+    const input = bar.querySelector(".sftp-search-input");
+    const recBtn = bar.querySelector(".sftp-search-recursive");
+    let debounceId = 0;
+
+    const runSearch = () => {
+      const s = sessions.get(sessionId);
+      if (!s?.sftp) return;
+      const st = sftpSearchState(s, side);
+      st.term = input.value.trim();
+      if (st.recursive && st.term) {
+        runSftpRecursiveSearch(sessionId, side);
+      } else {
+        // Cancela cualquier recorrido recursivo en curso y filtra el dir actual.
+        st.token++;
+        applySftpCurrentDirFilter(sessionId, side);
+      }
+    };
+
+    input.addEventListener("input", () => {
+      clearTimeout(debounceId);
+      debounceId = setTimeout(runSearch, 120);
+    });
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        clearSftpSearch(sessionId, side);
+        return;
+      }
+      // Navegación por resultados recursivos con flechas + Enter.
+      const filesDiv = panel.querySelector(`.sftp-files[data-side="${side}"]`);
+      const results = filesDiv.querySelectorAll(".sftp-search-result");
+      if (!results.length) return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const list = Array.from(results);
+        let idx = list.findIndex((r) => r.classList.contains("active"));
+        list.forEach((r) => r.classList.remove("active"));
+        if (e.key === "ArrowDown") idx = idx < list.length - 1 ? idx + 1 : 0;
+        else idx = idx > 0 ? idx - 1 : list.length - 1;
+        const target = list[idx];
+        target.classList.add("active");
+        target.scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        const active = filesDiv.querySelector(".sftp-search-result.active") || results[0];
+        if (active) openSftpSearchResult(sessionId, side, active);
+      }
+    });
+
+    recBtn.addEventListener("click", () => {
+      const s = sessions.get(sessionId);
+      if (!s?.sftp) return;
+      const st = sftpSearchState(s, side);
+      st.recursive = !st.recursive;
+      recBtn.classList.toggle("active", st.recursive);
+      runSearch();
+      input.focus();
+    });
+  });
+}
+
+// Resetea el estado y la UI de búsqueda de un lado (al navegar/refrescar).
+function resetSftpSearch(sessionId, side) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const st = sftpSearchState(s, side);
+  st.token++; // cancela recorridos en curso
+  st.term = "";
+  const panel = s.sftp.panel;
+  const input = panel.querySelector(`.sftp-search-input[data-side="${side}"]`);
+  if (input) input.value = "";
+  setSftpSearchStatus(panel, side, "");
+}
+
+// Limpia la búsqueda manteniendo el modo recursivo, y restaura el listado.
+function clearSftpSearch(sessionId, side) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const st = sftpSearchState(s, side);
+  st.token++;
+  st.term = "";
+  const panel = s.sftp.panel;
+  const input = panel.querySelector(`.sftp-search-input[data-side="${side}"]`);
+  if (input) input.value = "";
+  setSftpSearchStatus(panel, side, "");
+  renderSftpFiles(sessionId, side, s.sftp.entries?.[side] || []);
+}
+
+function setSftpSearchStatus(panel, side, text) {
+  const el = panel.querySelector(`.sftp-search-status[data-side="${side}"]`);
+  if (el) el.textContent = text || "";
+}
+
+// Filtra (mostrar/ocultar) las filas ya renderizadas del directorio actual.
+function applySftpCurrentDirFilter(sessionId, side) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const panel = s.sftp.panel;
+  const filesDiv = panel.querySelector(`.sftp-files[data-side="${side}"]`);
+  const st = sftpSearchState(s, side);
+  // Si veníamos de un resultado recursivo, restauramos el listado normal.
+  if (filesDiv.querySelector(".sftp-search-result") || filesDiv.querySelector(".sftp-search-empty")) {
+    renderSftpFiles(sessionId, side, s.sftp.entries?.[side] || []);
+  }
+  const term = st.term.toLocaleLowerCase();
+  const rows = filesDiv.querySelectorAll(".sftp-row");
+  if (!term) {
+    rows.forEach((r) => r.classList.remove("sftp-filtered-out"));
+    setSftpSearchStatus(panel, side, "");
+    return;
+  }
+  let visible = 0;
+  rows.forEach((r) => {
+    const name = (r.dataset.name || "").toLocaleLowerCase();
+    const hit = name.includes(term);
+    r.classList.toggle("sftp-filtered-out", !hit);
+    if (hit) visible++;
+  });
+  setSftpSearchStatus(panel, side, visible === 0 ? t("sftp_search.no_results") : "");
+}
+
+// Recorre subdirectorios en BFS desde el cwd con límites y cancelación.
+async function runSftpRecursiveSearch(sessionId, side) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const panel = s.sftp.panel;
+  const filesDiv = panel.querySelector(`.sftp-files[data-side="${side}"]`);
+  const st = sftpSearchState(s, side);
+  const term = st.term.toLocaleLowerCase();
+  if (!term) { clearSftpSearch(sessionId, side); return; }
+
+  // Nuevo token: invalida cualquier recorrido previo en curso.
+  st.token++;
+  const myToken = st.token;
+  const canceled = () => st.token !== myToken;
+
+  const base = side === "local" ? s.sftp.localCwd : s.sftp.cwd;
+  if (!base) return;
+  const isLocal = side === "local";
+  const listDir = (path) => isLocal
+    ? invoke("local_list_dir", { path })
+    : invoke("sftp_list_dir", { sessionId: s.sftp.sftpSessionId, path });
+
+  setSftpSearchStatus(panel, side, t("sftp_search.searching"));
+
+  const results = [];
+  // Cola BFS de { path, depth }.
+  const queue = [{ path: base, depth: 0 }];
+  let visited = 0;
+  let limitHit = false;
+
+  while (queue.length) {
+    if (canceled()) return;
+    if (results.length >= SFTP_SEARCH_MAX_RESULTS || visited >= SFTP_SEARCH_MAX_DIRS) {
+      limitHit = true;
+      break;
+    }
+    const { path, depth } = queue.shift();
+    visited++;
+    let entries;
+    try {
+      entries = await listDir(path);
+    } catch {
+      continue; // dir sin permisos / inaccesible: lo saltamos
+    }
+    if (canceled()) return;
+    for (const e of entries || []) {
+      if ((e.name || "").toLocaleLowerCase().includes(term)) {
+        results.push(e);
+        if (results.length >= SFTP_SEARCH_MAX_RESULTS) { limitHit = true; break; }
+      }
+      // Encolamos subdirectorios reales (no symlinks) dentro de la profundidad.
+      if (e.is_dir && !e.is_symlink && depth < SFTP_SEARCH_MAX_DEPTH) {
+        queue.push({ path: e.path, depth: depth + 1 });
+      }
+    }
+  }
+
+  if (canceled()) return;
+  renderSftpSearchResults(sessionId, side, base, results, limitHit);
+}
+
+function renderSftpSearchResults(sessionId, side, base, results, limitHit) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const panel = s.sftp.panel;
+  const filesDiv = panel.querySelector(`.sftp-files[data-side="${side}"]`);
+  if (!results.length) {
+    filesDiv.innerHTML = `<div class="sftp-empty sftp-search-empty">${escHtml(t("sftp_search.no_results"))}</div>`;
+    setSftpSearchStatus(panel, side, "");
+    return;
+  }
+  const sep = side === "local" ? null : "/";
+  filesDiv.innerHTML = results.map((e) => {
+    const rel = sftpRelativePath(base, e.path, sep);
+    return `
+    <div class="sftp-row sftp-search-result ${e.is_dir ? "is-dir" : "is-file"} ${sftpFileIconClass(e)}"
+         data-path="${escHtml(e.path)}"
+         data-name="${escHtml(e.name)}"
+         data-is-dir="${e.is_dir}"
+         data-is-symlink="${e.is_symlink}">
+      <span class="sftp-icon">${sftpFileIconChar(e)}</span>
+      <span class="sftp-name" title="${escHtml(rel)}">${escHtml(rel)}</span>
+      <span class="sftp-size">${e.is_dir ? "" : formatSize(e.size)}</span>
+      <span class="sftp-modified">${formatTime(e.modified)}</span>
+    </div>`;
+  }).join("");
+
+  filesDiv.querySelectorAll(".sftp-search-result").forEach((row) => {
+    row.addEventListener("dblclick", () => openSftpSearchResult(sessionId, side, row));
+    row.addEventListener("click", () => {
+      filesDiv.querySelectorAll(".sftp-search-result.active").forEach((r) => r.classList.remove("active"));
+      row.classList.add("active");
+    });
+  });
+
+  setSftpSearchStatus(
+    panel,
+    side,
+    limitHit ? t("sftp_search.limit_reached", { n: SFTP_SEARCH_MAX_RESULTS }) : "",
+  );
+}
+
+// Ruta relativa de `full` respecto a `base` para mostrar en resultados.
+function sftpRelativePath(base, full, sep) {
+  if (!base || !full) return full || "";
+  let b = base;
+  if (sep === "/") {
+    b = b.endsWith("/") ? b : b + "/";
+    if (b === "//") b = "/";
+  }
+  if (full.startsWith(base)) {
+    let rest = full.slice(base.length);
+    rest = rest.replace(/^[\\/]+/, "");
+    return rest || full;
+  }
+  return full;
+}
+
+// Navega a la carpeta contenedora del resultado y lo deja seleccionado.
+function openSftpSearchResult(sessionId, side, row) {
+  const fullPath = row.dataset.path;
+  const isDir = row.dataset.isDir === "true";
+  const name = row.dataset.name;
+  // Para directorios entramos en ellos; para ficheros, a su carpeta padre.
+  const target = isDir
+    ? fullPath
+    : (side === "local" ? localParentPath(fullPath) : parentPath(fullPath));
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const after = () => {
+    // Tras renderizar el destino, seleccionamos la fila correspondiente.
+    const panel = s.sftp.panel;
+    const filesDiv = panel.querySelector(`.sftp-files[data-side="${side}"]`);
+    const selName = isDir ? null : name;
+    if (selName) {
+      const r = filesDiv.querySelector(`.sftp-row[data-name="${CSS.escape(selName)}"]`);
+      if (r) {
+        filesDiv.querySelectorAll(".sftp-row.selected").forEach((x) => x.classList.remove("selected"));
+        r.classList.add("selected");
+        r.scrollIntoView({ block: "nearest" });
+      }
+    }
+  };
+  // resetSftpSearch se dispara dentro de navigate*, limpiando la caja.
+  const nav = side === "local"
+    ? navigateSftpLocal(sessionId, target)
+    : navigateSftpRemote(sessionId, target);
+  Promise.resolve(nav).then(after);
 }
 
 function sftpEntryTypeRank(entry) {
@@ -10565,6 +11171,7 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
     });
     if (!canceled) {
       toast(`Fallo transferencia: ${err}`, "error", 8000, {
+        category: "transfer",
         actionLabel: "Ver log",
         onAction: () => revealSftpActivity(panel),
       });
@@ -11557,19 +12164,157 @@ async function importConnections() {
 }
 
 /**
+ * Claves OpenSSH que reconocemos pero NO mapeamos a ningún campo de Rustty.
+ * Solo se usan para informar al usuario en el resumen de importación; no
+ * incluimos aquí las que sí sabemos traducir (HostName, User, forwards, etc.).
+ */
+const SSH_UNSUPPORTED_KEYS = new Set([
+  "match", "controlmaster", "controlpath", "controlpersist", "forwardagent",
+  "forwardx11", "serveralivecountmax", "stricthostkeychecking", "userknownhostsfile",
+  "preferredauthentications", "pubkeyauthentication", "passwordauthentication",
+  "ciphers", "macs", "kexalgorithms", "hostkeyalgorithms", "loglevel",
+  "compression", "addkeystoagent", "requesttty", "sendenv", "setenv",
+  "canonicalizehostname", "tcpkeepalive", "connecttimeout", "connectionattempts",
+]);
+
+/**
+ * Resuelve una ruta de `Include`/`IdentityFile` a un path absoluto.
+ * Absolutas se respetan; `~` y relativas se anclan a `~/.ssh/`.
+ */
+function resolveSshPath(p, homeDir) {
+  let s = String(p || "").trim().replace(/^["']|["']$/g, "");
+  if (!s) return s;
+  if (s.startsWith("~/")) return homeDir ? `${homeDir}/${s.slice(2)}` : s;
+  if (s === "~") return homeDir || s;
+  if (s.startsWith("/")) return s;          // absoluta
+  // Relativa: respecto a ~/.ssh/ (comportamiento de OpenSSH para el config de usuario).
+  return homeDir ? `${homeDir}/.ssh/${s}` : s;
+}
+
+/**
+ * Expande las directivas `Include` de un config de OpenSSH inlineando el
+ * contenido de los ficheros referenciados en el punto del Include (respeta el
+ * orden). Soporta globs simples (`*`) vía `local_list_dir`. Evita recursión
+ * con un Set de paths ya vistos y un límite de profundidad.
+ *
+ * Devuelve el contenido ya expandido y registra en `unsupported` los Include
+ * que no se pudieron resolver.
+ */
+async function expandSshIncludes(content, homeDir, seen, depth, unsupported) {
+  if (depth > 16) return content;
+  const out = [];
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.replace(/#.*$/, "").trim();
+    const m = line.match(/^include\s+(.+)$/i);
+    if (!m) {
+      out.push(rawLine);
+      continue;
+    }
+    // Un Include puede listar varios patrones separados por espacios.
+    const patterns = m[1].trim().split(/\s+/).filter(Boolean);
+    for (const pat of patterns) {
+      const resolved = resolveSshPath(pat, homeDir);
+      let files = [];
+      if (/[*?]/.test(resolved)) {
+        // Glob simple: listamos el directorio padre y filtramos por el patrón.
+        const slash = resolved.lastIndexOf("/");
+        const dir = slash >= 0 ? resolved.slice(0, slash) : ".";
+        const globPart = slash >= 0 ? resolved.slice(slash + 1) : resolved;
+        const re = new RegExp("^" + globPart.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+        try {
+          const entries = await invoke("local_list_dir", { path: dir });
+          files = entries
+            .filter((e) => !e.is_dir && re.test(e.name))
+            .map((e) => e.path)
+            .sort();
+        } catch {
+          unsupported.add(`Include ${pat}`);
+        }
+      } else {
+        files = [resolved];
+      }
+      for (const file of files) {
+        if (seen.has(file)) continue;       // evita ciclos
+        seen.add(file);
+        let inner;
+        try {
+          inner = await invoke("read_text_file", { path: file });
+        } catch {
+          unsupported.add(`Include ${pat}`);
+          continue;
+        }
+        const expanded = await expandSshIncludes(inner, homeDir, seen, depth + 1, unsupported);
+        out.push(expanded);
+      }
+    }
+  }
+  return out.join("\n");
+}
+
+/**
+ * Parsea uno o varios forwards de OpenSSH a la forma de túnel de Rustty.
+ * Formatos:
+ *   LocalForward  [bind:]lport rhost:rport   → {tunnel_type:"local"}
+ *   RemoteForward [bind:]rport lhost:lport   → {tunnel_type:"remote"}
+ *   DynamicForward [bind:]lport              → {tunnel_type:"dynamic"}
+ * Devuelve el objeto de túnel (esquema SshTunnelProfile) o `null` si no parsea.
+ */
+function parseSshForward(kind, value) {
+  // Separa un token `[bind:]port` en {bind, port}. Soporta IPv6 entre corchetes.
+  const splitHostPort = (tok) => {
+    const t = String(tok || "").trim();
+    const v6 = t.match(/^\[([^\]]+)\]:(\d+)$/);
+    if (v6) return { host: v6[1], port: parseInt(v6[2], 10) };
+    const parts = t.split(":");
+    if (parts.length === 1) return { host: null, port: parseInt(parts[0], 10) };
+    return { host: parts.slice(0, -1).join(":"), port: parseInt(parts[parts.length - 1], 10) };
+  };
+  const tokens = value.trim().split(/\s+/);
+  const base = { id: crypto.randomUUID(), name: null, auto_start: false };
+  if (kind === "dynamicforward") {
+    const a = splitHostPort(tokens[0]);
+    if (!Number.isFinite(a.port)) return null;
+    return { ...base, tunnel_type: "dynamic", bind_host: a.host || "127.0.0.1",
+             local_port: a.port, remote_host: null, remote_port: null };
+  }
+  if (tokens.length < 2) return null;
+  const left = splitHostPort(tokens[0]);
+  const right = splitHostPort(tokens[1]);
+  if (kind === "localforward") {
+    // [bind:]lport rhost:rport
+    if (!Number.isFinite(left.port) || !right.host || !Number.isFinite(right.port)) return null;
+    return { ...base, tunnel_type: "local", bind_host: left.host || "127.0.0.1",
+             local_port: left.port, remote_host: right.host, remote_port: right.port };
+  }
+  if (kind === "remoteforward") {
+    // [bind:]rport lhost:lport → el puerto que escucha en el remoto es local_port
+    // en nuestro esquema (el extremo que abre Rustty), y el destino es remote_*.
+    if (!Number.isFinite(left.port) || !right.host || !Number.isFinite(right.port)) return null;
+    return { ...base, tunnel_type: "remote", bind_host: left.host || "127.0.0.1",
+             local_port: left.port, remote_host: right.host, remote_port: right.port };
+  }
+  return null;
+}
+
+/**
  * Parsea el contenido de un fichero `~/.ssh/config` (formato OpenSSH).
  *
- * Formato resumido: bloques `Host <pattern>` seguidos de líneas indentadas
- * `Key Value`. Las claves son case-insensitive. Ignoramos directivas que no
- * mapean directamente a un perfil de Rustty (Match, Include, etc.) y los
- * patrones con comodines (`*`, `?`).
+ * Es asíncrono porque resuelve las directivas `Include` (lee ficheros vía el
+ * backend). Soporta: Host, HostName, User, Port, IdentityFile, ProxyJump,
+ * ServerAliveInterval (keepalive), IdentityAgent y los forwards
+ * (Local/Remote/Dynamic). Las claves reconocidas pero no mapeables se acumulan
+ * en `unsupported` (globales y por host) para mostrarlas en el resumen.
  *
- * Devuelve un array de objetos `{ alias, host, user, port, identityFile, proxyJump }`.
+ * Devuelve `{ blocks, unsupported }` donde cada bloque incluye además
+ * `keepAliveSecs` y `tunnels`.
  */
-function parseSshConfig(content) {
+async function parseSshConfig(content, homeDir) {
+  const unsupported = new Set();
+  const expanded = await expandSshIncludes(content, homeDir, new Set(), 0, unsupported);
+
   const blocks = [];
   let current = null;
-  for (const rawLine of content.split(/\r?\n/)) {
+  for (const rawLine of expanded.split(/\r?\n/)) {
     const line = rawLine.replace(/#.*$/, "").trim();
     if (!line) continue;
     // Aceptar `Key Value` o `Key=Value`
@@ -11585,20 +12330,48 @@ function parseSshConfig(content) {
         current = null; // bloque comodín, lo ignoramos
         continue;
       }
-      current = { alias: aliases[0], host: aliases[0] };
+      current = { alias: aliases[0], host: aliases[0], tunnels: [] };
       blocks.push(current);
-    } else if (current) {
+    } else if (key === "include") {
+      // Ya expandido en expandSshIncludes; ignorar.
+    } else {
       switch (key) {
-        case "hostname":      current.host = value; break;
-        case "user":          current.user = value; break;
-        case "port":          current.port = parseInt(value, 10); break;
-        case "identityfile":  current.identityFile = value.replace(/^~/, ""); break;
-        case "proxyjump":     current.proxyJump = value; break;
-        // Resto: lo ignoramos en MVP.
+        case "hostname":      if (current) current.host = value; break;
+        case "user":          if (current) current.user = value; break;
+        case "port":          if (current) current.port = parseInt(value, 10); break;
+        case "identityfile":  if (current) current.identityFile = value.replace(/^~/, ""); break;
+        case "proxyjump":     if (current) current.proxyJump = value; break;
+        case "serveraliveinterval": {
+          // Keepalive → keep_alive_secs (entero en segundos).
+          const secs = parseInt(value, 10);
+          if (current && Number.isFinite(secs)) current.keepAliveSecs = secs;
+          break;
+        }
+        case "identityagent": {
+          // Rustty ya usa el agente del SO, así que un IdentityAgent normal no
+          // requiere acción. Solo si el valor es `none` (sin agente) lo anotamos
+          // como no soportado para avisar al usuario.
+          if (/^none$/i.test(value)) unsupported.add("IdentityAgent none");
+          break;
+        }
+        case "localforward":
+        case "remoteforward":
+        case "dynamicforward": {
+          const tun = parseSshForward(key, value);
+          if (tun) {
+            if (current) current.tunnels.push(tun);
+          } else {
+            unsupported.add(`${m[1]} ${value}`);
+          }
+          break;
+        }
+        default:
+          // Claves reconocidas pero sin mapeo: informar.
+          if (SSH_UNSUPPORTED_KEYS.has(key)) unsupported.add(m[1]);
       }
     }
   }
-  return blocks.filter((b) => b.alias && b.host);
+  return { blocks: blocks.filter((b) => b.alias && b.host), unsupported: [...unsupported] };
 }
 
 /**
@@ -11622,66 +12395,152 @@ async function importFromSshConfig() {
   }
   if (!path) return;
 
-  let blocks;
+  let parsed, home;
   try {
+    home = await invoke("local_home_dir").catch(() => null);
     const text = await invoke("read_text_file", { path });
-    blocks = parseSshConfig(text);
+    parsed = await parseSshConfig(text, home);
   } catch (err) {
     toast(`No se pudo leer ${path}: ${err}`, "error");
     return;
   }
+  const { blocks, unsupported } = parsed;
 
   if (blocks.length === 0) {
-    toast("No se encontraron entradas Host válidas en el fichero", "info");
+    toast(t("import_ssh.no_hosts"), "info");
     return;
   }
 
   const wsId = getActiveWorkspaceId();
   const folder = "SSH Config";
-  saveWorkspaceFolders(wsId, [...getWorkspaceFolders(wsId), folder]);
 
-  const existing = new Set(
+  // Perfiles existentes en la carpeta SSH Config del workspace, indexados por alias.
+  const existingByName = new Map(
     profiles
       .filter((p) => (p.workspace_id || "default") === wsId && p.group === folder)
-      .map((p) => p.name)
+      .map((p) => [p.name, p])
   );
 
-  let added = 0, skipped = 0;
-  const now = new Date().toISOString();
-  for (const b of blocks) {
-    if (existing.has(b.alias)) { skipped++; continue; }
+  // Mapea un bloque del config a los campos de un perfil Rustty.
+  const blockToFields = (b) => {
     const hasKey = !!b.identityFile;
-    const profile = {
-      id: crypto.randomUUID(),
-      name: b.alias,
+    return {
       host: b.host,
       port: Number.isFinite(b.port) ? b.port : 22,
       username: b.user || "",
-      connection_type: "ssh",
-      domain: null,
       auth_type: hasKey ? "public_key" : "password",
       key_path: hasKey ? b.identityFile : null,
-      group: folder,
-      notes: null,
-      workspace_id: wsId,
-      keepass_entry_uuid: null,
-      keepass_property: null,
-      follow_cwd: true,
-      keep_alive_secs: null,
-      allow_legacy_algorithms: false,
-      agent_forwarding: false,
-      disable_paste_confirm: false,
-      x11_forwarding: false,
-      auto_reconnect: null,
-      session_log: false,
-      session_log_dir: null,
+      keep_alive_secs: Number.isFinite(b.keepAliveSecs) ? b.keepAliveSecs : null,
       proxy_jump: b.proxyJump || null,
-      mac_address: null,
-      wol_broadcast: null,
-      wol_port: null,
-      created_at: now,
-      updated_at: now,
+      ssh_tunnels: b.tunnels || [],
     };
+  };
+
+  // Compara los campos mapeados de dos perfiles; los túneles se comparan por
+  // forma (ignorando el `id`, que es aleatorio). Devuelve la lista de campos
+  // que cambiarían.
+  const tunnelKey = (list) =>
+    JSON.stringify(
+      (list || [])
+        .map((tnl) => normalizeTunnelConfig(tnl))
+        .map((tnl) => ({ t: tnl.tunnelType, b: tnl.bindHost, lp: tnl.localPort, rh: tnl.remoteHost, rp: tnl.remotePort }))
+        .sort((x, y) => JSON.stringify(x).localeCompare(JSON.stringify(y)))
+    );
+  const diffFields = (fields, prof) => {
+    const changed = [];
+    if (fields.host !== prof.host) changed.push("host");
+    if (fields.port !== (prof.port ?? 22)) changed.push("port");
+    if (fields.username !== (prof.username || "")) changed.push("user");
+    if ((fields.key_path || null) !== (prof.key_path || null)) changed.push("key_path");
+    if ((fields.proxy_jump || null) !== (prof.proxy_jump || null)) changed.push("proxy_jump");
+    if ((fields.keep_alive_secs ?? null) !== (prof.keep_alive_secs ?? null)) changed.push("keep_alive_secs");
+    if (tunnelKey(fields.ssh_tunnels) !== tunnelKey(prof.ssh_tunnels)) changed.push("ssh_tunnels");
+    return changed;
+  };
+
+  // Clasifica cada bloque: nuevo / a actualizar / sin cambios.
+  const toCreate = [], toUpdate = [], unchanged = [];
+  for (const b of blocks) {
+    const fields = blockToFields(b);
+    const prof = existingByName.get(b.alias);
+    if (!prof) {
+      toCreate.push({ b, fields });
+    } else {
+      const changed = diffFields(fields, prof);
+      if (changed.length) toUpdate.push({ b, fields, prof, changed });
+      else unchanged.push(b.alias);
+    }
+  }
+
+  // Resumen tematizado con recuentos, campos a cambiar y directivas no soportadas.
+  const lines = [
+    t("import_ssh.summary", { new: toCreate.length, update: toUpdate.length, same: unchanged.length }),
+    "",
+    t("import_ssh.new_label", { count: toCreate.length }) +
+      (toCreate.length ? ` — ${toCreate.map((x) => x.b.alias).join(", ")}` : ""),
+    t("import_ssh.update_label", { count: toUpdate.length }),
+  ];
+  for (const u of toUpdate) {
+    lines.push(`  • ${u.b.alias}: ${u.changed.join(", ")}`);
+  }
+  lines.push(t("import_ssh.same_label", { count: unchanged.length }));
+  if (unsupported.length) {
+    lines.push("", t("import_ssh.unsupported_label", { items: unsupported.join(", ") }));
+  }
+
+  if (toCreate.length === 0 && toUpdate.length === 0) {
+    toast(t("import_ssh.nothing"), "info");
+    return;
+  }
+
+  const ok = await confirmThemed({
+    title: t("import_ssh.title"),
+    message: lines.join("\n"),
+    submitLabel: t("import_ssh.apply"),
+  });
+  if (!ok) return;
+
+  saveWorkspaceFolders(wsId, [...getWorkspaceFolders(wsId), folder]);
+
+  // Construye un perfil completo nuevo a partir de los campos mapeados.
+  const buildNewProfile = (alias, fields, now) => ({
+    id: crypto.randomUUID(),
+    name: alias,
+    host: fields.host,
+    port: fields.port,
+    username: fields.username,
+    connection_type: "ssh",
+    domain: null,
+    auth_type: fields.auth_type,
+    key_path: fields.key_path,
+    group: folder,
+    notes: null,
+    workspace_id: wsId,
+    keepass_entry_uuid: null,
+    keepass_property: null,
+    follow_cwd: true,
+    keep_alive_secs: fields.keep_alive_secs,
+    allow_legacy_algorithms: false,
+    agent_forwarding: false,
+    disable_paste_confirm: false,
+    x11_forwarding: false,
+    auto_reconnect: null,
+    session_log: false,
+    session_log_dir: null,
+    proxy_jump: fields.proxy_jump,
+    mac_address: null,
+    wol_broadcast: null,
+    wol_port: null,
+    ssh_tunnels: fields.ssh_tunnels,
+    created_at: now,
+    updated_at: now,
+  });
+
+  let added = 0, updatedCount = 0;
+  const now = new Date().toISOString();
+
+  for (const { b, fields } of toCreate) {
+    const profile = buildNewProfile(b.alias, fields, now);
     try {
       await invoke("save_profile", { profile });
       profiles.push(profile);
@@ -11691,9 +12550,33 @@ async function importFromSshConfig() {
     }
   }
 
+  for (const { fields, prof } of toUpdate) {
+    // Actualiza el perfil existente conservando id y created_at.
+    const profile = {
+      ...prof,
+      host: fields.host,
+      port: fields.port,
+      username: fields.username,
+      auth_type: fields.auth_type,
+      key_path: fields.key_path,
+      keep_alive_secs: fields.keep_alive_secs,
+      proxy_jump: fields.proxy_jump,
+      ssh_tunnels: fields.ssh_tunnels,
+      updated_at: now,
+    };
+    try {
+      await invoke("save_profile", { profile });
+      const idx = profiles.findIndex((p) => p.id === prof.id);
+      if (idx >= 0) profiles[idx] = profile;
+      updatedCount++;
+    } catch (err) {
+      console.error("[ssh_config] save_profile update failed for", prof.name, err);
+    }
+  }
+
   renderConnectionList();
   scheduleProfileAutoSync();
-  toast(`SSH Config: ${added} nuevas, ${skipped} ya existían`, "success");
+  toast(t("import_ssh.done", { new: added, update: updatedCount, same: unchanged.length }), "success");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -11728,6 +12611,26 @@ function bindUIEvents() {
       renderConnectionSummary();
     });
     _connForm.addEventListener("change", () => renderConnectionSummary());
+  }
+
+  // Confirmación al activar el reenvío del agente SSH: es peligroso heredarlo
+  // silenciosamente, así que solo se habilita tras aceptar el aviso de seguridad.
+  const agentFwdToggle = document.getElementById("f-agent-forwarding");
+  if (agentFwdToggle) {
+    agentFwdToggle.addEventListener("change", async () => {
+      if (!agentFwdToggle.checked) return;
+      const ok = await confirmThemed({
+        title: t("modal_conn.agent_forwarding_confirm_title"),
+        message: t("modal_conn.agent_forwarding_confirm_message"),
+        submitLabel: t("modal_conn.agent_forwarding_confirm_submit"),
+        danger: true,
+      });
+      if (!ok) {
+        // El usuario canceló: el toggle vuelve a quedar desactivado.
+        agentFwdToggle.checked = false;
+        renderConnectionSummary();
+      }
+    });
   }
 
   // Reemplazar todos los <select> nativos por el dropdown personalizado
@@ -11817,6 +12720,63 @@ function bindUIEvents() {
       }
     });
   }
+
+  // Overflow de pestañas: botón ⋯ + popover con buscador, lista y teclado
+  const tabOverflowBtn = document.getElementById("btn-tab-overflow");
+  const tabOverflowPopover = document.getElementById("tab-overflow-popover");
+  const tabOverflowSearch = document.getElementById("tab-overflow-search");
+  if (tabOverflowBtn && tabOverflowPopover) {
+    tabOverflowBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleTabOverflow();
+    });
+    // Clic en una fila → activar esa pestaña y cerrar.
+    document.getElementById("tab-overflow-list")?.addEventListener("click", (e) => {
+      const item = e.target.closest(".tab-overflow-item");
+      if (item) activateTabOverflowRow(item.dataset.session);
+    });
+    // Búsqueda con debounce ligero (mismo criterio que el resto del proyecto).
+    tabOverflowSearch?.addEventListener("input", () => {
+      clearTimeout(_tabOverflowSearchTimer);
+      _tabOverflowSearchTimer = setTimeout(
+        () => renderTabOverflowList(tabOverflowSearch.value), 120);
+    });
+    // Teclado: ↑/↓ navegar, Enter activar, Esc cerrar.
+    tabOverflowSearch?.addEventListener("keydown", (e) => {
+      const items = [...document.querySelectorAll("#tab-overflow-list .tab-overflow-item")];
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (items.length) {
+          _tabOverflowIndex = (_tabOverflowIndex + 1) % items.length;
+          highlightTabOverflowRow();
+        }
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (items.length) {
+          _tabOverflowIndex = (_tabOverflowIndex - 1 + items.length) % items.length;
+          highlightTabOverflowRow();
+        }
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        activateTabOverflowRow(items[_tabOverflowIndex]?.dataset.session);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleTabOverflow(false);
+        tabOverflowBtn.focus();
+      }
+    });
+    // Cerrar al hacer clic fuera.
+    document.addEventListener("click", (e) => {
+      if (!tabOverflowPopover.classList.contains("hidden") &&
+          !tabOverflowPopover.contains(e.target) &&
+          !tabOverflowBtn.contains(e.target)) {
+        toggleTabOverflow(false);
+      }
+    });
+  }
+  // Recalcular el overflow cuando cambia el tamaño de la ventana.
+  window.addEventListener("resize", updateTabOverflowButton);
 
   // Botones de nueva conexión
   document.getElementById("btn-new-connection")
@@ -12045,6 +13005,31 @@ function bindUIEvents() {
     .addEventListener("click", () => importConnections());
   document.getElementById("btn-import-ssh-config")
     ?.addEventListener("click", () => importFromSshConfig());
+
+  // Logs de sesión: retención
+  document.getElementById("btn-session-logs-prune")
+    ?.addEventListener("click", () => sessionLogsPruneNow());
+  document.getElementById("btn-session-logs-open")
+    ?.addEventListener("click", () => sessionLogsOpenFolder());
+
+  // Gestor de known_hosts
+  document.getElementById("btn-manage-known-hosts")
+    ?.addEventListener("click", () => openKnownHostsModal());
+  document.getElementById("btn-known-hosts-close")
+    ?.addEventListener("click", closeKnownHostsModal);
+  document.getElementById("known-hosts-overlay")
+    ?.addEventListener("mousedown", (e) => {
+      if (e.target.id === "known-hosts-overlay") closeKnownHostsModal();
+    });
+  document.getElementById("known-hosts-modal")
+    ?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-known-host-action]");
+      if (!btn) return;
+      const row = btn.closest(".global-tunnel-row");
+      if (btn.dataset.knownHostAction === "remove") {
+        removeKnownHostLine(Number(row.dataset.line));
+      }
+    });
 
   // Panel global de túneles SSH
   document.getElementById("btn-global-tunnels-close")
@@ -13036,7 +14021,11 @@ async function initWindowControls() {
   try {
     const mod = await import("@tauri-apps/api/window");
     win = mod.getCurrentWindow();
+    // Restauramos tamaño/posición/maximizado ANTES de mostrar la ventana.
+    // Así el estado del plugin window-state ya está aplicado cuando la ventana
+    // se hace visible y evitamos un salto visible tras el primer paint.
     await restoreWindowStateNow(win);
+    revealWindowAfterPaint(win);
     initWindowResizeHandles(win);
   } catch {
     return; // fuera de Tauri (p. ej. vite dev puro): no hay ventana
@@ -13129,6 +14118,25 @@ async function saveWindowStateNow() {
       flags: WINDOW_STATE_FLAGS_SIZE_POSITION_MAXIMIZED,
     });
   } catch {}
+}
+
+/**
+ * Arranque visual sin flash: la ventana nace oculta (`visible:false` en
+ * tauri.conf.json) y la revelamos solo tras el primer paint, una vez aplicados
+ * tema y estilos. Un doble requestAnimationFrame garantiza que el navegador ha
+ * pintado al menos un frame antes de `show()`. Como salvaguarda anti-bloqueo,
+ * un setTimeout fuerza el `show()` aunque el rAF no llegara a dispararse (p. ej.
+ * pestaña en segundo plano), evitando que la ventana quede oculta para siempre.
+ */
+function revealWindowAfterPaint(win) {
+  let shown = false;
+  const show = () => {
+    if (shown) return;
+    shown = true;
+    win.show().catch(() => {});
+  };
+  requestAnimationFrame(() => requestAnimationFrame(show));
+  setTimeout(show, 1500);
 }
 
 async function restoreWindowStateNow(win) {
@@ -13597,6 +14605,30 @@ function escHtml(str) {
 
 const TOAST_VISIBLE_LIMIT = 3;
 
+/**
+ * Categorías que se agrupan (coalescing): si ya hay un toast visible de la
+ * misma categoría, en vez de apilar otro se reutiliza el existente, se
+ * actualiza con el último mensaje/acción y se muestra un badge "+N más" con
+ * los eventos extra agrupados. Las categorías fuera de esta lista (info
+ * puntual) se comportan como antes: un toast independiente por llamada.
+ */
+const TOAST_COALESCE_CATEGORIES = new Set(["transfer", "sync", "error"]);
+
+// Toast vivo por categoría agrupable, para reutilizarlo mientras esté visible.
+const activeCategoryToasts = new Map();
+
+/**
+ * Deriva la categoría de un toast. Prioriza `options.category` explícito
+ * (usado en transferencias/sincronización); si no, la infiere del `type`
+ * para no tener que tocar las llamadas existentes: los errores se agrupan
+ * bajo "error" y el resto queda como "default" (sin coalescing).
+ */
+function toastCategory(type, options) {
+  if (options && options.category) return options.category;
+  if (type === "error") return "error";
+  return "default";
+}
+
 function toast(message, type = "info", ms = 3500, options = {}) {
   if (typeof ms === "object" && ms !== null) {
     options = ms;
@@ -13618,30 +14650,86 @@ function toast(message, type = "info", ms = 3500, options = {}) {
       onAction: () => writeSystemClipboardText(String(message)),
     };
   }
+  const container = document.getElementById("toast-container");
+  const category = toastCategory(type, options);
+
+  // Coalescing: reutiliza el toast vivo de esta categoría, si lo hay.
+  if (TOAST_COALESCE_CATEGORIES.has(category)) {
+    const existing = activeCategoryToasts.get(category);
+    if (existing && existing.el.isConnected) {
+      existing.extra += 1;
+      updateToastContent(existing.el, message, type, options, existing.extra);
+      clearTimeout(existing.timer);
+      existing.timer = setTimeout(
+        () => dismissToast(existing.el, category),
+        ms,
+      );
+      refreshToastOverflowCounter();
+      return;
+    }
+  }
+
   const el = document.createElement("div");
   el.className = `toast ${type}`;
+  el.dataset.category = category;
+  updateToastContent(el, message, type, options, 0);
+  container.appendChild(el);
+
+  const timer = setTimeout(() => dismissToast(el, category), ms);
+  if (TOAST_COALESCE_CATEGORIES.has(category)) {
+    activeCategoryToasts.set(category, { el, extra: 0, timer });
+  }
+  refreshToastOverflowCounter();
+}
+
+/**
+ * (Re)pinta el contenido de un toast: mensaje, acción y, si procede, el badge
+ * "+N más" con los eventos agrupados de su categoría. Se usa tanto al crear el
+ * toast como al actualizarlo durante el coalescing, conservando la
+ * accionabilidad (p. ej. "Copiar error"/"Ver log") del último evento.
+ */
+function updateToastContent(el, message, type, options, extra) {
+  el.className = `toast ${type}`;
+  if (el.dataset.category) el.classList.add(`toast-cat-${el.dataset.category}`);
+  el.replaceChildren();
+
   const text = document.createElement("span");
   text.className = "toast-message";
   text.textContent = message;
   el.appendChild(text);
+
+  if (extra > 0) {
+    const badge = document.createElement("span");
+    badge.className = "toast-count";
+    badge.textContent = t("toast.more", { n: extra });
+    el.appendChild(badge);
+  }
+
   if (options.actionLabel && typeof options.onAction === "function") {
+    const category = el.dataset.category;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "toast-action";
     btn.textContent = options.actionLabel;
     btn.addEventListener("click", () => {
       options.onAction();
-      el.remove();
-      refreshToastOverflowCounter();
+      dismissToast(el, category);
     });
     el.appendChild(btn);
   }
-  const container = document.getElementById("toast-container");
-  container.appendChild(el);
-  setTimeout(() => {
-    el.remove();
-    refreshToastOverflowCounter();
-  }, ms);
+}
+
+/**
+ * Cierra un toast y, si pertenece a una categoría agrupable, resetea el grupo
+ * para que el siguiente evento de esa categoría vuelva a crear un toast nuevo.
+ */
+function dismissToast(el, category) {
+  const tracked = category && activeCategoryToasts.get(category);
+  if (tracked && tracked.el === el) {
+    clearTimeout(tracked.timer);
+    activeCategoryToasts.delete(category);
+  }
+  el.remove();
   refreshToastOverflowCounter();
 }
 
@@ -13669,6 +14757,7 @@ function refreshToastOverflowCounter() {
         openActivityCenter();
         all.forEach((t) => t.remove());
         counter?.remove();
+        activeCategoryToasts.clear();
       });
       container.prepend(counter);
     }

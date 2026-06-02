@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager, State};
 
+use crate::host_keys::fingerprint_sha256;
 use crate::keepass_manager;
 use crate::local_shell_manager::LocalShellManager;
 use crate::profiles::{ConnectionProfile, ProfileManager};
@@ -979,6 +980,148 @@ pub fn list_monospace_fonts() -> Result<Vec<String>, String> {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  Gestor de known_hosts
+// ═══════════════════════════════════════════════════════════════════
+
+/// Una entrada del fichero `~/.ssh/known_hosts` lista para mostrar en la UI.
+#[derive(serde::Serialize)]
+pub struct KnownHostEntry {
+    /// Número de línea (1-indexed) dentro del fichero.
+    pub line: usize,
+    /// Host (o `(hashed)` si la entrada está ofuscada con `|1|...`).
+    pub host: String,
+    /// Puerto; 22 si la entrada no lleva el formato `[host]:puerto`.
+    pub port: u16,
+    /// Algoritmo de la clave (p. ej. `ssh-ed25519`).
+    pub algorithm: String,
+    /// Huella SHA256 en formato `SHA256:...`.
+    pub fingerprint: String,
+}
+
+/// Devuelve la ruta de `~/.ssh/known_hosts` (la que usa russh por defecto).
+fn known_hosts_path() -> Result<PathBuf, String> {
+    dirs::home_dir()
+        .map(|home| home.join(".ssh").join("known_hosts"))
+        .ok_or_else(|| "No se pudo localizar el directorio home".to_string())
+}
+
+/// Separa el campo de hosts de una entrada known_hosts en `(host, puerto)`.
+/// Soporta el formato `[host]:puerto` y toma solo el primer host si hay varios
+/// separados por comas. Las entradas hashed (`|1|...`) se marcan como `(hashed)`.
+fn parse_known_host_field(field: &str) -> (String, u16) {
+    if field.starts_with("|1|") || field.starts_with("|") {
+        return ("(hashed)".to_string(), 22);
+    }
+    let first = field.split(',').next().unwrap_or(field);
+    if let Some(rest) = first.strip_prefix('[') {
+        if let Some((host, port)) = rest.split_once("]:") {
+            let port = port.parse::<u16>().unwrap_or(22);
+            return (host.to_string(), port);
+        }
+    }
+    (first.to_string(), 22)
+}
+
+/// Lista las entradas de `~/.ssh/known_hosts` con host, puerto, algoritmo y
+/// huella SHA256. Salta líneas vacías y comentarios. Si el fichero no existe,
+/// devuelve una lista vacía (no es un error).
+#[tauri::command]
+pub fn list_known_hosts() -> Result<Vec<KnownHostEntry>, String> {
+    use russh::keys::ssh_key::PublicKey;
+
+    let path = known_hosts_path()?;
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err.to_string()),
+    };
+
+    let mut entries = Vec::new();
+    for (idx, raw) in contents.lines().enumerate() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // Formato: hosts algoritmo clave_base64 [comentario]
+        let mut parts = trimmed.split_whitespace();
+        let Some(hosts_field) = parts.next() else {
+            continue;
+        };
+        // Las marcas `@cert-authority` / `@revoked` van delante del campo host.
+        let (hosts_field, algorithm, key_b64) = if hosts_field.starts_with('@') {
+            let Some(real_hosts) = parts.next() else {
+                continue;
+            };
+            let (Some(alg), Some(key)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            (real_hosts, alg, key)
+        } else {
+            let (Some(alg), Some(key)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            (hosts_field, alg, key)
+        };
+
+        let (host, port) = parse_known_host_field(hosts_field);
+        // Reconstruimos la línea openssh (`algoritmo clave`) para parsear la
+        // clave pública y calcular la huella con el helper común.
+        let openssh = format!("{algorithm} {key_b64}");
+        let fingerprint = match PublicKey::from_openssh(&openssh) {
+            Ok(key) => fingerprint_sha256(&key),
+            Err(_) => "(clave no reconocida)".to_string(),
+        };
+
+        entries.push(KnownHostEntry {
+            line: idx + 1,
+            host,
+            port,
+            algorithm: algorithm.to_string(),
+            fingerprint,
+        });
+    }
+
+    Ok(entries)
+}
+
+/// Elimina una línea concreta (1-indexed, coherente con `list_known_hosts`) de
+/// `~/.ssh/known_hosts` y reescribe el fichero preservando permisos 0600.
+#[tauri::command]
+pub fn remove_known_host_line(line: usize) -> Result<(), String> {
+    let path = known_hosts_path()?;
+    let contents = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+
+    if line == 0 {
+        return Err("Número de línea no válido".to_string());
+    }
+
+    // Conservamos el carácter de fin de línea final si existía.
+    let had_trailing_newline = contents.ends_with('\n');
+    let kept: Vec<&str> = contents
+        .lines()
+        .enumerate()
+        .filter(|(idx, _)| idx + 1 != line)
+        .map(|(_, l)| l)
+        .collect();
+
+    let mut output = kept.join("\n");
+    if !output.is_empty() && had_trailing_newline {
+        output.push('\n');
+    }
+
+    std::fs::write(&path, output).map_err(|e| e.to_string())?;
+
+    // Mantenemos los permisos restrictivos típicos de known_hosts en Unix.
+    #[cfg(unix)]
+    {
+        let perms = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(&path, perms).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  Sincronización en la nube
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1173,4 +1316,149 @@ pub async fn sync_read_snapshot(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "Snapshot no encontrado".to_string())?;
     unpack_state(&passphrase, &bytes).map_err(|e| e.to_string())
+}
+
+// ─── Retención de logs de sesión ──────────────────────────────────────────────
+
+/// Resumen del contenido de la carpeta de logs de sesión.
+#[derive(serde::Serialize)]
+pub struct SessionLogsInfo {
+    pub count: usize,
+    pub total_bytes: u64,
+}
+
+/// Resultado de una limpieza (poda) de la carpeta de logs de sesión.
+#[derive(serde::Serialize)]
+pub struct SessionLogsPruneResult {
+    pub removed: usize,
+    pub freed_bytes: u64,
+}
+
+/// Ruta efectiva por defecto de la carpeta de logs de sesión
+/// (`<data_dir>/session_logs`). Coincide con el destino que usa
+/// `resolve_log_path` cuando el perfil no fija una carpeta propia.
+fn session_logs_path(data_dir: &State<crate::DataDir>) -> PathBuf {
+    data_dir.0.join("session_logs")
+}
+
+/// Devuelve la ruta efectiva por defecto de los logs de sesión.
+#[tauri::command]
+pub fn session_logs_dir(data_dir: State<crate::DataDir>) -> Result<String, String> {
+    Ok(session_logs_path(&data_dir).to_string_lossy().into_owned())
+}
+
+/// Recorre la carpeta de logs y devuelve cuántos ficheros hay y su tamaño total.
+/// Si la carpeta no existe devuelve ceros. Solo cuenta ficheros regulares.
+#[tauri::command]
+pub fn session_logs_list(data_dir: State<crate::DataDir>) -> Result<SessionLogsInfo, String> {
+    let dir = session_logs_path(&data_dir);
+    let mut count = 0usize;
+    let mut total_bytes = 0u64;
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(ref err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SessionLogsInfo { count, total_bytes });
+        }
+        Err(err) => return Err(err.to_string()),
+    };
+    for entry in entries.flatten() {
+        // `metadata()` no sigue symlinks: descarta directorios y enlaces.
+        if let Ok(meta) = entry.metadata() {
+            if meta.is_file() {
+                count += 1;
+                total_bytes += meta.len();
+            }
+        }
+    }
+    Ok(SessionLogsInfo { count, total_bytes })
+}
+
+/// Borra logs de sesión antiguos. Primero elimina los más viejos que
+/// `max_age_days` (por fecha de modificación) y, si tras eso el total
+/// sigue por encima de `max_total_mb`, sigue borrando del más antiguo al
+/// más reciente hasta bajar del límite. Si ambos son `None` no borra nada.
+///
+/// Conservador: solo toca ficheros regulares dentro de la carpeta (no
+/// subdirectorios ni symlinks, que `metadata()` descarta por no ser file).
+#[tauri::command]
+pub fn session_logs_prune(
+    data_dir: State<crate::DataDir>,
+    max_age_days: Option<u32>,
+    max_total_mb: Option<u64>,
+) -> Result<SessionLogsPruneResult, String> {
+    let mut removed = 0usize;
+    let mut freed_bytes = 0u64;
+
+    if max_age_days.is_none() && max_total_mb.is_none() {
+        return Ok(SessionLogsPruneResult { removed, freed_bytes });
+    }
+
+    let dir = session_logs_path(&data_dir);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(ref err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SessionLogsPruneResult { removed, freed_bytes });
+        }
+        Err(err) => return Err(err.to_string()),
+    };
+
+    // Recopila ficheros regulares con tamaño y mtime.
+    struct LogFile {
+        path: PathBuf,
+        size: u64,
+        modified: std::time::SystemTime,
+    }
+    let mut files: Vec<LogFile> = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+        files.push(LogFile {
+            path: entry.path(),
+            size: meta.len(),
+            modified,
+        });
+    }
+
+    // Más antiguos primero.
+    files.sort_by(|a, b| a.modified.cmp(&b.modified));
+
+    // 1) Poda por edad.
+    if let Some(days) = max_age_days {
+        let cutoff = std::time::SystemTime::now()
+            .checked_sub(std::time::Duration::from_secs(days as u64 * 86_400));
+        if let Some(cutoff) = cutoff {
+            files.retain(|f| {
+                if f.modified < cutoff {
+                    if std::fs::remove_file(&f.path).is_ok() {
+                        removed += 1;
+                        freed_bytes += f.size;
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+    }
+
+    // 2) Poda por tamaño total (sobre los que quedan, del más antiguo al más nuevo).
+    if let Some(max_mb) = max_total_mb {
+        let max_bytes = max_mb.saturating_mul(1_048_576);
+        let mut total: u64 = files.iter().map(|f| f.size).sum();
+        for f in &files {
+            if total <= max_bytes {
+                break;
+            }
+            if std::fs::remove_file(&f.path).is_ok() {
+                removed += 1;
+                freed_bytes += f.size;
+                total = total.saturating_sub(f.size);
+            }
+        }
+    }
+
+    Ok(SessionLogsPruneResult { removed, freed_bytes })
 }

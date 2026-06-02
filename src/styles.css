@@ -610,6 +610,109 @@ body.sidebar-collapsed #sidebar-resize-handle {
 
 .sidebar-tools-popover #sidebar-search:focus { border-color: var(--blue); }
 
+/* ── Overflow de pestañas (botón ⋯ + popover con buscador y lista) ── */
+#btn-tab-overflow {
+  flex: 0 0 auto;
+  width: 30px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--subtext0);
+  border-right: 1px solid var(--surface0);
+  -webkit-app-region: no-drag;
+  transition: background 0.15s, color 0.15s;
+}
+#btn-tab-overflow.hidden { display: none; }
+#btn-tab-overflow:hover { background: var(--surface0); color: var(--text); }
+#btn-tab-overflow .tab-overflow-icon { font-size: 16px; line-height: 1; }
+
+.tab-overflow-popover {
+  position: fixed;
+  top: 44px;
+  left: 8px;
+  width: 280px;
+  z-index: 60;
+  background: var(--mantle);
+  border: 1px solid var(--surface1);
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+.tab-overflow-popover.hidden { display: none; }
+
+.tab-overflow-search {
+  width: 100%;
+  background: var(--base);
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  padding: 5px 9px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.tab-overflow-search:focus { border-color: var(--blue); }
+
+.tab-overflow-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.tab-overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.tab-overflow-item:hover,
+.tab-overflow-item.highlighted { background: var(--surface0); }
+.tab-overflow-item.active {
+  background: color-mix(in srgb, var(--blue) 20%, transparent);
+  color: var(--blue);
+}
+
+.tab-overflow-item .tab-dot { margin: 0; }
+
+.tab-overflow-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.tab-overflow-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab-overflow-host {
+  font-size: 10px;
+  color: var(--overlay1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-overflow-empty {
+  padding: 10px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--overlay1);
+}
+
 .workspace-menu {
   display: flex;
   flex-direction: column;
@@ -3068,6 +3171,19 @@ input[type="checkbox"] {
   background: rgba(0, 0, 0, 0.12);
 }
 
+/* Badge "+N más": eventos extra agrupados en un mismo toast por categoría
+   (transferencias, sincronización, errores). Reutiliza el color del toast. */
+.toast-count {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.18);
+  color: inherit;
+  white-space: nowrap;
+}
+
 /* Toasts apilados: cuando hay más de TOAST_VISIBLE_LIMIT, los antiguos
    se ocultan y un contador "+N" abre el centro de actividad. */
 .toast.toast-hidden {
@@ -5281,6 +5397,82 @@ body.sftp-panel-resizing {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Barra de búsqueda por nombre (separada del autocompletado de rutas) */
+.sftp-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: color-mix(in srgb, var(--crust) 88%, var(--mantle));
+  border-bottom: 1px solid var(--surface0);
+}
+
+.sftp-search-icon {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.sftp-search-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--base);
+  border: 1px solid var(--surface0);
+  color: var(--text);
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  outline: none;
+}
+
+.sftp-search-input:focus {
+  border-color: var(--blue);
+}
+
+.sftp-search-recursive {
+  background: transparent;
+  border: 1px solid var(--surface1);
+  color: var(--overlay1);
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms, color 120ms;
+}
+
+.sftp-search-recursive:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+.sftp-search-recursive.active {
+  background: color-mix(in srgb, var(--blue) 22%, transparent);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.sftp-search-status {
+  font-size: 10px;
+  color: var(--peach);
+  white-space: nowrap;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sftp-row.sftp-filtered-out {
+  display: none;
+}
+
+.sftp-row.sftp-search-result {
+  grid-template-columns: 48px 1fr 80px 130px;
+  cursor: pointer;
+}
+
+.sftp-row.sftp-search-result.active {
+  background: color-mix(in srgb, var(--blue) 22%, transparent);
 }
 
 .sftp-columns {

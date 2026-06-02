@@ -183,6 +183,9 @@
             <span class="tab-name">Inicio</span>
           </button>
           <div id="tabs-container"></div>
+          <button id="btn-tab-overflow" class="hidden" type="button" data-i18n-title="tab_overflow.button_title" title="Pestañas abiertas" aria-label="Pestañas abiertas" aria-haspopup="true" aria-expanded="false">
+            <span class="tab-overflow-icon" aria-hidden="true">⋯</span>
+          </button>
           <div id="tab-bar-drag" data-tauri-drag-region></div>
           <div id="window-controls" aria-hidden="false">
             <button id="btn-win-min" class="win-ctrl" data-i18n-title="window.minimize" title="Minimizar" aria-label="Minimizar">
@@ -500,6 +503,12 @@
       </button>
     </div>
 
+    <!-- Popover de overflow de pestañas: lista con buscador y estado -->
+    <div id="tab-overflow-popover" class="tab-overflow-popover hidden" role="menu">
+      <input type="search" id="tab-overflow-search" class="tab-overflow-search" data-i18n-placeholder="tab_overflow.search_placeholder" placeholder="Buscar pestañas…" spellcheck="false" autocomplete="off" />
+      <div id="tab-overflow-list" class="tab-overflow-list" role="listbox"></div>
+    </div>
+
     <!-- ══════════════════════════════════════════════════════
          MODAL: Añadir / Editar conexión
     ══════════════════════════════════════════════════════ -->
@@ -719,6 +728,9 @@
               <p class="form-hint" data-i18n="modal_conn.agent_forwarding_hint">
                 Reusa el socket del agente local ($SSH_AUTH_SOCK) para autenticar saltos desde el host remoto.
               </p>
+              <p class="form-hint warning" data-i18n="modal_conn.agent_forwarding_warning">
+                ⚠️ Habilítalo solo en hosts de confianza: un servidor comprometido puede usar tu agente (y tus claves) para saltar a otros equipos.
+              </p>
             </div>
 
             <div class="form-row">
@@ -888,6 +900,26 @@
           <div class="global-tunnels-section">
             <div class="global-tunnels-section-title">Guardados</div>
             <div id="global-saved-tunnels" class="global-tunnel-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Gestor de known_hosts
+    ══════════════════════════════════════════════════════ -->
+    <div id="known-hosts-overlay" class="hidden">
+      <div id="known-hosts-modal" role="dialog" aria-modal="true" aria-labelledby="known-hosts-title">
+        <div class="modal-header">
+          <h2 id="known-hosts-title" data-i18n="modal_known_hosts.title">Claves de host conocidas</h2>
+          <button class="btn-icon" id="btn-known-hosts-close" data-i18n-aria-label="modal_known_hosts.close" aria-label="Cerrar">✕</button>
+        </div>
+        <div class="global-tunnels-body">
+          <p class="prefs-panel-hint" data-i18n="modal_known_hosts.hint">
+            Entradas de <code>~/.ssh/known_hosts</code>. Elimina una clave conflictiva para volver a aceptarla la próxima vez que conectes.
+          </p>
+          <div class="global-tunnels-section">
+            <div id="known-hosts-list" class="global-tunnel-list"></div>
           </div>
         </div>
       </div>
@@ -1643,6 +1675,44 @@
                 <button type="button" class="btn-secondary" id="btn-import-ssh-config" data-i18n="prefs_data.import_ssh_config">
                   Importar ~/.ssh/config
                 </button>
+              </div>
+
+              <h3 class="prefs-panel-title" style="margin-top: 1.5rem;" data-i18n="prefs_known_hosts.title">Claves de host conocidas</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_known_hosts.hint">
+                Revisa las huellas registradas en <code>~/.ssh/known_hosts</code> y elimina entradas conflictivas sin editar el fichero a mano.
+              </p>
+              <div class="data-actions">
+                <button type="button" class="btn-secondary" id="btn-manage-known-hosts" data-i18n="prefs_known_hosts.manage">
+                  Gestionar known_hosts
+                </button>
+              </div>
+
+              <h3 class="prefs-panel-title" style="margin-top: 1.5rem;" data-i18n="prefs_session_logs.title">Logs de sesión</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_session_logs.hint">
+                Las sesiones con grabación activa vuelcan la salida del shell a ficheros de log. Define una retención para que no se acumulen indefinidamente.
+              </p>
+              <p class="form-hint warning" data-i18n="prefs_session_logs.warning">
+                ⚠️ Los logs pueden contener información sensible (comandos ejecutados y su salida). Guárdalos y bórralos con cuidado.
+              </p>
+
+              <p class="settings-hint" id="session-logs-stats" data-i18n="prefs_session_logs.stats_loading">Calculando…</p>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-session-log-max-age" data-i18n="prefs_session_logs.max_age">Edad máxima (días)</label>
+                <div class="settings-control">
+                  <input type="number" id="pref-session-log-max-age" min="1" step="1" data-i18n-placeholder="prefs_session_logs.no_limit" placeholder="Sin límite" />
+                </div>
+              </div>
+              <div class="settings-row settings-row-inline">
+                <label for="pref-session-log-max-mb" data-i18n="prefs_session_logs.max_total">Tamaño máximo total (MB)</label>
+                <div class="settings-control">
+                  <input type="number" id="pref-session-log-max-mb" min="1" step="1" data-i18n-placeholder="prefs_session_logs.no_limit" placeholder="Sin límite" />
+                </div>
+              </div>
+
+              <div class="data-actions">
+                <button type="button" class="btn-secondary" id="btn-session-logs-prune" data-i18n="prefs_session_logs.prune">Limpiar ahora</button>
+                <button type="button" class="btn-secondary" id="btn-session-logs-open" data-i18n="prefs_session_logs.open_folder">Abrir carpeta</button>
               </div>
             </section>
 

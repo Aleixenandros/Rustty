@@ -65,7 +65,7 @@ En el formulario de perfil, la sección **Opciones avanzadas** expone toggles SS
 
 - **Keep-alive (segundos)**: 0 deshabilita; cualquier valor mayor envía un paquete keepalive al servidor cada N segundos para evitar caídas por NAT.
 - **Permitir cifrados / kex / MAC antiguos**: extiende la negociación con `aes-cbc`, `dh-sha1`, `hmac-sha1` y `ssh-rsa` para conectar con servidores legacy. ⚠️ Reduce la seguridad: úsalo sólo cuando lo necesites.
-- **Reenviar agente SSH**: reusa `$SSH_AUTH_SOCK` (sólo Unix) para autenticar saltos desde el host remoto sin copiar las claves.
+- **Reenviar agente SSH**: reusa `$SSH_AUTH_SOCK` (sólo Unix) para autenticar saltos desde el host remoto sin copiar las claves. ⚠️ Al activarlo Rustty pide confirmación: un host comprometido podría usar tu agente para saltar a otros equipos, así que habilítalo solo en hosts de confianza.
 - **Reenviar X11**: solicita el canal X11 con cookie sintética `MIT-MAGIC-COOKIE-1` y lo redirige a `localhost:6000+display`. Requiere un X server local.
 - **Bastion / Jump host**: conecta primero a un host bastión y abre el destino real a través de un canal `direct-tcpip`, equivalente a `ProxyJump`.
 - **Desactivar confirmación de pegado peligroso**: la confirmación al pegar texto multilínea, muy largo o con caracteres de control está activa de forma global; este toggle del perfil la **desactiva** solo para esta conexión.
