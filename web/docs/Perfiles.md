@@ -47,6 +47,16 @@ Para SSH puedes elegir:
 
 También puedes asociar una entrada KeePass al perfil para resolver la contraseña desde una base `.kdbx` desbloqueada.
 
+### Origen de la contraseña
+
+Cuando el método es **Contraseña**, un selector **Origen de la contraseña** permite elegir de dónde sale:
+
+- **Propia**: la contraseña de este perfil (escrita al conectar o guardada en el keyring).
+- **Credencial maestra**: reutiliza una credencial definida en **Preferencias → Credenciales** (ver [Seguridad](?page=Seguridad)). El perfil guarda solo la referencia `${master:nombre}`; rotar el valor de la maestra actualiza a la vez todos los perfiles que la usan.
+- **KeePass**: resuelve la contraseña desde una entrada `.kdbx` desbloqueada.
+
+Desde el menú contextual de un perfil con contraseña propia, **Promover a credencial maestra** convierte esa contraseña en una credencial reutilizable y reapunta el perfil para usarla. También puedes teclear marcadores `${...}` (como `${master:nombre}` o `${ask:Etiqueta}`) directamente en el campo de contraseña; se resuelven al conectar.
+
 El check de guardar contraseña/passphrase aparece marcado por defecto para favorecer flujos multi-equipo; desmárcalo si no quieres guardar ese secreto en el keyring local. Si activas la sincronización de contraseñas guardadas en **Copias de seguridad**, esos secretos viajan cifrados E2E y se restauran en el keyring de los demás equipos.
 
 En perfiles RDP, **Guardar y conectar** usa la contraseña escrita en el formulario para esa conexión aunque no marques guardarla en el keyring. Si no hay contraseña disponible, Rustty la pedirá con el mismo modal integrado con el tema.

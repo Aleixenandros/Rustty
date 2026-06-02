@@ -10,7 +10,8 @@ Rustty agrupa las copias en **Preferencias → Copias de seguridad**. Desde ahí
 - Temas personalizados.
 - Atajos configurados por el usuario.
 - Snippets, cuando exista la biblioteca de snippets.
-- Contraseñas y passphrases guardadas, solo si activas el check **Contraseñas guardadas (cifradas E2E)**.
+- El catálogo de **credenciales maestras y variables** (metadatos: nombre y tipo). Las variables de texto incluyen su valor; las maestras y secretos no.
+- Contraseñas y passphrases guardadas y los **valores de credenciales maestras / secretos**, solo si activas el check **Contraseñas guardadas (cifradas E2E)**.
 
 Las bases KeePass desbloqueadas y rutas locales como `keepassPath` o `keepassKeyfile` no se sincronizan.
 
@@ -20,7 +21,7 @@ La sincronización usa un fichero `rustty-sync.bin` cifrado localmente con `age`
 
 Si pierdes la passphrase, Rustty no puede descifrar el backup remoto.
 
-Cuando activas la sincronización de contraseñas guardadas, Rustty lee del keyring local las claves `password:<profile_id>` y `passphrase:<profile_id>`, las incluye en ese blob cifrado y las restaura en el keyring del otro equipo. Google Drive o WebDAV nunca reciben esos valores en claro.
+Cuando activas la sincronización de contraseñas guardadas, Rustty lee del keyring local las claves `password:<profile_id>` y `passphrase:<profile_id>` —y, con el mismo opt-in, los valores de credenciales maestras (`master:<id>`) y secretos (`secret:<id>`)—, los incluye en ese blob cifrado y los restaura en el keyring del otro equipo. Google Drive o WebDAV nunca reciben esos valores en claro.
 
 ## Sincronización automática
 
