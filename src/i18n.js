@@ -401,6 +401,11 @@ const DICTIONARIES = {
     },
     status: {
       latency: "Latencia",
+      cwd_seg_nav: "Ir a {path} en el panel SFTP",
+      cwd_copy: "Copiar ruta completa",
+      cwd_copy_seg: "Ctrl/Cmd+clic para copiar la ruta",
+      cwd_copied: "Ruta copiada al portapapeles",
+      cwd_nav_error: "No se pudo abrir el panel SFTP en {path}",
     },
     prefs_sync: {
       title: "Sincronización en la nube",
@@ -977,6 +982,11 @@ const DICTIONARIES = {
     },
     status: {
       latency: "Latency",
+      cwd_seg_nav: "Go to {path} in the SFTP panel",
+      cwd_copy: "Copy full path",
+      cwd_copy_seg: "Ctrl/Cmd+click to copy the path",
+      cwd_copied: "Path copied to clipboard",
+      cwd_nav_error: "Could not open the SFTP panel at {path}",
     },
     prefs_sync: {
       title: "Cloud sync",
@@ -1507,6 +1517,11 @@ const DICTIONARIES = {
     },
     status: {
       latency: "Latence",
+      cwd_seg_nav: "Aller à {path} dans le panneau SFTP",
+      cwd_copy: "Copier le chemin complet",
+      cwd_copy_seg: "Ctrl/Cmd+clic pour copier le chemin",
+      cwd_copied: "Chemin copié dans le presse-papiers",
+      cwd_nav_error: "Impossible d'ouvrir le panneau SFTP sur {path}",
     },
     prefs_about: {
       title: "À propos de Rustty",
@@ -1958,6 +1973,11 @@ const DICTIONARIES = {
     },
     status: {
       latency: "Latência",
+      cwd_seg_nav: "Ir para {path} no painel SFTP",
+      cwd_copy: "Copiar caminho completo",
+      cwd_copy_seg: "Ctrl/Cmd+clique para copiar o caminho",
+      cwd_copied: "Caminho copiado para a área de transferência",
+      cwd_nav_error: "Não foi possível abrir o painel SFTP em {path}",
     },
     prefs_about: {
       title: "Acerca de Rustty",
@@ -2455,6 +2475,11 @@ const DICTIONARIES = {
     },
     status: {
       latency: "Latenz",
+      cwd_seg_nav: "Zu {path} im SFTP-Panel wechseln",
+      cwd_copy: "Vollständigen Pfad kopieren",
+      cwd_copy_seg: "Strg/Cmd+Klick zum Kopieren des Pfads",
+      cwd_copied: "Pfad in die Zwischenablage kopiert",
+      cwd_nav_error: "SFTP-Panel konnte unter {path} nicht geöffnet werden",
     },
     prefs_sync: {
       title: "Cloud-Sync",

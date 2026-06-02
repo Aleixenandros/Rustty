@@ -11,11 +11,14 @@
 - **Anclar conexiones al dashboard** para tenerlas como tiles grandes en la pantalla de bienvenida desde el menú contextual ("Anclar / desanclar del dashboard").
 - **Zoom de UI** con `Ctrl+Alt +/-/0` para escalar el rail, la sidebar y las pestañas sin afectar al tamaño del terminal.
 - Probar una conexión desde el modal antes de guardarla, ver el diagnóstico SSH por etapas en la barra inferior y consultar el centro global de actividad desde el acceso **Historial y logs** del rail.
+- Navegar el directorio remoto desde un **breadcrumb clicable** en la barra inferior: pulsa un segmento de la ruta para llevar el panel SFTP a esa carpeta, o copia la ruta completa al portapapeles.
 - Transferir ficheros con un **panel SFTP** integrado de **vista dividida remoto / local**, transferencia recursiva de carpetas, seguimiento del directorio del terminal y elevación a `sudo` cuando el servidor lo permita.
 - Crear **túneles SSH** locales, remotos y dinámicos / SOCKS desde una sesión activa o desde el acceso global **⇄** del rail, con panel de estado, tráfico, túneles guardados y autoconexión opcional por perfil.
 - Configurar opciones avanzadas SSH por perfil: **keep-alive**, **ProxyJump**, **agent forwarding**, **X11 forwarding** y compatibilidad opcional con cifrados / kex / MAC legacy.
 - Buscar dentro del buffer del terminal con `Ctrl+F` y filtrar perfiles desde la barra lateral.
 - **Exportar el historial** de una sesión a un fichero de texto desde el menú contextual de la pestaña: vuelca todo el buffer del terminal (comandos introducidos y salida del servidor) en texto plano.
+- Renombrar pestañas con un **alias temporal** desde su menú contextual, sin modificar el perfil: útil al duplicar sesiones o abrir varias a la vez. Dejar el alias vacío restablece el nombre del perfil.
+- **Desconectar todo** de golpe desde el botón de emergencia del rail o un atajo configurable: cierra las sesiones SSH, SFTP, RDP y consolas locales, cierra los túneles y cancela las transferencias en curso, tras confirmar con el recuento afectado.
 - Guardar contraseñas y passphrases en el **keyring del sistema** (KWallet, GNOME Keyring, Keychain, Credential Store) o tomarlas de una base **KeePass** (`.kdbx`).
 - Crear **copias de seguridad cifradas** y sincronizar perfiles, carpetas, preferencias, temas, snippets y atajos con Google Drive, iCloud Drive, una carpeta local/NAS o WebDAV. La sincronización se dispara al iniciar y al detectar cambios; puedes restaurar snapshots anteriores cuando lo necesites.
 - Personalizar la apariencia con **temas base y variantes** (Catppuccin, Dracula, Nord, Solarized, Gruvbox, Tokyo Night…), tema del terminal independiente del de UI, fuente configurable, **ligaduras tipográficas opcionales** (FiraCode, JetBrains Mono…) y **atajos de teclado** editables con presets *Vim-like* y *Tmux-like*.

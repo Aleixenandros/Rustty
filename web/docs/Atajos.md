@@ -14,6 +14,9 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl+1`…`Ctrl+9` | Saltar a la pestaña N (`Ctrl+9` salta a la última) |
 | `Ctrl+K`       | Buscar conexiones desde cualquier vista             |
 | `Ctrl+,`       | Abrir preferencias                                  |
+| _(sin asignar)_ | Desconectar todo: cierra sesiones, túneles y cancela transferencias |
+
+«Desconectar todo» también está disponible como botón de emergencia en el rail lateral. No trae combinación por defecto para no pisar otros atajos; asígnale una desde **Preferencias → Atajos** si quieres lanzarla con el teclado.
 
 ## Terminal
 
@@ -33,6 +36,8 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl+Shift+R` | Reconectar la sesión activa                         |
 
 La búsqueda en el buffer abre una barra flotante con next/prev y un toggle de **case-sensitive**. Resalta todas las coincidencias sobre `@xterm/addon-search`.
+
+El pegado en el terminal (`Ctrl+Alt+V`) pide confirmación con una previsualización cuando el texto es **multilínea**, **muy largo** o trae **caracteres de control**. Se configura en **Preferencias → Terminal** y puede desactivarse por perfil desde sus opciones avanzadas.
 
 ## Presets predefinidos
 

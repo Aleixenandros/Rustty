@@ -68,6 +68,7 @@ En el formulario de perfil, la sección **Opciones avanzadas** expone toggles SS
 - **Reenviar agente SSH**: reusa `$SSH_AUTH_SOCK` (sólo Unix) para autenticar saltos desde el host remoto sin copiar las claves.
 - **Reenviar X11**: solicita el canal X11 con cookie sintética `MIT-MAGIC-COOKIE-1` y lo redirige a `localhost:6000+display`. Requiere un X server local.
 - **Bastion / Jump host**: conecta primero a un host bastión y abre el destino real a través de un canal `direct-tcpip`, equivalente a `ProxyJump`.
+- **Desactivar confirmación de pegado peligroso**: la confirmación al pegar texto multilínea, muy largo o con caracteres de control está activa de forma global; este toggle del perfil la **desactiva** solo para esta conexión.
 
 Todas las opciones son **opt-in** y se guardan en el perfil; los toggles permanecen apagados hasta que los actives explícitamente.
 

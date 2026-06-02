@@ -28,6 +28,13 @@ Rustty usa verificación de `known_hosts` con modelo TOFU: la primera huella con
 
 La verificación se aplica también cuando el servidor **cambia de algoritmo de host key** (por ejemplo `ssh-rsa` → `ssh-ed25519`): Rustty compara la clave recibida con todas las entradas previas del host, no solo con las del mismo algoritmo, así rotaciones de tipo de clave no se aprenden en silencio.
 
+## Protecciones del terminal
+
+La salida de un servidor remoto es contenido no confiable, así que Rustty añade dos defensas en el propio terminal:
+
+- **Validación de enlaces**: al pulsar un enlace detectado en la salida, Rustty abre directamente solo los esquemas `http`, `https` y `mailto`. Cualquier otro esquema (o una URL que no se pueda interpretar) pide confirmación antes de abrirse, para que la salida remota no pueda lanzar esquemas arbitrarios.
+- **Confirmación de pegado peligroso**: antes de enviar al terminal un texto **multilínea**, **muy largo** o con **caracteres de control**, Rustty muestra una previsualización y pide confirmación. Así se evita ejecutar comandos pegados por error o secuencias de control ocultas. Está activado por defecto, se ajusta en **Preferencias → Terminal** y puede desactivarse por perfil en sus opciones avanzadas.
+
 ## Datos excluidos
 
 Por diseño quedan fuera de la sincronización:
@@ -38,6 +45,10 @@ Por diseño quedan fuera de la sincronización:
 - Contenido de sesiones SSH/RDP.
 
 Los exports JSON locales sí pueden incluir una sección `secrets`, pero solo después de confirmación explícita. Ese JSON no va cifrado por sí mismo.
+
+## Reporte de vulnerabilidades
+
+Si encuentras un fallo de seguridad, repórtalo de forma privada: usa el formulario «Report a vulnerability» de la pestaña *Security* del [repositorio en GitHub](https://github.com/Aleixenandros/Rustty/security/advisories/new) o el correo de contacto del proyecto. Evita abrir un issue público hasta que exista una corrección. Los detalles completos (versiones soportadas y modelo de seguridad) están en el fichero [`SECURITY.md`](https://github.com/Aleixenandros/Rustty/blob/main/SECURITY.md) del repositorio.
 
 ## Sitio web
 

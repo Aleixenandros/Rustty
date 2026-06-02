@@ -1426,10 +1426,14 @@ body.has-session-tabs .tab-home .tab-name {
    panes SFTP (.file-transfer-pane) ni RDP (.rdp-pane). */
 .terminal-pane:has(.xterm-container) {
   background: var(--xterm-bg, #1e1e2e);
+  /* Esquinas rectas: con el fondo del terminal pintado, un border-radius
+     dejaría asomar el color claro de la interfaz en las esquinas. */
+  border-radius: 0;
 }
 .terminal-pane:has(.xterm-container) .term-area,
 .terminal-pane:has(.xterm-container) .xterm-container {
   background: var(--xterm-bg, #1e1e2e);
+  border-radius: 0;
 }
 
 #terminals-container.status-bar-visible > .terminal-pane {
@@ -1845,6 +1849,51 @@ body.terminal-bell-visual::after {
   font-size: 11px;
   filter: grayscale(0.4);
   opacity: 0.85;
+  cursor: pointer;
+}
+#status-bar .status-cwd .status-cwd-icon:hover { opacity: 1; }
+
+/* Breadcrump de cwd: segmentos clicables + separadores sutiles.
+   No debe agrandar la barra; los segmentos truncan con ellipsis. */
+#status-bar #status-cwd {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+#status-bar .cwd-seg {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 14ch;
+  border: 0;
+  background: transparent;
+  color: var(--subtext0);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  padding: 1px 2px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* El último segmento (cwd actual) puede ser algo más ancho. */
+#status-bar .cwd-seg:last-child { max-width: 22ch; color: var(--text); }
+#status-bar .cwd-seg:hover {
+  color: var(--blue);
+  background: var(--surface0);
+}
+#status-bar .cwd-seg:focus-visible {
+  outline: 1px solid var(--blue);
+  outline-offset: 0;
+}
+#status-bar .cwd-sep {
+  flex: 0 0 auto;
+  color: var(--overlay0);
+  font-size: 11px;
+  padding: 0 1px;
+  user-select: none;
 }
 
 #status-bar .mono {

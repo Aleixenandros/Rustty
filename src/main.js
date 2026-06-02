@@ -7163,6 +7163,131 @@ function collapseHomePath(path) {
   return path.replace(/^\/(?:home|Users)\/[^/]+/, "~");
 }
 
+/**
+ * Construye dentro de #status-cwd un breadcrumb de segmentos clicables a
+ * partir de `rawPath` (el cwd remoto real). Normaliza:
+ *   - Windows `\` → `/` para segmentar; conserva el drive (`C:`) como primer
+ *     segmento, con `data-path` = `C:/`.
+ *   - Rutas POSIX absolutas: primer segmento `/` (raíz) con `data-path` `/`.
+ *   - Home colapsado: si la ruta cae dentro de /home/<user> o /Users/<user>,
+ *     se muestra `~` como primer segmento, pero su `data-path` (y el de los
+ *     segmentos siguientes) usa la base REAL del home, no `~`.
+ * Cada segmento navega el panel SFTP a su ruta acumulada real al pulsar; con
+ * Ctrl/Cmd+clic copia esa ruta. El icono 📂 copia la ruta completa.
+ */
+function renderCwdBreadcrumb(sessionId, rawPath) {
+  const cwdEl = document.getElementById("status-cwd");
+  if (!cwdEl) return;
+  cwdEl.innerHTML = "";
+  if (!rawPath) return;
+
+  // Base real del home si la ruta colapsa a "~" (lo que recorta collapseHomePath).
+  const collapsed = collapseHomePath(rawPath);
+  const usesHome = collapsed.startsWith("~");
+  let homeBase = "";
+  if (usesHome) {
+    const m = rawPath.match(/^\/(?:home|Users)\/[^/]+/);
+    homeBase = m ? m[0] : "";
+  }
+
+  // Detectar drive de Windows al inicio (C:, D:, …), tolerando "\" o "/".
+  const driveMatch = rawPath.match(/^([A-Za-z]):[\\/]?/);
+  const isWindows = !!driveMatch;
+
+  // Trabajamos siempre con "/" como separador para segmentar.
+  const unified = collapsed.replace(/\\/g, "/");
+
+  // segments: lista de { label, path } donde path es la ruta REAL acumulada.
+  const segments = [];
+
+  if (isWindows) {
+    const drive = `${driveMatch[1]}:`;
+    // Quitar el prefijo de drive (con o sin separador) del resto.
+    const rest = unified.replace(/^[A-Za-z]:\/?/, "");
+    segments.push({ label: drive, path: `${drive}/` });
+    let acc = `${drive}`;
+    for (const part of rest.split("/")) {
+      if (!part) continue;
+      acc = `${acc}/${part}`;
+      segments.push({ label: part, path: acc });
+    }
+  } else if (usesHome) {
+    // unified empieza por "~"; el resto cuelga del homeBase real.
+    const rest = unified.replace(/^~\/?/, "");
+    segments.push({ label: "~", path: homeBase || "/" });
+    let acc = homeBase;
+    for (const part of rest.split("/")) {
+      if (!part) continue;
+      acc = `${acc}/${part}`;
+      segments.push({ label: part, path: acc });
+    }
+  } else {
+    // POSIX absoluta o relativa.
+    const absolute = unified.startsWith("/");
+    let acc = "";
+    if (absolute) segments.push({ label: "/", path: "/" });
+    const parts = unified.split("/").filter(Boolean);
+    for (const part of parts) {
+      acc = absolute ? `${acc}/${part}` : (acc ? `${acc}/${part}` : part);
+      segments.push({ label: part, path: acc });
+    }
+    if (!absolute && segments.length === 0 && unified) {
+      segments.push({ label: unified, path: unified });
+    }
+  }
+
+  // Pintar segmentos con separadores sutiles entre medias.
+  segments.forEach((seg, i) => {
+    if (i > 0) {
+      const sepSpan = document.createElement("span");
+      sepSpan.className = "cwd-sep";
+      sepSpan.setAttribute("aria-hidden", "true");
+      sepSpan.textContent = "/";
+      cwdEl.appendChild(sepSpan);
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cwd-seg";
+    btn.dataset.path = seg.path;
+    btn.textContent = seg.label;
+    btn.title = `${t("status.cwd_seg_nav", { path: seg.path })} · ${t("status.cwd_copy_seg")}`;
+    btn.setAttribute("aria-label", t("status.cwd_seg_nav", { path: seg.path }));
+    btn.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      // Ctrl/Cmd+clic copia la ruta acumulada del segmento en vez de navegar.
+      if (ev.ctrlKey || ev.metaKey) {
+        await writeSystemClipboardText(seg.path);
+        toast(t("status.cwd_copied"), "success");
+        return;
+      }
+      await navigateCwdBreadcrumb(sessionId, seg.path);
+    });
+    cwdEl.appendChild(btn);
+  });
+}
+
+/**
+ * Navega el panel SFTP remoto de `sessionId` a `path`. Si el panel no está
+ * abierto/conectado, lo abre primero y luego navega. Muestra un toast si falla.
+ */
+async function navigateCwdBreadcrumb(sessionId, path) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  try {
+    if (!s.sftp?.sftpSessionId) {
+      // openSftpPanel ya navega al cwd inicial; tras conectar movemos al destino.
+      await openSftpPanel(sessionId);
+    }
+    if (s.sftp?.sftpSessionId) {
+      await navigateSftpRemote(sessionId, path);
+    }
+  } catch (err) {
+    console.warn("[cwd-breadcrumb] navegación falló", err);
+    toast(t("status.cwd_nav_error", { path }), "error");
+  }
+}
+
 function updateStatusBar() {
   const bar = document.getElementById("status-bar");
   if (!bar) return;
@@ -7194,11 +7319,29 @@ function updateStatusBar() {
   const cwdEl   = document.getElementById("status-cwd");
   if (cwdWrap && cwdEl && cwdSep) {
     if (s.remoteCwd) {
-      cwdEl.textContent = collapseHomePath(s.remoteCwd);
-      cwdEl.title = s.remoteCwd;
+      // Breadcrumb de segmentos clicables (navegan el panel SFTP).
+      renderCwdBreadcrumb(activeSessionId, s.remoteCwd);
+      cwdEl.title = s.remoteCwd; // tooltip con la ruta completa real
       cwdWrap.classList.remove("hidden");
       cwdSep.classList.remove("hidden");
+
+      // El icono 📂 copia la ruta completa real al portapapeles.
+      const cwdIcon = cwdWrap.querySelector(".status-cwd-icon");
+      if (cwdIcon && !cwdIcon.dataset.copyBound) {
+        cwdIcon.dataset.copyBound = "1";
+        cwdIcon.setAttribute("role", "button");
+        cwdIcon.setAttribute("tabindex", "0");
+        cwdIcon.title = t("status.cwd_copy");
+        cwdIcon.setAttribute("aria-label", t("status.cwd_copy"));
+        cwdIcon.addEventListener("click", async () => {
+          const cur = activeSessionId ? sessions.get(activeSessionId) : null;
+          if (!cur?.remoteCwd) return;
+          await writeSystemClipboardText(cur.remoteCwd);
+          toast(t("status.cwd_copied"), "success");
+        });
+      }
     } else {
+      cwdEl.innerHTML = "";
       cwdWrap.classList.add("hidden");
       cwdSep.classList.add("hidden");
     }

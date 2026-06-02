@@ -1,0 +1,174 @@
+name: CI
+
+# CI separado del release (build.yml). build.yml solo se dispara con tags v*
+# y publica el release; aquí validamos PRs y pushes a main para no fusionar
+# cambios (p. ej. de Dependabot) sin pasar por compilación, tests y lint.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancela runs anteriores del mismo ref para no acumular ejecuciones cuando
+# un PR recibe varios pushes seguidos.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Job principal: build JS + check/test Rust en Linux ────────────
+  lint-test:
+    runs-on: ubuntu-latest
+    name: Lint & test · Linux
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Misma lista de paquetes apt que build.yml para compilar Tauri en
+      # Ubuntu, SIN libssh2-1-dev (el backend usa russh puro). `rpm`/`zstd`
+      # no hacen falta aquí porque no empaquetamos, pero los demás sí para
+      # que `cargo check` enlace contra webkit/gtk/soup/openssl.
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libdbus-1-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      # Informativo: no bloquea el PR por avisos transitivos de prod.
+      - name: npm audit (advisory)
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --all-targets --locked
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test --locked
+
+  # ── Clippy ────────────────────────────────────────────────────────
+  # Arranca como INFORMATIVO (continue-on-error): hoy `cargo clippy
+  # --all-targets -- -D warnings` falla con ~21 warnings (map_or/is_none_or,
+  # needless_as_bytes, etc.). Coherente con el backlog «Habilitar clippy
+  # pedantic como aviso, no fallo». Cuando se limpien los warnings, quitar
+  # `continue-on-error` para hacerlo bloqueante.
+  clippy:
+    runs-on: ubuntu-latest
+    name: Clippy (advisory)
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libdbus-1-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+        continue-on-error: true
+
+  # ── Regresión de plataforma: solo build JS + cargo check ──────────
+  # Más ligeros que el job Linux; detectan roturas específicas de SO antes
+  # de publicar con build.yml.
+  platform-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            label: Windows
+          - platform: macos-latest
+            label: macOS
+    runs-on: ${{ matrix.platform }}
+    name: Platform check · ${{ matrix.label }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # build.yml en macOS instala openssl@3 y pkgconf vía brew; replicamos
+      # lo mínimo. Windows no requiere dependencias de sistema extra.
+      - name: Install macOS dependencies
+        if: matrix.platform == 'macos-latest'
+        run: |
+          missing=()
+          for formula in openssl@3 pkgconf; do
+            if ! brew list --formula "$formula" >/dev/null 2>&1; then
+              missing+=("$formula")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            brew install "${missing[@]}"
+          else
+            echo "macOS dependencies already installed."
+          fi
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --locked

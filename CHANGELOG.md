@@ -2,6 +2,30 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.15.0] - 2026-06-02
+
+### Añadido
+
+- El directorio remoto de la barra inferior es ahora un **breadcrumb
+  clicable**: pulsar un segmento lleva el panel SFTP a esa carpeta (lo abre si
+  hace falta), el icono 📂 copia la ruta completa y `Ctrl/Cmd+clic` copia la
+  ruta acumulada del segmento. Normaliza rutas POSIX, `~` y unidades de Windows.
+- Workflow de integración continua (`ci.yml`) separado del release: valida
+  cada pull request y push a `main` con `npm run build`, `cargo check`,
+  `cargo test` y `cargo clippy` (de momento informativo), más comprobaciones de
+  regresión en Windows y macOS. Cierra el hueco de los PR de dependencias que
+  antes se fusionaban sin validación automática.
+
+### Corregido
+
+- El fondo del terminal usa esquinas rectas para cubrir el panel por completo:
+  ya no asoma el color de la interfaz por las esquinas redondeadas.
+
+### Mantenimiento
+
+- Dependencias actualizadas: `keepass` 0.13.7, `uuid` 1.23.2, `socket2` 0.6.4,
+  `rpassword` 7.5.4 y `vite` 8.0.16.
+
 ## [1.14.0] - 2026-06-02
 
 ### Añadido
