@@ -381,6 +381,9 @@
       <button class="ctx-item ctx-conn-only hidden" data-ctx="duplicate-conn">
         <span class="ctx-icon">⎘</span><span data-i18n="ctx.duplicate">Duplicar</span>
       </button>
+      <button class="ctx-item ctx-conn-only ctx-promote-only hidden" data-ctx="promote-master">
+        <span class="ctx-icon">🔑</span><span data-i18n="ctx.promote_master">Promover a credencial maestra…</span>
+      </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-favorite">
         <span class="ctx-icon">★</span><span data-i18n="ctx.toggle_favorite">Marcar / desmarcar como favorito</span>
       </button>
@@ -618,13 +621,29 @@
             </div>
           </div>
 
-          <div class="form-row auth-field" id="field-keepass-toggle" data-modal-pane="general">
-            <label class="checkbox-label">
-              <input id="f-use-keepass" type="checkbox" />
-              <span data-i18n="modal_conn.use_keepass">Usar contraseña de KeePass</span>
-            </label>
+          <div class="form-row auth-field" id="field-password-source" data-modal-pane="general">
+            <label for="f-password-source" data-i18n="modal_conn.password_source">Origen de la contraseña</label>
+            <select id="f-password-source">
+              <option value="own" data-i18n="modal_conn.password_source_own">Propia del perfil</option>
+              <option value="master" data-i18n="modal_conn.password_source_master">Credencial maestra</option>
+              <option value="keepass" data-i18n="modal_conn.password_source_keepass">KeePass</option>
+            </select>
+            <!-- Checkbox histórico: oculto y sincronizado con el selector para
+                 reutilizar toda la lógica KeePass existente que lo consulta. -->
+            <input id="f-use-keepass" type="checkbox" hidden />
             <p class="form-hint" id="keepass-hint-locked" data-i18n="modal_conn.keepass_locked" style="display:none;">
               La base KeePass está bloqueada. Desbloquéala en Preferencias.
+            </p>
+          </div>
+
+          <div class="form-row auth-field hidden" id="field-master-cred" data-modal-pane="general">
+            <label for="f-master-cred" data-i18n="modal_conn.master_cred">Credencial maestra</label>
+            <select id="f-master-cred"></select>
+            <p class="form-hint master-cred-missing hidden" id="master-cred-missing" data-i18n="modal_conn.master_cred_missing">
+              La credencial referenciada ya no existe. Elige otra.
+            </p>
+            <p class="form-hint" id="master-cred-hint" data-i18n="modal_conn.master_cred_hint">
+              La contraseña se tomará de la credencial maestra seleccionada al conectar.
             </p>
           </div>
 
@@ -926,6 +945,58 @@
     </div>
 
     <!-- ══════════════════════════════════════════════════════
+         MODAL: Editor de credencial maestra
+    ══════════════════════════════════════════════════════ -->
+    <div id="cred-edit-overlay" class="hidden">
+      <div id="cred-edit-modal" role="dialog" aria-modal="true" aria-labelledby="cred-edit-title">
+        <div class="modal-header">
+          <h2 id="cred-edit-title" data-i18n="modal_credential_edit.title_new">Nueva credencial maestra</h2>
+          <button class="btn-icon" id="btn-cred-edit-close" data-i18n-aria-label="modal_credential_edit.close" aria-label="Cerrar">✕</button>
+        </div>
+        <form id="cred-edit-form" autocomplete="off">
+          <div class="form-group" id="cred-edit-kind-group">
+            <label for="cred-edit-kind" data-i18n="modal_credential_edit.kind">Tipo</label>
+            <select id="cred-edit-kind">
+              <option value="master" data-i18n="modal_credential_edit.kind_master">Maestra (secreto)</option>
+              <option value="var" data-i18n="modal_credential_edit.kind_var">Variable (texto)</option>
+              <option value="secret" data-i18n="modal_credential_edit.kind_secret">Secreto</option>
+            </select>
+            <p class="form-hint" id="cred-edit-kind-hint" data-i18n="modal_credential_edit.kind_hint_master">El valor se guarda cifrado en el keyring y nunca se muestra.</p>
+          </div>
+          <div class="form-group">
+            <label for="cred-edit-name" data-i18n="modal_credential_edit.name">Nombre</label>
+            <input id="cred-edit-name" type="text" data-i18n-placeholder="modal_credential_edit.name_ph" placeholder="bastion_prod" autocomplete="off" spellcheck="false" required />
+            <p class="form-hint" id="cred-edit-var-preview"></p>
+          </div>
+          <div class="form-group">
+            <label for="cred-edit-value"><span data-i18n="modal_credential_edit.value">Valor</span> <span class="optional" id="cred-edit-value-optional" data-i18n="modal_credential_edit.value_optional">(opcional al editar)</span></label>
+            <div class="password-field">
+              <input id="cred-edit-value" type="password" data-i18n-placeholder="modal_credential_edit.value_ph" placeholder="••••••••" autocomplete="new-password" />
+              <button
+                type="button"
+                class="btn-icon password-toggle"
+                id="btn-cred-edit-toggle"
+                data-i18n-title="modal_credential_edit.show_value"
+                data-i18n-aria-label="modal_credential_edit.show_value"
+                title="Ver valor"
+                aria-label="Ver valor"
+                aria-pressed="false"
+              ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="cred-edit-desc"><span data-i18n="modal_credential_edit.description">Descripción</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+            <input id="cred-edit-desc" type="text" data-i18n-placeholder="modal_credential_edit.description_ph" placeholder="Servidor bastión de producción" autocomplete="off" />
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="btn-cred-edit-cancel" data-i18n="modal_credential_edit.cancel">Cancelar</button>
+            <button type="submit" class="btn-primary" data-i18n="modal_credential_edit.save">Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
          MODAL: Credenciales bajo demanda
     ══════════════════════════════════════════════════════ -->
     <div id="credential-modal-overlay" class="hidden">
@@ -950,6 +1021,26 @@
           <div class="modal-actions">
             <button type="button" class="btn-secondary" id="btn-credential-cancel" data-i18n="modal_credential.cancel">Cancelar</button>
             <button type="submit" class="btn-primary" id="btn-credential-submit" data-i18n="modal_credential.submit">Conectar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Preguntas al conectar (${ask:})
+    ══════════════════════════════════════════════════════ -->
+    <div id="ask-modal-overlay" class="hidden">
+      <div id="ask-modal" role="dialog" aria-modal="true" aria-labelledby="ask-modal-title">
+        <div class="modal-header">
+          <h2 id="ask-modal-title" data-i18n="modal_ask.title">Datos para conectar</h2>
+          <button class="btn-icon" id="btn-ask-close" data-i18n-aria-label="modal_ask.close" aria-label="Cerrar">✕</button>
+        </div>
+        <form id="ask-modal-form" autocomplete="off">
+          <p class="credential-message" data-i18n="modal_ask.message">Este perfil requiere algunos datos antes de conectar.</p>
+          <div id="ask-modal-fields"></div>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="btn-ask-cancel" data-i18n="modal_ask.cancel">Cancelar</button>
+            <button type="submit" class="btn-primary" id="btn-ask-submit" data-i18n="modal_ask.submit">Conectar</button>
           </div>
         </form>
       </div>
@@ -983,6 +1074,10 @@
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="keepass">
               <span class="prefs-nav-icon">⚿</span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_keepass">KeePass</span>
+            </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="credentials">
+              <span class="prefs-nav-icon">🔑</span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_credentials">Credenciales</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="shortcuts">
               <span class="prefs-nav-icon">⌘</span>
@@ -1452,6 +1547,37 @@
                   <button type="button" class="btn-secondary hidden" id="btn-keepass-lock" data-i18n="prefs_keepass.lock">Bloquear</button>
                 </div>
               </div>
+            </section>
+
+            <!-- ── Credenciales maestras ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="credentials">
+              <h3 class="prefs-panel-title" data-i18n="prefs_credentials.title">Credenciales maestras</h3>
+              <p class="prefs-panel-hint" data-i18n-html="prefs_credentials.hint_html">
+                Define contraseñas o tokens reutilizables entre perfiles. Refiérelos en los campos de un perfil con <code>${master:nombre}</code>. El valor se guarda cifrado en el keyring del sistema y nunca se muestra.
+              </p>
+
+              <div class="cred-warnings">
+                <p class="cred-warning" data-i18n="prefs_credentials.warn_shared">
+                  ⚠️ Reutilizar una misma credencial en varios hosts implica que, si se compromete, quedan afectados todos a la vez.
+                </p>
+                <p class="cred-warning" data-i18n="prefs_credentials.warn_distinct">
+                  Nota: esto NO es la passphrase de sincronización ni la contraseña maestra de KeePass. Son conceptos distintos.
+                </p>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label data-i18n="prefs_credentials.list_label">Credenciales</label>
+                <div class="settings-control">
+                  <div class="segmented" id="cred-filter" role="tablist">
+                    <button type="button" class="segmented-btn active" data-cred-filter="master" data-i18n="prefs_credentials.filter_master">Maestras</button>
+                    <button type="button" class="segmented-btn" data-cred-filter="var" data-i18n="prefs_credentials.filter_var">Variables</button>
+                    <button type="button" class="segmented-btn" data-cred-filter="secret" data-i18n="prefs_credentials.filter_secret">Secretos</button>
+                  </div>
+                  <button type="button" class="btn-primary" id="btn-cred-add" data-i18n="prefs_credentials.add">Añadir credencial…</button>
+                </div>
+              </div>
+
+              <div id="cred-list" class="global-tunnel-list"></div>
             </section>
 
             <!-- ── Atajos de teclado ── -->

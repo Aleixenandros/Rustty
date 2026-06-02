@@ -1355,6 +1355,8 @@ function switchPrefsTab(tab) {
   document.querySelectorAll(".prefs-panel").forEach((el) =>
     el.classList.toggle("active", el.dataset.prefsPanel === tab)
   );
+  // Refrescar la lista de credenciales al entrar en su pestaña.
+  if (tab === "credentials") renderCredList();
 }
 
 function openSettingsModal() {
@@ -1445,6 +1447,9 @@ function openSettingsModal() {
 
   // Sincronización: cargar config + secretos
   populateSyncTab();
+
+  // Credenciales maestras: pintar la lista actual
+  renderCredList();
 
   document.getElementById("modal-prefs-overlay").classList.remove("hidden");
 }
@@ -1814,9 +1819,11 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     document.getElementById("sync-last-time").textContent =
       new Date(lastSyncAt).toLocaleString();
     setSyncStatus("success", "prefs_sync.status_success");
+    if (summary.credsChanged) renderCredList().catch(() => {});
     const total = summary.addedProfiles + summary.deletedProfiles
       + summary.themesChanged + summary.shortcutsChanged
       + (summary.secretsChanged || 0)
+      + (summary.credsChanged || 0)
       + (summary.prefsChanged ? 1 : 0);
     if (announce) {
       toast(t("prefs_sync.done_sync").replace("{n}", total), "success", { category: "sync" });
@@ -2002,9 +2009,11 @@ async function syncImportFile() {
     applyTheme(prefs.theme);
     applyPrefsToAllTerminals();
     savePrefs();
+    if (summary.credsChanged) renderCredList().catch(() => {});
     const total = summary.addedProfiles + summary.deletedProfiles
       + summary.themesChanged + summary.shortcutsChanged
       + (summary.secretsChanged || 0)
+      + (summary.credsChanged || 0)
       + (summary.prefsChanged ? 1 : 0);
     toast(t("prefs_sync.done_import").replace("{n}", total), "success");
   } catch (err) {
@@ -2058,9 +2067,11 @@ async function syncRestoreSnapshot() {
     applyPrefsToAllTerminals();
     savePrefs();
     setSyncStatus("success", "prefs_sync.status_success");
+    if (summary?.credsChanged) renderCredList().catch(() => {});
     const total = (summary?.addedProfiles ?? 0) + (summary?.deletedProfiles ?? 0)
       + (summary?.themesChanged ?? 0) + (summary?.shortcutsChanged ?? 0)
       + (summary?.secretsChanged ?? 0)
+      + (summary?.credsChanged ?? 0)
       + (summary?.prefsChanged ? 1 : 0);
     toast(`${t("prefs_sync.snapshots_restored")} (${total})`, "success");
   } catch (err) {
@@ -4482,6 +4493,13 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   menu.querySelectorAll(".ctx-conn-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "connection")
   );
+  // «Promover a credencial maestra» solo cuando el perfil usa su contraseña
+  // propia (la acción verifica que realmente exista una guardada en keyring).
+  const ctxProfile = type === "connection" ? profiles.find((p) => p.id === id) : null;
+  const canPromote = !!ctxProfile && (ctxProfile.password_source || "own") === "own";
+  menu.querySelectorAll(".ctx-promote-only").forEach((el) =>
+    el.classList.toggle("hidden", type !== "connection" || !canPromote)
+  );
   menu.querySelectorAll(".ctx-ws-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "workspace")
   );
@@ -4541,6 +4559,9 @@ function handleContextMenuAction(action) {
       break;
     case "duplicate-conn":
       duplicateProfile(id);
+      break;
+    case "promote-master":
+      if (id) promoteProfilePasswordToMaster(id);
       break;
     case "toggle-favorite":
       if (id) toggleFavoriteProfile(id);
@@ -4871,6 +4892,8 @@ function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiv
   document.getElementById("f-notes").value = "";
   document.getElementById("f-save-password").checked = true;
   document.getElementById("f-save-passphrase").checked = true;
+  setPasswordSource("own");
+  populateMasterCredSelect(null);
   refreshKeepassStatus().then(() => {
     populateKeepassEntrySelect(null);
     updateConnTypeFields("ssh");
@@ -5056,8 +5079,13 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-wol-broadcast").value = profile.wol_broadcast || "";
   document.getElementById("f-wol-port").value = profile.wol_port ?? "";
   populateWorkspaceFormSelect(profile.workspace_id || getActiveWorkspaceId());
+  // Origen de la contraseña: migración en memoria coherente con el backend
+  // (si viene `own` pero hay keepass_entry_uuid, se trata como keepass).
+  let source = profile.password_source || "own";
+  if (source === "own" && profile.keepass_entry_uuid) source = "keepass";
+  setPasswordSource(source);
+  populateMasterCredSelect(profile.master_credential_id || null);
   refreshKeepassStatus().then(() => {
-    document.getElementById("f-use-keepass").checked = !!profile.keepass_entry_uuid;
     const propEl = document.getElementById("f-keepass-property");
     if (propEl) propEl.value = profile.keepass_property || "password";
     populateKeepassEntrySelect(profile.keepass_entry_uuid || null);
@@ -5378,29 +5406,80 @@ function populateFolderSelect(selectedPath = null, workspaceId = getActiveWorksp
   }
 }
 
+/** Catálogo de credenciales maestras cacheado para el desplegable del form. */
+let masterCredentials = [];
+
+/** Devuelve el origen de contraseña seleccionado en el form (own/master/keepass). */
+function getPasswordSource() {
+  return document.getElementById("f-password-source")?.value || "own";
+}
+
+/**
+ * Fija el origen de contraseña del form y sincroniza el checkbox histórico
+ * `f-use-keepass` (que sigue siendo consultado por toda la lógica KeePass).
+ */
+function setPasswordSource(source) {
+  const sel = document.getElementById("f-password-source");
+  if (sel) sel.value = source;
+  const kp = document.getElementById("f-use-keepass");
+  if (kp) kp.checked = source === "keepass";
+}
+
+/**
+ * Puebla `#f-master-cred` con las credenciales maestras del catálogo. Si
+ * `selectedId` referencia una credencial ausente, muestra el aviso de fallback.
+ */
+async function populateMasterCredSelect(selectedId) {
+  const sel = document.getElementById("f-master-cred");
+  const missing = document.getElementById("master-cred-missing");
+  if (!sel) return;
+  try {
+    const all = await invoke("master_cred_list");
+    masterCredentials = (all || []).filter((c) => c.kind === "master");
+  } catch {
+    masterCredentials = [];
+  }
+  sel.innerHTML = "";
+  for (const cred of masterCredentials) {
+    const opt = document.createElement("option");
+    opt.value = cred.id;
+    opt.textContent = cred.name;
+    sel.appendChild(opt);
+  }
+  const exists = selectedId && masterCredentials.some((c) => c.id === selectedId);
+  if (exists) {
+    sel.value = selectedId;
+  } else if (masterCredentials.length) {
+    sel.selectedIndex = 0;
+  }
+  // Aviso de fallback: el perfil referenciaba un id que ya no existe.
+  if (missing) missing.classList.toggle("hidden", !(selectedId && !exists));
+}
+
 function updateAuthFields(authType) {
   const isPwd = authType === "password";
   if (!isPwd) setPasswordVisible(false);
-  document.getElementById("field-password").classList.toggle("hidden", !isPwd);
-  document.getElementById("field-save-password").classList.toggle("hidden", !isPwd);
+  const source = getPasswordSource();
+  const useKp = isPwd && source === "keepass";
+  const useMaster = isPwd && source === "master";
+  const useOwn = isPwd && source === "own";
+
+  document.getElementById("field-password").classList.toggle("hidden", !useOwn);
+  document.getElementById("field-save-password").classList.toggle("hidden", !useOwn);
   document.getElementById("field-key-path").classList.toggle("hidden", authType !== "public_key");
   document.getElementById("field-passphrase").classList.toggle("hidden", authType !== "public_key");
   document.getElementById("field-save-passphrase").classList.toggle("hidden", authType !== "public_key");
 
-  // KeePass: sólo aplica a auth=password
-  const useKp = document.getElementById("f-use-keepass").checked;
-  document.getElementById("field-keepass-toggle").classList.toggle("hidden", !isPwd);
-  document.getElementById("field-keepass-entry").classList.toggle("hidden", !isPwd || !useKp);
-  document.getElementById("field-keepass-property")?.classList.toggle("hidden", !isPwd || !useKp);
-  // Si KeePass está activo, ocultar los campos de contraseña
-  if (isPwd && useKp) {
-    setPasswordVisible(false);
-    document.getElementById("field-password").classList.add("hidden");
-    document.getElementById("field-save-password").classList.add("hidden");
-  }
-  // Hint cuando DB no está desbloqueada
+  // El selector de origen sólo aplica a auth=password.
+  document.getElementById("field-password-source").classList.toggle("hidden", !isPwd);
+  document.getElementById("field-keepass-entry").classList.toggle("hidden", !useKp);
+  document.getElementById("field-keepass-property")?.classList.toggle("hidden", !useKp);
+  document.getElementById("field-master-cred").classList.toggle("hidden", !useMaster);
+  if (!useOwn) setPasswordVisible(false);
+
+  // Hint cuando la DB KeePass no está desbloqueada.
   const hint = document.getElementById("keepass-hint-locked");
-  if (hint) hint.style.display = (isPwd && useKp && !keepassUnlocked) ? "" : "none";
+  if (hint) hint.style.display = (useKp && !keepassUnlocked) ? "" : "none";
   updateKeepassEntryValidation();
 }
 
@@ -5427,12 +5506,9 @@ function updateConnTypeFields(type, adjustPort = false) {
 
   if (isPasswordOnly) {
     document.getElementById("f-auth-type").value = "password";
-    const useKp = document.getElementById("f-use-keepass").checked;
-    document.getElementById("field-keepass-toggle").classList.remove("hidden");
-    document.getElementById("field-keepass-entry").classList.toggle("hidden", !useKp);
-    document.getElementById("field-keepass-property")?.classList.toggle("hidden", !useKp);
-    document.getElementById("field-password").classList.toggle("hidden", useKp);
-    document.getElementById("field-save-password").classList.toggle("hidden", useKp);
+    // RDP/FTP siempre usan auth=password: reutilizamos updateAuthFields para
+    // que el selector de origen (own/master/keepass) muestre el campo correcto.
+    updateAuthFields("password");
     if (adjustPort) {
       const portEl = document.getElementById("f-port");
       const current = parseInt(portEl.value, 10);
@@ -5782,13 +5858,16 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
   const authType = (connType === "rdp" || isFileTransferConnectionType(connType))
     ? "password"
     : document.getElementById("f-auth-type").value;
-  const useKeepass = document.getElementById("f-use-keepass").checked
-    && authType === "password";
+  const passwordSource = authType === "password" ? getPasswordSource() : "own";
+  const useKeepass = passwordSource === "keepass";
   const keepassEntryUuid = useKeepass
     ? (document.getElementById("f-keepass-entry").value || null)
     : null;
   const keepassProperty = useKeepass && keepassEntryUuid
     ? (document.getElementById("f-keepass-property")?.value || "password")
+    : null;
+  const masterCredentialId = passwordSource === "master"
+    ? (document.getElementById("f-master-cred").value || null)
     : null;
   const wsSelect = document.getElementById("f-workspace");
   const wsFromForm = wsSelect && !wsSelect.closest(".form-row").classList.contains("hidden")
@@ -5815,6 +5894,8 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     workspace_id: workspaceId,
     keepass_entry_uuid: keepassEntryUuid,
     keepass_property: keepassProperty,
+    password_source: passwordSource,
+    master_credential_id: masterCredentialId,
     follow_cwd: true,
     keep_alive_secs: keepAliveFromInput(document.getElementById("f-keep-alive").value),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
@@ -5991,13 +6072,16 @@ async function saveAndClose(shouldConnect) {
   const savePassphrase = document.getElementById("f-save-passphrase").checked;
   const group          = readFolderValue();
 
-  const useKeepass = document.getElementById("f-use-keepass").checked
-    && authType === "password";
+  const passwordSource = authType === "password" ? getPasswordSource() : "own";
+  const useKeepass = passwordSource === "keepass";
   const keepassEntryUuid = useKeepass
     ? (document.getElementById("f-keepass-entry").value || null)
     : null;
   const keepassProperty = useKeepass && keepassEntryUuid
     ? (document.getElementById("f-keepass-property")?.value || "password")
+    : null;
+  const masterCredentialId = passwordSource === "master"
+    ? (document.getElementById("f-master-cred").value || null)
     : null;
 
   const wsSelect = document.getElementById("f-workspace");
@@ -6024,6 +6108,8 @@ async function saveAndClose(shouldConnect) {
     workspace_id:        workspaceId,
     keepass_entry_uuid:  keepassEntryUuid,
     keepass_property:    keepassProperty,
+    password_source:     passwordSource,
+    master_credential_id: masterCredentialId,
     follow_cwd:          true,
     keep_alive_secs:     keepAliveFromInput(document.getElementById("f-keep-alive").value),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
@@ -6046,7 +6132,7 @@ async function saveAndClose(shouldConnect) {
   try {
     await invoke("save_profile", { profile });
 
-    if (authType === "password" && password && savePassword && !keepassEntryUuid) {
+    if (authType === "password" && passwordSource === "own" && password && savePassword) {
       await saveStoredSecret(passwordKey(profile.id), password, "contraseña");
     }
     if (authType === "public_key" && passphrase && savePassphrase) {
@@ -6214,9 +6300,96 @@ async function wakeProfile(profileId) {
   }
 }
 
+// ─── Preguntas al conectar (${ask:}) ─────────────────────────────
+// Resolver de la promesa del diálogo de asks en curso (null si no hay).
+let _askPromptResolve = null;
+
+/**
+ * Muestra un diálogo tematizado que pide un valor por cada `${ask:}` del perfil.
+ * `specs` es la lista devuelta por `template_asks`: `{ label, options }`.
+ * Devuelve un mapa { label: valor } o `null` si el usuario cancela.
+ */
+function promptAsks(specs) {
+  const overlay = document.getElementById("ask-modal-overlay");
+  const form = document.getElementById("ask-modal-form");
+  const fields = document.getElementById("ask-modal-fields");
+  if (!overlay || !form || !fields) return Promise.resolve(null);
+
+  if (_askPromptResolve) closeAskPrompt(null);
+
+  fields.innerHTML = specs
+    .map((spec, i) => {
+      const id = `ask-field-${i}`;
+      const label = escHtml(spec.label);
+      if (Array.isArray(spec.options) && spec.options.length) {
+        const opts = spec.options
+          .map((o) => `<option value="${escHtml(o)}">${escHtml(o)}</option>`)
+          .join("");
+        return `
+          <div class="form-row">
+            <label for="${id}">${label}</label>
+            <select id="${id}" data-ask-label="${label}">${opts}</select>
+          </div>`;
+      }
+      return `
+        <div class="form-row">
+          <label for="${id}">${label}</label>
+          <input id="${id}" type="text" data-ask-label="${label}" autocomplete="off" />
+        </div>`;
+    })
+    .join("");
+
+  overlay.classList.remove("hidden");
+  setTimeout(() => fields.querySelector("input, select")?.focus(), 0);
+
+  return new Promise((resolve) => {
+    _askPromptResolve = resolve;
+  });
+}
+
+function closeAskPrompt(result) {
+  const overlay = document.getElementById("ask-modal-overlay");
+  overlay?.classList.add("hidden");
+  const resolve = _askPromptResolve;
+  _askPromptResolve = null;
+  if (resolve) resolve(result);
+}
+
+/** Lee los valores actuales de los campos del diálogo de asks en un mapa. */
+function collectAskAnswers() {
+  const fields = document.getElementById("ask-modal-fields");
+  const answers = {};
+  fields?.querySelectorAll("[data-ask-label]").forEach((el) => {
+    answers[el.dataset.askLabel] = el.value;
+  });
+  return answers;
+}
+
+/**
+ * Si el perfil tiene `${ask:}`, pide los valores y devuelve el mapa de
+ * respuestas; si no tiene, devuelve `{}`. Devuelve `null` si el usuario cancela
+ * (el llamante debe abortar la conexión).
+ */
+async function askProfileAnswers(profileId) {
+  let specs = [];
+  try {
+    specs = await invoke("template_asks", { profileId });
+  } catch {
+    // Si el escaneo falla, conectamos como hoy (sin diálogo).
+    return {};
+  }
+  if (!specs || !specs.length) return {};
+  return await promptAsks(specs);
+}
+
 async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
+
+  // Preguntas `${ask:}` (si las hay) antes de crear la pestaña: si el usuario
+  // cancela, abortamos sin dejar nada a medias.
+  const askAnswers = await askProfileAnswers(profileId);
+  if (askAnswers === null) return;
 
   const sessionId = `ssh-${crypto.randomUUID()}`;
   createTerminalTab(sessionId, profile, "connecting");
@@ -6235,6 +6408,7 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
       profileId,
       password:   password   || null,
       passphrase: passphrase || null,
+      askAnswers: Object.keys(askAnswers).length ? askAnswers : null,
     });
 
     updateTabStatus(sessionId, "connecting");
@@ -8515,6 +8689,108 @@ async function duplicateProfile(profileId) {
   }
 }
 
+/**
+ * Convierte la contraseña propia de un perfil en una credencial maestra
+ * reutilizable. Pide un nombre (validado y único), crea la maestra con
+ * `master_cred_set`, reapunta el perfil a `password_source="master"` con el
+ * `master_credential_id` nuevo y, opcionalmente, borra la contraseña propia del
+ * keyring tras confirmación.
+ */
+async function promoteProfilePasswordToMaster(profileId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+
+  // Solo tiene sentido sobre la contraseña propia del perfil.
+  let ownPassword;
+  try {
+    ownPassword = await invoke("get_profile_password", { profileId });
+  } catch (err) {
+    toast(t("promote_master.error").replace("{err}", String(err)), "error", 6000);
+    return;
+  }
+  if (!ownPassword) {
+    toast(t("promote_master.no_password"), "warning", 6000);
+    return;
+  }
+
+  // Pide y valida el nombre de la nueva maestra (sin espacios, único).
+  let existing = [];
+  try {
+    existing = await invoke("master_cred_list");
+  } catch {}
+  const masterNames = new Set(
+    (existing || []).filter((c) => c.kind === "master").map((c) => c.name)
+  );
+  const isValidCredName = (name) => /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(name);
+
+  let name = null;
+  // Reintenta mientras el nombre sea inválido o duplicado.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const result = await promptCredential({
+      title: t("promote_master.title"),
+      message: t("promote_master.message"),
+      label: t("promote_master.name_label"),
+      submitLabel: t("modal_credential.submit"),
+      inputType: "text",
+      initialValue: name || "",
+    });
+    if (!result) return; // cancelado
+    name = (result.value || "").trim();
+    if (!isValidCredName(name)) {
+      toast(t("promote_master.invalid_name"), "warning", 6000);
+      continue;
+    }
+    if (masterNames.has(name)) {
+      toast(t("promote_master.duplicate_name"), "warning", 6000);
+      continue;
+    }
+    break;
+  }
+
+  try {
+    // Crea la credencial maestra (el valor va al keyring `master:<id>`).
+    const meta = await invoke("master_cred_set", {
+      id: null,
+      name,
+      kind: "master",
+      description: null,
+      value: ownPassword,
+    });
+
+    // Reapunta el perfil a la maestra recién creada.
+    const updated = {
+      ...profile,
+      password_source: "master",
+      master_credential_id: meta.id,
+      updated_at: new Date().toISOString(),
+    };
+    await invoke("save_profile", { profile: updated });
+
+    // Ofrece borrar la contraseña propia del perfil (opcional, con confirmación).
+    const removeOwn = await confirmThemed({
+      title: t("promote_master.delete_own_title"),
+      message: t("promote_master.delete_own_message"),
+      submitLabel: t("promote_master.delete_own_confirm"),
+      danger: true,
+    });
+    if (removeOwn) {
+      await invoke("keyring_delete", {
+        service: KEYRING_SERVICE,
+        key: passwordKey(profileId),
+      }).catch((err) => console.warn("[promote] keyring_delete", err));
+    }
+
+    profiles = await invoke("get_profiles");
+    renderConnectionList();
+    renderCredList().catch(() => {});
+    scheduleProfileAutoSync();
+    toast(t("promote_master.done").replace("{name}", name), "success");
+  } catch (err) {
+    toast(t("promote_master.error").replace("{err}", String(err)), "error", 6000);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // DIRECTORIO DE DATOS / BACKUP
 // ═══════════════════════════════════════════════════════════════
@@ -8700,6 +8976,264 @@ async function removeKnownHostLine(line) {
   } catch (err) {
     toast(`${err}`, "error", 8000);
   }
+}
+
+// ─── Credenciales: maestras, variables y secretos (Preferencias) ─────────
+// Estado del editor: id de la credencial en edición (null = alta nueva).
+let _credEditId = null;
+// Tipo seleccionado en el filtro de la lista (master | var | secret).
+let _credFilter = "master";
+
+/** Construye el marcador `${<kind>:nombre}` para previsualización y copia. */
+function credVar(kind, name) {
+  return "${" + kind + ":" + name + "}";
+}
+
+/** Empty-state según el tipo activo del filtro. */
+function credEmptyKey(kind) {
+  if (kind === "var") return "prefs_credentials.empty_var";
+  if (kind === "secret") return "prefs_credentials.empty_secret";
+  return "prefs_credentials.empty";
+}
+
+/** Carga el catálogo y pinta la lista del tipo activo (master/var/secret). */
+async function renderCredList() {
+  const list = document.getElementById("cred-list");
+  if (!list) return;
+  let creds;
+  try {
+    creds = await invoke("master_cred_list");
+  } catch (err) {
+    list.innerHTML = `<div class="tunnel-empty">${escHtml(String(err))}</div>`;
+    return;
+  }
+  const items = (creds || []).filter((c) => c.kind === _credFilter);
+  if (!items.length) {
+    list.innerHTML = `<div class="tunnel-empty">${escHtml(t(credEmptyKey(_credFilter)))}</div>`;
+    return;
+  }
+  list.innerHTML = items
+    .map((c) => {
+      const varText = credVar(c.kind, c.name);
+      const desc = c.description
+        ? `<span class="global-tunnel-desc">${escHtml(c.description)}</span>`
+        : "";
+      // Las variables NO son secretas: mostramos su valor como descripción si
+      // no tiene una propia. Secretos/maestras nunca exponen su valor.
+      const valueHint =
+        c.kind === "var" && !c.description && c.value
+          ? `<span class="global-tunnel-desc">= ${escHtml(c.value)}</span>`
+          : "";
+      const badge = `<span class="cred-kind-badge">${escHtml(t("prefs_credentials.badge_" + c.kind))}</span>`;
+      return `
+        <div class="global-tunnel-row" data-cred-id="${escHtml(c.id)}" data-cred-name="${escHtml(c.name)}" data-cred-kind="${escHtml(c.kind)}">
+          <span class="global-tunnel-profile">${escHtml(c.name)}</span>
+          ${badge}
+          <code class="cred-var">${escHtml(varText)}</code>
+          ${desc}${valueHint}
+          <span class="global-tunnel-row-actions">
+            <button type="button" class="global-tunnel-action" data-cred-action="copy">${escHtml(t("prefs_credentials.copy_var"))}</button>
+            <button type="button" class="global-tunnel-action" data-cred-action="edit">${escHtml(t("prefs_credentials.edit"))}</button>
+            <button type="button" class="global-tunnel-action danger" data-cred-action="delete">${escHtml(t("prefs_credentials.delete"))}</button>
+          </span>
+        </div>`;
+    })
+    .join("");
+}
+
+/** Abre el editor de credencial. `cred` null = alta; objeto = edición. */
+function openCredEditModal(cred = null) {
+  const overlay = document.getElementById("cred-edit-overlay");
+  if (!overlay) return;
+  _credEditId = cred ? cred.id : null;
+
+  const title = document.getElementById("cred-edit-title");
+  const nameInput = document.getElementById("cred-edit-name");
+  const valueInput = document.getElementById("cred-edit-value");
+  const descInput = document.getElementById("cred-edit-desc");
+  const optional = document.getElementById("cred-edit-value-optional");
+  const kindSelect = document.getElementById("cred-edit-kind");
+  const kindGroup = document.getElementById("cred-edit-kind-group");
+
+  // Tipo: en alta se elige libremente (default = filtro activo); en edición es
+  // fijo (cambiar el tipo movería el valor entre keyring y catálogo).
+  const kind = cred ? cred.kind : _credFilter;
+  if (kindSelect) {
+    kindSelect.value = kind;
+    kindSelect.disabled = !!cred;
+  }
+  kindGroup?.classList.toggle("hidden", !!cred);
+
+  title.textContent = cred
+    ? t("modal_credential_edit.title_edit")
+    : t("modal_credential_edit.title_new");
+  nameInput.value = cred ? cred.name : "";
+  descInput.value = cred && cred.description ? cred.description : "";
+  // Las variables NO son secretas: al editar precargamos su valor de texto.
+  valueInput.value = cred && cred.kind === "var" && cred.value ? cred.value : "";
+
+  if (cred && cred.kind !== "var") {
+    // En edición de secreto/maestra el valor es opcional (rotación); dejar
+    // vacío no lo cambia.
+    optional?.classList.remove("hidden");
+    valueInput.required = false;
+    valueInput.placeholder = t("modal_credential_edit.value_keep_ph");
+  } else {
+    optional?.classList.add("hidden");
+    valueInput.required = true;
+    valueInput.placeholder = t("modal_credential_edit.value_ph");
+  }
+
+  // Restaurar el valor oculto al abrir y aplicar el modo según el tipo.
+  resetCredValueToggle();
+  applyCredKindMode(kind);
+  updateCredVarPreview();
+
+  overlay.classList.remove("hidden");
+  nameInput.focus();
+}
+
+/**
+ * Ajusta el editor según el tipo: las variables son texto plano (visible, sin
+ * toggle de ocultar); secretos/maestras ocultan el valor en el keyring.
+ */
+function applyCredKindMode(kind) {
+  const valueInput = document.getElementById("cred-edit-value");
+  const toggle = document.getElementById("btn-cred-edit-toggle");
+  const hint = document.getElementById("cred-edit-kind-hint");
+  const isVar = kind === "var";
+  if (valueInput) valueInput.type = isVar ? "text" : "password";
+  // El toggle ojo solo tiene sentido para valores ocultos.
+  if (toggle) toggle.classList.toggle("hidden", isVar);
+  if (hint) hint.textContent = t("modal_credential_edit.kind_hint_" + kind);
+}
+
+function closeCredEditModal() {
+  document.getElementById("cred-edit-overlay")?.classList.add("hidden");
+  _credEditId = null;
+}
+
+function isCredEditModalOpen() {
+  const overlay = document.getElementById("cred-edit-overlay");
+  return !!overlay && !overlay.classList.contains("hidden");
+}
+
+/** Actualiza la previsualización `${<kind>:<nombre>}` mientras se teclea. */
+function updateCredVarPreview() {
+  const nameInput = document.getElementById("cred-edit-name");
+  const preview = document.getElementById("cred-edit-var-preview");
+  const kindSelect = document.getElementById("cred-edit-kind");
+  if (!nameInput || !preview) return;
+  const name = nameInput.value.trim();
+  const kind = kindSelect ? kindSelect.value : "master";
+  preview.textContent = name ? credVar(kind, name) : "";
+}
+
+/** Deja el campo de valor oculto (type=password) y el toggle en reposo. */
+function resetCredValueToggle() {
+  const valueInput = document.getElementById("cred-edit-value");
+  const toggle = document.getElementById("btn-cred-edit-toggle");
+  if (valueInput) valueInput.type = "password";
+  if (toggle) {
+    toggle.setAttribute("aria-pressed", "false");
+    toggle.title = t("modal_credential_edit.show_value");
+    toggle.setAttribute("aria-label", t("modal_credential_edit.show_value"));
+  }
+}
+
+/** Alterna mostrar/ocultar el valor de la credencial. */
+function toggleCredValueVisibility() {
+  const valueInput = document.getElementById("cred-edit-value");
+  const toggle = document.getElementById("btn-cred-edit-toggle");
+  if (!valueInput || !toggle) return;
+  const show = valueInput.type === "password";
+  valueInput.type = show ? "text" : "password";
+  toggle.setAttribute("aria-pressed", show ? "true" : "false");
+  const key = show ? "modal_credential_edit.hide_value" : "modal_credential_edit.show_value";
+  toggle.title = t(key);
+  toggle.setAttribute("aria-label", t(key));
+}
+
+/** Guarda el alta o la edición de una credencial (master/var/secret). */
+async function submitCredEdit(e) {
+  e.preventDefault();
+  const name = document.getElementById("cred-edit-name").value.trim();
+  const valueRaw = document.getElementById("cred-edit-value").value;
+  const descRaw = document.getElementById("cred-edit-desc").value.trim();
+  const kindSelect = document.getElementById("cred-edit-kind");
+  // En edición el tipo es fijo (select deshabilitado); leemos su valor igual.
+  const kind = kindSelect ? kindSelect.value : "master";
+
+  // Validación de cliente: nombre no vacío y sin espacios.
+  if (!name || /\s/.test(name)) {
+    toast(t("modal_credential_edit.name_invalid"), "error", 6000);
+    return;
+  }
+
+  const description = descRaw ? descRaw : null;
+  // En edición de secreto/maestra, solo enviamos `value` si el usuario escribió
+  // uno (rotación): el backend no toca el keyring cuando `value` es null. Para
+  // variables, el valor (texto) se envía siempre tal cual (puede ser vacío).
+  const value = kind === "var" ? valueRaw : valueRaw ? valueRaw : null;
+
+  try {
+    await invoke("master_cred_set", {
+      id: _credEditId,
+      name,
+      kind,
+      description,
+      value,
+    });
+    toast(t("modal_credential_edit.saved"), "success");
+    closeCredEditModal();
+    await renderCredList();
+  } catch (err) {
+    toast(`${err}`, "error", 8000);
+  }
+}
+
+/** Copia el marcador `${<kind>:nombre}` al portapapeles. */
+async function copyCredVar(kind, name) {
+  await writeSystemClipboardText(credVar(kind, name));
+  toast(t("prefs_credentials.copied"), "success");
+}
+
+/** Elimina una credencial; si hay perfiles que la referencian, reconfirma. */
+async function deleteCred(id) {
+  const ok = await confirmThemed({
+    title: t("prefs_credentials.confirm_delete_title"),
+    message: t("prefs_credentials.confirm_delete_msg"),
+    submitLabel: t("prefs_credentials.delete"),
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await invoke("master_cred_delete", { id, force: false });
+  } catch (err) {
+    // Si hay perfiles referenciando, el backend devuelve un error con el
+    // conteo. Extraemos el número para avisar y pedir segunda confirmación.
+    const msg = String(err);
+    const m = msg.match(/(\d+)\s+perfil/i) || msg.match(/(\d+)\s+profile/i);
+    if (!m) {
+      toast(msg, "error", 8000);
+      return;
+    }
+    const forced = await confirmThemed({
+      title: t("prefs_credentials.confirm_delete_title"),
+      message: t("prefs_credentials.referenced_warn", { n: m[1] }),
+      submitLabel: t("prefs_credentials.delete"),
+      danger: true,
+    });
+    if (!forced) return;
+    try {
+      await invoke("master_cred_delete", { id, force: true });
+    } catch (err2) {
+      toast(`${err2}`, "error", 8000);
+      return;
+    }
+  }
+  toast(t("prefs_credentials.deleted"), "success");
+  await renderCredList();
 }
 
 function updateGlobalTunnelFields() {
@@ -13031,6 +13565,76 @@ function bindUIEvents() {
       }
     });
 
+  // Credenciales (Preferencias → Credenciales): master / var / secret
+  document.getElementById("btn-cred-add")
+    ?.addEventListener("click", () => openCredEditModal(null));
+  document.getElementById("cred-filter")
+    ?.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-cred-filter]");
+      if (!btn) return;
+      _credFilter = btn.dataset.credFilter;
+      document.querySelectorAll("#cred-filter [data-cred-filter]").forEach((b) => {
+        b.classList.toggle("active", b === btn);
+      });
+      renderCredList();
+    });
+  document.getElementById("cred-list")
+    ?.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-cred-action]");
+      if (!btn) return;
+      const row = btn.closest("[data-cred-id]");
+      if (!row) return;
+      const id = row.dataset.credId;
+      const name = row.dataset.credName;
+      const kind = row.dataset.credKind || "master";
+      const action = btn.dataset.credAction;
+      if (action === "copy") copyCredVar(kind, name);
+      else if (action === "edit") {
+        // Recargamos el catálogo para obtener el valor (solo variables lo traen).
+        let cred = { id, name, kind, description: "" };
+        try {
+          const all = await invoke("master_cred_list");
+          const found = (all || []).find((c) => c.id === id);
+          if (found) cred = found;
+        } catch {}
+        openCredEditModal(cred);
+      } else if (action === "delete") deleteCred(id);
+    });
+  document.getElementById("cred-edit-form")
+    ?.addEventListener("submit", submitCredEdit);
+  document.getElementById("cred-edit-name")
+    ?.addEventListener("input", updateCredVarPreview);
+  document.getElementById("cred-edit-kind")
+    ?.addEventListener("change", (e) => {
+      applyCredKindMode(e.target.value);
+      updateCredVarPreview();
+    });
+  document.getElementById("btn-cred-edit-toggle")
+    ?.addEventListener("click", toggleCredValueVisibility);
+  document.getElementById("btn-cred-edit-close")
+    ?.addEventListener("click", closeCredEditModal);
+  document.getElementById("btn-cred-edit-cancel")
+    ?.addEventListener("click", closeCredEditModal);
+  document.getElementById("cred-edit-overlay")
+    ?.addEventListener("mousedown", (e) => {
+      if (e.target.id === "cred-edit-overlay") closeCredEditModal();
+    });
+
+  // Diálogo de preguntas al conectar (${ask:})
+  document.getElementById("ask-modal-form")
+    ?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      closeAskPrompt(collectAskAnswers());
+    });
+  document.getElementById("btn-ask-cancel")
+    ?.addEventListener("click", () => closeAskPrompt(null));
+  document.getElementById("btn-ask-close")
+    ?.addEventListener("click", () => closeAskPrompt(null));
+  document.getElementById("ask-modal-overlay")
+    ?.addEventListener("mousedown", (e) => {
+      if (e.target.id === "ask-modal-overlay") closeAskPrompt(null);
+    });
+
   // Panel global de túneles SSH
   document.getElementById("btn-global-tunnels-close")
     ?.addEventListener("click", closeGlobalTunnelsModal);
@@ -13122,9 +13726,13 @@ function bindUIEvents() {
     updateAuthFields(e.target.value)
   );
 
-  document.getElementById("f-use-keepass").addEventListener("change", () =>
-    updateAuthFields(document.getElementById("f-auth-type").value)
-  );
+  // Selector de origen de la contraseña (own/master/keepass). Sincroniza el
+  // checkbox histórico f-use-keepass y refresca los campos visibles.
+  document.getElementById("f-password-source").addEventListener("change", (e) => {
+    setPasswordSource(e.target.value);
+    updateAuthFields(document.getElementById("f-auth-type").value);
+    renderConnectionSummary();
+  });
 
   // Selector avanzado KeePass: abrir/cerrar + filtrar + seleccionar
   const kpSearch = document.getElementById("f-keepass-search");
@@ -13302,6 +13910,11 @@ function bindUIEvents() {
       const credentialOverlay = document.getElementById("credential-modal-overlay");
       if (credentialOverlay && !credentialOverlay.classList.contains("hidden")) {
         closeCredentialPrompt(null);
+        e.preventDefault();
+        return;
+      }
+      if (isCredEditModalOpen()) {
+        closeCredEditModal();
         e.preventDefault();
         return;
       }

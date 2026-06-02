@@ -16,6 +16,22 @@ pub enum AuthType {
     Agent,
 }
 
+/// Origen de la contraseña del perfil. Reemplaza la inferencia implícita
+/// histórica (que miraba solo `keepass_entry_uuid`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PasswordSource {
+    /// Contraseña propia del perfil (keyring `password:<id>` o introducida en
+    /// el formulario). Comportamiento histórico por defecto.
+    #[default]
+    Own,
+    /// La contraseña se resuelve desde una credencial maestra del catálogo.
+    Master,
+    /// La contraseña se resuelve desde una entrada KeePass (vía
+    /// `keepass_entry_uuid` / `keepass_property`).
+    Keepass,
+}
+
 fn default_conn_type() -> String {
     "ssh".to_string()
 }
@@ -100,6 +116,14 @@ pub struct ConnectionProfile {
     /// Permite usar `username`/`title`/`url`/`notes` como valor del campo.
     #[serde(default)]
     pub keepass_property: Option<String>,
+    /// Origen de la contraseña. Default `own` para compatibilidad. Ver la
+    /// migración en `load_all` para perfiles KeePass antiguos.
+    #[serde(default)]
+    pub password_source: PasswordSource,
+    /// Id de la credencial maestra a usar cuando `password_source == Master`.
+    /// Referencia `CredentialMeta.id` del catálogo `credentials.json`.
+    #[serde(default)]
+    pub master_credential_id: Option<String>,
     /// Si true, inyecta el hook OSC 7 tras conectar para que el panel SFTP
     /// pueda seguir el cwd del terminal. Solo aplica a conexiones SSH.
     #[serde(default = "default_true")]
@@ -186,7 +210,21 @@ impl ProfileManager {
             return Ok(vec![]);
         }
         let data = fs::read_to_string(&self.profiles_path)?;
-        let profiles: Vec<ConnectionProfile> = serde_json::from_str(&data)?;
+        let mut profiles: Vec<ConnectionProfile> = serde_json::from_str(&data)?;
+        // Migración idempotente (en memoria; se persiste al primer save): un
+        // perfil KeePass antiguo trae `keepass_entry_uuid` pero `password_source`
+        // por defecto `Own`. Lo reinterpretamos como `Keepass`. No tocamos los
+        // perfiles que ya declaren un `password_source` explícito.
+        for profile in &mut profiles {
+            if profile.password_source == PasswordSource::Own
+                && profile
+                    .keepass_entry_uuid
+                    .as_deref()
+                    .is_some_and(|s| !s.is_empty())
+            {
+                profile.password_source = PasswordSource::Keepass;
+            }
+        }
         Ok(profiles)
     }
 
@@ -290,6 +328,47 @@ mod tests {
         assert_eq!(de_vuelta.workspace_id, perfil.workspace_id);
         assert_eq!(de_vuelta.auth_type, perfil.auth_type);
         assert_eq!(de_vuelta.created_at, perfil.created_at);
+    }
+
+    #[test]
+    fn password_source_por_defecto_es_own() {
+        let perfil: ConnectionProfile =
+            serde_json::from_str(JSON_SIN_WORKSPACE).expect("JSON válido");
+        assert_eq!(perfil.password_source, PasswordSource::Own);
+        assert!(perfil.master_credential_id.is_none());
+    }
+
+    #[test]
+    fn migracion_keepass_antiguo_a_keepass() {
+        // Perfil KeePass antiguo: tiene keepass_entry_uuid pero sin
+        // password_source → load_all debe reinterpretarlo como Keepass.
+        let dir = std::env::temp_dir().join(format!("rustty-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("profiles.json");
+        let json = r#"[{
+            "id": "kp-1",
+            "name": "KeePass viejo",
+            "host": "h",
+            "port": 22,
+            "username": "u",
+            "domain": null,
+            "auth_type": "password",
+            "key_path": null,
+            "group": null,
+            "keepass_entry_uuid": "ABCDEF",
+            "created_at": "2026-05-08T12:00:00Z"
+        }]"#;
+        std::fs::write(&path, json).unwrap();
+        let mgr = ProfileManager::new(dir.clone());
+        let perfiles = mgr.load_all().expect("carga");
+        assert_eq!(perfiles[0].password_source, PasswordSource::Keepass);
+
+        // Idempotente: un perfil que ya declara own y sin keepass se queda own.
+        let json2 = json.replace("\"keepass_entry_uuid\": \"ABCDEF\",", "");
+        std::fs::write(&path, json2).unwrap();
+        let perfiles = mgr.load_all().expect("carga");
+        assert_eq!(perfiles[0].password_source, PasswordSource::Own);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

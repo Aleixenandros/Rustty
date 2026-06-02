@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager, State};
 
+use crate::credentials::{self, CredentialKind, CredentialMeta, CredentialStore};
 use crate::host_keys::fingerprint_sha256;
 use crate::keepass_manager;
 use crate::local_shell_manager::LocalShellManager;
@@ -111,12 +112,14 @@ fn parse_mac_address(input: &str) -> Result<[u8; 6], String> {
 pub fn ssh_connect(
     ssh_state: State<'_, SshManager>,
     profile_state: State<'_, ProfileManager>,
+    cred_state: State<'_, CredentialStore>,
     data_dir: State<'_, DataDir>,
     app_handle: AppHandle,
     profile_id: String,
     password: Option<String>,
     passphrase: Option<String>,
     session_id: Option<String>,
+    ask_answers: Option<std::collections::HashMap<String, String>>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let profile = profiles
@@ -124,7 +127,7 @@ pub fn ssh_connect(
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
 
-    let resolved_password = resolve_password_from_keepass(&profile, password)?;
+    let resolved_password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
 
     let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
@@ -144,13 +147,15 @@ pub fn ssh_connect(
 
 #[tauri::command]
 pub fn ssh_test_connection(
+    cred_state: State<'_, CredentialStore>,
     app_handle: AppHandle,
     profile: ConnectionProfile,
     password: Option<String>,
     passphrase: Option<String>,
     test_id: String,
+    ask_answers: Option<std::collections::HashMap<String, String>>,
 ) -> Result<(), String> {
-    let resolved_password = resolve_password_from_keepass(&profile, password)?;
+    let resolved_password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let result = match tokio::runtime::Builder::new_current_thread()
@@ -172,20 +177,85 @@ pub fn ssh_test_connection(
         .map_err(|e| format!("La prueba de conexión no respondió: {e}"))?
 }
 
-/// Si el perfil tiene `keepass_entry_uuid` y la DB está desbloqueada, devuelve
-/// el valor de la propiedad configurada (por defecto `password`) de KeePass.
-/// Si el uuid está pero la DB bloqueada, devuelve error. En cualquier otro
-/// caso, pasa a través la contraseña recibida del frontend.
+/// Resuelve la contraseña efectiva de un perfil según su `password_source`,
+/// con precedencia conforme al contrato del motor de credenciales:
+///
+/// - `Keepass` (o, por compatibilidad, `keepass_entry_uuid` no vacío aunque el
+///   `password_source` no se haya migrado todavía): resuelve la propiedad
+///   configurada de la entrada KeePass (requiere DB desbloqueada).
+/// - `Master`: lee el valor de la credencial maestra (`master:<id>`) del
+///   keyring a través del catálogo. Error claro si no existe o no tiene valor.
+/// - `Own` (por defecto): pasa la contraseña recibida del frontend por el motor
+///   de sustitución, de modo que marcadores como `${var:}`, `${secret:}`,
+///   `${master:}` o `${ask:}` (Fase 5) se resuelvan antes de autenticar.
+///
+/// `ask_answers` contiene las respuestas a los `${ask:}` que el frontend pidió
+/// al usuario (clave = etiqueta); es `None`/vacío para perfiles sin `${ask:}`.
+fn resolve_profile_password(
+    profile: &ConnectionProfile,
+    store: &CredentialStore,
+    password: Option<String>,
+    ask_answers: Option<std::collections::HashMap<String, String>>,
+) -> Result<Option<String>, String> {
+    use crate::profiles::PasswordSource;
+
+    // Compatibilidad: un perfil con `keepass_entry_uuid` no vacío se trata como
+    // KeePass aunque su `password_source` aún no se haya migrado a `Keepass`.
+    let has_keepass = profile
+        .keepass_entry_uuid
+        .as_deref()
+        .is_some_and(|s| !s.is_empty());
+
+    match profile.password_source {
+        PasswordSource::Keepass => resolve_password_from_keepass(profile),
+        PasswordSource::Master => {
+            let id = profile
+                .master_credential_id
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "El perfil no referencia ninguna credencial maestra".to_string())?;
+            let catalog = store.load_all().map_err(|e| e.to_string())?;
+            let Some(cred) = catalog
+                .iter()
+                .find(|c| c.id == id && c.kind == CredentialKind::Master)
+            else {
+                return Err("Credencial maestra no encontrada".to_string());
+            };
+            match credentials::resolve_master(&catalog, &cred.name) {
+                Some(value) => Ok(Some(value)),
+                None => Err("Credencial maestra no encontrada".to_string()),
+            }
+        }
+        PasswordSource::Own if has_keepass => resolve_password_from_keepass(profile),
+        // La contraseña propia pasa por el motor de sustitución: así soporta
+        // `${var:}`/`${secret:}`/`${master:}`/`${ask:}`. Si no hay marcadores el
+        // texto se devuelve tal cual (el motor es de una sola pasada).
+        PasswordSource::Own => match password {
+            Some(pw) if pw.contains("${") => {
+                let catalog = store.load_all().map_err(|e| e.to_string())?;
+                let ctx = crate::subst::SubstContext::from_profile(profile);
+                let resolver = credentials::CredentialResolver::with_ask_answers(
+                    ctx,
+                    catalog,
+                    ask_answers.unwrap_or_default(),
+                );
+                Ok(Some(crate::subst::substitute(&pw, &resolver)))
+            }
+            other => Ok(other),
+        },
+    }
+}
+
+/// Resuelve la contraseña desde la entrada KeePass referenciada por el perfil.
+/// Requiere `keepass_entry_uuid` no vacío y la DB desbloqueada.
 fn resolve_password_from_keepass(
     profile: &ConnectionProfile,
-    password: Option<String>,
 ) -> Result<Option<String>, String> {
-    let Some(entry_uuid) = profile.keepass_entry_uuid.as_deref() else {
-        return Ok(password);
-    };
-    if entry_uuid.is_empty() {
-        return Ok(password);
-    }
+    let entry_uuid = profile
+        .keepass_entry_uuid
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "El perfil no referencia ninguna entrada KeePass".to_string())?;
     if !keepass_manager::status().unlocked {
         return Err("KeePass está bloqueada; desbloquéala en Preferencias".to_string());
     }
@@ -212,29 +282,27 @@ pub fn ssh_disconnect(ssh_state: State<SshManager>, session_id: String) -> Resul
 #[tauri::command]
 pub fn get_profile_password(
     profile_state: State<'_, ProfileManager>,
+    cred_state: State<'_, CredentialStore>,
     profile_id: String,
 ) -> Result<Option<String>, String> {
+    use crate::profiles::PasswordSource;
+
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let profile = profiles
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
 
-    // 1) KeePass si el perfil la tiene asociada
-    if let Some(uuid) = profile
+    let has_keepass = profile
         .keepass_entry_uuid
         .as_deref()
-        .filter(|s| !s.is_empty())
+        .is_some_and(|s| !s.is_empty());
+
+    // 1) KeePass o credencial maestra → reutilizamos la resolución unificada.
+    if matches!(profile.password_source, PasswordSource::Keepass | PasswordSource::Master)
+        || has_keepass
     {
-        if !keepass_manager::status().unlocked {
-            return Err("KeePass está bloqueada; desbloquéala en Preferencias".into());
-        }
-        let property = profile
-            .keepass_property
-            .as_deref()
-            .and_then(keepass_manager::EntryProperty::from_str)
-            .unwrap_or(keepass_manager::EntryProperty::Password);
-        return keepass_manager::get_property(uuid, property).map_err(|e| e.to_string());
+        return resolve_profile_password(&profile, &cred_state, None, None);
     }
 
     // 2) keyring (si el usuario guardó la contraseña al crear el perfil)
@@ -307,9 +375,11 @@ pub async fn ssh_list_tunnels(
 pub fn rdp_connect(
     rdp_state: State<'_, RdpManager>,
     profile_state: State<'_, ProfileManager>,
+    cred_state: State<'_, CredentialStore>,
     app_handle: AppHandle,
     profile_id: String,
     password: Option<String>,
+    ask_answers: Option<std::collections::HashMap<String, String>>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let profile = profiles
@@ -317,7 +387,7 @@ pub fn rdp_connect(
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
 
-    let password = resolve_password_from_keepass(&profile, password)?;
+    let password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -396,12 +466,14 @@ pub fn local_shell_close(
 pub async fn sftp_connect(
     sftp_state: State<'_, SftpManager>,
     profile_state: State<'_, ProfileManager>,
+    cred_state: State<'_, CredentialStore>,
     app_handle: AppHandle,
     profile_id: String,
     password: Option<String>,
     passphrase: Option<String>,
     elevated: Option<bool>,
     session_id: Option<String>,
+    ask_answers: Option<std::collections::HashMap<String, String>>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let profile = profiles
@@ -409,7 +481,7 @@ pub async fn sftp_connect(
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
 
-    let password = resolve_password_from_keepass(&profile, password)?;
+    let password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
 
     let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
@@ -1461,4 +1533,114 @@ pub fn session_logs_prune(
     }
 
     Ok(SessionLogsPruneResult { removed, freed_bytes })
+}
+
+// ─── Preguntas al ejecutar (`${ask:}`) ───────────────────────────────────────
+
+/// Escanea los campos de texto del perfil que pasan por el motor de sustitución
+/// y devuelve los `${ask:Etiqueta|op1|op2}` únicos (en orden de aparición). El
+/// frontend usa esto para, antes de conectar, preguntar al usuario cada valor y
+/// pasarlo de vuelta como `ask_answers`.
+///
+/// Campos cubiertos en esta fase: la **contraseña propia** del perfil cuando
+/// `password_source == own` (la que el usuario guardó en el keyring como
+/// `password:<id>`). Otros orígenes (KeePass/maestra) no llevan `${ask:}`.
+#[tauri::command]
+pub fn template_asks(
+    profile_state: State<'_, ProfileManager>,
+    profile_id: String,
+) -> Result<Vec<credentials::AskSpec>, String> {
+    use crate::profiles::PasswordSource;
+
+    let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
+    let profile = profiles
+        .into_iter()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
+
+    // Solo la contraseña propia pasa por el motor con posibles `${ask:}`.
+    let has_keepass = profile
+        .keepass_entry_uuid
+        .as_deref()
+        .is_some_and(|s| !s.is_empty());
+    if profile.password_source != PasswordSource::Own || has_keepass {
+        return Ok(vec![]);
+    }
+
+    // Leemos la contraseña guardada en el keyring (si la hay) para escanearla.
+    let stored = keyring::Entry::new("rustty", &format!("password:{}", profile.id))
+        .ok()
+        .and_then(|e| e.get_password().ok());
+    let Some(pw) = stored else {
+        return Ok(vec![]);
+    };
+
+    // Deduplicamos por etiqueta conservando el orden de aparición.
+    let mut seen = std::collections::HashSet::new();
+    let asks = credentials::collect_asks(&pw)
+        .into_iter()
+        .filter(|a| seen.insert(a.label.clone()))
+        .collect();
+    Ok(asks)
+}
+
+// ─── Catálogo de credenciales (master / var / secret) ────────────────────────
+
+/// Lista los metadatos del catálogo. NUNCA incluye valores secretos: para
+/// `Master`/`Secret` el `value` es siempre `None` (vive en el keyring); para
+/// `Var` puede traer el valor por no ser secreto.
+#[tauri::command]
+pub fn master_cred_list(store: State<CredentialStore>) -> Result<Vec<CredentialMeta>, String> {
+    store.load_all().map_err(|e| e.to_string())
+}
+
+/// Crea (si `id` es `None`, genera UUID) o actualiza una credencial. Valida que
+/// el nombre no tenga espacios y sea único (case-sensitive) dentro del mismo
+/// `kind`. Para `Master`/`Secret`, escribe `value` al keyring y NO al catálogo;
+/// para `Var`, guarda `value` en el catálogo. Devuelve la credencial resultante.
+#[tauri::command]
+pub fn master_cred_set(
+    store: State<CredentialStore>,
+    id: Option<String>,
+    name: String,
+    kind: CredentialKind,
+    description: Option<String>,
+    value: Option<String>,
+) -> Result<CredentialMeta, String> {
+    credentials::cred_set(&store, id, name, kind, description, value).map_err(|e| e.to_string())
+}
+
+/// Aplica unos metadatos sincronizados (upsert por id) en `credentials.json`
+/// SIN tocar el keyring. Lo usa la sincronización para reescribir el catálogo
+/// con los metadatos remotos conservando el `id`. Para `Var` conserva el valor;
+/// para `Master`/`Secret` el valor queda `None` (viaja aparte como `secret:*`).
+#[tauri::command]
+pub fn master_cred_import(
+    store: State<CredentialStore>,
+    meta: CredentialMeta,
+) -> Result<(), String> {
+    credentials::cred_import(&store, meta).map_err(|e| e.to_string())
+}
+
+/// Renombra una credencial (solo cambia `name`; no toca el keyring, indexado por
+/// id). Valida unicidad y ausencia de espacios.
+#[tauri::command]
+pub fn master_cred_rename(
+    store: State<CredentialStore>,
+    id: String,
+    new_name: String,
+) -> Result<CredentialMeta, String> {
+    credentials::cred_rename(&store, id, new_name).map_err(|e| e.to_string())
+}
+
+/// Elimina la credencial del catálogo y su valor del keyring. Si `force` es
+/// `false` y algún perfil la referencia, falla indicando cuántos la usan.
+#[tauri::command]
+pub fn master_cred_delete(
+    store: State<CredentialStore>,
+    data_dir: State<DataDir>,
+    id: String,
+    force: bool,
+) -> Result<(), String> {
+    credentials::cred_delete(&store, &data_dir.0, id, force).map_err(|e| e.to_string())
 }

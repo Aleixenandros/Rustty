@@ -12,6 +12,24 @@ Rustty está diseñado como aplicación local-first: no requiere cuenta propia, 
 - La base KeePass desbloqueada nunca se sincroniza.
 - En Unix, `profiles.json` se escribe con permisos privados `0600`.
 
+## Credenciales maestras y variables
+
+En **Preferencias → Credenciales** puedes definir **credenciales maestras**: una contraseña o token reutilizable que se guarda una sola vez en el keyring del sistema y se referencia desde los perfiles con `${master:nombre}`. El perfil guarda únicamente la referencia, nunca el valor, así que **rotar** la credencial (cambiar su valor) actualiza a la vez todos los perfiles que la usan.
+
+En el formulario de conexión, el selector **Origen de la contraseña** permite elegir entre *Contraseña propia*, *Credencial maestra* o *KeePass*. También puedes **promover** la contraseña propia de un perfil a credencial maestra desde su menú contextual.
+
+Las credenciales maestras forman parte de un **motor de variables** que resuelve marcadores `${...}` al conectar:
+
+- Internos: `${host}`, `${port}`, `${user}`, `${profileName}`, `${workspace}`, `${date}`, `${time}`.
+- Entorno: `${env:NOMBRE}`.
+- Variables de texto: `${var:nombre}`.
+- Secretos (keyring): `${secret:nombre}` y `${master:nombre}`.
+- Preguntas al conectar: `${ask:Etiqueta}` o `${ask:Etiqueta|opción1|opción2}`, que se piden una vez al abrir la sesión y no se persisten.
+
+> Avisos: usar la misma credencial en varios hosts implica que, si se compromete, quedan afectados todos a la vez. Las credenciales maestras **no** son la passphrase de sincronización ni la contraseña maestra de KeePass: son conceptos distintos.
+
+Los valores de credenciales maestras y secretos se resuelven en el backend en el momento de conectar; nunca se escriben en `profiles.json`, en exports sin cifrar ni en los logs de sesión. Solo viajan en la copia cifrada E2E si activas la opción de incluir secretos.
+
 ## Sincronización cifrada
 
 Cuando activas sincronización o exportas un backup cifrado, Rustty genera `rustty-sync.bin` con `age` y tu passphrase maestra. El backend remoto recibe ese fichero ya cifrado.

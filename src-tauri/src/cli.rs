@@ -10,8 +10,9 @@ use russh::{ChannelMsg, Preferred};
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::credentials::{self, CredentialKind, CredentialStore};
 use crate::host_keys;
-use crate::profiles::{AuthType, ConnectionProfile, ProfileManager};
+use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
 use crate::ssh_manager::{authenticate_handle, legacy_preferred, parse_jump_spec};
 
 const KEYRING_SERVICE: &str = "rustty";
@@ -391,15 +392,22 @@ fn single_or_ambiguous<'a>(
 fn resolve_secrets(profile: &ConnectionProfile) -> Result<CliSecrets, String> {
     let password = match profile.auth_type {
         AuthType::Password => {
-            let stored = read_keyring_secret(&format!("password:{}", profile.id));
-            let prompt = format!("Contrasena para {}@{}: ", profile.username, profile.host);
-            Some(
-                stored
-                    .unwrap_or_else(|| prompt_secret(&prompt))
-                    .map_err(|e| {
-                        format!("No se pudo obtener la contrasena de {}: {e}", profile.name)
-                    })?,
-            )
+            // Credencial maestra: resolvemos su valor del keyring vía catálogo.
+            // KeePass-en-CLI queda fuera de alcance (no hay DB desbloqueada sin
+            // la app); para esos perfiles caemos al prompt/keyring habitual.
+            if profile.password_source == PasswordSource::Master {
+                Some(resolve_master_secret(profile)?)
+            } else {
+                let stored = read_keyring_secret(&format!("password:{}", profile.id));
+                let prompt = format!("Contrasena para {}@{}: ", profile.username, profile.host);
+                Some(
+                    stored
+                        .unwrap_or_else(|| prompt_secret(&prompt))
+                        .map_err(|e| {
+                            format!("No se pudo obtener la contrasena de {}: {e}", profile.name)
+                        })?,
+                )
+            }
         }
         AuthType::PublicKey | AuthType::Agent => None,
     };
@@ -413,6 +421,31 @@ fn resolve_secrets(profile: &ConnectionProfile) -> Result<CliSecrets, String> {
         password,
         passphrase,
     })
+}
+
+/// Resuelve el valor de la credencial maestra referenciada por el perfil
+/// (`password_source == Master`) construyendo un `CredentialStore` sobre el
+/// directorio de datos y leyendo `master:<id>` del keyring.
+fn resolve_master_secret(profile: &ConnectionProfile) -> Result<String, String> {
+    let id = profile
+        .master_credential_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "El perfil {} no referencia ninguna credencial maestra",
+                profile.name
+            )
+        })?;
+    let data_dir = crate::resolve_data_dir();
+    let store = CredentialStore::new(data_dir);
+    let catalog = store.load_all().map_err(|e| e.to_string())?;
+    let cred = catalog
+        .iter()
+        .find(|c| c.id == id && c.kind == CredentialKind::Master)
+        .ok_or_else(|| "Credencial maestra no encontrada".to_string())?;
+    credentials::resolve_master(&catalog, &cred.name)
+        .ok_or_else(|| "Credencial maestra no encontrada".to_string())
 }
 
 fn resolve_passphrase(profile: &ConnectionProfile) -> Result<Option<String>, String> {

@@ -386,9 +386,17 @@ pub async fn test_connection(
     passphrase: Option<String>,
     app_handle: AppHandle,
 ) -> Result<(), String> {
+    // Redacción defensiva del mensaje de error de prueba antes de devolverlo al
+    // frontend (toast): ningún error actual interpola la credencial, pero
+    // enmascaramos por si una capa inferior llegara a hacerlo.
+    let secret_values: Vec<String> = [password.clone(), passphrase.clone()]
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .collect();
     run_connection_test(test_id, profile, password, passphrase, app_handle)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| crate::subst::redact_secrets(&e.to_string(), &secret_values))
 }
 
 // ─── Worker asíncrono ───────────────────────────────────────────────────────
@@ -433,6 +441,15 @@ async fn run_session_with_reconnect(
     } else {
         None
     };
+    // Valores secretos efectivamente usados en esta sesión (contraseña/passphrase
+    // resueltas, que pueden venir de `${master:}`/`${secret:}`). Se usan para
+    // redactar defensivamente cualquier mensaje de error antes de emitirlo a un
+    // canal no confiable, por si una capa inferior llegara a interpolarlos.
+    let secret_values: Vec<String> = [password.clone(), passphrase.clone()]
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .collect();
 
     loop {
         let exit = run_session(
@@ -450,8 +467,12 @@ async fn run_session_with_reconnect(
         match exit {
             SessionExit::UserDisconnect => return,
             SessionExit::Fatal(err) => {
-                emit_connection_log(&app_handle, &session_id, "error", "error", err.to_string());
-                let _ = app_handle.emit(&format!("ssh-error-{}", session_id), err.to_string());
+                // Redacción defensiva: ningún error actual interpola la
+                // credencial, pero enmascaramos por si una capa inferior lo
+                // hiciera, para no filtrar el valor a log/eventos.
+                let msg = crate::subst::redact_secrets(&err.to_string(), &secret_values);
+                emit_connection_log(&app_handle, &session_id, "error", "error", msg.clone());
+                let _ = app_handle.emit(&format!("ssh-error-{}", session_id), msg);
                 return;
             }
             SessionExit::ServerClosed => {

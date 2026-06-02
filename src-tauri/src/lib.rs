@@ -1,6 +1,7 @@
 mod app_tray;
 pub mod cli;
 mod commands;
+mod credentials;
 mod error;
 mod host_keys;
 mod keepass_manager;
@@ -9,10 +10,12 @@ mod profiles;
 mod rdp_manager;
 mod sftp_manager;
 mod ssh_manager;
+mod subst;
 mod sync;
 
 use std::path::PathBuf;
 
+use credentials::CredentialStore;
 use local_shell_manager::LocalShellManager;
 use profiles::ProfileManager;
 use rdp_manager::RdpManager;
@@ -79,6 +82,7 @@ pub fn run() {
             app.manage(LocalShellManager::new());
             app.manage(SftpManager::new());
             app.manage(ProfileManager::new(data_dir.clone()));
+            app.manage(CredentialStore::new(data_dir.clone()));
             app.manage(SyncManager::new(data_dir.clone()));
             app.manage(DataDir(data_dir));
             app_tray::setup(app);
@@ -102,6 +106,13 @@ pub fn run() {
             commands::save_profile,
             commands::delete_profile,
             commands::wake_on_lan,
+            // ── Catálogo de credenciales (master / var / secret)
+            commands::master_cred_list,
+            commands::master_cred_set,
+            commands::master_cred_import,
+            commands::master_cred_rename,
+            commands::master_cred_delete,
+            commands::template_asks,
             // ── Sesiones SSH
             commands::ssh_connect,
             commands::ssh_test_connection,

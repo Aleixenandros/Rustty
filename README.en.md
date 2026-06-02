@@ -23,6 +23,7 @@
 - **Security**:
   - Native integration with the system keyring (Secret Service/KWallet on Linux, macOS Keychain, Windows Credential Store).
   - Support for **KeePass** databases (`.kdbx`) as a password source.
+  - Reusable **master credentials**: define a password once and reference it from several profiles with `${master:name}`; the value lives only in the keyring and rotating it updates every profile that uses it. It is part of a **variable engine** (`${host}`, `${env:…}`, `${var:…}`, `${secret:…}`, `${ask:…}`) resolved at connection time.
   - `Ctrl+P` shortcut to paste the active profile's password without exposing it on screen.
   - `known_hosts` verification with TOFU and a warning on fingerprint changes, plus a **visual `known_hosts` manager** in Preferences to review fingerprints and remove conflicting entries.
   - Warning and confirmation when **enabling agent forwarding**, so you don't share the SSH agent with untrusted hosts by mistake.

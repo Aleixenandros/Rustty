@@ -4200,6 +4200,11 @@ input[type="checkbox"] {
   color: var(--red, #e57373);
 }
 
+/* Aviso de fallback cuando la credencial maestra referenciada ya no existe. */
+.master-cred-missing {
+  color: var(--red);
+}
+
 .keepass-entry-status {
   color: var(--subtext1);
 }
@@ -6138,6 +6143,93 @@ body.sftp-log-resizing {
 .global-tunnel-action.danger:hover {
   border-color: var(--red);
   color: var(--red);
+}
+
+/* Credenciales maestras (Preferencias → Credenciales) */
+.cred-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 14px;
+}
+
+.cred-warning {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--surface0);
+  background: var(--base);
+  color: var(--subtext1);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cred-warning:first-child {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* Filas de credencial: reutilizan .global-tunnel-row con su propio grid. */
+.global-tunnel-row[data-cred-id] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1.2fr) auto;
+}
+
+.cred-var {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--blue);
+}
+
+#cred-edit-var-preview {
+  font-family: var(--font-mono);
+  color: var(--blue);
+  min-height: 1.2em;
+}
+
+/* Control segmentado (filtro Maestras | Variables | Secretos). */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--surface1);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.segmented-btn {
+  background: transparent;
+  border: none;
+  color: var(--subtext0);
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.segmented-btn:not(:last-child) {
+  border-right: 1px solid var(--surface1);
+}
+
+.segmented-btn:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+.segmented-btn.active {
+  background: var(--blue);
+  color: var(--crust);
+}
+
+/* Etiqueta del tipo de credencial en cada fila de la lista. */
+.cred-kind-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--surface1);
+  color: var(--subtext0);
 }
 
 .tunnel-panel-head {

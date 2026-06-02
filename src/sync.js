@@ -94,6 +94,51 @@ async function addProfileSecretItems(items, profiles, prefs, deviceId) {
   }
 }
 
+async function readCredentialCatalog() {
+  try {
+    const list = await invoke("master_cred_list");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+// Añade los metadatos del catálogo de credenciales (siempre) y, solo con el
+// opt-in de secretos, los valores de master/secret leídos del keyring. Sigue
+// el mismo patrón que `addProfileSecretItems` para los secretos de perfil.
+async function addCredentialItems(items, prefs, deviceId, includeSecrets) {
+  const secretTs = prefs._secretsTs || {};
+  const catalog = await readCredentialCatalog();
+  for (const meta of catalog) {
+    if (!meta?.id) continue;
+    // Metadatos: siempre. Para `var` el `value` no es secreto y viaja aquí;
+    // para `master`/`secret` el meta no contiene valor (queda None en backend).
+    const data = { ...meta };
+    if (meta.kind !== "var") data.value = null;
+    items[`cred:${meta.id}`] = {
+      data,
+      updated_at: stableTimestamp(meta.updated_at, meta.created_at),
+      device_id: deviceId,
+    };
+
+    if (!includeSecrets) continue;
+    // Valores secretos: solo con el opt-in, claves `secret:master:<id>` /
+    // `secret:secret:<id>`, análogo a `secret:password:<id>`.
+    const keyringKey =
+      meta.kind === "master" ? `master:${meta.id}`
+      : meta.kind === "secret" ? `secret:${meta.id}`
+      : null;
+    if (!keyringKey) continue;
+    const secret = await readProfileSecret(keyringKey);
+    if (!secret) continue;
+    items[`secret:${keyringKey}`] = {
+      data: { key: keyringKey, secret },
+      updated_at: stableTimestamp(secretTs[keyringKey], meta.updated_at, meta.created_at),
+      device_id: deviceId,
+    };
+  }
+}
+
 export async function buildSyncState(ctx) {
   const { profiles, prefs, deviceId, selective } = ctx;
   const items = {};
@@ -169,6 +214,10 @@ export async function buildSyncState(ctx) {
     await addProfileSecretItems(items, profiles, prefs, deviceId);
   }
 
+  // El catálogo de credenciales se sincroniza siempre (metadatos `cred:<id>`).
+  // Los valores de master/secret solo viajan con el opt-in de secretos.
+  await addCredentialItems(items, prefs, deviceId, !!selective.secrets);
+
   const exportedSecrets = ctx.exportedSecrets?.entries;
   if (exportedSecrets && typeof exportedSecrets === "object" && !Array.isArray(exportedSecrets)) {
     const exportedAt = ctx.exportedSecrets.exportedAt || now;
@@ -207,6 +256,7 @@ export async function applyMergedState(merged, ctx) {
   let addedProfiles = 0, deletedProfiles = 0, prefsChanged = false;
   let themesChanged = 0, shortcutsChanged = 0;
   let secretsChanged = 0;
+  let credsChanged = 0;
 
   const localProfileIds = new Set(profiles.map((p) => p.id));
   const localProfilesById = new Map(profiles.map((p) => [p.id, p]));
@@ -270,6 +320,19 @@ export async function applyMergedState(merged, ctx) {
       const existing = loadLocalSnippets().find((entry) => entry.id === id);
       if (existing && sameValue(existing, snippet)) continue;
       upsertLocalSnippet(snippet);
+    } else if (key.startsWith("cred:")) {
+      // Metadatos del catálogo de credenciales: upsert por id sin tocar el
+      // keyring. El valor real de master/secret llega aparte como `secret:*`.
+      const id = key.slice(5);
+      const meta = { ...(item.data || {}) };
+      if (!meta.id) meta.id = id;
+      meta.updated_at = item.updated_at;
+      try {
+        await invoke("master_cred_import", { meta });
+        credsChanged++;
+      } catch (err) {
+        console.error("[sync] master_cred_import", id, err);
+      }
     } else if (key.startsWith("secret:") && allowSecrets) {
       const secretKey = item.data?.key || key.slice(7);
       const secret = item.data?.secret;
@@ -320,7 +383,7 @@ export async function applyMergedState(merged, ctx) {
     }
   }
 
-  return { addedProfiles, deletedProfiles, prefsChanged, themesChanged, shortcutsChanged, secretsChanged };
+  return { addedProfiles, deletedProfiles, prefsChanged, themesChanged, shortcutsChanged, secretsChanged, credsChanged };
 }
 
 function stateHasSecrets(state) {

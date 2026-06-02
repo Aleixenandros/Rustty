@@ -2,6 +2,40 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.17.0] - 2026-06-02
+
+### Añadido
+
+- **Credenciales maestras y motor de variables**: una contraseña o token
+  reutilizable se define una sola vez en **Preferencias → Credenciales** y se
+  referencia desde cualquier perfil como `${master:nombre}`. Al rotar su valor,
+  todos los perfiles que la usan quedan actualizados sin tocarlos uno a uno. El
+  valor se guarda exclusivamente en el keyring del sistema; el perfil solo
+  guarda la referencia.
+- **Origen de la contraseña por perfil**: el formulario de conexión incluye un
+  selector «Contraseña propia / Credencial maestra / KeePass». Los perfiles
+  KeePass existentes se migran de forma transparente.
+- **Motor de sustitución `${...}`**: además de `${master:nombre}`, se resuelven
+  variables internas (`${host}`, `${port}`, `${user}`, `${date}`…), de entorno
+  (`${env:VAR}`), variables de texto (`${var:nombre}`), secretos
+  (`${secret:nombre}`) y preguntas al conectar (`${ask:Etiqueta|op1|op2}`), que
+  se piden una vez al abrir la sesión y no se persisten.
+- **Editor de variables y secretos**: la sección Credenciales gestiona los tres
+  tipos (maestras, variables de texto y secretos), con copia de la referencia y
+  borrado seguro que avisa si algún perfil la usa.
+- **Promover a credencial maestra**: acción en el menú contextual de un perfil
+  que convierte su contraseña propia en una credencial maestra reutilizable.
+- **Sincronización de credenciales**: los metadatos del catálogo viajan en la
+  copia cifrada E2E; los valores de maestras y secretos solo si activas la
+  opción de incluir secretos, igual que las contraseñas de perfil.
+
+### Seguridad
+
+- Los valores de credenciales maestras y secretos nunca se escriben en
+  `profiles.json`, en exports sin cifrar ni en los logs de sesión; se resuelven
+  en el backend en el momento de conectar y se redactan de forma defensiva en
+  los mensajes de error de conexión.
+
 ## [1.16.0] - 2026-06-02
 
 ### Añadido
