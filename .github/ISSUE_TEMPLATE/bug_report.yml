@@ -1,0 +1,92 @@
+name: Informe de error
+description: Reporta un fallo o comportamiento inesperado en Rustty
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gracias por ayudar a mejorar Rustty. Por favor, rellena los campos con el mayor detalle posible.
+
+  - type: textarea
+    id: descripcion
+    attributes:
+      label: Descripción del problema
+      description: Explica con claridad qué ocurre.
+      placeholder: Al conectar por SSH a un host, la terminal se queda en blanco...
+    validations:
+      required: true
+
+  - type: textarea
+    id: pasos
+    attributes:
+      label: Pasos para reproducir
+      description: Indica los pasos exactos para reproducir el problema.
+      placeholder: |
+        1. Abrir Rustty
+        2. Crear una conexión SSH a...
+        3. Pulsar conectar
+        4. Ver el error
+    validations:
+      required: true
+
+  - type: textarea
+    id: esperado-vs-real
+    attributes:
+      label: Comportamiento esperado vs. comportamiento real
+      description: Describe qué esperabas que ocurriera y qué ocurrió realmente.
+      placeholder: |
+        Esperado: la terminal muestra el prompt del servidor.
+        Real: la terminal queda en blanco y no responde.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: so
+    attributes:
+      label: Sistema operativo
+      description: Selecciona el sistema operativo donde ocurre el problema.
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+
+  - type: input
+    id: so-version
+    attributes:
+      label: Versión / distribución del sistema operativo
+      description: Indica la versión o distribución concreta.
+      placeholder: "Fedora 44 / macOS 15.4 / Windows 11 23H2"
+    validations:
+      required: true
+
+  - type: input
+    id: version-rustty
+    attributes:
+      label: Versión de Rustty
+      description: Indica la versión de Rustty que estás utilizando.
+      placeholder: "v1.13.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / salida relevante
+      description: |
+        Pega aquí cualquier log, traza de error o salida relevante.
+        IMPORTANTE: redacta (elimina o sustituye) cualquier dato sensible antes de pegar:
+        contraseñas, passphrases, claves privadas, tokens, hostnames/IPs sensibles
+        y contenido de la terminal que no quieras compartir.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: redaccion
+    attributes:
+      label: Confirmación de datos sensibles
+      options:
+        - label: He revisado y redactado los datos sensibles (contraseñas, passphrases, tokens, hosts/IPs, contenido de terminal) de los logs y capturas.
+          required: true

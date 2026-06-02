@@ -1,0 +1,33 @@
+version: 2
+updates:
+  # Dependencias de npm (frontend, package.json en la raíz)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      dependencias-prod:
+        dependency-type: "production"
+      dependencias-dev:
+        dependency-type: "development"
+
+  # Dependencias de Cargo (backend Rust/Tauri, Cargo.toml en src-tauri)
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+
+  # Actions del workflow de CI
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"

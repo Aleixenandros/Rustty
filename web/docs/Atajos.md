@@ -11,6 +11,7 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl+W`       | Cerrar pestaña activa                               |
 | `Ctrl+Tab`     | Pestaña siguiente                                   |
 | `Ctrl+Shift+Tab` | Pestaña anterior                                  |
+| `Ctrl+1`…`Ctrl+9` | Saltar a la pestaña N (`Ctrl+9` salta a la última) |
 | `Ctrl+K`       | Buscar conexiones desde cualquier vista             |
 | `Ctrl+,`       | Abrir preferencias                                  |
 

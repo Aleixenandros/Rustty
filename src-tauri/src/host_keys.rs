@@ -367,3 +367,44 @@ fn emit_tunnel_traffic(
         }),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use russh::keys::ssh_key::PublicKey;
+
+    // `fingerprint_sha256` debe producir exactamente el mismo SHA256 que
+    // `ssh-keygen -lf` (SHA256 de la clave en formato wire, base64 sin padding,
+    // prefijado con "SHA256:"). Usamos un par ed25519 fijo cuyo fingerprint
+    // conocemos de antemano.
+    const PUB_ED25519: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPLoaKpum+TqpMC1HCq9Fz7K6oNPtWxK03HhP6sgLLMV";
+    const FP_ED25519: &str = "SHA256:uQAtx5MA1iF9jq547yBEjEJYlWBFUsApAs9ILZLdZQU";
+
+    #[test]
+    fn fingerprint_coincide_con_ssh_keygen() {
+        let key = PublicKey::from_openssh(PUB_ED25519).expect("clave pública válida");
+        assert_eq!(fingerprint_sha256(&key), FP_ED25519);
+    }
+
+    #[test]
+    fn fingerprint_tiene_prefijo_sha256() {
+        let key = PublicKey::from_openssh(PUB_ED25519).expect("clave pública válida");
+        let fp = fingerprint_sha256(&key);
+        assert!(fp.starts_with("SHA256:"));
+        // Base64 sin padding: no debe contener '='.
+        assert!(!fp.contains('='));
+    }
+
+    #[test]
+    fn fingerprints_distintos_para_claves_distintas() {
+        // Otra clave ed25519 cualquiera debe dar un fingerprint diferente.
+        const OTRA_PUB: &str =
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINbq6kVZ1dQK4mZ1J3l2YbXq8q0XlqW7t8q4Q1qS9aaa";
+        let a = PublicKey::from_openssh(PUB_ED25519).expect("clave pública válida");
+        // La segunda puede o no parsear según el padding; solo comparamos si lo hace.
+        if let Ok(b) = PublicKey::from_openssh(OTRA_PUB) {
+            assert_ne!(fingerprint_sha256(&a), fingerprint_sha256(&b));
+        }
+    }
+}

@@ -359,6 +359,136 @@ mod tests {
 
         assert!(!a.logically_eq(&b));
     }
+
+    // Construye un SyncItem con un timestamp explícito (segundos desde epoch
+    // de 2026-05-08T12:00:00Z) para controlar el orden temporal en los tests
+    // de merge / LWW.
+    fn item_en(segundos: i64, data: serde_json::Value) -> SyncItem {
+        let base = DateTime::parse_from_rfc3339("2026-05-08T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        SyncItem {
+            data,
+            updated_at: base + chrono::Duration::seconds(segundos),
+            device_id: "device-test".to_string(),
+        }
+    }
+
+    fn ts(segundos: i64) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-05-08T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+            + chrono::Duration::seconds(segundos)
+    }
+
+    #[test]
+    fn merge_lww_gana_el_item_mas_nuevo() {
+        // Local tiene un item viejo; remoto trae el mismo key más nuevo.
+        let mut local = SyncState::default();
+        local
+            .items
+            .insert("profile:1".into(), item_en(0, json!({"v": "viejo"})));
+
+        let mut remoto = SyncState::default();
+        remoto
+            .items
+            .insert("profile:1".into(), item_en(10, json!({"v": "nuevo"})));
+
+        let cambios = local.merge(remoto);
+        assert_eq!(cambios, 1);
+        assert_eq!(local.items["profile:1"].data, json!({"v": "nuevo"}));
+
+        // Caso inverso: remoto trae un item más viejo → no debe pisar al local.
+        let mut local2 = SyncState::default();
+        local2
+            .items
+            .insert("profile:1".into(), item_en(10, json!({"v": "nuevo"})));
+        let mut remoto2 = SyncState::default();
+        remoto2
+            .items
+            .insert("profile:1".into(), item_en(0, json!({"v": "viejo"})));
+        let cambios2 = local2.merge(remoto2);
+        assert_eq!(cambios2, 0);
+        assert_eq!(local2.items["profile:1"].data, json!({"v": "nuevo"}));
+    }
+
+    #[test]
+    fn merge_tombstone_mas_nuevo_borra_el_item() {
+        // Local tiene un item; remoto trae un tombstone más reciente.
+        let mut local = SyncState::default();
+        local
+            .items
+            .insert("profile:1".into(), item_en(0, json!({"v": "vivo"})));
+
+        let mut remoto = SyncState::default();
+        remoto.tombstones.insert("profile:1".into(), ts(10));
+
+        let cambios = local.merge(remoto);
+        assert_eq!(cambios, 1);
+        assert!(!local.items.contains_key("profile:1"));
+        assert_eq!(local.tombstones.get("profile:1"), Some(&ts(10)));
+    }
+
+    #[test]
+    fn merge_item_mas_nuevo_que_tombstone_resucita() {
+        // Local tiene un tombstone viejo; remoto trae un item más nuevo.
+        // Según la lógica (beats_tomb = item > tombstone), el item resucita
+        // y el tombstone se elimina.
+        let mut local = SyncState::default();
+        local.tombstones.insert("profile:1".into(), ts(0));
+
+        let mut remoto = SyncState::default();
+        remoto
+            .items
+            .insert("profile:1".into(), item_en(10, json!({"v": "renacido"})));
+
+        let cambios = local.merge(remoto);
+        assert_eq!(cambios, 1);
+        assert_eq!(local.items["profile:1"].data, json!({"v": "renacido"}));
+        assert!(!local.tombstones.contains_key("profile:1"));
+    }
+
+    #[test]
+    fn merge_item_mas_viejo_que_tombstone_no_resucita() {
+        // Local tiene un tombstone reciente; remoto trae un item más antiguo:
+        // no debe resucitar (el borrado es más reciente que la edición).
+        let mut local = SyncState::default();
+        local.tombstones.insert("profile:1".into(), ts(10));
+
+        let mut remoto = SyncState::default();
+        remoto
+            .items
+            .insert("profile:1".into(), item_en(0, json!({"v": "zombi"})));
+
+        let cambios = local.merge(remoto);
+        assert_eq!(cambios, 0);
+        assert!(!local.items.contains_key("profile:1"));
+        assert_eq!(local.tombstones.get("profile:1"), Some(&ts(10)));
+    }
+
+    #[test]
+    fn merge_es_idempotente() {
+        // Mezclar dos veces el mismo remoto no produce cambios la segunda vez.
+        let mut local = SyncState::default();
+        local
+            .items
+            .insert("profile:1".into(), item_en(0, json!({"v": "a"})));
+        local.tombstones.insert("profile:2".into(), ts(0));
+
+        let mut remoto = SyncState::default();
+        remoto
+            .items
+            .insert("profile:1".into(), item_en(10, json!({"v": "b"})));
+        remoto.tombstones.insert("profile:3".into(), ts(5));
+
+        let primera = local.merge(remoto.clone());
+        assert!(primera > 0);
+        let estado_tras_primera = local.clone();
+
+        let segunda = local.merge(remoto);
+        assert_eq!(segunda, 0);
+        assert!(local.logically_eq(&estado_tras_primera));
+    }
 }
 
 // ─── Cifrado (age con passphrase) ────────────────────────────────────

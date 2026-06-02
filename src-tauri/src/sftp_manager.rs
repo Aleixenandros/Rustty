@@ -2354,3 +2354,47 @@ async fn do_upload_dir(
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `effective_parallelism` decide cuántos handles SFTP abrir en paralelo
+    // según el tamaño total de la transferencia. Verificamos sus ramas:
+    // - total <= SFTP_CHUNK  → 1 (no merece la pena paralelizar)
+    // - total mayor          → nº de chunks (div_ceil) acotado a SFTP_PIPELINE
+    #[test]
+    fn paralelismo_es_uno_para_transferencias_pequenas() {
+        assert_eq!(effective_parallelism(0), 1);
+        assert_eq!(effective_parallelism(1), 1);
+        // Justo en el límite de un chunk también devuelve 1.
+        assert_eq!(effective_parallelism(SFTP_CHUNK), 1);
+    }
+
+    #[test]
+    fn paralelismo_crece_con_el_numero_de_chunks() {
+        // Un byte por encima de un chunk ya son 2 chunks.
+        assert_eq!(effective_parallelism(SFTP_CHUNK + 1), 2);
+        // Exactamente tres chunks → 3.
+        assert_eq!(effective_parallelism(SFTP_CHUNK * 3), 3);
+        // Tres chunks y un byte → 4 chunks (div_ceil redondea hacia arriba).
+        assert_eq!(effective_parallelism(SFTP_CHUNK * 3 + 1), 4);
+    }
+
+    #[test]
+    fn paralelismo_se_topa_en_el_pipeline_maximo() {
+        // Muchísimos chunks: nunca supera SFTP_PIPELINE.
+        let enorme = SFTP_CHUNK * (SFTP_PIPELINE as u64) * 10;
+        assert_eq!(effective_parallelism(enorme), SFTP_PIPELINE);
+        // Justo SFTP_PIPELINE chunks → SFTP_PIPELINE.
+        assert_eq!(
+            effective_parallelism(SFTP_CHUNK * SFTP_PIPELINE as u64),
+            SFTP_PIPELINE
+        );
+        // Un chunk más allá del pipeline sigue topado.
+        assert_eq!(
+            effective_parallelism(SFTP_CHUNK * (SFTP_PIPELINE as u64 + 5)),
+            SFTP_PIPELINE
+        );
+    }
+}

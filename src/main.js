@@ -325,6 +325,10 @@ const DEFAULT_PREFS = {
   terminalTheme:   null,
   copyOnSelect:    false,
   rightClickPaste: false,
+  // Si está activo, los pegados peligrosos en el terminal (multilínea, muy
+  // largos o con caracteres de control) muestran una previsualización
+  // tematizada que el usuario debe confirmar antes de enviarse a la sesión.
+  confirmRiskyPaste: true,
   sftpConflictPolicy: "ask",   // "ask" | "overwrite" | "skip" | "rename"
   sftpVerifySize:  false,
   fontSize:        14,
@@ -1268,6 +1272,13 @@ function applyPrefsToTerminal(terminal) {
 }
 
 function applyPrefsToAllTerminals() {
+  // Sincroniza el fondo del chasis del terminal (--xterm-bg) con el fondo del
+  // tema de terminal activo, para que el padding del pane y la fila/columna
+  // parcial sin pintar de xterm queden del mismo color que el terminal.
+  const termBg = getTerminalTheme()?.background;
+  if (termBg) {
+    document.documentElement.style.setProperty("--xterm-bg", termBg);
+  }
   for (const [sid, s] of sessions) {
     if (!s.terminal) continue;
     applyPrefsToTerminal(s.terminal);
@@ -1352,6 +1363,8 @@ function openSettingsModal() {
   };
   document.getElementById("pref-copy-on-select").checked   = prefs.copyOnSelect;
   document.getElementById("pref-right-click-paste").checked = prefs.rightClickPaste;
+  const confirmRiskyPasteEl = document.getElementById("pref-confirm-risky-paste");
+  if (confirmRiskyPasteEl) confirmRiskyPasteEl.checked = prefs.confirmRiskyPaste !== false;
   document.getElementById("pref-sftp-conflict-policy").value = normalizeSftpConflictPolicy(prefs.sftpConflictPolicy);
   document.getElementById("pref-sftp-verify-size").checked = !!prefs.sftpVerifySize;
   populateFontFamilySelect(prefs.fontFamily || "");
@@ -2346,6 +2359,7 @@ function savePrefsFromModal() {
     terminalTheme:   selectedTerminalTheme,
     copyOnSelect:    document.getElementById("pref-copy-on-select").checked,
     rightClickPaste: document.getElementById("pref-right-click-paste").checked,
+    confirmRiskyPaste: document.getElementById("pref-confirm-risky-paste")?.checked ?? true,
     sftpConflictPolicy: normalizeSftpConflictPolicy(
       document.getElementById("pref-sftp-conflict-policy")?.value,
     ),
@@ -2539,6 +2553,11 @@ async function init() {
   loadPrefs();
   await registerBundledThemePacks();
   enhanceThemePickers();
+  // Los temas (incluidos los bundled, que se inyectan de forma diferida) ya
+  // están registrados y aplicados: revelamos el chrome y quitamos el anti-flash
+  // del arranque. Un rAF asegura que el navegador haya aplicado el CSS del tema
+  // antes del fade-in.
+  requestAnimationFrame(() => document.documentElement.classList.remove("booting"));
 
   // Skeleton durante la carga inicial: evita el flash vacío de la sidebar
   // mientras get_profiles termina. Si la carga es instantánea el usuario
@@ -4943,6 +4962,8 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-keep-alive").value = profile.keep_alive_secs ?? "";
   document.getElementById("f-allow-legacy").checked = !!profile.allow_legacy_algorithms;
   document.getElementById("f-agent-forwarding").checked = !!profile.agent_forwarding;
+  const disablePasteConfirmEl = document.getElementById("f-disable-paste-confirm");
+  if (disablePasteConfirmEl) disablePasteConfirmEl.checked = !!profile.disable_paste_confirm;
   document.getElementById("f-x11-forwarding").checked = !!profile.x11_forwarding;
   document.getElementById("f-auto-reconnect").value = profile.auto_reconnect ?? "";
   document.getElementById("f-session-log").checked = !!profile.session_log;
@@ -5714,6 +5735,7 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     keep_alive_secs: keepAliveFromInput(document.getElementById("f-keep-alive").value),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     agent_forwarding: document.getElementById("f-agent-forwarding").checked,
+    disable_paste_confirm: document.getElementById("f-disable-paste-confirm")?.checked ?? false,
     x11_forwarding: document.getElementById("f-x11-forwarding").checked,
     auto_reconnect: autoReconnectFromInput(document.getElementById("f-auto-reconnect").value),
     session_log: document.getElementById("f-session-log").checked,
@@ -5922,6 +5944,7 @@ async function saveAndClose(shouldConnect) {
     keep_alive_secs:     keepAliveFromInput(document.getElementById("f-keep-alive").value),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     agent_forwarding:    document.getElementById("f-agent-forwarding").checked,
+    disable_paste_confirm: document.getElementById("f-disable-paste-confirm")?.checked ?? false,
     x11_forwarding:      document.getElementById("f-x11-forwarding").checked,
     auto_reconnect:      autoReconnectFromInput(document.getElementById("f-auto-reconnect").value),
     session_log:         document.getElementById("f-session-log").checked,
@@ -6374,13 +6397,17 @@ function createTab(sessionId, profile, initialStatus, { sftp = true } = {}) {
   const tab = document.createElement("div");
   tab.className = "tab";
   tab.dataset.session = sessionId;
-  tab.title = buildTabTooltip(profile);
+  // Si la sesión recién creada ya trajera un alias temporal, lo respetamos.
+  const sessionAlias = (sessions.get(sessionId)?.alias || "").trim();
+  const tabLabel = sessionAlias || profile.name;
+  tab.title = buildTabTooltip(profile, sessionAlias);
+  if (sessionAlias) tab.classList.add("has-alias");
   tab.draggable = true;
   const sftpBtn = sftp ? `<button class="tab-sftp" title="Panel SFTP">⇅</button>` : "";
   const tunnelBtn = sftp ? `<button class="tab-tunnels" title="Túneles SSH">⇄</button>` : "";
   tab.innerHTML = `
     <span class="tab-dot ${initialStatus}"></span>
-    <span class="tab-name">${escHtml(profile.name)}</span>
+    <span class="tab-name">${escHtml(tabLabel)}</span>
     ${sftpBtn}
     ${tunnelBtn}
     <button class="tab-close" title="Cerrar">✕</button>`;
@@ -6412,9 +6439,14 @@ function createTab(sessionId, profile, initialStatus, { sftp = true } = {}) {
  * Construye el tooltip del tab. Para SSH/SFTP/FTP/RDP muestra "user@host:port".
  * Para shell local solo el nombre. Si falta info se omite.
  */
-function buildTabTooltip(profile) {
-  if (!profile) return "";
-  const parts = [profile.name];
+function buildTabTooltip(profile, alias = "") {
+  if (!profile) return alias || "";
+  const parts = [];
+  // Si la sesión tiene un alias temporal, lo anteponemos al nombre del perfil
+  // para que el tooltip refleje "alias · Nombre · user@host:port · TIPO".
+  const trimmedAlias = (alias || "").trim();
+  if (trimmedAlias) parts.push(trimmedAlias);
+  parts.push(profile.name);
   if (profile.host) {
     const user = profile.username ? `${profile.username}@` : "";
     const port = profile.port ? `:${profile.port}` : "";
@@ -6424,6 +6456,39 @@ function buildTabTooltip(profile) {
     parts.push(profile.connection_type.toUpperCase());
   }
   return parts.join(" · ");
+}
+
+/**
+ * Resuelve la etiqueta visible de una pestaña: usa el alias temporal de la
+ * sesión (`s.alias`) si existe y no está vacío; en caso contrario el nombre
+ * del perfil asociado. El alias vive solo en runtime (no se persiste).
+ */
+function getSessionTabLabel(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s) return "";
+  const alias = (s.alias || "").trim();
+  if (alias) return alias;
+  const profile = profiles.find((p) => p.id === s.profileId);
+  if (profile?.name) return profile.name;
+  // Fallback: el nombre que ya estuviera pintado en la pestaña.
+  const tab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
+  return tab?.querySelector(".tab-name")?.textContent || "";
+}
+
+/**
+ * Actualiza en el DOM el nombre visible y el tooltip de una pestaña según su
+ * alias/perfil actuales. Marca la clase `has-alias` para poder estilarla.
+ */
+function updateTabLabel(sessionId) {
+  const tab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
+  if (!tab) return;
+  const s = sessions.get(sessionId);
+  const alias = (s?.alias || "").trim();
+  const nameEl = tab.querySelector(".tab-name");
+  if (nameEl) nameEl.textContent = getSessionTabLabel(sessionId);
+  const profile = s ? profiles.find((p) => p.id === s.profileId) : null;
+  tab.title = buildTabTooltip(profile, alias);
+  tab.classList.toggle("has-alias", !!alias);
 }
 
 /**
@@ -6579,10 +6644,94 @@ async function writeSystemClipboardText(text) {
   }
 }
 
+// Umbral de longitud (caracteres) a partir del cual un pegado se considera
+// "muy largo" y dispara la confirmación.
+const PASTE_WARN_LENGTH = 2000;
+// Caracteres de control C0 peligrosos: todo el rango 0x00–0x1F y DEL (0x7F)
+// EXCEPTO tab (\t = 0x09), salto de línea (\n = 0x0A) y retorno (\r = 0x0D),
+// que son habituales en texto legítimo. ESC (0x1B) y demás podrían inyectar
+// secuencias de terminal.
+const PASTE_CONTROL_CHARS_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/;
+// Cuántas líneas / caracteres mostrar como extracto en la previsualización.
+const PASTE_PREVIEW_MAX_LINES = 10;
+const PASTE_PREVIEW_MAX_CHARS = 500;
+
+/**
+ * Decide si un texto a pegar en el terminal es "peligroso" y, por tanto,
+ * merece confirmación. Devuelve el motivo principal ("multiline" | "long" |
+ * "control") o null si el pegado es seguro (corto, una sola línea y sin
+ * caracteres de control). El orden prioriza el riesgo de ejecución de
+ * comandos (multilínea) y la inyección de secuencias (control).
+ */
+function pasteNeedsConfirmation(text) {
+  if (!text) return null;
+  if (PASTE_CONTROL_CHARS_RE.test(text)) return "control";
+  if (/[\r\n]/.test(text)) return "multiline";
+  if (text.length > PASTE_WARN_LENGTH) return "long";
+  return null;
+}
+
+/**
+ * Construye el cuerpo de la previsualización tematizada: motivo, recuento de
+ * líneas y caracteres, y un extracto truncado del texto. Se devuelve como
+ * texto plano (la modal usa `textContent`), sin HTML.
+ */
+function buildPastePreviewMessage(text, reason) {
+  const lineCount = text.split(/\r\n|\r|\n/).length;
+  const charCount = text.length;
+  const reasonKey =
+    reason === "control" ? "modal_paste.reason_control"
+    : reason === "long"  ? "modal_paste.reason_long"
+    : "modal_paste.reason_multiline";
+
+  // Extracto: primeras N líneas o M caracteres (lo que se alcance antes).
+  let excerpt = text.split(/\r\n|\r|\n/).slice(0, PASTE_PREVIEW_MAX_LINES).join("\n");
+  let truncated = lineCount > PASTE_PREVIEW_MAX_LINES;
+  if (excerpt.length > PASTE_PREVIEW_MAX_CHARS) {
+    excerpt = excerpt.slice(0, PASTE_PREVIEW_MAX_CHARS);
+    truncated = true;
+  }
+  // Neutraliza caracteres de control en el extracto para que no afecten al
+  // render de la modal (se sustituyen por su nombre simbólico básico).
+  excerpt = excerpt.replace(PASTE_CONTROL_CHARS_RE, (ch) =>
+    ch === "\x1b" ? "␛" : "·"
+  );
+  if (truncated) excerpt += "\n…";
+
+  return [
+    t(reasonKey),
+    t("modal_paste.stats", { lines: lineCount, chars: charCount }),
+    "",
+    excerpt,
+  ].join("\n");
+}
+
 async function pasteClipboardIntoSession(sessionObj) {
   if (!sessionObj || sessionObj.status === "closed" || !sessionObj.terminal || sessionObj.type === "rdp") return;
   const text = await readSystemClipboardText();
   if (!text) return;
+
+  // Confirmación de pegado peligroso. Se omite si:
+  //  - el texto es seguro (corto, una línea, sin caracteres de control),
+  //  - la preferencia global `confirmRiskyPaste` está desactivada, o
+  //  - el perfil de la sesión tiene la excepción `disable_paste_confirm`.
+  const reason = pasteNeedsConfirmation(text);
+  if (reason && prefs.confirmRiskyPaste !== false) {
+    const profile = sessionObj.profileId
+      ? profiles.find((p) => p.id === sessionObj.profileId)
+      : null;
+    const profileSkips = !!profile?.disable_paste_confirm;
+    if (!profileSkips) {
+      const ok = await confirmThemed({
+        title: t("modal_paste.title"),
+        message: buildPastePreviewMessage(text, reason),
+        submitLabel: t("modal_paste.submit"),
+        danger: true,
+      });
+      if (!ok) return;
+    }
+  }
+
   sendTerminalInput(sessionObj, text);
 }
 
@@ -7318,6 +7467,57 @@ function hideReconnectOverlay(sessionId) {
   }
 }
 
+/**
+ * Esquemas considerados seguros para abrir directamente desde un enlace
+ * detectado en la salida del terminal. La salida remota es no confiable,
+ * así que solo se abren sin preguntar estos esquemas.
+ */
+const SAFE_LINK_SCHEMES = new Set(["https:", "http:", "mailto:"]);
+
+/**
+ * Abre una URL externa con el opener del sistema (mismo mecanismo que el
+ * resto de la app, ver `plugin:opener|open_url`).
+ */
+function openExternalUrl(url) {
+  return invoke("plugin:opener|open_url", { url }).catch((err) =>
+    toast(`${t("toast.link_open_error")}: ${err}`, "error", 6000)
+  );
+}
+
+/**
+ * Handler de enlaces de WebLinksAddon. La salida de un servidor remoto no es
+ * confiable, por lo que validamos el esquema antes de abrir:
+ *  - https/http/mailto se abren directamente con el opener seguro de Tauri.
+ *  - Cualquier otro esquema (o URLs no parseables) requiere confirmación
+ *    explícita del usuario y nunca se abre sin preguntar.
+ * El callback de WebLinksAddon no es async, así que la confirmación se
+ * resuelve con una IIFE async desacoplada.
+ */
+function handleTerminalLink(_event, uri) {
+  let parsed;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    parsed = null;
+  }
+
+  if (parsed && SAFE_LINK_SCHEMES.has(parsed.protocol)) {
+    openExternalUrl(uri);
+    return;
+  }
+
+  // Esquema inesperado o URL no parseable: pedir confirmación antes de abrir.
+  (async () => {
+    const ok = await confirmThemed({
+      title: t("toast.link_open_confirm_title"),
+      message: t("toast.link_open_confirm_msg", { uri }),
+      submitLabel: t("toast.link_open_submit"),
+      danger: true,
+    });
+    if (ok) openExternalUrl(uri);
+  })();
+}
+
 function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   const { sftp = true } = opts;
 
@@ -7359,7 +7559,7 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   const fitAddon = new FitAddon();
   const searchAddon = new SearchAddon();
   terminal.loadAddon(fitAddon);
-  terminal.loadAddon(new WebLinksAddon());
+  terminal.loadAddon(new WebLinksAddon(handleTerminalLink));
   terminal.loadAddon(searchAddon);
   terminal.open(xtermDiv);
   // Ligaduras: el addon requiere que el terminal ya esté abierto en el DOM.
@@ -7776,6 +7976,75 @@ async function closeSession(sessionId, opts = {}) {
   sessions.delete(sessionId);
   removeTab(sessionId);
   renderConnectionList();
+}
+
+/**
+ * Acción global de emergencia: desconecta TODO. Cuenta las sesiones vivas y
+ * las transferencias SFTP en curso, pide confirmación temática con el contador
+ * y, si se acepta, cancela las transferencias activas, cierra explícitamente
+ * los túneles SSH abiertos y cierra todas las sesiones (SSH, SFTP, RDP y
+ * consolas locales) vía `closeSession(..., { skipConfirm: true })`.
+ */
+async function disconnectAll() {
+  // Snapshot de los ids: el Map `sessions` muta al ir cerrando sesiones.
+  const ids = [...sessions.keys()];
+  const liveIds = ids.filter((sid) => isSessionLive(sessions.get(sid)));
+
+  // Contar transferencias SFTP en curso (en cola o ejecutándose).
+  let activeTransfers = 0;
+  for (const [, s] of sessions) {
+    for (const job of s.sftp?.transfers?.values?.() || []) {
+      if (job.status === "running" || job.status === "queued" || job.status === "paused") {
+        activeTransfers++;
+      }
+    }
+  }
+
+  if (liveIds.length === 0) {
+    toast(t("disconnect_all.none"), "info");
+    return;
+  }
+
+  const ok = await confirmThemed({
+    title: t("disconnect_all.title"),
+    message: t("disconnect_all.confirm", { n: liveIds.length, m: activeTransfers }),
+    submitLabel: t("disconnect_all.submit"),
+    danger: true,
+  });
+  if (!ok) return;
+
+  // 1) Cancelar las transferencias SFTP activas antes de cerrar las sesiones.
+  for (const [, s] of sessions) {
+    const sftpSessionId = s.sftp?.sftpSessionId;
+    for (const job of s.sftp?.transfers?.values?.() || []) {
+      if (job.status === "queued") {
+        // En cola: basta con marcarla como cancelada localmente.
+        job.status = "canceled";
+        if (s.sftp?.transferQueue) {
+          s.sftp.transferQueue = s.sftp.transferQueue.filter((item) => item.id !== job.id);
+        }
+        markTransferCanceled(job.transferEl, "Cancelado");
+      } else if ((job.status === "running" || job.status === "paused") && sftpSessionId) {
+        invoke("sftp_cancel_transfer", { sessionId: sftpSessionId, transferId: job.id }).catch(() => {});
+      }
+    }
+  }
+
+  // 2) Cerrar explícitamente los túneles SSH activos (aunque caen al cerrar la
+  //    sesión SSH, los detenemos en el backend para no dejar puertos abiertos).
+  for (const sid of ids) {
+    const s = sessions.get(sid);
+    for (const tunnelId of [...(s?.tunnels?.keys?.() || [])]) {
+      await stopSshTunnel(sid, tunnelId);
+    }
+  }
+
+  // 3) Cerrar TODAS las sesiones (snapshot inicial; el Map muta en el bucle).
+  for (const sid of ids) {
+    await closeSession(sid, { skipConfirm: true });
+  }
+
+  toast(t("disconnect_all.done"), "success");
 }
 
 function removeTab(sessionId) {
@@ -11258,6 +11527,7 @@ async function importFromSshConfig() {
       keep_alive_secs: null,
       allow_legacy_algorithms: false,
       agent_forwarding: false,
+      disable_paste_confirm: false,
       x11_forwarding: false,
       auto_reconnect: null,
       session_log: false,
@@ -11482,6 +11752,7 @@ function bindUIEvents() {
       else if (action === "local-shell") openLocalShell();
       else if (action === "tunnels") openGlobalTunnelsModal();
       else if (action === "activity") openActivityCenter();
+      else if (action === "disconnect-all") disconnectAll();
       else if (action === "settings") openSettingsModal();
     });
   });
@@ -11962,6 +12233,7 @@ const SHORTCUT_ACTIONS = {
   sftp_toggle_follow:{ default: null,             run: () => toggleActiveSftpFollow() },
   sftp_toggle_sudo:  { default: null,             run: () => toggleActiveSftpElevated() },
   toggle_zen_mode:   { default: "F11",            run: () => toggleZenMode() },
+  disconnect_all:    { default: "",               run: () => disconnectAll() },
 };
 
 const SHORTCUT_IDS = Object.keys(SHORTCUT_ACTIONS);
@@ -13017,6 +13289,31 @@ async function handleTabContextAction(action) {
         others.forEach((el) => container.appendChild(el));
       }
     }
+    return;
+  }
+
+  if (action === "rename") {
+    const s = sessions.get(targetId);
+    if (!s) return;
+    // El alias es por sesión (runtime): no toca el perfil ni profiles.json.
+    const profile = profiles.find((p) => p.id === s.profileId);
+    const result = await promptCredential({
+      title: t("tab_rename.title"),
+      message: t("tab_rename.message"),
+      label: t("tab_rename.label"),
+      submitLabel: t("tab_rename.submit"),
+      inputType: "text",
+      initialValue: s.alias || "",
+    });
+    if (!result) return; // Cancelado: no cambiamos nada.
+    const value = (result.value || "").trim();
+    if (value) {
+      s.alias = value;
+    } else {
+      // Vaciar = restablecer al nombre del perfil.
+      delete s.alias;
+    }
+    updateTabLabel(targetId);
     return;
   }
 

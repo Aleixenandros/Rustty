@@ -1,5 +1,7 @@
 # Rustty - Cliente SSH Multiplataforma🦀⚡
 
+> 🌐 English version: [README.en.md](README.en.md)
+
 > ⚠️ **Aviso**: este repositorio contiene código y documentación generados en parte con agentes de IA.
 > Las contribuciones y/o críticas son bienvenidas.
 

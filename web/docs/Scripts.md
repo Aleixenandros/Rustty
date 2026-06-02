@@ -2,6 +2,13 @@
 
 La automatización por scripts está planificada, pero todavía no forma parte de la versión estable.
 
+## Ya disponible
+
+Aunque los scripts reproducibles aún están en diseño, Rustty ya cubre dos necesidades cercanas:
+
+- **Grabación de sesión a fichero**: activa **Grabar sesión** en las opciones avanzadas de un perfil SSH para volcar toda la salida del shell a un `.log` dentro del directorio de datos.
+- **Exportar el historial**: desde el menú contextual de una pestaña, **Exportar historial…** guarda en un `.txt` todo el buffer del terminal (comandos introducidos y salida del servidor) en texto plano.
+
 ## En diseño
 
 La idea es permitir recetas reproducibles para sesiones SSH:

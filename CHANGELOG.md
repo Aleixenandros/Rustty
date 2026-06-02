@@ -2,6 +2,41 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.14.0] - 2026-06-02
+
+### Añadido
+
+- Acción global «Desconectar todo» como botón de emergencia en el rail y como
+  atajo configurable: confirma con el número de sesiones y transferencias
+  afectadas, cancela las transferencias SFTP en curso, cierra los túneles y
+  desconecta todas las sesiones SSH, SFTP, RDP y consolas locales.
+- Alias temporal de pestaña: renombrar una pestaña desde su menú contextual
+  sin tocar el perfil. El alias vive solo en la sesión y se restablece al
+  nombre del perfil al dejar el campo vacío.
+- README en inglés (`README.en.md`) con enlaces de cambio de idioma desde y
+  hacia el README en español.
+- Política de seguridad (`SECURITY.md`) con el canal de reporte privado, las
+  versiones soportadas y el modelo de seguridad del proyecto.
+- Configuración de Dependabot (npm, Cargo y GitHub Actions) y plantillas de
+  issues y pull request con checklist de pruebas y aviso de redacción de datos
+  sensibles.
+
+### Cambiado
+
+- Los enlaces detectados en el terminal se validan antes de abrirse: solo se
+  abren directamente los esquemas `http`, `https` y `mailto`; cualquier otro
+  pide confirmación, evitando que la salida remota abra esquemas arbitrarios.
+- El pegado en el terminal pide confirmación con previsualización cuando el
+  texto es multilínea, muy largo o contiene caracteres de control. Es
+  configurable de forma global y se puede desactivar por perfil.
+
+### Corregido
+
+- El fondo del terminal ahora cubre todo el panel: desaparecen las franjas del
+  color de la interfaz que asomaban en los bordes y bajo la barra de estado.
+- Se elimina el parpadeo de temas al arrancar: la interfaz aplica el tema
+  guardado antes del primer pintado y se revela cuando los temas están listos.
+
 ## [1.13.0] - 2026-06-01
 
 ### Añadido

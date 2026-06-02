@@ -64,7 +64,6 @@ jobs:
             libdbus-1-dev \
             libssl-dev \
             pkg-config \
-            libssh2-1-dev \
             rpm \
             zstd
 
@@ -73,7 +72,7 @@ jobs:
         if: matrix.platform == 'macos-latest'
         run: |
           missing=()
-          for formula in libssh2 openssl@3 pkgconf; do
+          for formula in openssl@3 pkgconf; do
             if ! brew list --formula "$formula" >/dev/null 2>&1; then
               missing+=("$formula")
             fi

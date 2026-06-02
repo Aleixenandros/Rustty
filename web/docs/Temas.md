@@ -41,4 +41,4 @@ El botón **Exportar plantilla** genera un JSON listo para editar. Los temas per
 
 ## Idioma
 
-La preferencia de idioma tiene pendiente una opción **Sistema** para detectar automáticamente el idioma del sistema operativo. Mientras tanto, puedes elegir manualmente los idiomas disponibles desde Preferencias.
+Desde **Preferencias → Idioma** puedes dejar la opción **Sistema (automático)**, que detecta el idioma del sistema operativo, o fijar manualmente uno de los disponibles: **español**, **inglés**, **francés**, **portugués** y **alemán**.

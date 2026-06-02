@@ -1,0 +1,46 @@
+name: Propuesta de funcionalidad
+description: Sugiere una nueva funcionalidad o mejora para Rustty
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gracias por proponer una mejora para Rustty.
+
+        Nota: Rustty NO incorpora funcionalidades de inteligencia artificial de ningún tipo
+        (asistentes, agentes, integraciones con LLM, etc.). Este tipo de propuestas no se
+        aceptan, así que por favor evita enviarlas para no generar ruido.
+
+  - type: textarea
+    id: problema
+    attributes:
+      label: Problema o necesidad
+      description: ¿Qué problema o necesidad motiva esta propuesta?
+      placeholder: Actualmente no es posible...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solucion
+    attributes:
+      label: Solución deseada
+      description: Describe la funcionalidad o comportamiento que te gustaría ver.
+      placeholder: Me gustaría que Rustty permitiera...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas consideradas
+      description: ¿Has considerado otras soluciones o alternativas? Descríbelas.
+    validations:
+      required: false
+
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto adicional
+      description: Añade cualquier otra información, capturas o ejemplos que ayuden a entender la propuesta.
+    validations:
+      required: false

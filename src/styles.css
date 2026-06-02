@@ -10,6 +10,9 @@
   --crust:   #11111b;
   --mantle:  #181825;
   --base:    #1e1e2e;
+  /* Fondo del terminal xterm (lo refresca applyPrefsToAllTerminals según el
+     tema de terminal activo; este valor por defecto evita un flash claro). */
+  --xterm-bg: #1e1e2e;
   --surface0: #313244;
   --surface1: #45475a;
   --surface2: #585b70;
@@ -139,6 +142,20 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Anti-flash: mientras el documento está "booting" (clase fijada por el script
+   inline del <head> y retirada por init() tras registrar/aplicar los temas),
+   el chrome queda invisible sobre el fondo del tema ya correcto. Al revelar,
+   un fade corto evita el salto brusco. */
+html.booting #app {
+  opacity: 0;
+}
+#app {
+  transition: opacity 140ms var(--motion-ease, ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  #app { transition: none; }
+}
+
 button {
   font-family: inherit;
   font-size: inherit;
@@ -258,6 +275,11 @@ a:focus-visible,
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0;
+}
+
+.rail-btn-danger:hover {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  color: var(--red);
 }
 
 .rail-btn-primary {
@@ -1302,6 +1324,12 @@ body.has-session-tabs .tab-home .tab-name {
   text-overflow: ellipsis;
 }
 
+/* Alias temporal de sesión: cursiva sutil para distinguir las pestañas
+   renombradas en runtime de las que muestran el nombre del perfil. */
+.tab.has-alias .tab-name {
+  font-style: italic;
+}
+
 .tab-close {
   width: 16px;
   height: 16px;
@@ -1388,6 +1416,20 @@ body.has-session-tabs .tab-home .tab-name {
   border-radius: 5px;
   outline: 2px solid transparent;
   transition: outline-color 0.12s;
+}
+
+/* El pane de un terminal SSH/local adopta el fondo del tema de terminal
+   (`--xterm-bg`, fijado por applyPrefsToAllTerminals). Así el padding del
+   pane y la fila/columna parcial que xterm deja sin pintar quedan del mismo
+   color que el terminal, sin franjas claras del color base de la app en los
+   bordes ni en la parte inferior (sobre la barra de estado). No afecta a los
+   panes SFTP (.file-transfer-pane) ni RDP (.rdp-pane). */
+.terminal-pane:has(.xterm-container) {
+  background: var(--xterm-bg, #1e1e2e);
+}
+.terminal-pane:has(.xterm-container) .term-area,
+.terminal-pane:has(.xterm-container) .xterm-container {
+  background: var(--xterm-bg, #1e1e2e);
 }
 
 #terminals-container.status-bar-visible > .terminal-pane {
@@ -2574,6 +2616,13 @@ body.terminal-bell-visual::after {
   color: var(--subtext1);
   font-size: 13px;
   line-height: 1.45;
+  /* Conserva saltos de línea y espacios del extracto en la previsualización de
+     pegado peligroso, manteniendo el ajuste de línea para texto largo. */
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Evita que un extracto muy alto desborde la modal: limita y permite scroll. */
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 .modal-header {

@@ -150,6 +150,11 @@ pub struct ConnectionProfile {
     /// `<data_dir>/session_logs/<perfil>/<timestamp>.log`.
     #[serde(default)]
     pub session_log_dir: Option<String>,
+    /// Si true, este perfil omite la confirmación de pegado peligroso
+    /// (multilínea / muy largo / caracteres de control) aunque la preferencia
+    /// global `confirmRiskyPaste` esté activa. Excepción explícita por perfil.
+    #[serde(default)]
+    pub disable_paste_confirm: bool,
     /// Túneles SSH guardados para este perfil. Si `auto_start` está activo,
     /// el frontend los levanta al establecer la sesión interactiva.
     #[serde(default)]
@@ -235,4 +240,66 @@ fn write_private_file(path: &PathBuf, data: &[u8]) -> Result<(), AppError> {
 fn write_private_file(path: &PathBuf, data: &[u8]) -> Result<(), AppError> {
     fs::write(path, data)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // JSON mínimo de un perfil SSH SIN el campo `workspace_id` (como los
+    // perfiles previos a la feature de workspaces). El resto de campos con
+    // `#[serde(default)]` deben rellenarse solos.
+    const JSON_SIN_WORKSPACE: &str = r#"{
+        "id": "abc-123",
+        "name": "Servidor de prueba",
+        "host": "example.com",
+        "port": 22,
+        "username": "root",
+        "domain": null,
+        "auth_type": "password",
+        "key_path": null,
+        "group": null,
+        "created_at": "2026-05-08T12:00:00Z"
+    }"#;
+
+    #[test]
+    fn deserializar_sin_workspace_id_usa_el_valor_por_defecto() {
+        let perfil: ConnectionProfile =
+            serde_json::from_str(JSON_SIN_WORKSPACE).expect("JSON válido");
+        assert_eq!(perfil.workspace_id, "default");
+        // Otros defaults comprobados de paso.
+        assert_eq!(perfil.connection_type, "ssh");
+        assert!(perfil.follow_cwd);
+        assert_eq!(perfil.auth_type, AuthType::Password);
+    }
+
+    #[test]
+    fn round_trip_conserva_los_campos() {
+        let perfil: ConnectionProfile =
+            serde_json::from_str(JSON_SIN_WORKSPACE).expect("JSON válido");
+
+        let serializado = serde_json::to_string(&perfil).expect("serializa");
+        let de_vuelta: ConnectionProfile =
+            serde_json::from_str(&serializado).expect("deserializa");
+
+        assert_eq!(de_vuelta.id, perfil.id);
+        assert_eq!(de_vuelta.name, perfil.name);
+        assert_eq!(de_vuelta.host, perfil.host);
+        assert_eq!(de_vuelta.port, perfil.port);
+        assert_eq!(de_vuelta.username, perfil.username);
+        assert_eq!(de_vuelta.workspace_id, perfil.workspace_id);
+        assert_eq!(de_vuelta.auth_type, perfil.auth_type);
+        assert_eq!(de_vuelta.created_at, perfil.created_at);
+    }
+
+    #[test]
+    fn workspace_id_explicito_se_respeta() {
+        // Si el JSON sí trae workspace_id, no debe sobrescribirse con el default.
+        let json = JSON_SIN_WORKSPACE.replace(
+            "\"created_at\": \"2026-05-08T12:00:00Z\"",
+            "\"workspace_id\": \"trabajo\",\n        \"created_at\": \"2026-05-08T12:00:00Z\"",
+        );
+        let perfil: ConnectionProfile = serde_json::from_str(&json).expect("JSON válido");
+        assert_eq!(perfil.workspace_id, "trabajo");
+    }
 }
