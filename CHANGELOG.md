@@ -2,6 +2,13 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.19.2] - 2026-06-03
+
+### Cambiado
+
+- Se revierte el logotipo SVG del dashboard introducido en 1.18.0 (no se parecía
+  a un cangrejo) y se vuelve al emoji 🦀.
+
 ## [1.19.1] - 2026-06-03
 
 ### Corregido

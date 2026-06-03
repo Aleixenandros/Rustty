@@ -2240,13 +2240,8 @@ body.terminal-bell-visual::after {
   justify-content: center;
   width: 68px;
   height: 52px;
+  font-size: 48px;
   line-height: 1;
-  color: var(--peach);
-}
-
-.dashboard-brand svg {
-  width: 52px;
-  height: 52px;
 }
 
 .dashboard-title {
@@ -2593,11 +2588,7 @@ body.terminal-bell-visual::after {
   .dashboard-brand {
     width: 52px;
     height: 42px;
-  }
-
-  .dashboard-brand svg {
-    width: 42px;
-    height: 42px;
+    font-size: 38px;
   }
 
   .dashboard-search-wrap {
