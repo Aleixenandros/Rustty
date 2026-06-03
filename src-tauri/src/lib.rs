@@ -1,4 +1,5 @@
 mod app_tray;
+mod asbru;
 pub mod cli;
 mod commands;
 mod credentials;
@@ -176,6 +177,8 @@ pub fn run() {
             commands::remove_file,
             commands::write_text_file,
             commands::read_text_file,
+            asbru::parse_asbru,
+            asbru::asbru_decrypt,
             commands::join_path,
             commands::list_monospace_fonts,
             commands::tcp_ping,

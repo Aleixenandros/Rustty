@@ -7826,13 +7826,13 @@ let _tabOverflowSearchTimer = 0;
 
 /**
  * Muestra/oculta el botón ⋯ según si la barra de pestañas desborda
- * horizontalmente. El contenedor scrollable es #tab-bar (overflow-x:auto);
+ * horizontalmente. El contenedor scrollable es #tab-scroll (overflow-x:auto);
  * comparamos su scrollWidth con su clientWidth.
  */
 function updateTabOverflowButton() {
   const btn = document.getElementById("btn-tab-overflow");
   if (!btn) return;
-  const bar = document.getElementById("tab-bar");
+  const bar = document.getElementById("tab-scroll");
   const hasTabs = document.querySelector("#tabs-container .tab") !== null;
   // +1px de holgura para evitar parpadeos por redondeo subpíxel.
   const overflowing = !!bar && hasTabs && bar.scrollWidth > bar.clientWidth + 1;
@@ -13268,8 +13268,11 @@ const importWizard = {
 
 /**
  * Parsea el contenido XML de un export de mRemoteNG (confCons, ConfVersion
- * 2.x). Devuelve `{ meta, tree }`. `tree` es una lista de nodos envueltos con
- * `{ uid, el, parent, name, type, protocol, children }`. No descifra nada.
+ * 2.x). Devuelve `{ meta, tree }` donde `tree` usa el modelo de nodo
+ * normalizado que comparten todas las fuentes del asistente:
+ * `{ uid, name, type, protocol, connType, host, port, username, domain,
+ *   notes, encPassword, children }`. No descifra nada (la herencia de
+ * atributos sí se resuelve por adelantado).
  */
 function parseMremoteng(xmlText) {
   const doc = new DOMParser().parseFromString(xmlText, "application/xml");
@@ -13281,14 +13284,21 @@ function parseMremoteng(xmlText) {
     throw new Error(t("import_wizard.err_not_mremoteng"));
   }
   const meta = {
+    source: "mremoteng",
     name: root.getAttribute("Name") || "mRemoteNG",
     blockCipherMode: (root.getAttribute("BlockCipherMode") || "GCM").toUpperCase(),
     kdfIterations: parseInt(root.getAttribute("KdfIterations") || "1000", 10) || 1000,
     protectedCanary: root.getAttribute("Protected") || null,
     fullFileEncryption: (root.getAttribute("FullFileEncryption") || "false") === "true",
     confVersion: root.getAttribute("ConfVersion") || "",
+    // El paso de contraseña maestra solo aplica si el fichero está protegido.
+    needsMasterPassword: !!root.getAttribute("Protected"),
+    hasPasswords: !!root.getAttribute("Protected"),
+    protocolMap: { ...MRNG_PROTOCOL_MAP },
   };
 
+  // Primera pasada: árbol "crudo" con referencia al elemento DOM y al padre,
+  // necesario para resolver la herencia de atributos (mrngResolveAttr).
   let counter = 0;
   const walk = (el, parent) => {
     const out = [];
@@ -13308,7 +13318,29 @@ function parseMremoteng(xmlText) {
     }
     return out;
   };
-  const tree = walk(root, null);
+  const raw = walk(root, null);
+
+  // Segunda pasada: normaliza al modelo común resolviendo la herencia.
+  const normalize = (n) => {
+    const isConn = n.type !== "Container";
+    const connType = isConn ? (MRNG_PROTOCOL_MAP[n.protocol] || null) : null;
+    const portRaw = parseInt(mrngResolveAttr(n, "Port") || "", 10);
+    return {
+      uid: n.uid,
+      name: n.name,
+      type: isConn ? "Connection" : "Container",
+      protocol: n.protocol,
+      connType,
+      host: isConn ? (mrngResolveAttr(n, "Hostname") || n.name) : null,
+      port: Number.isFinite(portRaw) && portRaw > 0 ? portRaw : null,
+      username: isConn ? (mrngResolveAttr(n, "Username") || "") : null,
+      domain: isConn ? (mrngResolveAttr(n, "Domain") || null) : null,
+      notes: isConn ? (n.el.getAttribute("Descr") || null) : null,
+      encPassword: isConn ? (mrngResolveAttr(n, "Password") || null) : null,
+      children: n.children.map(normalize),
+    };
+  };
+  const tree = raw.map(normalize);
   return { meta, tree };
 }
 
@@ -13372,8 +13404,8 @@ function mrngEffectivePassword(input) {
   return input && input.length ? input : "mR3m";
 }
 
-/** Aplana el árbol parseado a la lista de nodos Connection con su ruta de carpeta. */
-function mrngFlattenConnections(tree) {
+/** Aplana el árbol normalizado a la lista de nodos Connection con su ruta de carpeta. */
+function flattenConnections(tree) {
   const out = [];
   const walk = (nodes, pathParts) => {
     for (const n of nodes) {
@@ -13388,11 +13420,11 @@ function mrngFlattenConnections(tree) {
   return out;
 }
 
-/** Conjunto de protocolos presentes (los que mapean a un tipo de Rustty). */
-function mrngSupportedProtocols(tree) {
+/** Conjunto de protocolos presentes que mapean a un tipo de Rustty soportado. */
+function supportedProtocols(tree) {
   const set = new Set();
-  for (const { node } of mrngFlattenConnections(tree)) {
-    if (MRNG_PROTOCOL_MAP[node.protocol]) set.add(node.protocol);
+  for (const { node } of flattenConnections(tree)) {
+    if (node.connType) set.add(node.protocol);
   }
   return set;
 }
@@ -13409,7 +13441,7 @@ function setImportWizardStep(step) {
     s.classList.toggle("is-active", n === step);
     s.classList.toggle("is-done", n < step);
   });
-  const hasPwStep = !!importWizard.meta?.protectedCanary;
+  const hasPwStep = !!importWizard.meta?.hasPasswords;
   const back = document.getElementById("iw-back");
   const next = document.getElementById("iw-next");
   const imp = document.getElementById("iw-import");
@@ -13418,6 +13450,11 @@ function setImportWizardStep(step) {
   const lastStep = hasPwStep ? 3 : 2;
   next.classList.toggle("hidden", step >= lastStep);
   imp.classList.toggle("hidden", step < lastStep);
+  // El grupo de contraseña maestra solo aplica a fuentes que lo necesitan
+  // (mRemoteNG protegido); Ásbrú usa una clave fija y no pide nada.
+  document
+    .getElementById("iw-master-group")
+    ?.classList.toggle("hidden", !importWizard.meta?.needsMasterPassword);
 }
 
 function openImportWizard() {
@@ -13433,6 +13470,9 @@ function openImportWizard() {
   document.getElementById("iw-master-password").value = "";
   document.getElementById("iw-import-passwords").checked = false;
   document.getElementById("iw-next").disabled = true;
+  document.getElementById("iw-progress")?.classList.add("hidden");
+  document.getElementById("iw-import").disabled = false;
+  document.getElementById("iw-back").disabled = false;
   overlay.classList.remove("hidden");
   setImportWizardStep(1);
 }
@@ -13442,42 +13482,70 @@ function closeImportWizard() {
 }
 
 async function importWizardPickFile() {
+  // La fuente seleccionada determina el filtro de fichero y el parser.
+  importWizard.source = document.getElementById("iw-source").value || "mremoteng";
+  const filters = importWizard.source === "asbru"
+    ? [{ name: "Ásbrú Connection Manager", extensions: ["yml", "yaml"] }]
+    : [{ name: "mRemoteNG", extensions: ["xml"] }];
   let path;
   try {
     path = await openDialog({
       title: t("import_wizard.pick_file"),
       multiple: false,
-      filters: [{ name: "mRemoteNG", extensions: ["xml"] }],
+      filters,
     });
   } catch (err) {
     toast(`${err}`, "error");
     return;
   }
   if (!path) return;
+  importWizard.fileName = Array.isArray(path) ? path[0] : path;
   document.getElementById("iw-parse-error").textContent = "";
   try {
-    const text = await invoke("read_text_file", { path });
-    const { meta, tree } = parseMremoteng(text);
+    let meta, tree, defaultName;
+    if (importWizard.source === "asbru") {
+      // Ásbrú se parsea y descifra en el backend (YAML + Blowfish/MD5). El
+      // backend devuelve códigos estables («code» o «code|detalle») que se
+      // traducen aquí.
+      try {
+        tree = await invoke("parse_asbru", { path: importWizard.fileName });
+      } catch (e) {
+        const [code, detail] = `${e}`.split("|");
+        const key = { not_asbru: "err_not_asbru", read: "err_read", yaml: "err_yaml" }[code];
+        throw new Error(key ? t(`import_wizard.${key}`, { detail: detail || "" }) : `${e}`);
+      }
+      meta = {
+        source: "asbru",
+        name: "Ásbrú",
+        needsMasterPassword: false,
+        hasPasswords: true,
+        protocolMap: { SSH: "ssh", RDP: "rdp" },
+      };
+      defaultName = "Ásbrú";
+    } else {
+      const text = await invoke("read_text_file", { path: importWizard.fileName });
+      ({ meta, tree } = parseMremoteng(text));
+      if (meta.fullFileEncryption) {
+        document.getElementById("iw-parse-error").textContent = t("import_wizard.err_full_encryption");
+        document.getElementById("iw-next").disabled = true;
+        return;
+      }
+      defaultName = meta.name && meta.name !== "Conexiones" ? meta.name : "mRemoteNG";
+    }
+
     importWizard.meta = meta;
     importWizard.tree = tree;
-    importWizard.fileName = Array.isArray(path) ? path[0] : path;
-    importWizard.protocols = mrngSupportedProtocols(tree);
+    importWizard.protocols = supportedProtocols(tree);
 
-    const conns = mrngFlattenConnections(tree);
-    const supported = conns.filter((c) => MRNG_PROTOCOL_MAP[c.node.protocol]).length;
-    const containers = [];
+    const conns = flattenConnections(tree);
+    const supported = conns.filter((c) => c.node.connType).length;
+    let containers = 0;
     const countContainers = (nodes) => {
       for (const n of nodes) {
-        if (n.type === "Container") { containers.push(n); countContainers(n.children); }
+        if (n.type === "Container") { containers++; countContainers(n.children); }
       }
     };
     countContainers(tree);
-
-    if (meta.fullFileEncryption) {
-      document.getElementById("iw-parse-error").textContent = t("import_wizard.err_full_encryption");
-      document.getElementById("iw-next").disabled = true;
-      return;
-    }
 
     const fname = importWizard.fileName.split(/[/\\]/).pop();
     document.getElementById("iw-file-name").textContent = fname;
@@ -13485,7 +13553,7 @@ async function importWizardPickFile() {
     summary.innerHTML = t("import_wizard.summary", {
       total: conns.length,
       supported,
-      folders: containers.length,
+      folders: containers,
       protocols: [...importWizard.protocols].join(", ") || "—",
     }).replace(/\n/g, "<br>");
     summary.classList.remove("hidden");
@@ -13493,10 +13561,8 @@ async function importWizardPickFile() {
     if (supported === 0) {
       document.getElementById("iw-parse-error").textContent = t("import_wizard.err_no_supported");
     }
-    // Prefijar nombre del workspace con el del fichero.
-    document.getElementById("iw-workspace-name").value = meta.name && meta.name !== "Conexiones"
-      ? meta.name
-      : "mRemoteNG";
+    // Prefijar nombre del workspace con el del origen.
+    document.getElementById("iw-workspace-name").value = defaultName;
   } catch (err) {
     importWizard.tree = null;
     document.getElementById("iw-parse-error").textContent = `${err.message || err}`;
@@ -13508,11 +13574,12 @@ async function importWizardPickFile() {
 function renderImportWizardSelection() {
   const protoBox = document.getElementById("iw-proto-filter");
   protoBox.innerHTML = "";
+  const protoMap = importWizard.meta?.protocolMap || {};
   for (const proto of [...importWizard.protocols]) {
     const id = `iw-proto-${proto}`;
     const label = document.createElement("label");
     label.className = "iw-proto-chip";
-    label.innerHTML = `<input type="checkbox" id="${id}" checked data-proto="${proto}"><span>${proto} → ${MRNG_PROTOCOL_MAP[proto]}</span>`;
+    label.innerHTML = `<input type="checkbox" id="${id}" checked data-proto="${proto}"><span>${proto} → ${protoMap[proto] || "?"}</span>`;
     protoBox.appendChild(label);
   }
   protoBox.querySelectorAll("input[data-proto]").forEach((cb) => {
@@ -13532,7 +13599,7 @@ function renderImportWizardSelection() {
   treeBox.innerHTML = "";
   const renderNodes = (nodes, depth) => {
     for (const n of nodes) {
-      const supported = n.type === "Connection" && MRNG_PROTOCOL_MAP[n.protocol];
+      const supported = n.type === "Connection" && !!n.connType;
       const isUnsupportedConn = n.type === "Connection" && !supported;
       const row = document.createElement("div");
       row.className = "iw-node " + (n.type === "Container" ? "iw-container" : "iw-conn");
@@ -13605,15 +13672,17 @@ async function importWizardRun() {
   const selectedUids = new Set(
     Array.from(document.querySelectorAll("#iw-tree .iw-conn input:checked")).map((c) => c._uid)
   );
-  const conns = mrngFlattenConnections(importWizard.tree).filter(
-    (c) => MRNG_PROTOCOL_MAP[c.node.protocol] && selectedUids.has(c.node.uid)
+  const conns = flattenConnections(importWizard.tree).filter(
+    (c) => c.node.connType && selectedUids.has(c.node.uid)
   );
   if (conns.length === 0) {
     toast(t("import_wizard.err_nothing_selected"), "warning");
     return;
   }
 
-  if (importPw) {
+  // mRemoteNG valida la contraseña maestra antes de importar; Ásbrú usa una
+  // clave fija y no necesita esta comprobación.
+  if (importPw && importWizard.meta?.needsMasterPassword) {
     const ok = await importWizardValidatePassword();
     if (!ok) {
       const cont = await confirmThemed({
@@ -13634,32 +13703,47 @@ async function importWizardRun() {
 
   const now = new Date().toISOString();
   const folderSet = new Set();
-  let imported = 0, withPw = 0, pwFailed = 0;
+  let imported = 0, withPw = 0, pwFailed = 0, processed = 0;
+
+  // Feedback de progreso: el volcado es un bucle de IPC que puede tardar con
+  // muchos perfiles, así que mostramos una barra y un contador en vivo.
+  const total = conns.length;
+  const progressBox = document.getElementById("iw-progress");
+  const progressFill = document.getElementById("iw-progress-fill");
+  const progressText = document.getElementById("iw-progress-text");
+  const importBtn = document.getElementById("iw-import");
+  const backBtn = document.getElementById("iw-back");
+  const updateProgress = (done) => {
+    const pct = total ? Math.round((done / total) * 100) : 100;
+    if (progressFill) progressFill.style.width = `${pct}%`;
+    if (progressText) progressText.textContent = t("import_wizard.progress", { done, total, pct });
+  };
+  if (importBtn) importBtn.disabled = true;
+  if (backBtn) backBtn.disabled = true;
+  if (progressFill) progressFill.style.width = "0%";
+  progressBox?.classList.remove("hidden");
+  updateProgress(0);
 
   for (const { node, folder } of conns) {
-    const ctype = MRNG_PROTOCOL_MAP[node.protocol];
-    const portRaw = parseInt(mrngResolveAttr(node, "Port") || "", 10);
-    const port = Number.isFinite(portRaw) && portRaw > 0
-      ? portRaw
+    const ctype = node.connType;
+    const port = Number.isFinite(node.port) && node.port > 0
+      ? node.port
       : (ctype === "rdp" ? 3389 : 22);
-    const username = mrngResolveAttr(node, "Username") || "";
-    const domain = mrngResolveAttr(node, "Domain") || null;
-    const descr = node.el.getAttribute("Descr") || null;
     const id = crypto.randomUUID();
     if (folder) folderSet.add(folder);
 
     const profile = {
       id,
       name: node.name,
-      host: mrngResolveAttr(node, "Hostname") || node.name,
+      host: node.host || node.name,
       port,
-      username,
+      username: node.username || "",
       connection_type: ctype,
-      domain: ctype === "rdp" ? domain : null,
+      domain: ctype === "rdp" ? (node.domain || null) : null,
       auth_type: "password",
       key_path: null,
       group: folder || null,
-      notes: descr,
+      notes: node.notes || null,
       workspace_id: wsId,
       keepass_entry_uuid: null,
       keepass_property: null,
@@ -13681,29 +13765,34 @@ async function importWizardRun() {
       updated_at: now,
     };
 
+    let saved = false;
     try {
       await invoke("save_profile", { profile });
       profiles.push(profile);
       imported++;
+      saved = true;
     } catch (err) {
       console.error("[import] save_profile failed for", node.name, err);
-      continue;
     }
 
-    if (importPw) {
-      const encPw = mrngResolveAttr(node, "Password");
-      if (encPw) {
-        try {
-          const plain = await mrngDecryptGcm(encPw, masterPw, importWizard.meta.kdfIterations);
-          if (plain) {
-            await saveStoredSecret(passwordKey(id), plain, "contraseña");
-            withPw++;
-          }
-        } catch {
-          pwFailed++;
+    if (saved && importPw && node.encPassword) {
+      try {
+        // El descifrado depende de la fuente: mRemoteNG (AES-GCM en WebCrypto)
+        // o Ásbrú (Blowfish/MD5 en el backend).
+        const plain = importWizard.source === "asbru"
+          ? await invoke("asbru_decrypt", { blob: node.encPassword })
+          : await mrngDecryptGcm(node.encPassword, masterPw, importWizard.meta.kdfIterations);
+        if (plain) {
+          await saveStoredSecret(passwordKey(id), plain, "contraseña");
+          withPw++;
         }
+      } catch {
+        pwFailed++;
       }
     }
+
+    processed++;
+    updateProgress(processed);
   }
 
   // Registra las carpetas (incluyendo las intermedias) en el workspace nuevo.
@@ -13720,6 +13809,11 @@ async function importWizardRun() {
   savePrefs();
   renderConnectionList();
   scheduleProfileAutoSync();
+
+  // Restaura los controles del asistente para una posible reapertura.
+  if (importBtn) importBtn.disabled = false;
+  if (backBtn) backBtn.disabled = false;
+  progressBox?.classList.add("hidden");
   closeImportWizard();
 
   let msg = t("import_wizard.done", { count: imported, workspace: wsName });
@@ -14158,8 +14252,8 @@ function bindUIEvents() {
   document.getElementById("btn-import-ssh-config")
     ?.addEventListener("click", () => importFromSshConfig());
 
-  // Asistente de importación (mRemoteNG, …)
-  document.getElementById("btn-import-mremoteng")
+  // Asistente de importación (mRemoteNG, Ásbrú, …)
+  document.getElementById("btn-import-external")
     ?.addEventListener("click", () => openImportWizard());
   document.getElementById("btn-import-wizard-close")
     ?.addEventListener("click", () => closeImportWizard());

@@ -178,15 +178,17 @@
           <button id="btn-toggle-sidebar" data-i18n-title="sidebar.toggle_title" title="Ocultar / mostrar la barra lateral" aria-label="Toggle sidebar">
             <span class="chevron" aria-hidden="true">‹</span>
           </button>
-          <button id="home-tab" class="tab tab-home active" type="button" title="Inicio">
-            <span class="tab-home-icon" aria-hidden="true">⌂</span>
-            <span class="tab-name">Inicio</span>
-          </button>
-          <div id="tabs-container"></div>
+          <div id="tab-scroll">
+            <button id="home-tab" class="tab tab-home active" type="button" title="Inicio">
+              <span class="tab-home-icon" aria-hidden="true">⌂</span>
+              <span class="tab-name">Inicio</span>
+            </button>
+            <div id="tabs-container"></div>
+          </div>
+          <div id="tab-bar-drag" data-tauri-drag-region></div>
           <button id="btn-tab-overflow" class="hidden" type="button" data-i18n-title="tab_overflow.button_title" title="Pestañas abiertas" aria-label="Pestañas abiertas" aria-haspopup="true" aria-expanded="false">
             <span class="tab-overflow-icon" aria-hidden="true">⋯</span>
           </button>
-          <div id="tab-bar-drag" data-tauri-drag-region></div>
           <div id="window-controls" aria-hidden="false">
             <button id="btn-win-min" class="win-ctrl" data-i18n-title="window.minimize" title="Minimizar" aria-label="Minimizar">
               <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 5 H10" stroke="currentColor" stroke-width="1" fill="none"/></svg>
@@ -1068,6 +1070,7 @@
               <label for="iw-source" data-i18n="import_wizard.source">Herramienta de origen</label>
               <select id="iw-source">
                 <option value="mremoteng">mRemoteNG (.xml)</option>
+                <option value="asbru">Ásbrú Connection Manager (.yml)</option>
               </select>
             </div>
             <div class="form-group">
@@ -1115,6 +1118,11 @@
               <p class="form-hint" id="iw-pw-result"></p>
             </div>
           </section>
+        </div>
+
+        <div id="iw-progress" class="iw-progress hidden">
+          <div class="iw-progress-track"><div class="iw-progress-fill" id="iw-progress-fill"></div></div>
+          <p class="form-hint" id="iw-progress-text"></p>
         </div>
 
         <div class="modal-actions">
@@ -1911,8 +1919,15 @@
                 <button type="button" class="btn-secondary" id="btn-import-ssh-config" data-i18n="prefs_data.import_ssh_config">
                   Importar ~/.ssh/config
                 </button>
-                <button type="button" class="btn-secondary" id="btn-import-mremoteng" data-i18n="prefs_data.import_mremoteng">
-                  Importar desde mRemoteNG…
+              </div>
+
+              <h3 class="prefs-panel-title" style="margin-top: 1.5rem;" data-i18n="prefs_import_external.title">Importar desde otras aplicaciones</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_import_external.hint">
+                Migra tus conexiones desde otros gestores. Un asistente por pasos reconstruye el árbol de carpetas y, opcionalmente, descifra las contraseñas guardadas (todo en local).
+              </p>
+              <div class="data-actions">
+                <button type="button" class="btn-secondary" id="btn-import-external" data-i18n="prefs_import_external.open">
+                  Importar datos de otros programas…
                 </button>
               </div>
 

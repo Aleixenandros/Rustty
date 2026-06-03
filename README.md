@@ -20,7 +20,7 @@
 - **Diagnóstico y actividad**: botón **Probar** en el modal de conexión sin guardar el perfil, logs SSH por etapas, comprobación TCP para RDP/FTP/FTPS y centro global de actividad persistente con transferencias, sync, errores y actualizaciones agrupados por día.
 - **Bandeja del sistema / quick launcher**: acceso rápido a favoritos, recientes, workspaces, consola local, **Wake On LAN** de los perfiles con MAC y abrir/ocultar ventana desde el icono de tray.
 - **Exportación granular**: exporta todos los perfiles, los de una carpeta o los de un workspace a JSON desde el menú contextual, preguntando antes si debe incluir contraseñas/passphrases guardadas.
-- **Importación desde otras herramientas**: importa tu `~/.ssh/config` o, con un **asistente por pasos**, un export de **mRemoteNG** (`.xml`) — reconstruye el árbol de carpetas en un perfil-contenedor nuevo, deja elegir qué importar y descifra opcionalmente las contraseñas guardadas (todo en local).
+- **Importación desde otras herramientas**: importa tu `~/.ssh/config` o, con un **asistente por pasos**, conexiones de **mRemoteNG** (`.xml`) o **Ásbrú Connection Manager** (`.yml`) — reconstruye el árbol de carpetas en un perfil-contenedor nuevo, deja elegir qué importar, muestra el progreso y descifra opcionalmente las contraseñas guardadas (todo en local).
 - **Seguridad**:
   - Integración nativa con el keyring del sistema (Secret Service/KWallet en Linux, macOS Keychain, Windows Credential Store).
   - Soporte para bases de datos **KeePass** (`.kdbx`) como fuente de contraseñas.

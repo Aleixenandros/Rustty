@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.20.0"
+version = "1.21.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -67,3 +67,10 @@ urlencoding = "2"
 sha2 = "0.11"
 base64 = "0.22"
 tauri-plugin-clipboard-manager = "2"
+# Importador de Ásbrú Connection Manager: parseo YAML + descifrado de contraseñas
+# (Blowfish-CBC con KDF de OpenSSL/MD5). WebCrypto no ofrece ni Blowfish ni MD5,
+# por eso este flujo vive en el backend.
+serde_yaml = "0.9"
+blowfish = "0.9"
+md-5 = "0.10"
+hex = "0.4"

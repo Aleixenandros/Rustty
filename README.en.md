@@ -20,7 +20,7 @@
 - **Diagnostics and activity**: a **Test** button in the connection modal without saving the profile, staged SSH logs, TCP checks for RDP/FTP/FTPS and a persistent global activity center with transfers, sync, errors and updates grouped by day.
 - **System tray / quick launcher**: quick access to favorites, recents, workspaces, local console, **Wake On LAN** for profiles with a MAC address and show/hide window from the tray icon.
 - **Granular export**: export all profiles, those of a folder or those of a workspace to JSON from the context menu, asking first whether saved passwords/passphrases should be included.
-- **Import from other tools**: import your `~/.ssh/config` or, via a **step-by-step wizard**, an **mRemoteNG** export (`.xml`) — it rebuilds the folder tree into a new workspace, lets you choose what to import and optionally decrypts the saved passwords (all locally).
+- **Import from other tools**: import your `~/.ssh/config` or, via a **step-by-step wizard**, connections from **mRemoteNG** (`.xml`) or **Ásbrú Connection Manager** (`.yml`) — it rebuilds the folder tree into a new workspace, lets you choose what to import, shows progress and optionally decrypts the saved passwords (all locally).
 - **Security**:
   - Native integration with the system keyring (Secret Service/KWallet on Linux, macOS Keychain, Windows Credential Store).
   - Support for **KeePass** databases (`.kdbx`) as a password source.

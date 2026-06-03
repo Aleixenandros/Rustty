@@ -2,6 +2,34 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.21.0] - 2026-06-03
+
+### Añadido
+
+- **Importador de Ásbrú Connection Manager**: el asistente de importación admite
+  ahora ficheros `.yml` de **Ásbrú** además de los `.xml` de mRemoteNG.
+  Reconstruye el árbol de carpetas, importa las conexiones SSH/RDP y, de forma
+  opcional, descifra las contraseñas guardadas (Blowfish + KDF de OpenSSL, sin
+  necesidad de introducir contraseña maestra). El parseo del YAML y el descifrado
+  se hacen en el backend.
+- **Barra de progreso en el importador**: al volcar las conexiones, el asistente
+  muestra un porcentaje dinámico y un contador («N de M conexiones importadas»),
+  útil sobre todo con catálogos grandes.
+
+### Cambiado
+
+- El botón de importación de terceros se reorganiza en su propia sección de
+  **Preferencias → Copias de seguridad** y pasa a llamarse **Importar datos de
+  otros programas…**, que abre el asistente con el selector de origen
+  (mRemoteNG / Ásbrú).
+
+### Corregido
+
+- Los controles de ventana (minimizar / maximizar / cerrar) y el botón de
+  pestañas desbordadas ya no se desplazan al abrir muchas pestañas: ahora solo la
+  tira de pestañas hace scroll horizontal y los controles quedan fijos a la
+  derecha.
+
 ## [1.20.0] - 2026-06-03
 
 ### Añadido

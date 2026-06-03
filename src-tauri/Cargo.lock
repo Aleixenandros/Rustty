@@ -430,7 +430,7 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "144e573728da132683b9488acd528274c790e07fc06ff81ee29f9d8f8b1041e0"
 dependencies = [
- "blowfish",
+ "blowfish 0.10.0",
  "pbkdf2 0.13.0",
  "sha2 0.11.0",
 ]
@@ -554,6 +554,16 @@ dependencies = [
  "futures-io",
  "futures-lite",
  "piper",
+]
+
+[[package]]
+name = "blowfish"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e412e2cd0f2b2d93e02543ceae7917b3c70331573df19ee046bcbc35e45e87d7"
+dependencies = [
+ "byteorder",
+ "cipher 0.4.4",
 ]
 
 [[package]]
@@ -3320,6 +3330,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "md-5"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+dependencies = [
+ "cfg-if",
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "md5"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5144,18 +5164,21 @@ dependencies = [
 
 [[package]]
 name = "rustty"
-version = "1.20.0"
+version = "1.21.0"
 dependencies = [
  "age",
  "async-trait",
  "base64 0.22.1",
+ "blowfish 0.9.1",
  "chrono",
  "crossterm",
  "dirs",
  "fontdb",
  "futures",
+ "hex",
  "keepass",
  "keyring",
+ "md-5",
  "portable-pty",
  "reqwest",
  "rpassword",
@@ -5163,6 +5186,7 @@ dependencies = [
  "russh-sftp",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2 0.11.0",
  "socket2",
  "suppaftp",
@@ -5577,6 +5601,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.14.0",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
 ]
 
 [[package]]
@@ -7008,6 +7045,12 @@ dependencies = [
  "crypto-common 0.2.2",
  "ctutils",
 ]
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

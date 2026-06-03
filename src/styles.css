@@ -1176,12 +1176,25 @@ body.sidebar-collapsed #sidebar-resize-handle {
   border-bottom: 1px solid var(--surface0);
   display: flex;
   align-items: stretch;
+  /* La barra en sí NO hace scroll: solo lo hace #tab-scroll. Así el botón de
+     overflow y los controles de ventana quedan siempre fijos a la derecha y no
+     se desplazan al abrir muchas pestañas. */
+  overflow: hidden;
+}
+
+/* Tira scrollable que contiene la pestaña Inicio y las pestañas de sesión.
+   Puede encogerse (min-width:0) para ceder espacio a los controles fijos. */
+#tab-scroll {
+  display: flex;
+  align-items: stretch;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
 }
 
-#tab-bar::-webkit-scrollbar { display: none; }
+#tab-scroll::-webkit-scrollbar { display: none; }
 
 #btn-toggle-sidebar {
   flex: 0 0 auto;
@@ -2886,6 +2899,29 @@ body.terminal-bell-visual::after {
 
 .iw-summary strong {
   color: var(--text);
+}
+
+.iw-progress {
+  padding: 4px 0 0;
+}
+
+.iw-progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface1);
+  overflow: hidden;
+}
+
+.iw-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--blue);
+  transition: width 0.15s ease;
+}
+
+#iw-progress-text {
+  margin-top: 6px;
 }
 
 .iw-proto-filter {
