@@ -2,6 +2,19 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.17.1] - 2026-06-03
+
+### Corregido
+
+- El editor de credenciales maestras se mostraba al pie de la pantalla
+  principal en lugar de superpuesto y centrado sobre Preferencias: a los
+  modales de credenciales, gestor de `known_hosts` y preguntas `${ask:}` les
+  faltaba el posicionamiento de overlay. Ahora aparecen centrados y por encima
+  del resto de la interfaz.
+- El icono de la pestaña **Credenciales** usaba un emoji a color; ahora es un
+  glifo monocromo coherente con el resto de iconos de Preferencias (se atenúa y
+  se resalta en azul al activarse como los demás).
+
 ## [1.17.0] - 2026-06-02
 
 ### Añadido
