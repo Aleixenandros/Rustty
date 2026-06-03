@@ -2,6 +2,28 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.20.0] - 2026-06-03
+
+### Añadido
+
+- **Importador desde mRemoteNG**: nuevo asistente por pasos en **Preferencias →
+  Copias de seguridad → Importar desde mRemoteNG…** que lee un export `.xml`,
+  reconstruye el árbol de carpetas y crea las conexiones (SSH y RDP) en un
+  perfil-contenedor nuevo. Permite elegir qué importar (por protocolo y por
+  nodo) y, opcionalmente, descifrar e importar las contraseñas guardadas con la
+  contraseña maestra de mRemoteNG. Todo el proceso es local.
+- **Transferencias SFTP simultáneas configurables**: nueva opción en
+  **Preferencias → FTP/SFTP** para fijar el número de peticiones SFTP en
+  paralelo por transferencia (por defecto 4, rango 1–64). Bajarla evita el error
+  `Handle limit reached` en servidores con SFTP restringido como el Storage Box
+  de Hetzner; subirla exprime más velocidad en redes con latencia alta.
+
+### Cambiado
+
+- **Buscador del panel SFTP plegable**: la caja de búsqueda de cada lado deja de
+  estar siempre visible. Ahora se abre con un botón de lupa (icono SVG) en la
+  toolbar y se pliega al volver a pulsarlo o con `Esc`.
+
 ## [1.19.2] - 2026-06-03
 
 ### Cambiado

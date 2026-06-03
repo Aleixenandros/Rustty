@@ -477,6 +477,7 @@ pub async fn sftp_connect(
     elevated: Option<bool>,
     session_id: Option<String>,
     ask_answers: Option<std::collections::HashMap<String, String>>,
+    max_concurrent: Option<usize>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
@@ -488,6 +489,9 @@ pub async fn sftp_connect(
     let password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
 
     let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    // Concurrencia de transferencia por sesión. Default 4 (conservador para
+    // servidores con límite de handles como Hetzner Storage Box).
+    let max_parallelism = max_concurrent.unwrap_or(4).clamp(1, 64);
 
     sftp_state
         .connect(
@@ -496,6 +500,7 @@ pub async fn sftp_connect(
             password,
             passphrase,
             elevated.unwrap_or(false),
+            max_parallelism,
             app_handle,
         )
         .await?;

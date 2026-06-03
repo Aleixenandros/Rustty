@@ -1046,6 +1046,86 @@
     </div>
 
     <!-- ══════════════════════════════════════════════════════
+         MODAL: Asistente de importación (mRemoteNG, …)
+    ══════════════════════════════════════════════════════ -->
+    <div id="import-wizard-overlay" class="hidden">
+      <div id="import-wizard-modal" role="dialog" aria-modal="true" aria-labelledby="import-wizard-title">
+        <div class="modal-header">
+          <h2 id="import-wizard-title" data-i18n="import_wizard.title">Importar conexiones</h2>
+          <button class="btn-icon" id="btn-import-wizard-close" data-i18n-aria-label="import_wizard.close" aria-label="Cerrar">✕</button>
+        </div>
+
+        <ol class="iw-steps" id="iw-steps">
+          <li class="iw-step is-active" data-step="1"><span class="iw-step-num">1</span><span class="iw-step-label" data-i18n="import_wizard.step_source">Origen</span></li>
+          <li class="iw-step" data-step="2"><span class="iw-step-num">2</span><span class="iw-step-label" data-i18n="import_wizard.step_select">Selección</span></li>
+          <li class="iw-step" data-step="3"><span class="iw-step-num">3</span><span class="iw-step-label" data-i18n="import_wizard.step_passwords">Contraseñas</span></li>
+        </ol>
+
+        <div class="iw-body">
+          <!-- Paso 1: origen y fichero -->
+          <section class="iw-pane" data-pane="1">
+            <div class="form-group">
+              <label for="iw-source" data-i18n="import_wizard.source">Herramienta de origen</label>
+              <select id="iw-source">
+                <option value="mremoteng">mRemoteNG (.xml)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <button type="button" class="btn-secondary" id="iw-pick-file" data-i18n="import_wizard.pick_file">Seleccionar archivo…</button>
+              <p class="form-hint" id="iw-file-name"></p>
+            </div>
+            <div id="iw-parse-summary" class="iw-summary hidden"></div>
+            <p class="form-hint" id="iw-parse-error" style="color: var(--red);"></p>
+          </section>
+
+          <!-- Paso 2: qué importar -->
+          <section class="iw-pane hidden" data-pane="2">
+            <div class="form-group">
+              <label for="iw-workspace-name" data-i18n="import_wizard.workspace_name">Nombre del perfil-contenedor</label>
+              <input id="iw-workspace-name" type="text" autocomplete="off" spellcheck="false" placeholder="mRemoteNG" />
+              <p class="form-hint" data-i18n="import_wizard.workspace_hint">Las conexiones importadas se crearán en un nuevo perfil-contenedor con este nombre.</p>
+            </div>
+            <div class="form-group">
+              <label data-i18n="import_wizard.protocols">Protocolos a incluir</label>
+              <div class="iw-proto-filter" id="iw-proto-filter"></div>
+            </div>
+            <div class="iw-tree-toolbar">
+              <button type="button" class="btn-link" id="iw-select-all" data-i18n="import_wizard.select_all">Marcar todo</button>
+              <button type="button" class="btn-link" id="iw-select-none" data-i18n="import_wizard.select_none">Desmarcar todo</button>
+              <span class="iw-count" id="iw-selected-count"></span>
+            </div>
+            <div id="iw-tree" class="iw-tree"></div>
+          </section>
+
+          <!-- Paso 3: contraseñas -->
+          <section class="iw-pane hidden" data-pane="3">
+            <p class="form-hint" id="iw-pw-intro" data-i18n="import_wizard.pw_intro">El fichero contiene contraseñas cifradas. Puedes importarlas opcionalmente.</p>
+            <div class="settings-row settings-row-inline">
+              <label for="iw-import-passwords" data-i18n="import_wizard.import_passwords">Importar contraseñas guardadas</label>
+              <input id="iw-import-passwords" type="checkbox" />
+            </div>
+            <div class="form-group" id="iw-master-group">
+              <label for="iw-master-password" data-i18n="import_wizard.master_password">Contraseña maestra de mRemoteNG</label>
+              <div class="password-field">
+                <input id="iw-master-password" type="password" autocomplete="off" placeholder="••••••••" />
+                <button type="button" class="btn-icon password-toggle" id="iw-master-toggle" aria-pressed="false" data-i18n-title="import_wizard.show_password" title="Ver contraseña"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></button>
+              </div>
+              <p class="form-hint" data-i18n="import_wizard.master_hint">Déjala en blanco si nunca configuraste una contraseña en mRemoteNG (se probará la predeterminada).</p>
+              <button type="button" class="btn-secondary" id="iw-validate-password" data-i18n="import_wizard.validate">Validar contraseña</button>
+              <p class="form-hint" id="iw-pw-result"></p>
+            </div>
+          </section>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" id="iw-back" data-i18n="import_wizard.back">Atrás</button>
+          <button type="button" class="btn-primary" id="iw-next" data-i18n="import_wizard.next">Siguiente</button>
+          <button type="button" class="btn-primary hidden" id="iw-import" data-i18n="import_wizard.do_import">Importar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
          MODAL: Preferencias
     ══════════════════════════════════════════════════════ -->
     <div id="modal-prefs-overlay" class="hidden">
@@ -1521,6 +1601,11 @@
                 </label>
                 <p class="settings-hint" data-i18n="prefs_transfer.sftp_verify_size_hint">Comprueba el tamaño final del fichero copiado para detectar transferencias incompletas.</p>
               </div>
+              <div class="settings-row settings-row-inline">
+                <label for="pref-sftp-max-concurrent" data-i18n="prefs_transfer.sftp_max_concurrent">Transferencias simultáneas (SFTP)</label>
+                <input type="number" id="pref-sftp-max-concurrent" min="1" max="64" step="1" style="width: 80px;" />
+              </div>
+              <p class="settings-hint" data-i18n="prefs_transfer.sftp_max_concurrent_hint">Peticiones SFTP en paralelo por transferencia. Súbelo para más velocidad en redes con latencia; bájalo (p. ej. 4) si el servidor da «Handle limit reached» (Hetzner Storage Box y similares). Aplica a sesiones nuevas.</p>
             </section>
 
             <!-- ── Idioma ── -->
@@ -1825,6 +1910,9 @@
                 </button>
                 <button type="button" class="btn-secondary" id="btn-import-ssh-config" data-i18n="prefs_data.import_ssh_config">
                   Importar ~/.ssh/config
+                </button>
+                <button type="button" class="btn-secondary" id="btn-import-mremoteng" data-i18n="prefs_data.import_mremoteng">
+                  Importar desde mRemoteNG…
                 </button>
               </div>
 

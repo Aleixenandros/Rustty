@@ -331,6 +331,11 @@ const DEFAULT_PREFS = {
   confirmRiskyPaste: true,
   sftpConflictPolicy: "ask",   // "ask" | "overwrite" | "skip" | "rename"
   sftpVerifySize:  false,
+  // Máximo de peticiones SFTP simultáneas (handles en vuelo) por transferencia
+  // en cada sesión. Conservador por defecto: servidores como Hetzner Storage Box
+  // limitan los handles abiertos y un valor alto provoca "Handle limit reached".
+  sftpMaxConcurrent: 4,        // 1–64
+
   // Disposición del panel SFTP: lado donde se muestra el panel remoto.
   sftpRemoteSide:  "left",     // "left" | "right"
   fontSize:        14,
@@ -1376,6 +1381,8 @@ function openSettingsModal() {
   if (confirmRiskyPasteEl) confirmRiskyPasteEl.checked = prefs.confirmRiskyPaste !== false;
   document.getElementById("pref-sftp-conflict-policy").value = normalizeSftpConflictPolicy(prefs.sftpConflictPolicy);
   document.getElementById("pref-sftp-verify-size").checked = !!prefs.sftpVerifySize;
+  const maxConcEl = document.getElementById("pref-sftp-max-concurrent");
+  if (maxConcEl) maxConcEl.value = sftpMaxConcurrent();
   const remoteSideEl = document.getElementById("pref-sftp-remote-side");
   if (remoteSideEl) remoteSideEl.value = prefs.sftpRemoteSide === "right" ? "right" : "left";
   populateFontFamilySelect(prefs.fontFamily || "");
@@ -2454,6 +2461,10 @@ function savePrefsFromModal() {
       document.getElementById("pref-sftp-conflict-policy")?.value,
     ),
     sftpVerifySize:  document.getElementById("pref-sftp-verify-size")?.checked ?? false,
+    sftpMaxConcurrent: (() => {
+      const n = parseInt(document.getElementById("pref-sftp-max-concurrent")?.value, 10);
+      return Number.isFinite(n) ? Math.min(64, Math.max(1, n)) : 4;
+    })(),
     sftpRemoteSide:  document.getElementById("pref-sftp-remote-side")?.value === "right" ? "right" : "left",
     fontFamily:      (document.getElementById("pref-font-family")?.value || "").trim(),
     fontSize:        parseInt(document.getElementById("pref-font-size").value, 10) || DEFAULT_PREFS.fontSize,
@@ -9884,6 +9895,7 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
       passphrase: passphrase || null,
       elevated: s.sftp.elevated,
       sessionId: sftpSessionId,
+      maxConcurrent: sftpMaxConcurrent(),
     });
     s.sftp.sftpSessionId = sftpSessionId;
     appendSftpActivity(panel, {
@@ -9986,6 +9998,7 @@ async function toggleSftpElevated(sessionId) {
       passphrase: passphrase || null,
       elevated: targetElevated,
       sessionId: newSftpSessionId,
+      maxConcurrent: sftpMaxConcurrent(),
     });
     s.sftp.sftpSessionId = newSftpSessionId;
     s.sftp.elevated = targetElevated;
@@ -10018,6 +10031,7 @@ async function toggleSftpElevated(sessionId) {
         passphrase: passphrase || null,
         elevated: wasElevated,
         sessionId: fallbackSftpSessionId,
+        maxConcurrent: sftpMaxConcurrent(),
       });
       s.sftp.sftpSessionId = fallbackSftpSessionId;
       s.sftp.elevated = wasElevated;
@@ -10445,6 +10459,7 @@ function setupSftpLogTabs(panel) {
 // (nuevo archivo). Trazo con currentColor para heredar el color del botón.
 const SFTP_ICON_FOLDER_PLUS = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>`;
 const SFTP_ICON_FILE_PLUS = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>`;
+const SFTP_ICON_SEARCH = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
 
 /** Aplica la disposición de paneles (remoto a izquierda/derecha) a un panel. */
 function applySftpRemoteSide(panel) {
@@ -10476,9 +10491,10 @@ function buildSftpPanel(sessionId) {
         <input class="sftp-path" data-side="local" type="text" spellcheck="false" />
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="local" title="Nueva carpeta" aria-label="Nueva carpeta">${SFTP_ICON_FOLDER_PLUS}</button>
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="local" title="Nuevo archivo" aria-label="Nuevo archivo">${SFTP_ICON_FILE_PLUS}</button>
+        <button class="sftp-nav-btn sftp-search-toggle" data-sftp-act="search-toggle" data-side="local" title="${escHtml(t("sftp_search.toggle_title"))}" aria-label="${escHtml(t("sftp_search.toggle_title"))}" aria-expanded="false">${SFTP_ICON_SEARCH}</button>
       </div>
-      <div class="sftp-search-bar" data-side="local">
-        <span class="sftp-search-icon">🔎</span>
+      <div class="sftp-search-bar hidden" data-side="local">
+        <span class="sftp-search-icon">${SFTP_ICON_SEARCH}</span>
         <input class="sftp-search-input" data-side="local" type="search" spellcheck="false"
                placeholder="${escHtml(t("sftp_search.placeholder"))}" />
         <button type="button" class="sftp-search-recursive" data-side="local"
@@ -10518,9 +10534,10 @@ function buildSftpPanel(sessionId) {
         <input class="sftp-path" data-side="remote" type="text" spellcheck="false" />
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="remote" title="Nueva carpeta" aria-label="Nueva carpeta">${SFTP_ICON_FOLDER_PLUS}</button>
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="remote" title="Nuevo archivo" aria-label="Nuevo archivo">${SFTP_ICON_FILE_PLUS}</button>
+        <button class="sftp-nav-btn sftp-search-toggle" data-sftp-act="search-toggle" data-side="remote" title="${escHtml(t("sftp_search.toggle_title"))}" aria-label="${escHtml(t("sftp_search.toggle_title"))}" aria-expanded="false">${SFTP_ICON_SEARCH}</button>
       </div>
-      <div class="sftp-search-bar" data-side="remote">
-        <span class="sftp-search-icon">🔎</span>
+      <div class="sftp-search-bar hidden" data-side="remote">
+        <span class="sftp-search-icon">${SFTP_ICON_SEARCH}</span>
         <input class="sftp-search-input" data-side="remote" type="search" spellcheck="false"
                placeholder="${escHtml(t("sftp_search.placeholder"))}" />
         <button type="button" class="sftp-search-recursive" data-side="remote"
@@ -10628,6 +10645,8 @@ function buildSftpPanel(sessionId) {
         promptMkdir(sessionId, side || "remote");
       } else if (act === "touch") {
         promptCreateFile(sessionId, side || "remote");
+      } else if (act === "search-toggle") {
+        toggleSftpSearchBar(sessionId, side || "remote");
       } else if (act === "close") {
         closeSftpPanel(sessionId);
       }
@@ -10894,7 +10913,8 @@ function setupSftpSearch(panel, sessionId) {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
-        clearSftpSearch(sessionId, side);
+        // Limpia y pliega la barra, devolviendo el foco al listado.
+        toggleSftpSearchBar(sessionId, side, false);
         return;
       }
       // Navegación por resultados recursivos con flechas + Enter.
@@ -10960,6 +10980,28 @@ function clearSftpSearch(sessionId, side) {
 function setSftpSearchStatus(panel, side, text) {
   const el = panel.querySelector(`.sftp-search-status[data-side="${side}"]`);
   if (el) el.textContent = text || "";
+}
+
+// Pliega/despliega la barra de búsqueda de un lado del panel SFTP. Arranca
+// plegada (solo el icono de lupa en la toolbar); al abrirla enfoca el input y
+// al cerrarla limpia el filtro para no dejar el listado "enganchado".
+function toggleSftpSearchBar(sessionId, side, forceOpen) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const panel = s.sftp.panel;
+  const bar = panel.querySelector(`.sftp-search-bar[data-side="${side}"]`);
+  const toggle = panel.querySelector(`.sftp-search-toggle[data-side="${side}"]`);
+  if (!bar) return;
+  const willOpen = forceOpen ?? bar.classList.contains("hidden");
+  bar.classList.toggle("hidden", !willOpen);
+  toggle?.classList.toggle("active", willOpen);
+  toggle?.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  if (willOpen) {
+    const input = bar.querySelector(".sftp-search-input");
+    input?.focus();
+  } else {
+    clearSftpSearch(sessionId, side);
+  }
 }
 
 // Filtra (mostrar/ocultar) las filas ya renderizadas del directorio actual.
@@ -11557,6 +11599,12 @@ function createTransferConflictState() {
 
 function normalizeSftpConflictPolicy(policy) {
   return ["ask", "overwrite", "skip", "rename"].includes(policy) ? policy : "ask";
+}
+
+/** Concurrencia SFTP por sesión (handles en vuelo por transferencia), saneada a 1–64. */
+function sftpMaxConcurrent() {
+  const n = parseInt(prefs.sftpMaxConcurrent, 10);
+  return Number.isFinite(n) ? Math.min(64, Math.max(1, n)) : 4;
 }
 
 function renderedSftpNames(sessionId, side) {
@@ -13197,6 +13245,489 @@ async function importFromSshConfig() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ASISTENTE DE IMPORTACIÓN (mRemoteNG, …)
+//
+// Parser + descifrado en frontend (DOMParser + WebCrypto), sin nuevas
+// dependencias Rust. Vuelca a un perfil-contenedor (workspace) nuevo,
+// reconstruyendo el árbol de carpetas del origen. Las contraseñas se
+// descifran de forma opt-in y se guardan en el keyring local.
+// ═══════════════════════════════════════════════════════════════
+
+// Mapa Protocol de mRemoteNG → connection_type de Rustty. Lo no listado
+// se omite (se cuenta como "no soportado").
+const MRNG_PROTOCOL_MAP = { SSH2: "ssh", SSH1: "ssh", RDP: "rdp" };
+
+const importWizard = {
+  source: "mremoteng",
+  fileName: null,
+  meta: null,
+  tree: null,
+  step: 1,
+  protocols: new Set(), // protocolos soportados marcados
+};
+
+/**
+ * Parsea el contenido XML de un export de mRemoteNG (confCons, ConfVersion
+ * 2.x). Devuelve `{ meta, tree }`. `tree` es una lista de nodos envueltos con
+ * `{ uid, el, parent, name, type, protocol, children }`. No descifra nada.
+ */
+function parseMremoteng(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+  if (doc.querySelector("parsererror")) {
+    throw new Error(t("import_wizard.err_xml"));
+  }
+  const root = doc.documentElement;
+  if (!root || !/Connections$/.test(root.localName || root.nodeName)) {
+    throw new Error(t("import_wizard.err_not_mremoteng"));
+  }
+  const meta = {
+    name: root.getAttribute("Name") || "mRemoteNG",
+    blockCipherMode: (root.getAttribute("BlockCipherMode") || "GCM").toUpperCase(),
+    kdfIterations: parseInt(root.getAttribute("KdfIterations") || "1000", 10) || 1000,
+    protectedCanary: root.getAttribute("Protected") || null,
+    fullFileEncryption: (root.getAttribute("FullFileEncryption") || "false") === "true",
+    confVersion: root.getAttribute("ConfVersion") || "",
+  };
+
+  let counter = 0;
+  const walk = (el, parent) => {
+    const out = [];
+    for (const child of Array.from(el.children)) {
+      if ((child.tagName || child.nodeName) !== "Node") continue;
+      const node = {
+        uid: `iw-${counter++}`,
+        el: child,
+        parent,
+        name: child.getAttribute("Name") || "(sin nombre)",
+        type: child.getAttribute("Type") || "Connection",
+        protocol: child.getAttribute("Protocol") || "",
+        children: [],
+      };
+      node.children = walk(child, node);
+      out.push(node);
+    }
+    return out;
+  };
+  const tree = walk(root, null);
+  return { meta, tree };
+}
+
+/**
+ * Resuelve un atributo de un nodo respetando la herencia de mRemoteNG: si el
+ * nodo declara `Inherit<Attr>="true"`, sube al contenedor padre.
+ */
+function mrngResolveAttr(node, attr) {
+  let cur = node;
+  while (cur) {
+    const inherit = cur.el.getAttribute("Inherit" + attr);
+    if (inherit === "true" && cur.parent) {
+      cur = cur.parent;
+      continue;
+    }
+    return cur.el.getAttribute(attr);
+  }
+  return null;
+}
+
+/** Deriva la clave AES-256 desde la contraseña maestra (PBKDF2-HMAC-SHA1). */
+async function mrngDeriveKey(password, salt, iterations) {
+  const baseKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations, hash: "SHA-1" },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"]
+  );
+}
+
+/**
+ * Descifra un campo cifrado de mRemoteNG (modo GCM). El blob base64 es
+ * `salt(16) || nonce(16) || ciphertext+tag`. Lanza si el tag GCM no valida
+ * (contraseña incorrecta). Solo se soporta GCM (el modo moderno por defecto).
+ */
+async function mrngDecryptGcm(b64, password, iterations) {
+  const raw = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  if (raw.length < 32) throw new Error("blob demasiado corto");
+  const salt = raw.slice(0, 16);
+  const nonce = raw.slice(16, 32);
+  const ct = raw.slice(32);
+  const key = await mrngDeriveKey(password, salt, iterations);
+  const pt = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: nonce, tagLength: 128 },
+    key,
+    ct
+  );
+  return new TextDecoder().decode(pt);
+}
+
+/** Contraseña efectiva: vacía → predeterminada histórica de mRemoteNG. */
+function mrngEffectivePassword(input) {
+  return input && input.length ? input : "mR3m";
+}
+
+/** Aplana el árbol parseado a la lista de nodos Connection con su ruta de carpeta. */
+function mrngFlattenConnections(tree) {
+  const out = [];
+  const walk = (nodes, pathParts) => {
+    for (const n of nodes) {
+      if (n.type === "Container") {
+        walk(n.children, [...pathParts, n.name]);
+      } else {
+        out.push({ node: n, folder: pathParts.join("/") });
+      }
+    }
+  };
+  walk(tree, []);
+  return out;
+}
+
+/** Conjunto de protocolos presentes (los que mapean a un tipo de Rustty). */
+function mrngSupportedProtocols(tree) {
+  const set = new Set();
+  for (const { node } of mrngFlattenConnections(tree)) {
+    if (MRNG_PROTOCOL_MAP[node.protocol]) set.add(node.protocol);
+  }
+  return set;
+}
+
+function setImportWizardStep(step) {
+  importWizard.step = step;
+  const overlay = document.getElementById("import-wizard-overlay");
+  if (!overlay) return;
+  overlay.querySelectorAll(".iw-pane").forEach((p) => {
+    p.classList.toggle("hidden", Number(p.dataset.pane) !== step);
+  });
+  overlay.querySelectorAll(".iw-step").forEach((s) => {
+    const n = Number(s.dataset.step);
+    s.classList.toggle("is-active", n === step);
+    s.classList.toggle("is-done", n < step);
+  });
+  const hasPwStep = !!importWizard.meta?.protectedCanary;
+  const back = document.getElementById("iw-back");
+  const next = document.getElementById("iw-next");
+  const imp = document.getElementById("iw-import");
+  back.classList.toggle("hidden", step === 1);
+  // El último paso es 3 si hay contraseñas cifradas, si no el 2.
+  const lastStep = hasPwStep ? 3 : 2;
+  next.classList.toggle("hidden", step >= lastStep);
+  imp.classList.toggle("hidden", step < lastStep);
+}
+
+function openImportWizard() {
+  importWizard.fileName = null;
+  importWizard.meta = null;
+  importWizard.tree = null;
+  importWizard.protocols = new Set();
+  const overlay = document.getElementById("import-wizard-overlay");
+  document.getElementById("iw-file-name").textContent = "";
+  document.getElementById("iw-parse-error").textContent = "";
+  document.getElementById("iw-parse-summary").classList.add("hidden");
+  document.getElementById("iw-pw-result").textContent = "";
+  document.getElementById("iw-master-password").value = "";
+  document.getElementById("iw-import-passwords").checked = false;
+  document.getElementById("iw-next").disabled = true;
+  overlay.classList.remove("hidden");
+  setImportWizardStep(1);
+}
+
+function closeImportWizard() {
+  document.getElementById("import-wizard-overlay")?.classList.add("hidden");
+}
+
+async function importWizardPickFile() {
+  let path;
+  try {
+    path = await openDialog({
+      title: t("import_wizard.pick_file"),
+      multiple: false,
+      filters: [{ name: "mRemoteNG", extensions: ["xml"] }],
+    });
+  } catch (err) {
+    toast(`${err}`, "error");
+    return;
+  }
+  if (!path) return;
+  document.getElementById("iw-parse-error").textContent = "";
+  try {
+    const text = await invoke("read_text_file", { path });
+    const { meta, tree } = parseMremoteng(text);
+    importWizard.meta = meta;
+    importWizard.tree = tree;
+    importWizard.fileName = Array.isArray(path) ? path[0] : path;
+    importWizard.protocols = mrngSupportedProtocols(tree);
+
+    const conns = mrngFlattenConnections(tree);
+    const supported = conns.filter((c) => MRNG_PROTOCOL_MAP[c.node.protocol]).length;
+    const containers = [];
+    const countContainers = (nodes) => {
+      for (const n of nodes) {
+        if (n.type === "Container") { containers.push(n); countContainers(n.children); }
+      }
+    };
+    countContainers(tree);
+
+    if (meta.fullFileEncryption) {
+      document.getElementById("iw-parse-error").textContent = t("import_wizard.err_full_encryption");
+      document.getElementById("iw-next").disabled = true;
+      return;
+    }
+
+    const fname = importWizard.fileName.split(/[/\\]/).pop();
+    document.getElementById("iw-file-name").textContent = fname;
+    const summary = document.getElementById("iw-parse-summary");
+    summary.innerHTML = t("import_wizard.summary", {
+      total: conns.length,
+      supported,
+      folders: containers.length,
+      protocols: [...importWizard.protocols].join(", ") || "—",
+    }).replace(/\n/g, "<br>");
+    summary.classList.remove("hidden");
+    document.getElementById("iw-next").disabled = supported === 0;
+    if (supported === 0) {
+      document.getElementById("iw-parse-error").textContent = t("import_wizard.err_no_supported");
+    }
+    // Prefijar nombre del workspace con el del fichero.
+    document.getElementById("iw-workspace-name").value = meta.name && meta.name !== "Conexiones"
+      ? meta.name
+      : "mRemoteNG";
+  } catch (err) {
+    importWizard.tree = null;
+    document.getElementById("iw-parse-error").textContent = `${err.message || err}`;
+    document.getElementById("iw-next").disabled = true;
+  }
+}
+
+/** Pinta los chips de protocolo y el árbol con checkboxes del paso 2. */
+function renderImportWizardSelection() {
+  const protoBox = document.getElementById("iw-proto-filter");
+  protoBox.innerHTML = "";
+  for (const proto of [...importWizard.protocols]) {
+    const id = `iw-proto-${proto}`;
+    const label = document.createElement("label");
+    label.className = "iw-proto-chip";
+    label.innerHTML = `<input type="checkbox" id="${id}" checked data-proto="${proto}"><span>${proto} → ${MRNG_PROTOCOL_MAP[proto]}</span>`;
+    protoBox.appendChild(label);
+  }
+  protoBox.querySelectorAll("input[data-proto]").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      // Marca/desmarca todas las conexiones de ese protocolo en el árbol.
+      const proto = cb.dataset.proto;
+      document.querySelectorAll(`#iw-tree .iw-conn[data-proto="${proto}"] input`).forEach((c) => {
+        c.checked = cb.checked;
+        c.disabled = !cb.checked;
+        c.closest(".iw-node")?.classList.toggle("iw-disabled", !cb.checked);
+      });
+      updateImportWizardCount();
+    });
+  });
+
+  const treeBox = document.getElementById("iw-tree");
+  treeBox.innerHTML = "";
+  const renderNodes = (nodes, depth) => {
+    for (const n of nodes) {
+      const supported = n.type === "Connection" && MRNG_PROTOCOL_MAP[n.protocol];
+      const isUnsupportedConn = n.type === "Connection" && !supported;
+      const row = document.createElement("div");
+      row.className = "iw-node " + (n.type === "Container" ? "iw-container" : "iw-conn");
+      if (isUnsupportedConn) row.classList.add("iw-disabled");
+      if (n.type === "Connection") row.dataset.proto = n.protocol;
+      row.dataset.uid = n.uid;
+      const protoBadge = n.type === "Connection"
+        ? `<span class="iw-node-proto">${n.protocol || "?"}</span>`
+        : "";
+      row.style.paddingLeft = `${10 + depth * 18}px`;
+      row.innerHTML = `<label><input type="checkbox" ${supported || n.type === "Container" ? "checked" : ""} ${isUnsupportedConn ? "disabled" : ""}><span class="iw-node-name">${escHtml(n.name)}</span></label>${protoBadge}`;
+      treeBox.appendChild(row);
+      const cb = row.querySelector("input");
+      cb._uid = n.uid;
+      if (n.type === "Container") {
+        cb.addEventListener("change", () => {
+          // Propaga el check a los descendientes visibles y no deshabilitados.
+          const start = Array.from(treeBox.children).indexOf(row);
+          for (let i = start + 1; i < treeBox.children.length; i++) {
+            const r = treeBox.children[i];
+            const rd = parseInt(r.style.paddingLeft, 10);
+            if (rd <= 10 + depth * 18) break; // salió del subárbol
+            const c = r.querySelector("input");
+            if (!c.disabled) c.checked = cb.checked;
+          }
+          updateImportWizardCount();
+        });
+      } else {
+        cb.addEventListener("change", updateImportWizardCount);
+      }
+      if (n.children.length) renderNodes(n.children, depth + 1);
+    }
+  };
+  renderNodes(importWizard.tree, 0);
+  updateImportWizardCount();
+}
+
+function updateImportWizardCount() {
+  const n = document.querySelectorAll("#iw-tree .iw-conn input:checked").length;
+  document.getElementById("iw-selected-count").textContent = t("import_wizard.selected", { count: n });
+}
+
+async function importWizardValidatePassword() {
+  const result = document.getElementById("iw-pw-result");
+  const pw = mrngEffectivePassword(document.getElementById("iw-master-password").value);
+  if (importWizard.meta.blockCipherMode !== "GCM") {
+    result.textContent = t("import_wizard.pw_mode_unsupported", { mode: importWizard.meta.blockCipherMode });
+    result.style.color = "var(--red)";
+    return false;
+  }
+  try {
+    await mrngDecryptGcm(importWizard.meta.protectedCanary, pw, importWizard.meta.kdfIterations);
+    result.textContent = t("import_wizard.pw_ok");
+    result.style.color = "var(--green)";
+    return true;
+  } catch {
+    result.textContent = t("import_wizard.pw_bad");
+    result.style.color = "var(--red)";
+    return false;
+  }
+}
+
+/** Ejecuta la importación: crea el workspace y vuelca los perfiles seleccionados. */
+async function importWizardRun() {
+  const wsName = (document.getElementById("iw-workspace-name").value || "mRemoteNG").trim();
+  const importPw = document.getElementById("iw-import-passwords").checked;
+  const masterPw = mrngEffectivePassword(document.getElementById("iw-master-password").value);
+
+  // Conexiones seleccionadas (checkbox marcado y soportadas).
+  const selectedUids = new Set(
+    Array.from(document.querySelectorAll("#iw-tree .iw-conn input:checked")).map((c) => c._uid)
+  );
+  const conns = mrngFlattenConnections(importWizard.tree).filter(
+    (c) => MRNG_PROTOCOL_MAP[c.node.protocol] && selectedUids.has(c.node.uid)
+  );
+  if (conns.length === 0) {
+    toast(t("import_wizard.err_nothing_selected"), "warning");
+    return;
+  }
+
+  if (importPw) {
+    const ok = await importWizardValidatePassword();
+    if (!ok) {
+      const cont = await confirmThemed({
+        title: t("import_wizard.title"),
+        message: t("import_wizard.pw_continue_without"),
+        submitLabel: t("import_wizard.continue"),
+      });
+      if (!cont) return;
+    }
+  }
+
+  // Crea el perfil-contenedor (workspace) nuevo.
+  const wsId = `ws-${crypto.randomUUID()}`;
+  prefs.workspaces = Array.isArray(prefs.workspaces) ? prefs.workspaces : [];
+  prefs.workspaces.push({ id: wsId, name: wsName });
+  prefs.userFoldersByWorkspace = prefs.userFoldersByWorkspace || {};
+  prefs.userFoldersByWorkspace[wsId] = [];
+
+  const now = new Date().toISOString();
+  const folderSet = new Set();
+  let imported = 0, withPw = 0, pwFailed = 0;
+
+  for (const { node, folder } of conns) {
+    const ctype = MRNG_PROTOCOL_MAP[node.protocol];
+    const portRaw = parseInt(mrngResolveAttr(node, "Port") || "", 10);
+    const port = Number.isFinite(portRaw) && portRaw > 0
+      ? portRaw
+      : (ctype === "rdp" ? 3389 : 22);
+    const username = mrngResolveAttr(node, "Username") || "";
+    const domain = mrngResolveAttr(node, "Domain") || null;
+    const descr = node.el.getAttribute("Descr") || null;
+    const id = crypto.randomUUID();
+    if (folder) folderSet.add(folder);
+
+    const profile = {
+      id,
+      name: node.name,
+      host: mrngResolveAttr(node, "Hostname") || node.name,
+      port,
+      username,
+      connection_type: ctype,
+      domain: ctype === "rdp" ? domain : null,
+      auth_type: "password",
+      key_path: null,
+      group: folder || null,
+      notes: descr,
+      workspace_id: wsId,
+      keepass_entry_uuid: null,
+      keepass_property: null,
+      follow_cwd: true,
+      keep_alive_secs: null,
+      allow_legacy_algorithms: false,
+      agent_forwarding: false,
+      disable_paste_confirm: false,
+      x11_forwarding: false,
+      auto_reconnect: null,
+      session_log: false,
+      session_log_dir: null,
+      proxy_jump: null,
+      mac_address: null,
+      wol_broadcast: null,
+      wol_port: null,
+      ssh_tunnels: [],
+      created_at: now,
+      updated_at: now,
+    };
+
+    try {
+      await invoke("save_profile", { profile });
+      profiles.push(profile);
+      imported++;
+    } catch (err) {
+      console.error("[import] save_profile failed for", node.name, err);
+      continue;
+    }
+
+    if (importPw) {
+      const encPw = mrngResolveAttr(node, "Password");
+      if (encPw) {
+        try {
+          const plain = await mrngDecryptGcm(encPw, masterPw, importWizard.meta.kdfIterations);
+          if (plain) {
+            await saveStoredSecret(passwordKey(id), plain, "contraseña");
+            withPw++;
+          }
+        } catch {
+          pwFailed++;
+        }
+      }
+    }
+  }
+
+  // Registra las carpetas (incluyendo las intermedias) en el workspace nuevo.
+  const allFolders = new Set();
+  for (const f of folderSet) {
+    const parts = f.split("/");
+    for (let i = 1; i <= parts.length; i++) allFolders.add(parts.slice(0, i).join("/"));
+  }
+  prefs.userFoldersByWorkspace[wsId] = [...allFolders];
+
+  prefs.activeWorkspaceId = wsId;
+  prefs.sidebarViewMode = "current";
+  userFolders = new Set(prefs.userFoldersByWorkspace[wsId]);
+  savePrefs();
+  renderConnectionList();
+  scheduleProfileAutoSync();
+  closeImportWizard();
+
+  let msg = t("import_wizard.done", { count: imported, workspace: wsName });
+  if (importPw) msg += " " + t("import_wizard.done_passwords", { ok: withPw, failed: pwFailed });
+  toast(msg, "success", 8000);
+}
+
+// ═══════════════════════════════════════════════════════════════
 // ENLACE DE EVENTOS DE LA UI
 // ═══════════════════════════════════════════════════════════════
 
@@ -13626,6 +14157,47 @@ function bindUIEvents() {
     .addEventListener("click", () => importConnections());
   document.getElementById("btn-import-ssh-config")
     ?.addEventListener("click", () => importFromSshConfig());
+
+  // Asistente de importación (mRemoteNG, …)
+  document.getElementById("btn-import-mremoteng")
+    ?.addEventListener("click", () => openImportWizard());
+  document.getElementById("btn-import-wizard-close")
+    ?.addEventListener("click", () => closeImportWizard());
+  document.getElementById("iw-pick-file")
+    ?.addEventListener("click", () => importWizardPickFile());
+  document.getElementById("iw-back")?.addEventListener("click", () => {
+    if (importWizard.step > 1) setImportWizardStep(importWizard.step - 1);
+  });
+  document.getElementById("iw-next")?.addEventListener("click", () => {
+    if (importWizard.step === 1) {
+      if (!importWizard.tree) return;
+      setImportWizardStep(2);
+      renderImportWizardSelection();
+    } else if (importWizard.step === 2) {
+      setImportWizardStep(3);
+    }
+  });
+  document.getElementById("iw-import")?.addEventListener("click", () => importWizardRun());
+  document.getElementById("iw-validate-password")
+    ?.addEventListener("click", () => importWizardValidatePassword());
+  document.getElementById("iw-select-all")?.addEventListener("click", () => {
+    document.querySelectorAll("#iw-tree input:not(:disabled)").forEach((c) => (c.checked = true));
+    updateImportWizardCount();
+  });
+  document.getElementById("iw-select-none")?.addEventListener("click", () => {
+    document.querySelectorAll("#iw-tree input").forEach((c) => (c.checked = false));
+    updateImportWizardCount();
+  });
+  document.getElementById("iw-master-toggle")?.addEventListener("click", () => {
+    const inp = document.getElementById("iw-master-password");
+    const btn = document.getElementById("iw-master-toggle");
+    const show = inp.type === "password";
+    inp.type = show ? "text" : "password";
+    btn.setAttribute("aria-pressed", show ? "true" : "false");
+  });
+  document.getElementById("import-wizard-overlay")?.addEventListener("mousedown", (e) => {
+    if (e.target?.id === "import-wizard-overlay") closeImportWizard();
+  });
 
   // Logs de sesión: retención
   document.getElementById("btn-session-logs-prune")

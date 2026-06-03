@@ -240,6 +240,11 @@ trait FileTransfer {
 
 struct SftpBackend {
     sftp: SftpSession,
+    /// Máximo de peticiones SFTP simultáneas (handles en vuelo) por transferencia.
+    /// Configurable por sesión; servidores restringidos como Hetzner Storage Box
+    /// imponen un límite bajo de handles abiertos y un valor alto provoca
+    /// "Handle limit reached".
+    max_parallelism: usize,
 }
 
 struct FtpBackend {
@@ -268,6 +273,7 @@ impl SftpManager {
     /// acceder a rutas que requieren root (ej. `/root/` tras `sudo su -`).
     /// Requiere que el `sudoers` permita ejecutar `sftp-server` sin
     /// contraseña para el usuario conectado.
+    #[allow(clippy::too_many_arguments)]
     pub async fn connect(
         &self,
         session_id: String,
@@ -275,6 +281,7 @@ impl SftpManager {
         password: Option<String>,
         passphrase: Option<String>,
         elevated: bool,
+        max_parallelism: usize,
         app_handle: AppHandle,
     ) -> Result<(), String> {
         let (tx, rx) = mpsc::channel::<SftpCommand>();
@@ -300,6 +307,7 @@ impl SftpManager {
                 password,
                 passphrase,
                 elevated,
+                max_parallelism,
                 rx,
                 ready_tx,
                 app_handle,
@@ -535,12 +543,14 @@ impl SftpManager {
 
 // ─── Worker ──────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn run_sftp_worker(
     session_id: String,
     profile: ConnectionProfile,
     password: Option<String>,
     passphrase: Option<String>,
     elevated: bool,
+    max_parallelism: usize,
     rx: mpsc::Receiver<SftpCommand>,
     ready: mpsc::SyncSender<Result<(), String>>,
     app_handle: AppHandle,
@@ -551,6 +561,7 @@ async fn run_sftp_worker(
         password.as_deref(),
         passphrase.as_deref(),
         elevated,
+        max_parallelism,
         &app_handle,
         &session_id,
     )
@@ -695,6 +706,7 @@ async fn connect_and_open_backend(
     password: Option<&str>,
     passphrase: Option<&str>,
     elevated: bool,
+    max_parallelism: usize,
     app_handle: &AppHandle,
     session_id: &str,
 ) -> Result<Box<dyn FileTransfer>, String> {
@@ -734,7 +746,10 @@ async fn connect_and_open_backend(
                 profile, password, passphrase, elevated, app_handle, session_id,
             )
             .await?;
-            Ok(Box::new(SftpBackend { sftp }))
+            Ok(Box::new(SftpBackend {
+                sftp,
+                max_parallelism,
+            }))
         }
     }
 }
@@ -1101,6 +1116,7 @@ impl FileTransfer for SftpBackend {
             local,
             transfer_id,
             verify_size,
+            self.max_parallelism,
             app,
             controls,
         )
@@ -1122,6 +1138,7 @@ impl FileTransfer for SftpBackend {
             remote,
             transfer_id,
             verify_size,
+            self.max_parallelism,
             app,
             controls,
         )
@@ -1615,6 +1632,7 @@ async fn do_download(
     local: &Path,
     transfer_id: &str,
     verify_size: bool,
+    max_parallelism: usize,
     app: &AppHandle,
     controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
@@ -1639,6 +1657,7 @@ async fn do_download(
         &mut local_file,
         total,
         transfer_id,
+        max_parallelism,
         app,
         controls,
     )
@@ -1666,6 +1685,7 @@ async fn do_upload(
     remote: &str,
     transfer_id: &str,
     verify_size: bool,
+    max_parallelism: usize,
     app: &AppHandle,
     controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
@@ -1680,6 +1700,7 @@ async fn do_upload(
         remote,
         total,
         transfer_id,
+        max_parallelism,
         app,
         controls,
     )
@@ -1710,6 +1731,7 @@ async fn pipelined_download(
     local_file: &mut tokio::fs::File,
     total: u64,
     transfer_id: &str,
+    max_parallelism: usize,
     app: &AppHandle,
     controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
@@ -1728,7 +1750,7 @@ async fn pipelined_download(
     }
 
     // Abrir N file handles concurrentemente para no pagar N RTT secuenciales.
-    let parallelism = effective_parallelism(total);
+    let parallelism = effective_parallelism(total, max_parallelism);
     let mut idle_files: Vec<SftpFile> = open_handles(sftp, remote, parallelism, OpenFlags::READ)
         .await
         .map_err(|e| format!("No se pudieron abrir los handles SFTP: {e}"))?;
@@ -1860,6 +1882,7 @@ async fn pipelined_upload(
     remote: &str,
     total: u64,
     transfer_id: &str,
+    max_parallelism: usize,
     app: &AppHandle,
     controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
@@ -1888,7 +1911,7 @@ async fn pipelined_upload(
         return Ok(());
     }
 
-    let parallelism = effective_parallelism(total);
+    let parallelism = effective_parallelism(total, max_parallelism);
     let mut idle_files: Vec<SftpFile> = Vec::with_capacity(parallelism);
     idle_files.push(first);
     if parallelism > 1 {
@@ -2035,12 +2058,13 @@ async fn open_handles(
     Ok(handles)
 }
 
-fn effective_parallelism(total: u64) -> usize {
+fn effective_parallelism(total: u64, cap: usize) -> usize {
     if total <= SFTP_CHUNK {
         return 1;
     }
+    let cap = cap.clamp(1, SFTP_PIPELINE);
     let chunks = total.div_ceil(SFTP_CHUNK) as usize;
-    chunks.min(SFTP_PIPELINE).max(1)
+    chunks.min(cap).max(1)
 }
 
 fn transfer_copy_blocking<R, W>(
@@ -2365,36 +2389,47 @@ mod tests {
     // - total mayor          → nº de chunks (div_ceil) acotado a SFTP_PIPELINE
     #[test]
     fn paralelismo_es_uno_para_transferencias_pequenas() {
-        assert_eq!(effective_parallelism(0), 1);
-        assert_eq!(effective_parallelism(1), 1);
+        assert_eq!(effective_parallelism(0, SFTP_PIPELINE), 1);
+        assert_eq!(effective_parallelism(1, SFTP_PIPELINE), 1);
         // Justo en el límite de un chunk también devuelve 1.
-        assert_eq!(effective_parallelism(SFTP_CHUNK), 1);
+        assert_eq!(effective_parallelism(SFTP_CHUNK, SFTP_PIPELINE), 1);
     }
 
     #[test]
     fn paralelismo_crece_con_el_numero_de_chunks() {
         // Un byte por encima de un chunk ya son 2 chunks.
-        assert_eq!(effective_parallelism(SFTP_CHUNK + 1), 2);
+        assert_eq!(effective_parallelism(SFTP_CHUNK + 1, SFTP_PIPELINE), 2);
         // Exactamente tres chunks → 3.
-        assert_eq!(effective_parallelism(SFTP_CHUNK * 3), 3);
+        assert_eq!(effective_parallelism(SFTP_CHUNK * 3, SFTP_PIPELINE), 3);
         // Tres chunks y un byte → 4 chunks (div_ceil redondea hacia arriba).
-        assert_eq!(effective_parallelism(SFTP_CHUNK * 3 + 1), 4);
+        assert_eq!(effective_parallelism(SFTP_CHUNK * 3 + 1, SFTP_PIPELINE), 4);
     }
 
     #[test]
     fn paralelismo_se_topa_en_el_pipeline_maximo() {
-        // Muchísimos chunks: nunca supera SFTP_PIPELINE.
+        // Muchísimos chunks: nunca supera SFTP_PIPELINE aunque el cap sea mayor.
         let enorme = SFTP_CHUNK * (SFTP_PIPELINE as u64) * 10;
-        assert_eq!(effective_parallelism(enorme), SFTP_PIPELINE);
+        assert_eq!(effective_parallelism(enorme, 1000), SFTP_PIPELINE);
         // Justo SFTP_PIPELINE chunks → SFTP_PIPELINE.
         assert_eq!(
-            effective_parallelism(SFTP_CHUNK * SFTP_PIPELINE as u64),
+            effective_parallelism(SFTP_CHUNK * SFTP_PIPELINE as u64, SFTP_PIPELINE),
             SFTP_PIPELINE
         );
         // Un chunk más allá del pipeline sigue topado.
         assert_eq!(
-            effective_parallelism(SFTP_CHUNK * (SFTP_PIPELINE as u64 + 5)),
+            effective_parallelism(SFTP_CHUNK * (SFTP_PIPELINE as u64 + 5), SFTP_PIPELINE),
             SFTP_PIPELINE
         );
+    }
+
+    #[test]
+    fn paralelismo_respeta_el_cap_configurado() {
+        // Con muchos chunks, el cap por sesión limita los handles en vuelo.
+        let enorme = SFTP_CHUNK * 50;
+        assert_eq!(effective_parallelism(enorme, 4), 4);
+        assert_eq!(effective_parallelism(enorme, 1), 1);
+        // Un cap de 0 se sanea a 1; un cap exagerado se topa en SFTP_PIPELINE.
+        assert_eq!(effective_parallelism(enorme, 0), 1);
+        assert_eq!(effective_parallelism(enorme, usize::MAX), SFTP_PIPELINE);
     }
 }
