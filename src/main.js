@@ -13885,15 +13885,19 @@ function bindUIEvents() {
 
   // Botones del modal
   document.getElementById("btn-modal-test")?.addEventListener("click", runConnectionTestFromModal);
-  document.getElementById("btn-modal-save-only").addEventListener("click", () => {
+  // "Guardar y conectar" es un botón explícito (no el submit por defecto), para
+  // que al pulsar Intro en el formulario solo se GUARDE, sin conectar.
+  document.getElementById("btn-modal-save-connect").addEventListener("click", () => {
     const form = document.getElementById("form-connection");
     if (!form.checkValidity()) {
       revealFirstInvalidPane(form);
       form.reportValidity();
       return;
     }
-    saveAndClose(false);
+    saveAndClose(true);
   });
+  // Submit del formulario (botón "Guardar", que es el por defecto, o Intro) →
+  // guardar sin conectar.
   document.getElementById("form-connection").addEventListener("submit", (e) => {
     e.preventDefault();
     const form = e.currentTarget;
@@ -13902,7 +13906,7 @@ function bindUIEvents() {
       form.reportValidity();
       return;
     }
-    saveAndClose(true);
+    saveAndClose(false);
   });
 
   // ── Menú contextual ──────────────────────────────────────

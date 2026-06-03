@@ -2,6 +2,14 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.19.1] - 2026-06-03
+
+### Corregido
+
+- Al crear o editar una conexión, pulsar **Intro** ahora **guarda** sin conectar
+  (antes guardaba y conectaba). «Guardar y conectar» sigue disponible como botón
+  explícito.
+
 ## [1.19.0] - 2026-06-03
 
 ### Añadido
