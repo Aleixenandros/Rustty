@@ -29,7 +29,7 @@ Entre las dos columnas están los botones centrales **⇨ Descargar** y **⇦ Su
 
 Las carpetas se transfieren de forma recursiva en ambos sentidos.
 
-Cada columna tiene además una **caja de búsqueda** por nombre, independiente del autocompletado de rutas: al escribir filtra las entradas del directorio actual y, activando el botón **Recursiva**, recorre los subdirectorios (con cancelación y límite de resultados) para localizar ficheros en niveles inferiores. Pulsa un resultado para ir a su carpeta contenedora; `Esc` limpia la búsqueda y `↑`/`↓` + `Enter` navegan los resultados.
+Cada columna tiene además un botón de **búsqueda** (icono de lupa) en su toolbar. La caja de búsqueda empieza **plegada**: al pulsar la lupa se despliega y al volver a pulsarla (o con `Esc`) se pliega y limpia el filtro. Es independiente del autocompletado de rutas: al escribir filtra las entradas del directorio actual y, activando el botón **Recursiva**, recorre los subdirectorios (con cancelación y límite de resultados) para localizar ficheros en niveles inferiores. Pulsa un resultado para ir a su carpeta contenedora; `↑`/`↓` + `Enter` navegan los resultados.
 
 La zona inferior del panel agrupa **Transferencias** y **Actividad** en pestañas. Está pegada a la parte inferior, recuerda su altura y se puede redimensionar hacia arriba para revisar logs largos o colas de transferencia con más comodidad.
 
@@ -67,9 +67,15 @@ Si una transferencia falla o se cancela, el detalle muestra los bytes realmente 
 
 ## Rendimiento (pipelining)
 
-Las descargas y subidas mantienen 16 peticiones SFTP simultáneamente en vuelo con chunks de 256 KiB. Eso elimina el techo de velocidad `chunk × RTT` típico de los clientes SFTP en serie: con un RTT de 12-15 ms y buffer de 64 KiB el techo era de ~5 MB/s; con 4 MiB de datos en vuelo a la vez, la transferencia satura el ancho de banda real de la conexión.
+Las descargas y subidas mantienen varias peticiones SFTP simultáneamente en vuelo con chunks de 256 KiB. Eso elimina el techo de velocidad `chunk × RTT` típico de los clientes SFTP en serie: con un RTT de 12-15 ms y buffer de 64 KiB el techo era de ~5 MB/s; con varios MiB de datos en vuelo a la vez, la transferencia satura el ancho de banda real de la conexión.
 
 Si el servidor caps por sesión (por ejemplo limita a 100 Mbps) verás velocidades estables cerca de ese tope, sin importar la latencia.
+
+### Transferencias simultáneas configurables
+
+El número de peticiones SFTP en paralelo por transferencia se ajusta en **Preferencias → FTP/SFTP → Transferencias simultáneas (SFTP)** (por defecto **4**, rango 1–64). Súbelo para exprimir más velocidad en redes con latencia alta; **bájalo** si el servidor devuelve `Limit exceeded: Handle limit reached`.
+
+Algunos servidores con SFTP restringido —como el **Storage Box de Hetzner**— imponen un límite bajo de *handles* (ficheros abiertos) por sesión. Un valor de concurrencia alto abre demasiados handles a la vez y dispara ese error, sobre todo al descargar carpetas recursivas. Con el valor por defecto de 4 no debería ocurrir. El cambio se aplica a las **sesiones nuevas**.
 
 ## SFTP elevado
 
