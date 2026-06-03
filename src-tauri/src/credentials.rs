@@ -13,6 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::error::AppError;
+use crate::profiles::ConnectionProfile;
 use crate::subst::{InternalVar, Resolver, SubstContext};
 
 /// Servicio usado para todas las entradas de keyring de Rustty.
@@ -231,6 +232,61 @@ pub fn resolve_secret(catalog: &[CredentialMeta], name: &str) -> Option<String> 
 pub fn resolve_var(catalog: &[CredentialMeta], name: &str) -> Option<String> {
     let cred = find_by_name(catalog, CredentialKind::Var, name)?;
     cred.value.clone()
+}
+
+/// Resolver para campos de conexión de texto (host, usuario, bastion): resuelve
+/// solo variables de texto (`${var:}`) y entorno (`${env:}`). Deja literales los
+/// internos (evita recursión de `${host}` dentro del propio host) y nunca expone
+/// secretos/maestras en un campo no protegido.
+struct ConnFieldResolver<'a> {
+    catalog: &'a [CredentialMeta],
+}
+
+impl Resolver for ConnFieldResolver<'_> {
+    fn internal(&self, _var: InternalVar) -> Option<String> {
+        None
+    }
+    fn env(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
+    }
+    fn var(&self, name: &str) -> Option<String> {
+        resolve_var(self.catalog, name)
+    }
+    fn secret(&self, _name: &str) -> Option<String> {
+        None
+    }
+    fn master(&self, _name: &str) -> Option<String> {
+        None
+    }
+    fn ask(&self, _label: &str, _options: &[String]) -> Option<String> {
+        None
+    }
+}
+
+/// Sustituye `${var:}` / `${env:}` en los campos de conexión de texto del perfil
+/// (host, usuario y bastion) justo antes de conectar. No toca contraseñas ni
+/// otros campos; los marcadores sin resolver quedan literales. Permite, p. ej.,
+/// completar un host con `servidor.${var:dominio}`.
+pub fn substitute_connection_fields(profile: &mut ConnectionProfile, store: &CredentialStore) {
+    let needs = profile.host.contains("${")
+        || profile.username.contains("${")
+        || profile.proxy_jump.as_deref().is_some_and(|s| s.contains("${"));
+    if !needs {
+        return;
+    }
+    let catalog = store.load_all().unwrap_or_default();
+    let resolver = ConnFieldResolver { catalog: &catalog };
+    if profile.host.contains("${") {
+        profile.host = crate::subst::substitute(&profile.host, &resolver);
+    }
+    if profile.username.contains("${") {
+        profile.username = crate::subst::substitute(&profile.username, &resolver);
+    }
+    if let Some(pj) = profile.proxy_jump.clone() {
+        if pj.contains("${") {
+            profile.proxy_jump = Some(crate::subst::substitute(&pj, &resolver));
+        }
+    }
 }
 
 // ─── Integración con el motor de sustitución ─────────────────────────────────

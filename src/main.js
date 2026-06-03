@@ -9077,27 +9077,28 @@ async function renderCredList() {
   list.innerHTML = items
     .map((c) => {
       const varText = credVar(c.kind, c.name);
-      const desc = c.description
-        ? `<span class="global-tunnel-desc">${escHtml(c.description)}</span>`
+      // Descripción o, en variables (no secretas), su valor de texto.
+      const descText = c.description
+        ? c.description
+        : (c.kind === "var" && c.value ? "= " + c.value : "");
+      const desc = descText
+        ? `<span class="cred-desc" title="${escHtml(descText)}">${escHtml(descText)}</span>`
         : "";
-      // Las variables NO son secretas: mostramos su valor como descripción si
-      // no tiene una propia. Secretos/maestras nunca exponen su valor.
-      const valueHint =
-        c.kind === "var" && !c.description && c.value
-          ? `<span class="global-tunnel-desc">= ${escHtml(c.value)}</span>`
-          : "";
       const badge = `<span class="cred-kind-badge">${escHtml(t("prefs_credentials.badge_" + c.kind))}</span>`;
       return `
-        <div class="global-tunnel-row" data-cred-id="${escHtml(c.id)}" data-cred-name="${escHtml(c.name)}" data-cred-kind="${escHtml(c.kind)}">
-          <span class="global-tunnel-profile">${escHtml(c.name)}</span>
-          ${badge}
-          <code class="cred-var">${escHtml(varText)}</code>
-          ${desc}${valueHint}
-          <span class="global-tunnel-row-actions">
-            <button type="button" class="global-tunnel-action" data-cred-action="copy">${escHtml(t("prefs_credentials.copy_var"))}</button>
-            <button type="button" class="global-tunnel-action" data-cred-action="edit">${escHtml(t("prefs_credentials.edit"))}</button>
-            <button type="button" class="global-tunnel-action danger" data-cred-action="delete">${escHtml(t("prefs_credentials.delete"))}</button>
-          </span>
+        <div class="cred-row" data-cred-id="${escHtml(c.id)}" data-cred-name="${escHtml(c.name)}" data-cred-kind="${escHtml(c.kind)}">
+          <div class="cred-row-top">
+            <span class="cred-name" title="${escHtml(c.name)}">${escHtml(c.name)}</span>
+            ${badge}
+            ${desc}
+            <span class="cred-row-actions">
+              <button type="button" class="global-tunnel-action" data-cred-action="edit">${escHtml(t("prefs_credentials.edit"))}</button>
+              <button type="button" class="global-tunnel-action danger" data-cred-action="delete">${escHtml(t("prefs_credentials.delete"))}</button>
+            </span>
+          </div>
+          <button type="button" class="cred-var" data-cred-action="copy" title="${escHtml(t("prefs_credentials.copy_var"))}">
+            <code>${escHtml(varText)}</code>
+          </button>
         </div>`;
     })
     .join("");

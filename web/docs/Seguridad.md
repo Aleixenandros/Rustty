@@ -14,7 +14,9 @@ Rustty está diseñado como aplicación local-first: no requiere cuenta propia, 
 
 ## Credenciales maestras y variables
 
-En **Preferencias → Credenciales** puedes definir **credenciales maestras**: una contraseña o token reutilizable que se guarda una sola vez en el keyring del sistema y se referencia desde los perfiles con `${master:nombre}`. El perfil guarda únicamente la referencia, nunca el valor, así que **rotar** la credencial (cambiar su valor) actualiza a la vez todos los perfiles que la usan.
+En **Preferencias → Credenciales** puedes definir dos tipos reutilizables entre perfiles: **credenciales maestras** y **variables de texto**. Una credencial maestra (contraseña o token) se guarda una sola vez en el keyring del sistema y se referencia con `${master:nombre}`; el perfil guarda únicamente la referencia, nunca el valor, así que **rotar** la credencial actualiza a la vez todos los perfiles que la usan. Las variables (`${var:nombre}`) son texto plano y sirven para reutilizar valores comunes como un dominio o un usuario.
+
+La lista se organiza en dos pestañas (**Maestras** y **Variables**); cada fila muestra su variable de referencia, que se **copia al portapapeles al pulsarla**.
 
 En el formulario de conexión, el selector **Origen de la contraseña** permite elegir entre *Contraseña propia*, *Credencial maestra* o *KeePass*. También puedes **promover** la contraseña propia de un perfil a credencial maestra desde su menú contextual.
 
@@ -23,8 +25,10 @@ Las credenciales maestras forman parte de un **motor de variables** que resuelve
 - Internos: `${host}`, `${port}`, `${user}`, `${profileName}`, `${workspace}`, `${date}`, `${time}`.
 - Entorno: `${env:NOMBRE}`.
 - Variables de texto: `${var:nombre}`.
-- Secretos (keyring): `${secret:nombre}` y `${master:nombre}`.
+- Credenciales maestras (keyring): `${master:nombre}`.
 - Preguntas al conectar: `${ask:Etiqueta}` o `${ask:Etiqueta|opción1|opción2}`, que se piden una vez al abrir la sesión y no se persisten.
+
+Las variables de texto (`${var:nombre}`) y de entorno (`${env:VAR}`) se resuelven además en los campos **host**, **usuario** y **bastion** del perfil, no solo en la contraseña: por ejemplo, un host `servidor.${var:dominio}` se completa al conectar.
 
 > Avisos: usar la misma credencial en varios hosts implica que, si se compromete, quedan afectados todos a la vez. Las credenciales maestras **no** son la passphrase de sincronización ni la contraseña maestra de KeePass: son conceptos distintos.
 

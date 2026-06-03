@@ -122,10 +122,11 @@ pub fn ssh_connect(
     ask_answers: Option<std::collections::HashMap<String, String>>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
-    let profile = profiles
+    let mut profile = profiles
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
+    credentials::substitute_connection_fields(&mut profile, &cred_state);
 
     let resolved_password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
 
@@ -149,12 +150,13 @@ pub fn ssh_connect(
 pub fn ssh_test_connection(
     cred_state: State<'_, CredentialStore>,
     app_handle: AppHandle,
-    profile: ConnectionProfile,
+    mut profile: ConnectionProfile,
     password: Option<String>,
     passphrase: Option<String>,
     test_id: String,
     ask_answers: Option<std::collections::HashMap<String, String>>,
 ) -> Result<(), String> {
+    credentials::substitute_connection_fields(&mut profile, &cred_state);
     let resolved_password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -382,10 +384,11 @@ pub fn rdp_connect(
     ask_answers: Option<std::collections::HashMap<String, String>>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
-    let profile = profiles
+    let mut profile = profiles
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
+    credentials::substitute_connection_fields(&mut profile, &cred_state);
 
     let password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
 
@@ -476,10 +479,11 @@ pub async fn sftp_connect(
     ask_answers: Option<std::collections::HashMap<String, String>>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
-    let profile = profiles
+    let mut profile = profiles
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
+    credentials::substitute_connection_fields(&mut profile, &cred_state);
 
     let password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
 

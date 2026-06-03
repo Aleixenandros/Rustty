@@ -6259,18 +6259,75 @@ body.sftp-log-resizing {
 }
 
 /* Filas de credencial: reutilizan .global-tunnel-row con su propio grid. */
-.global-tunnel-row[data-cred-id] {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1.2fr) auto;
+/* Fila de credencial: cabecera (nombre + badge + descripción + acciones) y, en
+   una segunda línea, la variable copiable a pantalla completa. */
+.cred-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--surface0);
 }
 
-.cred-var {
+.cred-row:last-child { border-bottom: none; }
+
+.cred-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cred-name {
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--text);
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cred-desc {
+  color: var(--subtext0);
+  font-size: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cred-row-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* Variable copiable: ocupa todo el ancho, se ve completa (con wrap) y al
+   pulsarla se copia al portapapeles. */
+.cred-var {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--base);
+  border: 1px solid var(--surface0);
+  border-radius: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+
+.cred-var code {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--blue);
+  word-break: break-all;
+}
+
+.cred-var:hover {
+  background: var(--surface0);
+  border-color: var(--blue);
 }
 
 #cred-edit-var-preview {

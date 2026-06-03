@@ -2,6 +2,24 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.19.0] - 2026-06-03
+
+### Añadido
+
+- Las **variables de texto** (`${var:nombre}`) y las variables de entorno
+  (`${env:VAR}`) se resuelven ahora también en los campos **host**, **usuario** y
+  **bastion** de un perfil al conectar (además de en la contraseña). Permite,
+  por ejemplo, completar un host con `servidor.${var:dominio}`.
+
+### Cambiado
+
+- **Rediseño de Preferencias → Credenciales**: cada fila muestra el nombre, el
+  tipo y la descripción en una línea, con «Editar» y «Eliminar» siempre dentro
+  del recuadro; la variable (`${master:…}` / `${var:…}`) ocupa su propia línea,
+  se ve completa y **se copia al portapapeles al pulsarla**.
+- La sección de credenciales se simplifica a **Maestras** y **Variables**; se
+  retira la categoría «Secretos» de la interfaz.
+
 ## [1.18.0] - 2026-06-03
 
 ### Añadido

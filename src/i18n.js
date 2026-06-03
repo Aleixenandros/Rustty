@@ -475,7 +475,7 @@ const DICTIONARIES = {
     prefs_credentials: {
       title: "Credenciales",
       hint_html:
-        "Define contraseñas, tokens, variables de texto y secretos reutilizables entre perfiles. Refiérelos en los campos de un perfil con <code>${master:nombre}</code>, <code>${var:nombre}</code> o <code>${secret:nombre}</code>. Los secretos y maestras se guardan cifrados en el keyring y nunca se muestran; las variables son texto plano.",
+        "Define contraseñas o tokens maestros y variables de texto reutilizables entre perfiles. Refiérelos en los campos de un perfil (host, usuario, contraseña…) con <code>${master:nombre}</code> o <code>${var:nombre}</code>. Las maestras se guardan cifradas en el keyring y nunca se muestran; las variables son texto plano.",
       warn_shared:
         "⚠️ Reutilizar una misma credencial en varios hosts implica que, si se compromete, quedan afectados todos a la vez.",
       warn_distinct:
@@ -1228,7 +1228,7 @@ const DICTIONARIES = {
     prefs_credentials: {
       title: "Credentials",
       hint_html:
-        "Define passwords, tokens, text variables and secrets reusable across profiles. Reference them in a profile's fields with <code>${master:name}</code>, <code>${var:name}</code> or <code>${secret:name}</code>. Secrets and master credentials are stored encrypted in the keyring and never shown; variables are plain text.",
+        "Define master passwords or tokens and reusable text variables shared across profiles. Reference them in a profile's fields (host, user, password…) with <code>${master:name}</code> or <code>${var:name}</code>. Master credentials are stored encrypted in the keyring and never shown; variables are plain text.",
       warn_shared:
         "⚠️ Reusing the same credential across several hosts means that, if it is compromised, all of them are affected at once.",
       warn_distinct:
@@ -1935,7 +1935,7 @@ const DICTIONARIES = {
     prefs_credentials: {
       title: "Identifiants",
       hint_html:
-        "Définissez des mots de passe, jetons, variables texte et secrets réutilisables entre profils. Référencez-les dans les champs d'un profil avec <code>${master:nom}</code>, <code>${var:nom}</code> ou <code>${secret:nom}</code>. Les secrets et identifiants maîtres sont stockés chiffrés dans le trousseau et jamais affichés ; les variables sont du texte brut.",
+        "Définissez des mots de passe ou jetons maîtres et des variables texte réutilisables entre profils. Référencez-les dans les champs d'un profil (hôte, utilisateur, mot de passe…) avec <code>${master:nom}</code> ou <code>${var:nom}</code>. Les identifiants maîtres sont stockés chiffrés dans le trousseau et jamais affichés ; les variables sont du texte brut.",
       warn_shared:
         "⚠️ Réutiliser un même identifiant sur plusieurs hôtes implique que, s'il est compromis, tous sont affectés à la fois.",
       warn_distinct:
@@ -2563,7 +2563,7 @@ const DICTIONARIES = {
     prefs_credentials: {
       title: "Credenciais",
       hint_html:
-        "Define palavras-passe, tokens, variáveis de texto e segredos reutilizáveis entre perfis. Referencia-os nos campos de um perfil com <code>${master:nome}</code>, <code>${var:nome}</code> ou <code>${secret:nome}</code>. Os segredos e credenciais mestras são guardados cifrados no keyring e nunca são mostrados; as variáveis são texto simples.",
+        "Define palavras-passe ou tokens mestres e variáveis de texto reutilizáveis entre perfis. Referencia-os nos campos de um perfil (host, utilizador, palavra-passe…) com <code>${master:nome}</code> ou <code>${var:nome}</code>. As credenciais mestras são guardadas cifradas no keyring e nunca são mostradas; as variáveis são texto simples.",
       warn_shared:
         "⚠️ Reutilizar a mesma credencial em vários hosts implica que, se for comprometida, todos ficam afetados ao mesmo tempo.",
       warn_distinct:
@@ -3237,7 +3237,7 @@ const DICTIONARIES = {
     prefs_credentials: {
       title: "Anmeldedaten",
       hint_html:
-        "Definiere profilübergreifend wiederverwendbare Passwörter, Tokens, Textvariablen und Geheimnisse. Verweise in den Feldern eines Profils mit <code>${master:name}</code>, <code>${var:name}</code> oder <code>${secret:name}</code> darauf. Geheimnisse und Master-Anmeldedaten werden verschlüsselt im Schlüsselbund gespeichert und nie angezeigt; Variablen sind Klartext.",
+        "Definiere profilübergreifend wiederverwendbare Master-Passwörter oder -Tokens und Textvariablen. Verweise in den Feldern eines Profils (Host, Benutzer, Passwort…) mit <code>${master:name}</code> oder <code>${var:name}</code> darauf. Master-Anmeldedaten werden verschlüsselt im Schlüsselbund gespeichert und nie angezeigt; Variablen sind Klartext.",
       warn_shared:
         "⚠️ Dieselben Anmeldedaten für mehrere Hosts zu verwenden bedeutet, dass bei einer Kompromittierung alle gleichzeitig betroffen sind.",
       warn_distinct:
