@@ -2,6 +2,16 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.17.2] - 2026-06-03
+
+### Corregido
+
+- En la búsqueda de la barra lateral, al pulsar un resultado el filtro se
+  borraba en el primer clic y re-renderizaba la lista, lo que impedía el doble
+  clic para conectar. Ahora, mientras interactúas con los resultados, el
+  popover de búsqueda y el filtro se mantienen; se cierran y limpian al conectar
+  o al hacer clic fuera de la lista.
+
 ## [1.17.1] - 2026-06-03
 
 ### Corregido

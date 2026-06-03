@@ -6250,6 +6250,13 @@ async function connectProfile(profileId, { force = false } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
+  // Al conectar desde un resultado de búsqueda, cierra el popover y limpia el
+  // filtro de la sidebar (se mantenían abiertos para permitir el doble clic).
+  if (_sidebarSearchQuery) {
+    clearSidebarSearch();
+    toggleSidebarTools(false);
+  }
+
   if (profile.connection_type === "rdp") {
     return connectRdp(profileId);
   }
@@ -13220,11 +13227,15 @@ function bindUIEvents() {
       }
     });
     document.addEventListener("click", (e) => {
-      if (!popover.classList.contains("hidden") &&
-          !popover.contains(e.target) &&
-          !toolsBtn.contains(e.target)) {
-        toggleSidebarTools(false);
-      }
+      if (popover.classList.contains("hidden")) return;
+      if (popover.contains(e.target) || toolsBtn.contains(e.target)) return;
+      // Si el clic recae sobre una conexión de los resultados, no cierres el
+      // popover de búsqueda: así la lista no se re-renderiza en el primer clic
+      // y el doble clic para conectar puede completarse. El popover y el filtro
+      // se cierran/limpian al conectar (connectProfile) o al clicar fuera de la
+      // lista.
+      if (e.target.closest(".conn-item")) return;
+      toggleSidebarTools(false);
     });
   }
 
