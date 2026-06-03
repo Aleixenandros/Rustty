@@ -239,7 +239,7 @@
           <div id="welcome-screen">
             <div class="dashboard-shell">
               <section class="dashboard-command">
-                <div class="dashboard-brand" aria-hidden="true">🦀</div>
+                <div class="dashboard-brand" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 19c0-3.3 4-6 9-6s9 2.7 9 6-4 5.5-9 5.5S7 22.3 7 19z"/><line x1="12" y1="13" x2="11" y2="9"/><line x1="20" y1="13" x2="21" y2="9"/><circle cx="11" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="21" cy="8" r="1.2" fill="currentColor" stroke="none"/><path d="M7.5 17c-2-.5-3-2-5-1.5"/><path d="M24.5 17c2-.5 3-2 5-1.5"/><path d="M9 22l-3 2.5"/><path d="M11 23.5l-2 3"/><path d="M23 22l3 2.5"/><path d="M21 23.5l2 3"/></svg></div>
                 <div class="dashboard-title">Rustty</div>
                 <div id="dashboard-workspace-chip" class="dashboard-workspace-chip" aria-live="polite"></div>
                 <div class="dashboard-search-wrap">
@@ -1067,6 +1067,14 @@
               <span class="prefs-nav-icon">◐</span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_appearance">Apariencia</span>
             </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="aesthetics">
+              <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg></span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_aesthetics">Estética</span>
+            </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="transfer">
+              <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v13"/><path d="M4 7l3-3 3 3"/><path d="M17 20V7"/><path d="M14 17l3 3 3-3"/></svg></span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_transfer">FTP/SFTP</span>
+            </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="language">
               <span class="prefs-nav-icon">A文</span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_language">Idioma</span>
@@ -1124,23 +1132,6 @@
                 <p class="settings-hint" data-i18n="prefs_terminal.confirm_risky_paste_hint">Pide confirmación antes de pegar texto multilínea, muy largo o con caracteres de control</p>
               </div>
 
-              <div class="settings-row settings-row-inline">
-                <label for="pref-sftp-conflict-policy" data-i18n="prefs_terminal.sftp_conflict_policy">Conflictos SFTP</label>
-                <select id="pref-sftp-conflict-policy">
-                  <option value="ask" data-i18n="prefs_terminal.sftp_conflict_ask">Preguntar siempre</option>
-                  <option value="overwrite" data-i18n="prefs_terminal.sftp_conflict_overwrite">Sobrescribir siempre</option>
-                  <option value="skip" data-i18n="prefs_terminal.sftp_conflict_skip">Omitir existentes</option>
-                  <option value="rename" data-i18n="prefs_terminal.sftp_conflict_rename">Renombrar automáticamente</option>
-                </select>
-              </div>
-
-              <div class="settings-row">
-                <label class="checkbox-label">
-                  <input type="checkbox" id="pref-sftp-verify-size" />
-                  <span data-i18n="prefs_terminal.sftp_verify_size">Verificar tamaño al terminar transferencias SFTP</span>
-                </label>
-                <p class="settings-hint" data-i18n="prefs_terminal.sftp_verify_size_hint">Comprueba el tamaño final del fichero copiado para detectar transferencias incompletas.</p>
-              </div>
 
               <div class="settings-row settings-row-inline">
                 <label for="pref-font-family" data-i18n="prefs_terminal.font_family">Familia de fuente</label>
@@ -1494,6 +1485,42 @@
                   <button type="button" class="btn-secondary" id="btn-import-theme" data-i18n="prefs_appearance.import_theme">Importar tema…</button>
                 </div>
                 <p class="settings-hint" data-i18n="prefs_appearance.theme_io_hint">Se exporta la paleta xterm.js y los tokens de UI del tema activo. Los temas importados aparecen al final del selector.</p>
+              </div>
+            </section>
+
+            <!-- ── Estética ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="aesthetics">
+              <h3 class="prefs-panel-title" data-i18n="prefs_aesthetics.title">Estética</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_aesthetics.hint">Ajustes de disposición de la interfaz.</p>
+              <div class="settings-row settings-row-inline">
+                <label for="pref-sftp-remote-side" data-i18n="prefs_aesthetics.sftp_layout">Disposición del panel SFTP</label>
+                <select id="pref-sftp-remote-side">
+                  <option value="left" data-i18n="prefs_aesthetics.sftp_remote_left">Remoto a la izquierda</option>
+                  <option value="right" data-i18n="prefs_aesthetics.sftp_remote_right">Remoto a la derecha</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="prefs_aesthetics.sftp_layout_hint">Elige en qué lado del panel de ficheros se muestra el directorio remoto; el local queda en el lado opuesto.</p>
+            </section>
+
+            <!-- ── FTP/SFTP ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="transfer">
+              <h3 class="prefs-panel-title" data-i18n="prefs_transfer.title">FTP/SFTP</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_transfer.hint">Opciones de transferencia de ficheros por SFTP, FTP y FTPS.</p>
+              <div class="settings-row settings-row-inline">
+                <label for="pref-sftp-conflict-policy" data-i18n="prefs_transfer.sftp_conflict_policy">Conflictos SFTP</label>
+                <select id="pref-sftp-conflict-policy">
+                  <option value="ask" data-i18n="prefs_transfer.sftp_conflict_ask">Preguntar siempre</option>
+                  <option value="overwrite" data-i18n="prefs_transfer.sftp_conflict_overwrite">Sobrescribir siempre</option>
+                  <option value="skip" data-i18n="prefs_transfer.sftp_conflict_skip">Omitir existentes</option>
+                  <option value="rename" data-i18n="prefs_transfer.sftp_conflict_rename">Renombrar automáticamente</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-sftp-verify-size" />
+                  <span data-i18n="prefs_transfer.sftp_verify_size">Verificar tamaño al terminar transferencias SFTP</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_transfer.sftp_verify_size_hint">Comprueba el tamaño final del fichero copiado para detectar transferencias incompletas.</p>
               </div>
             </section>
 

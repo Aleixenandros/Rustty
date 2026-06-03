@@ -2,6 +2,31 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.18.0] - 2026-06-03
+
+### Añadido
+
+- **Conexiones fijadas en el dashboard**: los *tiles* anclados muestran ahora la
+  franja de color de la carpeta del perfil y, en perfiles SSH, un botón
+  secundario para abrir directamente el panel SFTP.
+- **Preferencias → FTP/SFTP**: nueva sección que agrupa las opciones de
+  transferencia de ficheros (política de conflictos y verificación de tamaño),
+  antes repartidas en la pestaña Terminal.
+- **Preferencias → Estética**: nueva sección para ajustar la disposición del
+  panel de ficheros, con la opción de mostrar el panel **remoto a la izquierda o
+  a la derecha**.
+
+### Cambiado
+
+- **Panel SFTP**: el botón de cerrar se ha movido a una cabecera superior que
+  engloba los paneles local y remoto, en lugar de ir junto a «nueva carpeta» y
+  «nuevo archivo» (donde se confundía con un botón de eliminar). Es neutro y
+  solo se resalta en rojo al pasar el ratón.
+- Los botones de **nueva carpeta** y **nuevo archivo** del panel SFTP usan
+  ahora iconos propios (carpeta con «+» y documento con «+») en lugar de glifos.
+- El logotipo del dashboard de bienvenida es ahora un **SVG propio** (un
+  cangrejo monocromo que sigue el color del tema) en vez de un emoji.
+
 ## [1.17.2] - 2026-06-03
 
 ### Corregido

@@ -331,6 +331,8 @@ const DEFAULT_PREFS = {
   confirmRiskyPaste: true,
   sftpConflictPolicy: "ask",   // "ask" | "overwrite" | "skip" | "rename"
   sftpVerifySize:  false,
+  // Disposición del panel SFTP: lado donde se muestra el panel remoto.
+  sftpRemoteSide:  "left",     // "left" | "right"
   fontSize:        14,
   // Tipografía fina del terminal
   fontFamily:      "",        // "" = usar cadena por defecto con fallback monospace
@@ -1374,6 +1376,8 @@ function openSettingsModal() {
   if (confirmRiskyPasteEl) confirmRiskyPasteEl.checked = prefs.confirmRiskyPaste !== false;
   document.getElementById("pref-sftp-conflict-policy").value = normalizeSftpConflictPolicy(prefs.sftpConflictPolicy);
   document.getElementById("pref-sftp-verify-size").checked = !!prefs.sftpVerifySize;
+  const remoteSideEl = document.getElementById("pref-sftp-remote-side");
+  if (remoteSideEl) remoteSideEl.value = prefs.sftpRemoteSide === "right" ? "right" : "left";
   populateFontFamilySelect(prefs.fontFamily || "");
   document.getElementById("pref-font-size").value           = prefs.fontSize;
   document.getElementById("pref-line-height").value         = prefs.lineHeight;
@@ -2450,6 +2454,7 @@ function savePrefsFromModal() {
       document.getElementById("pref-sftp-conflict-policy")?.value,
     ),
     sftpVerifySize:  document.getElementById("pref-sftp-verify-size")?.checked ?? false,
+    sftpRemoteSide:  document.getElementById("pref-sftp-remote-side")?.value === "right" ? "right" : "left",
     fontFamily:      (document.getElementById("pref-font-family")?.value || "").trim(),
     fontSize:        parseInt(document.getElementById("pref-font-size").value, 10) || DEFAULT_PREFS.fontSize,
     lineHeight:      (() => {
@@ -2498,6 +2503,9 @@ function savePrefsFromModal() {
   };
 
   savePrefs();
+  // Reaplica la disposición del panel SFTP (remoto izquierda/derecha) a los
+  // paneles ya abiertos.
+  applySftpRemoteSideToAll();
   // Persistir también la configuración de la pestaña de Sincronización
   // (config del backend + secretos al keyring) si existe el formulario.
   if (document.getElementById("sync-enabled")) {
@@ -3642,14 +3650,56 @@ function renderDashboardPinnedTiles() {
   card.classList.remove("hidden");
   root.innerHTML = list.map((p) => {
     const proto = dashboardProtocol(p);
+    // Color de carpeta del perfil (franja de acento en el tile).
+    const fc = getFolderColor(p.group, profileWorkspaceId(p));
+    const tintAttr = fc ? ` style="--pin-tint:${fc.color}"` : "";
+    const tintClass = fc ? " has-tint" : "";
+    // Botón secundario para abrir SFTP (solo en perfiles SSH).
+    const type = p.connection_type || "ssh";
+    const sftpBtn = type === "ssh"
+      ? `<button type="button" class="dashboard-pin-sftp" data-dashboard-connect data-pin-sftp="${escHtml(p.id)}" title="${escHtml(t("dashboard.open_sftp"))}" aria-label="${escHtml(t("dashboard.open_sftp"))}">${DASHBOARD_ICON_SFTP}</button>`
+      : "";
     return `
-      <button class="dashboard-fav-tile dashboard-pinned-tile" data-profile-id="${escHtml(p.id)}" title="${escHtml(dashboardProfileHost(p))}">
+      <div class="dashboard-fav-tile dashboard-pinned-tile${tintClass}" role="button" tabindex="0" data-profile-id="${escHtml(p.id)}" title="${escHtml(dashboardProfileHost(p))}"${tintAttr}>
         <span class="dashboard-fav-proto ${escHtml(proto.toLowerCase())}">${escHtml(proto)}</span>
         <span class="dashboard-fav-name">${escHtml(p.name)}</span>
         <span class="dashboard-fav-host">${escHtml(dashboardProfileHost(p))}</span>
-      </button>`;
+        ${sftpBtn}
+      </div>`;
   }).join("");
   bindDashboardCards(root);
+  root.querySelectorAll("[data-pin-sftp]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openProfileSftp(btn.dataset.pinSftp);
+    });
+  });
+}
+
+// Icono SFTP del botón secundario de los tiles fijados (carpeta).
+const DASHBOARD_ICON_SFTP = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2z"/></svg>`;
+
+// Perfiles para los que se debe abrir el panel SFTP en cuanto la sesión SSH
+// se conecte (botón secundario de los tiles fijados del dashboard).
+const pendingSftpOpenProfiles = new Set();
+
+/**
+ * Abre el panel SFTP de un perfil desde el dashboard. Si ya hay una sesión
+ * conectada de ese perfil, conmuta/enfoca su panel; si no, conecta y marca el
+ * perfil para abrir SFTP automáticamente cuando la sesión esté conectada.
+ */
+function openProfileSftp(profileId) {
+  if (!profileId) return;
+  for (const [sid, s] of sessions) {
+    if (s.profileId === profileId && s.status === "connected") {
+      setActiveTab(sid);
+      const panel = s.sftp?.panel;
+      if (!panel || panel.classList.contains("hidden")) toggleSftpPanel(sid);
+      return;
+    }
+  }
+  pendingSftpOpenProfiles.add(profileId);
+  connectProfile(profileId);
 }
 
 function togglePinnedProfile(profileId) {
@@ -8355,6 +8405,11 @@ async function registerSshListeners(sessionId, terminal) {
   ul.push(await listen(`ssh-connected-${sessionId}`, () => {
     const s = sessions.get(sessionId);
     if (s) s.status = "connected";
+    // Apertura automática de SFTP si se pidió desde un tile fijado del dashboard.
+    if (s && pendingSftpOpenProfiles.has(s.profileId)) {
+      pendingSftpOpenProfiles.delete(s.profileId);
+      openSftpPanel(sessionId).catch(() => {});
+    }
     appendConnectionLog(sessionId, {
       stage: "connected",
       status: "ok",
@@ -10385,11 +10440,32 @@ function setupSftpLogTabs(panel) {
   });
 }
 
+// Iconos SVG del panel SFTP: carpeta-con-+ (nueva carpeta) y documento-con-+
+// (nuevo archivo). Trazo con currentColor para heredar el color del botón.
+const SFTP_ICON_FOLDER_PLUS = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>`;
+const SFTP_ICON_FILE_PLUS = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>`;
+
+/** Aplica la disposición de paneles (remoto a izquierda/derecha) a un panel. */
+function applySftpRemoteSide(panel) {
+  if (!panel) return;
+  panel.classList.toggle("sftp-remote-right", prefs.sftpRemoteSide === "right");
+}
+
+/** Re-aplica la disposición a todos los paneles SFTP abiertos (al cambiar la pref). */
+function applySftpRemoteSideToAll() {
+  document.querySelectorAll(".sftp-panel-split").forEach(applySftpRemoteSide);
+}
+
 function buildSftpPanel(sessionId) {
   const panel = document.createElement("div");
   panel.className = "sftp-panel sftp-panel-split";
+  applySftpRemoteSide(panel);
   panel.innerHTML = `
     <div class="sftp-resize-handle" title="Redimensionar panel SFTP"></div>
+    <div class="sftp-header">
+      <span class="sftp-header-title">SFTP</span>
+      <button class="sftp-nav-btn sftp-close-btn" data-sftp-act="close" title="Cerrar panel SFTP" aria-label="Cerrar panel SFTP">✕</button>
+    </div>
     <div class="sftp-side sftp-side-local" data-side="local">
       <div class="sftp-side-title">Local</div>
       <div class="sftp-toolbar">
@@ -10397,8 +10473,8 @@ function buildSftpPanel(sessionId) {
         <button class="sftp-nav-btn" data-sftp-nav="home" data-side="local" title="Inicio">⌂</button>
         <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="local" title="Refrescar">⟳</button>
         <input class="sftp-path" data-side="local" type="text" spellcheck="false" />
-        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="local" title="Nueva carpeta">＋</button>
-        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="local" title="Nuevo archivo">📄</button>
+        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="local" title="Nueva carpeta" aria-label="Nueva carpeta">${SFTP_ICON_FOLDER_PLUS}</button>
+        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="local" title="Nuevo archivo" aria-label="Nuevo archivo">${SFTP_ICON_FILE_PLUS}</button>
       </div>
       <div class="sftp-search-bar" data-side="local">
         <span class="sftp-search-icon">🔎</span>
@@ -10439,9 +10515,8 @@ function buildSftpPanel(sessionId) {
         <button class="sftp-nav-btn sftp-sudo-btn" data-sftp-nav="sudo"
                 title="Reconectar SFTP elevado (sudo -n sftp-server). Requiere NOPASSWD en /etc/sudoers">sudo</button>
         <input class="sftp-path" data-side="remote" type="text" spellcheck="false" />
-        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="remote" title="Nueva carpeta">＋</button>
-        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="remote" title="Nuevo archivo">📄</button>
-        <button class="sftp-nav-btn sftp-close-btn" data-sftp-act="close" title="Cerrar panel SFTP">✕</button>
+        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="remote" title="Nueva carpeta" aria-label="Nueva carpeta">${SFTP_ICON_FOLDER_PLUS}</button>
+        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="remote" title="Nuevo archivo" aria-label="Nuevo archivo">${SFTP_ICON_FILE_PLUS}</button>
       </div>
       <div class="sftp-search-bar" data-side="remote">
         <span class="sftp-search-icon">🔎</span>

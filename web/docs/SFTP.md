@@ -12,13 +12,18 @@ El panel reutiliza los datos de conexión del perfil, pero crea su propio canal 
 
 ## Vista dividida local / remoto
 
+El panel tiene una **cabecera superior común** a ambos lados con el botón de cerrar (✕), separado de las acciones de cada columna para no confundirlo con un botón de eliminar.
+
 Cada columna tiene su propia toolbar con:
 
 - Ruta editable.
 - ↑ subir un nivel.
 - ⌂ ir al home.
 - ⟳ refrescar.
-- ＋ crear carpeta.
+- Nueva carpeta (icono de carpeta con «+»).
+- Nuevo archivo (icono de documento con «+»).
+
+Puedes elegir en qué lado se muestra el panel remoto (izquierda o derecha) desde **Preferencias → Estética**; el local queda en el lado opuesto.
 
 Entre las dos columnas están los botones centrales **⇨ Descargar** y **⇦ Subir**, con la flecha apuntando siempre al destino. La selección múltiple funciona con **Ctrl+click**; el doble clic en un fichero dispara la transferencia y el doble clic en una carpeta navega dentro de ella.
 

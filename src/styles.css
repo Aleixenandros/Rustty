@@ -2240,8 +2240,13 @@ body.terminal-bell-visual::after {
   justify-content: center;
   width: 68px;
   height: 52px;
-  font-size: 48px;
   line-height: 1;
+  color: var(--peach);
+}
+
+.dashboard-brand svg {
+  width: 52px;
+  height: 52px;
 }
 
 .dashboard-title {
@@ -2588,7 +2593,11 @@ body.terminal-bell-visual::after {
   .dashboard-brand {
     width: 52px;
     height: 42px;
-    font-size: 38px;
+  }
+
+  .dashboard-brand svg {
+    width: 42px;
+    height: 42px;
   }
 
   .dashboard-search-wrap {
@@ -5223,15 +5232,17 @@ html.theme-monokai {
   --sftp-log-height: 190px;
   display: grid;
   grid-template-columns: 1fr 44px 1fr;
-  grid-template-rows: 7px minmax(0, 1fr) minmax(110px, var(--sftp-log-height));
+  grid-template-rows: 7px auto minmax(0, 1fr) minmax(110px, var(--sftp-log-height));
   grid-template-areas:
     "resize resize resize"
+    "header header header"
     "remote divider local"
     "transfers transfers transfers";
   gap: 0;
 }
 
 .sftp-panel-split > .sftp-resize-handle { grid-area: resize; }
+.sftp-panel-split > .sftp-header { grid-area: header; }
 .sftp-panel-split > .sftp-side-local { grid-area: local; }
 .sftp-panel-split > .sftp-divider { grid-area: divider; }
 .sftp-panel-split > .sftp-side-remote { grid-area: remote; }
@@ -5372,13 +5383,49 @@ body.sftp-panel-resizing {
   color: var(--blue);
 }
 
+/* Cabecera del panel SFTP: engloba ambos lados (local + remoto) y aloja el
+   botón de cerrar, que antes vivía junto a mkdir/crear-archivo y se confundía
+   con un botón de eliminar. */
+.sftp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 8px;
+  background: var(--crust);
+  border-bottom: 1px solid var(--surface0);
+}
+
+.sftp-header-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--overlay1);
+}
+
+.sftp-header .sftp-close-btn {
+  width: 24px;
+  height: 24px;
+}
+
+/* Botón de cerrar: neutro por defecto (es un "cerrar", no un "eliminar"); se
+   tiñe de rojo solo al pasar el ratón. */
 .sftp-close-btn {
-  color: var(--red);
-  font-weight: bold;
+  color: var(--subtext0);
 }
 
 .sftp-close-btn:hover {
-  background: color-mix(in srgb, var(--red) 22%, transparent);
+  background: color-mix(in srgb, var(--red) 18%, transparent);
+  color: var(--red);
+}
+
+/* Disposición de paneles configurable (Preferencias → Estética): por defecto
+   el remoto va a la izquierda; con esta clase se intercambian los lados. */
+.sftp-panel-split.sftp-remote-right {
+  grid-template-areas:
+    "resize resize resize"
+    "header header header"
+    "local divider remote"
+    "transfers transfers transfers";
 }
 
 .sftp-path {
@@ -6900,6 +6947,31 @@ body.zen-mode #zen-exit-btn {
   transform: translateY(-1px);
   box-shadow: var(--shadow-1);
 }
+
+/* Tiles fijados: franja de acento con el color de carpeta del perfil y botón
+   secundario para abrir SFTP (aparece al pasar el ratón). */
+.dashboard-pinned-tile { position: relative; }
+.dashboard-pinned-tile.has-tint { border-left: 3px solid var(--pin-tint); }
+.dashboard-pin-sftp {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--subtext0);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-ease), background 120ms, color 120ms;
+}
+.dashboard-pinned-tile:hover .dashboard-pin-sftp,
+.dashboard-pin-sftp:focus-visible { opacity: 1; }
+.dashboard-pin-sftp:hover { background: var(--surface0); color: var(--blue); }
 
 .dashboard-fav-proto {
   font-family: var(--font-mono);
