@@ -134,6 +134,7 @@ pub fn run() {
             commands::autostart_apply,
             commands::autostart_is_enabled,
             commands::is_launched_minimized,
+            commands::is_appimage,
             app_tray::tray_update_quick_launcher,
             // ── Perfiles de conexión
             commands::get_profiles,

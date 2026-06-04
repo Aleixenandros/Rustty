@@ -1767,6 +1767,18 @@ pub fn is_launched_minimized(state: State<LaunchMinimized>) -> bool {
     state.0
 }
 
+/// Indica si la app se está ejecutando como AppImage en Linux (variable de
+/// entorno `APPIMAGE` presente y no vacía). El frontend lo usa para habilitar
+/// el updater de Tauri en Linux solo cuando es AppImage (el único formato que
+/// el updater sabe actualizar in-place); el resto de formatos se actualizan por
+/// el gestor de paquetes.
+#[tauri::command]
+pub fn is_appimage() -> bool {
+    std::env::var("APPIMAGE")
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+}
+
 // ─── Notas Markdown por conexión («runbooks») ───────────────────────────────
 
 /// Lee la nota Markdown de un perfil. `None` si no existe.

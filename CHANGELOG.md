@@ -2,6 +2,16 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.24.1] - 2026-06-05
+
+### Añadido
+
+- **Actualización automática también en Linux (AppImage)**: las instalaciones
+  AppImage ya pueden descargarse e instalar la nueva versión desde dentro de la
+  app, igual que en Windows y macOS. El resto de formatos de Linux
+  (deb/rpm/Flatpak/Arch) siguen actualizándose por el gestor de paquetes y
+  muestran el aviso con la página de descargas.
+
 ## [1.24.0] - 2026-06-05
 
 ### Añadido

@@ -2247,18 +2247,27 @@ function setAboutUpdateStatus(text, type = "") {
 }
 
 /**
- * El updater de Tauri solo se usa para autoinstalar en Windows y macOS, donde el
- * formato de paquete es único y la actualización in-place es fiable. En Linux
- * (deb/rpm/AppImage/Flatpak/Arch) el formato es ambiguo, así que se mantiene el
- * aviso clásico que abre la página de releases.
+ * El updater de Tauri autoinstala en Windows y macOS (formato único, in-place
+ * fiable) y en Linux **solo cuando la app es un AppImage** (único formato que el
+ * updater sabe reemplazar). En el resto de formatos de Linux (deb/rpm/Flatpak/
+ * Arch) se mantiene el aviso clásico que abre la página de releases, porque la
+ * actualización corresponde al gestor de paquetes.
  */
-function platformSupportsUpdater() {
+async function platformSupportsUpdater() {
   const ua = navigator.userAgent || "";
-  return /Windows/.test(ua) || /Mac OS X|Macintosh/.test(ua);
+  if (/Windows/.test(ua) || /Mac OS X|Macintosh/.test(ua)) return true;
+  if (/Linux/.test(ua)) {
+    try {
+      return await invoke("is_appimage");
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 async function checkForUpdates({ interactive = true } = {}) {
-  if (platformSupportsUpdater()) {
+  if (await platformSupportsUpdater()) {
     const handled = await checkForUpdatesViaUpdater({ interactive });
     if (handled) return;
     // Si el updater no estaba disponible (p. ej. ejecutando fuera del bundle),
