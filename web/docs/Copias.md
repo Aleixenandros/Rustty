@@ -9,6 +9,7 @@ Rustty agrupa las copias en **Preferencias → Copias de seguridad**. Desde ahí
 - Preferencias generales.
 - Temas personalizados.
 - Atajos configurados por el usuario.
+- **Notas de conexión** en Markdown (opt-in **Notas**, activo por defecto).
 - Snippets, cuando exista la biblioteca de snippets.
 - El catálogo de **credenciales maestras y variables** (metadatos: nombre y tipo). Las variables de texto incluyen su valor; las maestras no.
 - Contraseñas y passphrases guardadas y los **valores de las credenciales maestras**, solo si activas el check **Contraseñas guardadas (cifradas E2E)**.
@@ -36,6 +37,8 @@ Al abrir Rustty, si ya tienes una sincronización configurada, la app hace una c
 Antes de sobrescribir el blob remoto, Rustty guarda una copia histórica cifrada. Se conservan **30 snapshots por defecto**, y el número se puede ajustar en **Copias históricas**.
 
 La poda automática del histórico está disponible para **Carpeta local/NAS**, **WebDAV** y **Google Drive**. En conflictos, Rustty usa resolución last-write-wins por elemento, con tombstones para borrados.
+
+Cuando configuras la sincronización en un **equipo recién instalado**, su configuración local (workspaces, carpetas, favoritos) aún no tiene cambios propios, así que el primer sync **adopta la del equipo que ya tenía datos** en lugar de sobrescribirla. A partir de ahí, las ediciones que hagas en cualquier equipo se propagan por fecha de modificación.
 
 ## Restaurar una copia previa
 

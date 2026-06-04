@@ -459,9 +459,13 @@ function folderColorKey(path, workspaceId = getActiveWorkspaceId()) {
 
 function migrateLegacyFolderColors() {
   if (!prefs.folderColors || typeof prefs.folderColors !== "object" || Array.isArray(prefs.folderColors)) {
+    // Inicialización de un default vacío: NO es una edición del usuario, así que
+    // NO debe tocar `_prefsUpdatedAt`. Si lo hiciera, una instalación nueva
+    // marcaría su bundle de prefs con fecha "ahora" y ganaría el LWW del primer
+    // sync, descartando los workspaces/carpetas/favoritos remotos (los perfiles
+    // sí bajan y quedan colgando de "default").
     prefs.folderColors = {};
-    prefs._prefsUpdatedAt = new Date().toISOString();
-    return true;
+    return false;
   }
   const migrated = {};
   let mutated = false;
@@ -554,6 +558,39 @@ function profileBelongsToActiveWorkspace(p) {
 
 function profileWorkspaceId(p) {
   return p?.workspace_id || "default";
+}
+
+/**
+ * Garantiza que todo `workspace_id` referenciado por algún perfil exista en
+ * `prefs.workspaces`. Si un perfil apunta a un workspace ausente (p. ej. tras un
+ * merge de sync que trajo los perfiles pero no el bundle de prefs con la lista
+ * de workspaces), se crea una entrada de respaldo para que la conexión NO quede
+ * colgando de "default". NO toca `_prefsUpdatedAt`: es una reconstrucción
+ * defensiva, no una edición; si más tarde llega el bundle real por sync (con los
+ * nombres correctos), reemplaza la lista entera y los nombres se restauran.
+ * @returns {boolean} true si añadió alguna entrada.
+ */
+function ensureWorkspacesForProfiles() {
+  if (!Array.isArray(prefs.workspaces) || prefs.workspaces.length === 0) {
+    prefs.workspaces = [{ id: "default", name: "Default" }];
+  }
+  const known = new Set(prefs.workspaces.map((w) => w.id));
+  let added = false;
+  for (const p of profiles) {
+    const wsId = p?.workspace_id || "default";
+    if (known.has(wsId)) continue;
+    known.add(wsId);
+    // Nombre de respaldo: legible aunque el real (del bundle remoto) aún no haya
+    // llegado. El usuario puede renombrarlo; un sync posterior lo sobrescribe.
+    prefs.workspaces.push({ id: wsId, name: `Workspace ${prefs.workspaces.length}` });
+    prefs.userFoldersByWorkspace = prefs.userFoldersByWorkspace || {};
+    if (!Array.isArray(prefs.userFoldersByWorkspace[wsId])) {
+      prefs.userFoldersByWorkspace[wsId] = [];
+    }
+    added = true;
+  }
+  if (added) savePrefs();
+  return added;
 }
 
 function getWorkspaceFolders(wsId) {
@@ -1834,6 +1871,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     registerAllCustomThemes();
     // Recargar perfiles del backend (puede haber añadidos/borrados)
     profiles = await invoke("get_profiles");
+    ensureWorkspacesForProfiles();
     await refreshNotesIndex();
     restoreSidebarTreeState(sidebarTreeState);
     renderConnectionList();
@@ -2746,6 +2784,7 @@ async function init() {
     profiles = [];
   }
 
+  ensureWorkspacesForProfiles();
   await refreshNotesIndex();
 
   if (_connListBoot) _connListBoot.removeAttribute("aria-busy");

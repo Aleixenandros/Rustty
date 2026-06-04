@@ -2,6 +2,21 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.23.1] - 2026-06-05
+
+### Corregido
+
+- **Sincronización en equipos recién instalados**: una instalación nueva marcaba
+  su bundle de preferencias con la fecha actual al inicializarse, de modo que en
+  el primer sync podía **ganar el merge** (last-write-wins) frente al remoto y
+  **descartar los workspaces, carpetas y favoritos** sincronizados — e incluso
+  pisarlos en el almacenamiento remoto. Los perfiles sí bajaban, pero quedaban
+  colgando de "default". Ahora un equipo nuevo nunca gana ese merge en el primer
+  sync y adopta correctamente la configuración remota.
+- **Red de seguridad de workspaces**: si un perfil referencia un workspace que no
+  existe en la lista local (p. ej. tras un sync incompleto), se reconstruye una
+  entrada de respaldo para que la conexión no quede colgando de "default".
+
 ## [1.23.0] - 2026-06-04
 
 ### Añadido
