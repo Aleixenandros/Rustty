@@ -103,6 +103,15 @@ async function readCredentialCatalog() {
   }
 }
 
+async function readAllNotes() {
+  try {
+    const docs = await invoke("note_export_all");
+    return Array.isArray(docs) ? docs : [];
+  } catch {
+    return [];
+  }
+}
+
 // Añade los metadatos del catálogo de credenciales (siempre) y, solo con el
 // opt-in de secretos, los valores de master/secret leídos del keyring. Sigue
 // el mismo patrón que `addProfileSecretItems` para los secretos de perfil.
@@ -210,6 +219,21 @@ export async function buildSyncState(ctx) {
     });
   }
 
+  if (selective.notes) {
+    const docs = await readAllNotes();
+    for (const doc of docs) {
+      if (!doc?.profile_id) continue;
+      items[`note:${doc.profile_id}`] = {
+        data: doc,
+        updated_at: stableTimestamp(doc.updated_at, doc.created_at),
+        device_id: deviceId,
+      };
+    }
+    Object.entries(prefs.tombstones?.notes || {}).forEach(([id, ts]) => {
+      tombstones[`note:${id}`] = ts;
+    });
+  }
+
   if (selective.secrets) {
     await addProfileSecretItems(items, profiles, prefs, deviceId);
   }
@@ -257,6 +281,7 @@ export async function applyMergedState(merged, ctx) {
   let themesChanged = 0, shortcutsChanged = 0;
   let secretsChanged = 0;
   let credsChanged = 0;
+  let notesChanged = 0;
 
   const localProfileIds = new Set(profiles.map((p) => p.id));
   const localProfilesById = new Map(profiles.map((p) => [p.id, p]));
@@ -320,6 +345,19 @@ export async function applyMergedState(merged, ctx) {
       const existing = loadLocalSnippets().find((entry) => entry.id === id);
       if (existing && sameValue(existing, snippet)) continue;
       upsertLocalSnippet(snippet);
+    } else if (key.startsWith("note:")) {
+      // Nota Markdown de un perfil: upsert del fichero `.md` (LWW ya resuelto
+      // por el merge del SyncState). El backend preserva updated_at/created_at.
+      const id = key.slice(5);
+      const doc = { ...(item.data || {}) };
+      if (!doc.profile_id) doc.profile_id = id;
+      doc.updated_at = item.updated_at || doc.updated_at;
+      try {
+        await invoke("note_import", { doc });
+        notesChanged++;
+      } catch (err) {
+        console.error("[sync] note_import", id, err);
+      }
     } else if (key.startsWith("cred:")) {
       // Metadatos del catálogo de credenciales: upsert por id sin tocar el
       // keyring. El valor real de master/secret llega aparte como `secret:*`.
@@ -380,10 +418,18 @@ export async function applyMergedState(merged, ctx) {
       }
     } else if (key.startsWith("snippet:")) {
       deleteLocalSnippet(key.slice(8));
+    } else if (key.startsWith("note:")) {
+      const id = key.slice(5);
+      try {
+        await invoke("note_delete", { profileId: id });
+        notesChanged++;
+      } catch (err) {
+        console.error("[sync] note_delete", id, err);
+      }
     }
   }
 
-  return { addedProfiles, deletedProfiles, prefsChanged, themesChanged, shortcutsChanged, secretsChanged, credsChanged };
+  return { addedProfiles, deletedProfiles, prefsChanged, themesChanged, shortcutsChanged, secretsChanged, credsChanged, notesChanged };
 }
 
 function stateHasSecrets(state) {
@@ -521,6 +567,7 @@ export async function runSync(ctx) {
       themes: !!config.selective?.themes,
       shortcuts: !!config.selective?.shortcuts,
       snippets: !!config.selective?.snippets,
+      notes: config.selective?.notes ?? true,
       secrets: !!config.selective?.secrets,
     },
     snippets: loadLocalSnippets(),
@@ -559,7 +606,7 @@ export async function exportToFile(ctx) {
     profiles: ctx.profiles,
     prefs: ctx.prefs,
     deviceId: ctx.deviceId,
-    selective: { profiles: true, prefs: true, themes: true, shortcuts: true, snippets: true },
+    selective: { profiles: true, prefs: true, themes: true, shortcuts: true, snippets: true, notes: true },
     snippets: loadLocalSnippets(),
     exportedSecrets: ctx.exportedSecrets,
   });

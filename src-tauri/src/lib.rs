@@ -7,6 +7,7 @@ mod error;
 mod host_keys;
 mod keepass_manager;
 mod local_shell_manager;
+mod notes;
 mod profiles;
 mod rdp_manager;
 mod sftp_manager;
@@ -18,6 +19,7 @@ use std::path::PathBuf;
 
 use credentials::CredentialStore;
 use local_shell_manager::LocalShellManager;
+use notes::NotesManager;
 use profiles::ProfileManager;
 use rdp_manager::RdpManager;
 use sftp_manager::SftpManager;
@@ -91,7 +93,16 @@ pub fn run() {
             app.manage(RdpManager::new());
             app.manage(LocalShellManager::new());
             app.manage(SftpManager::new());
-            app.manage(ProfileManager::new(data_dir.clone()));
+            let profile_manager = ProfileManager::new(data_dir.clone());
+            // Migración idempotente: vuelca el campo inline `notes` de los
+            // perfiles a ficheros `notes/<id>.md` la primera vez. A partir de
+            // aquí el `.md` es la fuente de verdad de las notas.
+            let notes_manager = NotesManager::new(data_dir.clone());
+            if let Ok(profiles) = profile_manager.load_all() {
+                notes_manager.migrate_from_profiles(&profiles);
+            }
+            app.manage(profile_manager);
+            app.manage(notes_manager);
             app.manage(CredentialStore::new(data_dir.clone()));
             app.manage(SyncManager::new(data_dir.clone()));
             app.manage(DataDir(data_dir));
@@ -129,6 +140,15 @@ pub fn run() {
             commands::master_cred_rename,
             commands::master_cred_delete,
             commands::template_asks,
+            // ── Notas Markdown por conexión (runbooks)
+            commands::note_get,
+            commands::note_set,
+            commands::note_delete,
+            commands::note_list,
+            commands::note_export_all,
+            commands::note_import,
+            commands::note_search,
+            commands::notes_dir,
             // ── Sesiones SSH
             commands::ssh_connect,
             commands::ssh_test_connection,

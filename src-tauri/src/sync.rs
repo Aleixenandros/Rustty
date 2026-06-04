@@ -166,6 +166,14 @@ pub struct SyncSelective {
     pub snippets: bool,
     #[serde(default)]
     pub secrets: bool,
+    /// Notas Markdown por conexión (item `note:<id>`). Default `true` para
+    /// configuraciones antiguas que no traen el campo.
+    #[serde(default = "default_true_field")]
+    pub notes: bool,
+}
+
+fn default_true_field() -> bool {
+    true
 }
 
 impl Default for SyncSelective {
@@ -177,6 +185,7 @@ impl Default for SyncSelective {
             shortcuts: true,
             snippets: true,
             secrets: false,
+            notes: true,
         }
     }
 }

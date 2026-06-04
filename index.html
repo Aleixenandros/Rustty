@@ -391,6 +391,22 @@
       <button class="ctx-item ctx-conn-only hidden" data-ctx="duplicate-conn">
         <span class="ctx-icon">⎘</span><span data-i18n="ctx.duplicate">Duplicar</span>
       </button>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="edit-note">
+        <span class="ctx-icon">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 2.5h4.5L12 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/>
+            <path d="M8.4 2.5V6H12"/><path d="M5.5 8.7h5M5.5 11h3.2"/>
+          </svg>
+        </span><span id="ctx-note-label" data-i18n="ctx.add_note">Añadir nota</span>
+      </button>
+      <button class="ctx-item ctx-conn-only ctx-note-exists hidden" data-ctx="delete-note">
+        <span class="ctx-icon">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 4.3h10M6.4 4.3V2.8h3.2v1.5M4.7 4.3l.5 8.4a1 1 0 0 0 1 .95h3.6a1 1 0 0 0 1-.95l.5-8.4"/>
+            <path d="M6.7 6.9v4.2M9.3 6.9v4.2"/>
+          </svg>
+        </span><span data-i18n="ctx.delete_note">Eliminar nota</span>
+      </button>
       <button class="ctx-item ctx-conn-only ctx-promote-only hidden" data-ctx="promote-master">
         <span class="ctx-icon">🔑</span><span data-i18n="ctx.promote_master">Promover a credencial maestra…</span>
       </button>
@@ -594,9 +610,15 @@
           </div>
 
           <div class="form-row" data-modal-pane="notes">
-            <label for="f-notes"><span data-i18n="modal_conn.notes">Notas</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
-            <textarea id="f-notes" rows="6" data-i18n-placeholder="modal_conn.notes_ph" placeholder="Comandos frecuentes, rutas, responsables…"></textarea>
-            <p class="form-hint" data-i18n="modal_conn.notes_hint">Texto local para recordatorios del perfil. Evita guardar secretos aquí.</p>
+            <label><span data-i18n="modal_conn.notes">Notas</span> <span class="optional">(Markdown)</span></label>
+            <p class="form-hint" data-i18n="notes.modal_hint">Nota Markdown del perfil, guardada como archivo `.md` y sincronizable. Evita guardar secretos.</p>
+            <div id="modal-note-preview" class="note-modal-preview markdown-body" hidden></div>
+            <div class="note-modal-actions">
+              <button type="button" class="btn-secondary" id="modal-note-edit-btn" data-i18n="notes.open_editor">Abrir editor de notas…</button>
+            </div>
+            <p class="form-hint" id="modal-note-save-first" data-i18n="notes.save_first" hidden>Guarda la conexión antes de añadir una nota.</p>
+            <!-- Campo inline histórico (semilla de migración). Oculto: el .md es la fuente de verdad. -->
+            <textarea id="f-notes" hidden></textarea>
           </div>
 
           <div class="form-row" id="field-auth-type" data-modal-pane="general">
@@ -1842,6 +1864,10 @@
                     <span data-i18n="prefs_sync.sel_shortcuts">Atajos de teclado</span>
                   </label>
                   <label class="checkbox-label">
+                    <input type="checkbox" id="sync-sel-notes" checked />
+                    <span data-i18n="prefs_sync.sel_notes">Notas de conexión (Markdown)</span>
+                  </label>
+                  <label class="checkbox-label">
                     <input type="checkbox" id="sync-sel-secrets" />
                     <span data-i18n="prefs_sync.sel_secrets">Contraseñas guardadas (cifradas E2E)</span>
                   </label>
@@ -2088,6 +2114,84 @@
         <div class="modal-actions">
           <button type="button" class="btn-secondary" id="cmd-editor-cancel" data-i18n="cmd_editor.cancel">Cancelar</button>
           <button type="button" class="btn-primary"   id="cmd-editor-insert" data-i18n="cmd_editor.insert">Insertar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         EDITOR DE NOTAS MARKDOWN (runbook por conexión)
+    ══════════════════════════════════════════════════════ -->
+    <div id="note-editor-overlay" class="hidden">
+      <div id="note-editor-modal" role="dialog" aria-modal="true" aria-labelledby="note-editor-title">
+        <div class="modal-header">
+          <h2 id="note-editor-title" data-i18n="notes.editor_title">Nota de conexión</h2>
+          <button class="btn-icon" id="note-editor-open-folder" data-i18n-title="notes.open_folder" title="Abrir carpeta de notas" aria-label="Abrir carpeta de notas">
+            <svg viewBox="0 0 18 18" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2.5 5A1.5 1.5 0 0 1 4 3.5h3l1.5 1.6h5A1.5 1.5 0 0 1 15 6.6"/>
+              <path d="M2.6 7.4h12.2l-1.2 6.3a1.2 1.2 0 0 1-1.2 1H5a1.2 1.2 0 0 1-1.2-1z"/>
+            </svg>
+          </button>
+          <button class="btn-icon" id="note-editor-close" data-i18n-aria-label="notes.close" aria-label="Cerrar">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 4l8 8M12 4l-8 8"/>
+            </svg>
+          </button>
+        </div>
+        <div class="note-editor-meta">
+          <input type="text" id="note-editor-title-input" class="note-meta-input"
+                 data-i18n-placeholder="notes.title_ph" placeholder="Título (opcional)" autocomplete="off" />
+          <input type="text" id="note-editor-tags" class="note-meta-input"
+                 data-i18n-placeholder="notes.tags_ph" placeholder="Tags separadas por comas" autocomplete="off" />
+        </div>
+        <div class="note-editor-toolbar" id="note-editor-toolbar">
+          <button type="button" class="note-tool" data-md="h"      data-i18n-title="notes.tool_heading" title="Encabezado" aria-label="Encabezado">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 3.5v9M11 3.5v9M4 8h7"/>
+            </svg>
+          </button>
+          <button type="button" class="note-tool" data-md="bold"   data-i18n-title="notes.tool_bold"    title="Negrita" aria-label="Negrita">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5.5 3.5h3.1a2.2 2.2 0 0 1 0 4.4H5.5zM5.5 7.9h3.6a2.2 2.2 0 0 1 0 4.4H5.5z"/>
+            </svg>
+          </button>
+          <button type="button" class="note-tool" data-md="italic" data-i18n-title="notes.tool_italic"  title="Cursiva" aria-label="Cursiva">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6.8 3.5h4M5 12.5h4M9.8 3.5L6.2 12.5"/>
+            </svg>
+          </button>
+          <button type="button" class="note-tool" data-md="code"   data-i18n-title="notes.tool_code"    title="Código" aria-label="Código">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 5l-3 3 3 3M10 5l3 3-3 3"/>
+            </svg>
+          </button>
+          <button type="button" class="note-tool" data-md="ul"     data-i18n-title="notes.tool_list"    title="Lista" aria-label="Lista">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6.5 4.5h6.5M6.5 8h6.5M6.5 11.5h6.5"/><path d="M3.4 4.5h.01M3.4 8h.01M3.4 11.5h.01"/>
+            </svg>
+          </button>
+          <button type="button" class="note-tool" data-md="task"   data-i18n-title="notes.tool_task"    title="Casilla" aria-label="Casilla">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M5.4 8.2l1.8 1.8 3.3-3.7"/>
+            </svg>
+          </button>
+          <button type="button" class="note-tool" data-md="link"   data-i18n-title="notes.tool_link"    title="Enlace" aria-label="Enlace">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6.6 9.4a2.4 2.4 0 0 0 3.4 0l2-2a2.4 2.4 0 0 0-3.4-3.4l-1 1"/>
+              <path d="M9.4 6.6a2.4 2.4 0 0 0-3.4 0l-2 2a2.4 2.4 0 0 0 3.4 3.4l1-1"/>
+            </svg>
+          </button>
+        </div>
+        <div class="note-editor-split">
+          <textarea id="note-editor-textarea" class="note-editor-textarea"
+                    spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
+                    data-i18n-placeholder="notes.body_ph" placeholder="Escribe la nota en Markdown…"></textarea>
+          <div id="note-editor-preview" class="note-editor-preview markdown-body"></div>
+        </div>
+        <div class="modal-actions">
+          <span class="note-editor-hint" data-i18n="notes.editor_hint">Ctrl+S para guardar · Markdown · evita guardar secretos</span>
+          <span class="note-editor-spacer"></span>
+          <button type="button" class="btn-secondary" id="note-editor-cancel" data-i18n="notes.cancel">Cancelar</button>
+          <button type="button" class="btn-primary"   id="note-editor-save"   data-i18n="notes.save">Guardar</button>
         </div>
       </div>
     </div>

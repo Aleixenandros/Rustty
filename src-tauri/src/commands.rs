@@ -9,6 +9,7 @@ use crate::credentials::{self, CredentialKind, CredentialMeta, CredentialStore};
 use crate::host_keys::fingerprint_sha256;
 use crate::keepass_manager;
 use crate::local_shell_manager::LocalShellManager;
+use crate::notes::{NoteDoc, NoteSummary, NotesManager};
 use crate::profiles::{ConnectionProfile, ProfileManager};
 use crate::rdp_manager::RdpManager;
 use crate::sftp_manager::{FileEntry, SftpManager, TransferConflictPolicy};
@@ -1764,4 +1765,64 @@ pub fn autostart_is_enabled() -> Result<bool, String> {
 #[tauri::command]
 pub fn is_launched_minimized(state: State<LaunchMinimized>) -> bool {
     state.0
+}
+
+// ─── Notas Markdown por conexión («runbooks») ───────────────────────────────
+
+/// Lee la nota Markdown de un perfil. `None` si no existe.
+#[tauri::command]
+pub fn note_get(notes: State<NotesManager>, profile_id: String) -> Result<Option<NoteDoc>, String> {
+    notes.read(&profile_id).map_err(|e| e.to_string())
+}
+
+/// Crea o actualiza la nota de un perfil. Fija `updated_at = now` y conserva
+/// `created_at`. Devuelve el documento resultante.
+#[tauri::command]
+pub fn note_set(
+    notes: State<NotesManager>,
+    profile_id: String,
+    body: String,
+    title: String,
+    connection: String,
+    tags: Vec<String>,
+) -> Result<NoteDoc, String> {
+    notes
+        .set(&profile_id, body, title, connection, tags)
+        .map_err(|e| e.to_string())
+}
+
+/// Borra la nota de un perfil (idempotente).
+#[tauri::command]
+pub fn note_delete(notes: State<NotesManager>, profile_id: String) -> Result<(), String> {
+    notes.delete(&profile_id).map_err(|e| e.to_string())
+}
+
+/// Resúmenes de todas las notas (índice del frontend: badge, búsqueda).
+#[tauri::command]
+pub fn note_list(notes: State<NotesManager>) -> Result<Vec<NoteSummary>, String> {
+    notes.list().map_err(|e| e.to_string())
+}
+
+/// Volcado completo de notas (lo usa la sincronización para construir el estado).
+#[tauri::command]
+pub fn note_export_all(notes: State<NotesManager>) -> Result<Vec<NoteDoc>, String> {
+    notes.export_all().map_err(|e| e.to_string())
+}
+
+/// Upsert de una nota sincronizada (preserva `updated_at`/`created_at`).
+#[tauri::command]
+pub fn note_import(notes: State<NotesManager>, doc: NoteDoc) -> Result<(), String> {
+    notes.import(doc).map_err(|e| e.to_string())
+}
+
+/// Búsqueda full-text simple sobre título, tags y cuerpo de las notas.
+#[tauri::command]
+pub fn note_search(notes: State<NotesManager>, query: String) -> Result<Vec<NoteSummary>, String> {
+    notes.search(&query).map_err(|e| e.to_string())
+}
+
+/// Ruta de la carpeta `notes/` (para abrirla en el explorador del SO).
+#[tauri::command]
+pub fn notes_dir(notes: State<NotesManager>) -> Result<String, String> {
+    Ok(notes.dir().to_string_lossy().to_string())
 }

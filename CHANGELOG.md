@@ -2,6 +2,20 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.23.0] - 2026-06-04
+
+### Añadido
+
+- **Notas Markdown por conexión (runbooks)**: clic derecho sobre una conexión →
+  "Añadir/Editar nota" abre un editor Markdown con previsualización en vivo,
+  toolbar, título y tags. Cada nota se guarda como un archivo `.md`
+  autocontenido (con frontmatter) en `notes/<id>.md`, se sincroniza (opt-in
+  **Notas**, activo por defecto) y resuelve variables `${host}/${user}/…` en el
+  preview. Las conexiones con nota muestran un badge `📝`, la búsqueda de la
+  barra lateral indexa título/tags/contenido, y cada sesión SSH/SFTP tiene un
+  **panel runbook** lateral con la nota renderizada y casillas de tarea
+  interactivas que se guardan en el `.md`. Atajo `Ctrl+Shift+N`.
+
 ## [1.22.0] - 2026-06-04
 
 ### Añadido

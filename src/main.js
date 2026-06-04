@@ -23,6 +23,8 @@ import {
   detectLanguage,
   applyTranslations,
 } from "./i18n.js";
+import { renderMarkdownMinimal, toggleTaskInBody } from "./modules/markdown.js";
+import { substitutePreview } from "./modules/subst.js";
 
 // ═══════════════════════════════════════════════════════════════
 // ESTADO DE LA APLICACIÓN
@@ -1508,6 +1510,7 @@ async function populateSyncTab() {
   document.getElementById("sync-sel-prefs").checked     = config.selective?.prefs ?? true;
   document.getElementById("sync-sel-themes").checked    = config.selective?.themes ?? true;
   document.getElementById("sync-sel-shortcuts").checked = config.selective?.shortcuts ?? true;
+  document.getElementById("sync-sel-notes").checked     = config.selective?.notes ?? true;
   document.getElementById("sync-sel-secrets").checked   = config.selective?.secrets ?? false;
   document.getElementById("sync-history-keep").value =
     String(Math.max(1, parseInt(config.history_keep, 10) || DEFAULT_SYNC_HISTORY_KEEP));
@@ -1724,6 +1727,7 @@ async function persistSyncConfig() {
       prefs:     document.getElementById("sync-sel-prefs").checked,
       themes:    document.getElementById("sync-sel-themes").checked,
       shortcuts: document.getElementById("sync-sel-shortcuts").checked,
+      notes:     document.getElementById("sync-sel-notes").checked,
       secrets:   document.getElementById("sync-sel-secrets").checked,
       snippets:  true,
     },
@@ -1786,6 +1790,7 @@ function shouldAutoSyncProfiles() {
     && (
       (_syncConfigCache.selective?.profiles ?? true)
       || (_syncConfigCache.selective?.prefs ?? true)
+      || (_syncConfigCache.selective?.notes ?? true)
       || (_syncConfigCache.selective?.secrets ?? false)
     );
 }
@@ -1829,6 +1834,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     registerAllCustomThemes();
     // Recargar perfiles del backend (puede haber añadidos/borrados)
     profiles = await invoke("get_profiles");
+    await refreshNotesIndex();
     restoreSidebarTreeState(sidebarTreeState);
     renderConnectionList();
     // Reaplica tema y prefs si cambiaron
@@ -2740,6 +2746,8 @@ async function init() {
     profiles = [];
   }
 
+  await refreshNotesIndex();
+
   if (_connListBoot) _connListBoot.removeAttribute("aria-busy");
   renderConnectionList();
   bindUIEvents();
@@ -3472,12 +3480,18 @@ async function handleWorkspaceMenuClick(action, wsId) {
 }
 
 function profileMatchesSidebarQuery(profile, query) {
+  // Incluye los metadatos de la nota (título, tags y extracto) para que buscar
+  // por contenido de runbook encuentre la conexión asociada.
+  const note = notesIndex.get(profile.id);
   const haystack = [
     profile.name,
     profile.host,
     profile.username,
     profile.group,
     profile.connection_type || "ssh",
+    note?.title,
+    (note?.tags || []).join(" "),
+    note?.excerpt,
   ].filter(Boolean).join(" ").toLowerCase();
   return haystack.includes(query);
 }
@@ -4115,9 +4129,9 @@ function renderConnectionItem(p, depth) {
   const connType = p.connection_type || "ssh";
   const proto = connectionProtocolMeta(connType);
   const indent = 14 + depth * 12;
-  const notes = String(p.notes || "").trim();
-  const notesBadge = notes
-    ? `<span class="conn-notes-badge" title="${escHtml(notes)}">ⓘ</span>`
+  const noteSummary = notesIndex.get(p.id);
+  const notesBadge = noteSummary
+    ? `<span class="conn-notes-badge" data-action="open-note" data-id="${p.id}" title="${escHtml(noteSummary.excerpt || t("notes.has_note"))}">${NOTE_ICON_SVG}</span>`
     : "";
   const cls = [
     "conn-item",
@@ -4266,6 +4280,12 @@ function bindTreeEvents(container) {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       toggleFavoriteProfile(btn.dataset.id);
+    });
+  });
+  container.querySelectorAll("[data-action='open-note']").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openNoteEditor(btn.dataset.id);
     });
   });
 
@@ -4619,6 +4639,13 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   menu.querySelectorAll(".ctx-promote-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "connection" || !canPromote)
   );
+  // Nota: etiqueta dinámica (Añadir/Editar) y visibilidad de "Eliminar nota".
+  const hasNote = type === "connection" && id ? profileHasNote(id) : false;
+  const noteLabel = document.getElementById("ctx-note-label");
+  if (noteLabel) noteLabel.textContent = hasNote ? t("ctx.edit_note") : t("ctx.add_note");
+  menu.querySelectorAll(".ctx-note-exists").forEach((el) =>
+    el.classList.toggle("hidden", !hasNote)
+  );
   menu.querySelectorAll(".ctx-ws-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "workspace")
   );
@@ -4681,6 +4708,12 @@ function handleContextMenuAction(action) {
       break;
     case "duplicate-conn":
       duplicateProfile(id);
+      break;
+    case "edit-note":
+      if (id) openNoteEditor(id);
+      break;
+    case "delete-note":
+      if (id) deleteNote(id);
       break;
     case "promote-master":
       if (id) promoteProfilePasswordToMaster(id);
@@ -5012,6 +5045,7 @@ function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiv
   setPasswordVisible(false);
   document.getElementById("f-conn-type").value = "ssh";
   document.getElementById("f-notes").value = "";
+  setupModalNotePane();
   document.getElementById("f-save-password").checked = true;
   document.getElementById("f-save-passphrase").checked = true;
   setPasswordSource("own");
@@ -5167,6 +5201,7 @@ function openEditConnectionModal(profileId) {
 
   editingProfileId = profileId;
   resetConnectionTestPanel();
+  setupModalNotePane();
   document.getElementById("modal-title").textContent = "Editar conexión";
 
   document.getElementById("f-name").value  = profile.name;
@@ -6828,6 +6863,12 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
   tab.draggable = true;
   const sftpBtn = sftp ? `<button class="tab-sftp" title="Panel SFTP">⇅</button>` : "";
   const tunnelBtn = sftp ? `<button class="tab-tunnels" title="Túneles SSH">⇄</button>` : "";
+  // Botón de nota/runbook solo para sesiones de un perfil guardado real
+  // (excluye consolas locales, cuyo perfil es sintético `local-…`).
+  const isSavedProfile = !!profile?.id && profiles.some((p) => p.id === profile.id);
+  const runbookBtn = isSavedProfile
+    ? `<button class="tab-notes" title="${escHtml(t("notes.runbook_title"))}">${NOTE_ICON_SVG}</button>`
+    : "";
   // Badge de sesión privada: escudo SVG monocromo con currentColor.
   const privateBadge = isPrivate ? `<span class="tab-private-badge" title="${escHtml(t("private_session.tab_tooltip"))}">
     <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -6840,11 +6881,13 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
     ${privateBadge}
     ${sftpBtn}
     ${tunnelBtn}
+    ${runbookBtn}
     <button class="tab-close" title="Cerrar">✕</button>`;
   tab.addEventListener("click", (e) => {
     if (e.target.classList.contains("tab-close")) return;
     if (e.target.classList.contains("tab-sftp")) return;
     if (e.target.classList.contains("tab-tunnels")) return;
+    if (e.target.classList.contains("tab-notes")) return;
     selectSession(tab.dataset.session, e.ctrlKey || e.metaKey);
   });
   tab.querySelector(".tab-close").addEventListener("click", () => closeSession(tab.dataset.session));
@@ -6855,6 +6898,10 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
   tab.querySelector(".tab-tunnels")?.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleTunnelPanel(tab.dataset.session);
+  });
+  tab.querySelector(".tab-notes")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleRunbookPanel(tab.dataset.session);
   });
   attachTabDragHandlers(tab);
   document.getElementById("tabs-container").appendChild(tab);
@@ -14258,6 +14305,7 @@ function bindUIEvents() {
   initWindowControls();
   initCredentialModalEvents();
   initCommandEditor();
+  initNoteEditor();
 
   // ── Modal de preferencias ────────────────────────────────────
   document.getElementById("btn-prefs-close")
@@ -14869,7 +14917,20 @@ const SHORTCUT_ACTIONS = {
   toggle_zen_mode:   { default: "F11",            run: () => toggleZenMode() },
   disconnect_all:    { default: "",               run: () => disconnectAll() },
   open_command_editor: { default: "Ctrl+Shift+E", run: () => openCommandEditor() },
+  open_note_editor:    { default: "Ctrl+Shift+M", run: () => openActiveSessionNote() },
 };
+
+/** Abre el editor de notas del perfil de la sesión activa (atajo). */
+function openActiveSessionNote() {
+  const s = activeSessionId ? sessions.get(activeSessionId) : null;
+  if (s?.profileId) {
+    openNoteEditor(s.profileId);
+    return;
+  }
+  const pid = activeProfileId();
+  if (pid) openNoteEditor(pid);
+  else toast(t("notes.toast_no_profile"), "warning");
+}
 
 const SHORTCUT_IDS = Object.keys(SHORTCUT_ACTIONS);
 
@@ -15409,6 +15470,386 @@ function clearActiveTerminal() {
   if (!s?.terminal) return;
   s.terminal.clear();
   s.terminal.focus();
+}
+
+// ── Notas Markdown por conexión (runbooks) ────────────────────────────────
+
+/** Icono SVG de nota (documento con líneas), monocromo con currentColor. */
+const NOTE_ICON_SVG = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5h4.5L12 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M8.4 2.5V6H12"/><path d="M5.5 8.7h5M5.5 11h3.2"/></svg>`;
+
+/** Índice en memoria de notas: profileId → NoteSummary. */
+const notesIndex = new Map();
+
+/** Recarga el índice de notas desde el backend (badge, menú, búsqueda). */
+async function refreshNotesIndex() {
+  try {
+    const list = await invoke("note_list");
+    notesIndex.clear();
+    for (const s of list || []) {
+      if (s?.profile_id) notesIndex.set(s.profile_id, s);
+    }
+  } catch (err) {
+    console.error("[notes] list", err);
+  }
+}
+
+function profileHasNote(profileId) {
+  return notesIndex.has(profileId);
+}
+
+/** Contexto de sustitución para el preview a partir de un perfil. */
+function noteSubstContext(profile) {
+  if (!profile) return {};
+  return {
+    host: profile.host,
+    port: profile.port,
+    user: profile.username,
+    profileName: profile.name,
+    workspace: profile.workspace_id || "default",
+  };
+}
+
+function recordNoteTombstone(profileId) {
+  prefs.tombstones = prefs.tombstones || {};
+  prefs.tombstones.notes = prefs.tombstones.notes || {};
+  prefs.tombstones.notes[profileId] = new Date().toISOString();
+  savePrefs();
+}
+
+function clearNoteTombstone(profileId) {
+  if (prefs.tombstones?.notes?.[profileId]) {
+    delete prefs.tombstones.notes[profileId];
+    savePrefs();
+  }
+}
+
+let _noteEditorProfileId = null;
+let _noteEditorDirty = false;
+let _notePreviewTimer = null;
+
+function renderNotePreviewInto(el, body, profile) {
+  if (!el) return;
+  const resolved = substitutePreview(String(body || ""), noteSubstContext(profile));
+  el.innerHTML = renderMarkdownMinimal(resolved);
+}
+
+async function openNoteEditor(profileId) {
+  const overlay = document.getElementById("note-editor-overlay");
+  if (!overlay || !profileId) return;
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+  _noteEditorProfileId = profileId;
+  _noteEditorDirty = false;
+
+  const titleInput = document.getElementById("note-editor-title-input");
+  const tagsInput = document.getElementById("note-editor-tags");
+  const textarea = document.getElementById("note-editor-textarea");
+
+  document.getElementById("note-editor-title").textContent =
+    `${t("notes.editor_title")} · ${profile.name}`;
+
+  let doc = null;
+  try {
+    doc = await invoke("note_get", { profileId });
+  } catch (err) {
+    console.error("[notes] get", err);
+  }
+  titleInput.value = doc?.title || "";
+  tagsInput.value = (doc?.tags || []).join(", ");
+  textarea.value = doc?.body || "";
+
+  renderNotePreviewInto(document.getElementById("note-editor-preview"), textarea.value, profile);
+  overlay.classList.remove("hidden");
+  textarea.focus();
+}
+
+function scheduleNotePreview() {
+  clearTimeout(_notePreviewTimer);
+  _notePreviewTimer = setTimeout(() => {
+    const textarea = document.getElementById("note-editor-textarea");
+    const profile = profiles.find((p) => p.id === _noteEditorProfileId);
+    renderNotePreviewInto(document.getElementById("note-editor-preview"), textarea?.value, profile);
+  }, 150);
+}
+
+async function saveNoteFromEditor({ close = true } = {}) {
+  if (!_noteEditorProfileId) return;
+  const profileId = _noteEditorProfileId;
+  const profile = profiles.find((p) => p.id === profileId);
+  const body = document.getElementById("note-editor-textarea").value;
+  const title = document.getElementById("note-editor-title-input").value.trim();
+  const tags = document.getElementById("note-editor-tags").value
+    .split(",").map((s) => s.trim()).filter(Boolean);
+
+  try {
+    if (body.trim() === "" && title === "" && tags.length === 0) {
+      await invoke("note_delete", { profileId });
+      recordNoteTombstone(profileId);
+    } else {
+      await invoke("note_set", {
+        profileId,
+        body,
+        title,
+        connection: profile?.name || "",
+        tags,
+      });
+      clearNoteTombstone(profileId);
+    }
+    await refreshNotesIndex();
+    renderConnectionList();
+    updateRunbookForProfile(profileId);
+    setupModalNotePane();
+    _noteEditorDirty = false;
+    scheduleProfileAutoSync();
+  } catch (err) {
+    toast(t("notes.toast_save_error"), "error");
+    console.error("[notes] save", err);
+    return;
+  }
+  if (close) closeNoteEditor();
+}
+
+function closeNoteEditor() {
+  document.getElementById("note-editor-overlay")?.classList.add("hidden");
+  _noteEditorProfileId = null;
+  _noteEditorDirty = false;
+  if (activeSessionId) sessions.get(activeSessionId)?.terminal?.focus();
+}
+
+/** Esc / cancelar: autoguarda si hubo cambios, si no cierra sin más. */
+function handleNoteEditorEscape() {
+  if (_noteEditorDirty) saveNoteFromEditor({ close: true });
+  else closeNoteEditor();
+}
+
+async function deleteNote(profileId) {
+  if (!profileId || !profileHasNote(profileId)) return;
+  const ok = await confirmThemed({
+    title: t("notes.delete_title"),
+    message: t("notes.delete_confirm"),
+    submitLabel: t("modal_destructive.submit"),
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await invoke("note_delete", { profileId });
+    recordNoteTombstone(profileId);
+    await refreshNotesIndex();
+    renderConnectionList();
+    updateRunbookForProfile(profileId);
+    scheduleProfileAutoSync();
+    toast(t("notes.toast_deleted"), "success");
+  } catch (err) {
+    console.error("[notes] delete", err);
+  }
+}
+
+/** Inserta marcado Markdown alrededor de la selección del textarea. */
+function applyNoteToolbar(action) {
+  const ta = document.getElementById("note-editor-textarea");
+  if (!ta) return;
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  const sel = ta.value.slice(start, end);
+  let before = "";
+  let after = "";
+  let placeholder = sel;
+  switch (action) {
+    case "bold":   before = "**"; after = "**"; placeholder = sel || t("notes.ph_bold"); break;
+    case "italic": before = "*";  after = "*";  placeholder = sel || t("notes.ph_italic"); break;
+    case "code":   before = "`";  after = "`";  placeholder = sel || t("notes.ph_code"); break;
+    case "link":   before = "[";  after = "](https://)"; placeholder = sel || t("notes.ph_link"); break;
+    case "h":      before = "## "; placeholder = sel || t("notes.ph_heading"); break;
+    case "ul":     before = "- ";  placeholder = sel || t("notes.ph_item"); break;
+    case "task":   before = "- [ ] "; placeholder = sel || t("notes.ph_task"); break;
+    default: return;
+  }
+  const insert = before + placeholder + after;
+  ta.value = ta.value.slice(0, start) + insert + ta.value.slice(end);
+  const caret = start + before.length;
+  ta.focus();
+  ta.setSelectionRange(caret, caret + placeholder.length);
+  _noteEditorDirty = true;
+  scheduleNotePreview();
+}
+
+function initNoteEditor() {
+  const overlay = document.getElementById("note-editor-overlay");
+  const textarea = document.getElementById("note-editor-textarea");
+  if (!overlay || !textarea) return;
+
+  textarea.addEventListener("input", () => {
+    _noteEditorDirty = true;
+    scheduleNotePreview();
+  });
+  textarea.addEventListener("keydown", (e) => {
+    if ((e.key === "s" || e.key === "S") && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      saveNoteFromEditor({ close: false });
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      handleNoteEditorEscape();
+    }
+  });
+  ["note-editor-title-input", "note-editor-tags"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("input", () => { _noteEditorDirty = true; });
+  });
+
+  document.getElementById("note-editor-save")?.addEventListener("click", () => saveNoteFromEditor({ close: true }));
+  document.getElementById("note-editor-cancel")?.addEventListener("click", () => handleNoteEditorEscape());
+  document.getElementById("note-editor-close")?.addEventListener("click", () => handleNoteEditorEscape());
+  document.getElementById("note-editor-open-folder")?.addEventListener("click", async () => {
+    try {
+      const dir = await invoke("notes_dir");
+      await invoke("plugin:opener|open_path", { path: dir });
+    } catch (err) {
+      console.error("[notes] open dir", err);
+    }
+  });
+  document.getElementById("note-editor-toolbar")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".note-tool");
+    if (btn) applyNoteToolbar(btn.dataset.md);
+  });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) handleNoteEditorEscape();
+  });
+
+  // Botón "Abrir editor de notas" de la pestaña Notas del modal de conexión.
+  document.getElementById("modal-note-edit-btn")?.addEventListener("click", () => {
+    if (editingProfileId) openNoteEditor(editingProfileId);
+  });
+}
+
+// ── Panel runbook (nota junto a la sesión) ────────────────────────────────
+
+async function toggleRunbookPanel(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  if (s.runbookPanel) {
+    s.runbookPanel.classList.toggle("hidden");
+    if (!s.runbookPanel.classList.contains("hidden")) renderRunbookPanel(sessionId);
+    s.fitAddon?.fit();
+    return;
+  }
+  s.runbookPanel = buildRunbookPanel(sessionId);
+  s.pane?.appendChild(s.runbookPanel);
+  await renderRunbookPanel(sessionId);
+  s.fitAddon?.fit();
+}
+
+function buildRunbookPanel(sessionId) {
+  const panel = document.createElement("div");
+  panel.className = "runbook-panel";
+  const editSvg = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 3l2.5 2.5-7 7-3 .5.5-3z"/><path d="M9.5 4l2.5 2.5"/></svg>`;
+  const closeSvg = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
+  panel.innerHTML = `
+    <div class="runbook-head">
+      <div class="runbook-title">${escHtml(t("notes.runbook_title"))}</div>
+      <div class="runbook-head-actions">
+        <button class="btn-icon runbook-edit" type="button" title="${escHtml(t("notes.open_editor"))}" aria-label="${escHtml(t("notes.open_editor"))}">${editSvg}</button>
+        <button class="btn-icon runbook-close" type="button" title="${escHtml(t("notes.close"))}" aria-label="${escHtml(t("notes.close"))}">${closeSvg}</button>
+      </div>
+    </div>
+    <div class="runbook-body markdown-body"></div>`;
+  panel.querySelector(".runbook-close").addEventListener("click", () => {
+    panel.classList.add("hidden");
+    sessions.get(sessionId)?.fitAddon?.fit();
+  });
+  panel.querySelector(".runbook-edit").addEventListener("click", () => {
+    const s = sessions.get(sessionId);
+    if (s?.profileId) openNoteEditor(s.profileId);
+  });
+  return panel;
+}
+
+async function renderRunbookPanel(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s?.runbookPanel) return;
+  const bodyEl = s.runbookPanel.querySelector(".runbook-body");
+  const profile = profiles.find((p) => p.id === s.profileId);
+  if (!profile) {
+    bodyEl.innerHTML = `<p class="runbook-empty">${escHtml(t("notes.runbook_empty"))}</p>`;
+    return;
+  }
+  let doc = null;
+  try {
+    doc = await invoke("note_get", { profileId: s.profileId });
+  } catch (err) {
+    console.error("[notes] runbook get", err);
+  }
+  if (!doc || !String(doc.body || "").trim()) {
+    bodyEl.innerHTML = `<p class="runbook-empty">${escHtml(t("notes.runbook_empty"))}</p>
+      <button class="btn-secondary runbook-add" type="button">${escHtml(t("notes.add_note"))}</button>`;
+    bodyEl.querySelector(".runbook-add")?.addEventListener("click", () => openNoteEditor(s.profileId));
+    return;
+  }
+  const resolved = substitutePreview(doc.body, noteSubstContext(profile));
+  bodyEl.innerHTML = renderMarkdownMinimal(resolved, { onToggleTask: () => {} });
+  // Cablea las casillas interactivas para que persistan en el `.md`.
+  bodyEl.querySelectorAll('input[type="checkbox"][data-task-index]').forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      const idx = Number(cb.dataset.taskIndex);
+      try {
+        const fresh = await invoke("note_get", { profileId: s.profileId });
+        const base = fresh?.body ?? doc.body;
+        const newBody = toggleTaskInBody(base, idx, cb.checked);
+        await invoke("note_set", {
+          profileId: s.profileId,
+          body: newBody,
+          title: fresh?.title || doc.title || "",
+          connection: profile.name,
+          tags: fresh?.tags || doc.tags || [],
+        });
+        await refreshNotesIndex();
+        scheduleProfileAutoSync();
+        renderRunbookPanel(sessionId);
+      } catch (err) {
+        console.error("[notes] toggle task", err);
+        cb.checked = !cb.checked;
+      }
+    });
+  });
+}
+
+/** Refresca cualquier panel runbook abierto que muestre este perfil. */
+function updateRunbookForProfile(profileId) {
+  for (const [sid, s] of sessions) {
+    if (s.profileId === profileId && s.runbookPanel && !s.runbookPanel.classList.contains("hidden")) {
+      renderRunbookPanel(sid);
+    }
+  }
+}
+
+/**
+ * Sincroniza la pestaña "Notas" del modal de conexión con el estado actual:
+ * para una conexión nueva (sin id) deshabilita el editor; para una existente
+ * muestra un extracto y abre el editor Markdown del perfil.
+ */
+function setupModalNotePane() {
+  const btn = document.getElementById("modal-note-edit-btn");
+  const preview = document.getElementById("modal-note-preview");
+  const saveFirst = document.getElementById("modal-note-save-first");
+  if (!btn) return;
+  const id = editingProfileId;
+  if (!id) {
+    btn.disabled = true;
+    if (saveFirst) saveFirst.hidden = false;
+    if (preview) { preview.hidden = true; preview.textContent = ""; }
+    return;
+  }
+  btn.disabled = false;
+  if (saveFirst) saveFirst.hidden = true;
+  const summary = notesIndex.get(id);
+  btn.textContent = summary ? t("notes.edit_note_btn") : t("notes.open_editor");
+  if (preview) {
+    if (summary?.excerpt) {
+      preview.hidden = false;
+      preview.textContent = summary.excerpt;
+    } else {
+      preview.hidden = true;
+      preview.textContent = "";
+    }
+  }
 }
 
 // ── Editor multilínea (Ctrl+Shift+E) ──────────────────────────────────────
