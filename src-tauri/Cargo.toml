@@ -71,7 +71,7 @@ tauri-plugin-clipboard-manager = "2"
 # (Blowfish-CBC con KDF de OpenSSL/MD5). WebCrypto no ofrece ni Blowfish ni MD5,
 # por eso este flujo vive en el backend.
 serde_yaml = "0.9"
-blowfish = "0.9"
+blowfish = "0.10"
 md-5 = "0.10"
 hex = "0.4"
 # Arranque automático con el sistema (opt-in). Se usa el crate `auto-launch`
