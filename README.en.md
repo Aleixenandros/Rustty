@@ -10,7 +10,7 @@
 ## Key features
 
 - **Multi-protocol**: SSH, SFTP, FTP, FTPS and RDP connections (the latter via external `xfreerdp` / `mstsc`).
-- **Modern terminal**: xterm.js with themes, configurable cursor, scrollback, **in-buffer search** (Ctrl+F), a bottom bar with status/latency/diagnostics and OSC 7 support (tracking the remote `cwd`).
+- **Modern terminal**: xterm.js with themes, configurable cursor, scrollback, **in-buffer search** (Ctrl+F), a bottom bar with status/latency/diagnostics, OSC 7 support (tracking the remote `cwd`) and a **multi-line command editor** (Ctrl+Shift+E) to compose long commands, with a per-profile draft.
 - **Integrated file panel**: SFTP/FTP/FTPS explorer with a **split remote / local view** (remote on the left or right, configurable in Preferences → Aesthetics), recursive folder transfers, drag & drop, configurable conflicts, transfer queue, resizable tabbed logs, context menus, **path autocompletion** (`Tab` and a suggestions dropdown), **file search** by name in the current directory or recursively, creation of folders and empty files on both sides, optional tracking of the terminal directory over SSH, and elevation to **sudo** when the server allows it. SFTP transfers use **pipelining** (simultaneous in-flight requests of 256 KiB, configurable in Preferences) and saturate the connection's actual bandwidth instead of being limited by RTT; the number of parallel requests can be lowered for servers with a handle limit (e.g. Hetzner Storage Box).
 - **SSH CLI**: list saved connections with `rustty -l`, connect directly with `rustty -c <name|id|ip|host>` and run remote commands with `--exec`, `--` or the alias `rustty -c <profile> "cmd"`, without opening the graphical interface.
 - **Integrated SSH tunnels**: **local** (`-L`), **remote** (`-R`) and **dynamic / SOCKS** (`-D`) port forwarding over an active session or from the global quick access, with a status panel, traffic, saved tunnels and optional per-profile auto-connect.
@@ -18,14 +18,15 @@
 - **Multi-tab and split views**: work with multiple simultaneous sessions, arrange them in horizontal / vertical / grid *splits* and enable *broadcast* to type into several at once.
 - **Polished sidebar**: a vertical rail of icons (Profiles, Favorites, Tunnels, Activity, Sync, Preferences and quick actions), **drag & drop** between folders and workspaces, per-folder colors, remembering of the expanded tree and automatic selection of the connection associated with the active tab.
 - **Diagnostics and activity**: a **Test** button in the connection modal without saving the profile, staged SSH logs, TCP checks for RDP/FTP/FTPS and a persistent global activity center with transfers, sync, errors and updates grouped by day.
-- **System tray / quick launcher**: quick access to favorites, recents, workspaces, local console, **Wake On LAN** for profiles with a MAC address and show/hide window from the tray icon.
+- **System tray / quick launcher**: quick access to favorites, recents, workspaces, local console, **Wake On LAN** for profiles with a MAC address and show/hide window from the tray icon. Optionally **start Rustty with the system** and **start minimized** to the tray (opt-in, under Preferences → System).
 - **Granular export**: export all profiles, those of a folder or those of a workspace to JSON from the context menu, asking first whether saved passwords/passphrases should be included.
 - **Import from other tools**: import your `~/.ssh/config` or, via a **step-by-step wizard**, connections from **mRemoteNG** (`.xml`) or **Ásbrú Connection Manager** (`.yml`) — it rebuilds the folder tree into a new workspace, lets you choose what to import, shows progress and optionally decrypts the saved passwords (all locally).
 - **Security**:
   - Native integration with the system keyring (Secret Service/KWallet on Linux, macOS Keychain, Windows Credential Store).
   - Support for **KeePass** databases (`.kdbx`) as a password source.
   - Reusable **master credentials**: define a password once and reference it from several profiles with `${master:name}`; the value lives only in the keyring and rotating it updates every profile that uses it. It is part of a **variable engine** (`${host}`, `${env:…}`, `${var:…}`, `${ask:…}`) resolved at connection time, including fields such as the host or the user.
-  - `Ctrl+P` shortcut to paste the active profile's password without exposing it on screen.
+  - `Ctrl+P` shortcut to paste the active profile's password without exposing it on screen; it is only sent to the connected, focused SSH session and is blocked while *broadcast* is active so the secret is never fanned out.
+  - **Private / ephemeral session** ("Open in private" from the profile menu): leaves no trace in recents, the activity center, drafts or session recording, and the tab is marked as private.
   - `known_hosts` verification with TOFU and a warning on fingerprint changes, plus a **visual `known_hosts` manager** in Preferences to review fingerprints and remove conflicting entries.
   - Warning and confirmation when **enabling agent forwarding**, so you don't share the SSH agent with untrusted hosts by mistake.
   - **Configurable retention of session logs** (by age and size) with manual cleanup and a sensitive-content warning.
@@ -71,6 +72,7 @@ Rustty includes a **shortcut editor** in Preferences → *Shortcuts* that lets y
 | `Ctrl+Alt+C`                   | Copy terminal selection                                |
 | `Ctrl+Alt+V`                   | Paste into the terminal                                |
 | `Ctrl+P`                       | Paste the active profile's password into the shell    |
+| `Ctrl+Shift+E`                 | Open the multi-line command editor                     |
 | `Ctrl+K`                       | Search connections from any view                       |
 | `Ctrl+F`                       | Search within the terminal buffer                      |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Increase / decrease / reset the font size              |

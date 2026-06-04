@@ -59,6 +59,11 @@ La salida de un servidor remoto es contenido no confiable, así que Rustty añad
 - **Validación de enlaces**: al pulsar un enlace detectado en la salida, Rustty abre directamente solo los esquemas `http`, `https` y `mailto`. Cualquier otro esquema (o una URL que no se pueda interpretar) pide confirmación antes de abrirse, para que la salida remota no pueda lanzar esquemas arbitrarios.
 - **Confirmación de pegado peligroso**: antes de enviar al terminal un texto **multilínea**, **muy largo** o con **caracteres de control**, Rustty muestra una previsualización y pide confirmación. Así se evita ejecutar comandos pegados por error o secuencias de control ocultas. Está activado por defecto, se ajusta en **Preferencias → Terminal** y puede desactivarse por perfil en sus opciones avanzadas.
 - **Aviso al activar agent forwarding**: el reenvío del agente SSH comparte tu agente local con el host remoto, de modo que un servidor comprometido podría usar tus claves para saltar a otros equipos. Por eso, al activar el toggle de *agent forwarding* en un perfil, Rustty muestra una advertencia y pide confirmación; habilítalo solo en hosts de confianza.
+- **Pegado de contraseña acotado (`Ctrl+P`)**: el atajo que pega la contraseña del perfil activo solo la envía a una sesión SSH **conectada y enfocada**, y queda **bloqueado mientras el *broadcast* está activo**, para que el secreto no se difunda a varias sesiones a la vez. El valor no aparece en logs, historial ni previsualizaciones.
+
+## Sesión privada
+
+Desde el menú contextual de un perfil, **"Abrir en privado"** inicia una sesión SSH **efímera** que no deja rastro local: no se añade a recientes ni al quick launcher, no registra detalle en el centro de actividad, no guarda borrador de comandos y **desactiva la grabación de sesión** aunque el perfil la tenga habilitada (también al reconectar). La pestaña se marca con un distintivo para recordarte que estás en modo privado.
 
 ## Logs de sesión
 

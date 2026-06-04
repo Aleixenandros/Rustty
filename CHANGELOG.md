@@ -2,6 +2,46 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.22.0] - 2026-06-04
+
+### Añadido
+
+- **Iniciar Rustty con el sistema**: nueva pestaña **Preferencias → Sistema** con
+  las opciones "Iniciar Rustty con el sistema" y "Arrancar minimizado" (opt-in,
+  desactivadas por defecto). Con "minimizado" la app arranca en la bandeja sin
+  abrir la ventana, ideal para el quick launcher.
+- **Editor multilínea de comandos** (`Ctrl+Shift+E`): hoja flotante para
+  redactar comandos largos y enviarlos a la sesión activa (SSH o consola local).
+  Guarda un borrador por perfil y lo restaura al reabrir. `Ctrl+Enter` inserta,
+  `Esc` cierra conservando el borrador.
+- **Sesión privada / efímera**: acción "Abrir en privado" en el menú contextual
+  de un perfil. La sesión no deja rastro: no se guarda en recientes, no registra
+  detalle en el centro de actividad, no guarda borrador y desactiva la grabación
+  de sesión. La pestaña muestra un distintivo de sesión privada.
+- **Aviso de proceso activo al cerrar una consola local**: si la consola está
+  ejecutando un proceso (p. ej. `vim`, `top`, una compilación), Rustty pide
+  confirmación antes de cerrar la pestaña; una consola inactiva se cierra sin
+  preguntar.
+
+### Cambiado
+
+- **Preferencias → Estética** se integra dentro de **Preferencias → FTP/SFTP**:
+  la opción "Disposición del panel SFTP" deja de tener pestaña propia.
+- **`Ctrl+P` (pegar contraseña) endurecido**: solo se envía a una sesión SSH
+  realmente conectada y queda bloqueado mientras el broadcast está activo, para
+  no difundir el secreto a varias sesiones.
+- **Zoom del terminal con `Ctrl+rueda` / `Ctrl±`**: ahora muestra un indicador
+  con el tamaño en píxeles y el porcentaje respecto al tamaño por defecto, que
+  se resalta al volver al 100 %.
+
+### Corregido
+
+- **Importar datos de otros programas**: el desplegable de origen no mostraba la
+  opción de **Ásbrú Connection Manager** porque la lista quedaba oculta tras el
+  modal; ahora se ve correctamente.
+- **Abrir carpeta de logs de sesión**: corregido el error "Not allowed to open
+  path" al pulsar "Abrir carpeta" en Preferencias → Copias de seguridad.
+
 ## [1.21.0] - 2026-06-03
 
 ### Añadido

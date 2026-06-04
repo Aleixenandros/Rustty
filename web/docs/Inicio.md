@@ -16,6 +16,9 @@
 - Crear **túneles SSH** locales, remotos y dinámicos / SOCKS desde una sesión activa o desde el acceso global **⇄** del rail, con panel de estado, tráfico, túneles guardados y autoconexión opcional por perfil.
 - Configurar opciones avanzadas SSH por perfil: **keep-alive**, **ProxyJump**, **agent forwarding**, **X11 forwarding** y compatibilidad opcional con cifrados / kex / MAC legacy.
 - Buscar dentro del buffer del terminal con `Ctrl+F` y filtrar perfiles desde la barra lateral.
+- Redactar comandos largos con el **editor multilínea** (`Ctrl+Shift+E`): una hoja flotante que guarda un borrador por perfil y, al confirmar, inserta el comando en la sesión activa.
+- Abrir una **sesión privada / efímera** ("Abrir en privado" desde el menú del perfil) que no deja rastro en recientes, actividad, borradores ni grabación de sesión.
+- **Iniciar Rustty con el sistema** y, opcionalmente, **arrancar minimizado** en la bandeja, desde **Preferencias → Sistema** (opt-in).
 - **Exportar el historial** de una sesión a un fichero de texto desde el menú contextual de la pestaña: vuelca todo el buffer del terminal (comandos introducidos y salida del servidor) en texto plano.
 - Renombrar pestañas con un **alias temporal** desde su menú contextual, sin modificar el perfil: útil al duplicar sesiones o abrir varias a la vez. Dejar el alias vacío restablece el nombre del perfil.
 - **Desconectar todo** de golpe desde el botón de emergencia del rail o un atajo configurable: cierra las sesiones SSH, SFTP, RDP y consolas locales, cierra los túneles y cancela las transferencias en curso, tras confirmar con el recuento afectado.

@@ -25,6 +25,7 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl+Alt+C`   | Copiar selección del terminal                       |
 | `Ctrl+Alt+V`   | Pegar en el terminal                                |
 | `Ctrl+P`       | Pegar la contraseña del perfil activo               |
+| `Ctrl+Shift+E` | Abrir el editor multilínea de comandos              |
 | `Ctrl+F`       | Buscar dentro del buffer del terminal               |
 | `Ctrl++`       | Aumentar tamaño de fuente                           |
 | `Ctrl+-`       | Disminuir tamaño de fuente                          |

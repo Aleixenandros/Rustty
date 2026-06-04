@@ -10,7 +10,7 @@
 ## Características principales
 
 - **Multi-protocolo**: conexiones SSH, SFTP, FTP, FTPS y RDP (este último mediante `xfreerdp` / `mstsc` externos).
-- **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F), barra inferior con estado/latencia/diagnóstico y soporte de OSC 7 (seguimiento del `cwd` remoto).
+- **Terminal moderno**: xterm.js con temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F), barra inferior con estado/latencia/diagnóstico, soporte de OSC 7 (seguimiento del `cwd` remoto) y **editor multilínea de comandos** (Ctrl+Shift+E) para redactar instrucciones largas con borrador por perfil.
 - **Panel de ficheros integrado**: explorador SFTP/FTP/FTPS con **vista dividida remoto / local** (con el remoto a la izquierda o a la derecha, configurable en Preferencias → Estética), transferencia recursiva de carpetas, drag & drop, conflictos configurables, cola de transferencias, logs en pestañas redimensionables, menús contextuales, **autocompletado de rutas** (`Tab` y desplegable de sugerencias), **búsqueda de ficheros** por nombre en el directorio actual o recursiva, creación de carpetas y archivos vacíos en ambos lados, seguimiento opcional del directorio del terminal en SSH y modo elevado a **sudo** cuando el servidor lo permita. Las transferencias SFTP usan **pipelining** (peticiones simultáneas en vuelo de 256 KiB, configurable en Preferencias) y saturan el ancho de banda real de la conexión en lugar de quedarse limitadas por el RTT; el número de peticiones en paralelo se puede bajar para servidores con límite de handles (p. ej. Hetzner Storage Box).
 - **CLI SSH**: lista conexiones guardadas con `rustty -l`, conecta directamente con `rustty -c <nombre|id|ip|host>` y ejecuta comandos remotos con `--exec`, `--` o el alias `rustty -c <perfil> "cmd"`, sin abrir la interfaz gráfica.
 - **Túneles SSH integrados**: redirección de puertos **local** (`-L`), **remota** (`-R`) y **dinámica / SOCKS** (`-D`) sobre una sesión activa o desde acceso rápido global, con panel de estado, tráfico, túneles guardados y autoconexión opcional por perfil.
@@ -18,14 +18,15 @@
 - **Multi-pestaña y vistas divididas**: trabaja con varias sesiones simultáneas, distribúyelas en *split* horizontal / vertical / grid y activa el *broadcast* para teclear en varias a la vez.
 - **Sidebar pulida**: rail vertical de iconos (Perfiles, Favoritos, Túneles, Actividad, Sync, Preferencias y acciones rápidas), **drag & drop** entre carpetas y workspaces, colores por carpeta, recuerdo del árbol abierto y selección automática de la conexión asociada a la pestaña activa.
 - **Diagnóstico y actividad**: botón **Probar** en el modal de conexión sin guardar el perfil, logs SSH por etapas, comprobación TCP para RDP/FTP/FTPS y centro global de actividad persistente con transferencias, sync, errores y actualizaciones agrupados por día.
-- **Bandeja del sistema / quick launcher**: acceso rápido a favoritos, recientes, workspaces, consola local, **Wake On LAN** de los perfiles con MAC y abrir/ocultar ventana desde el icono de tray.
+- **Bandeja del sistema / quick launcher**: acceso rápido a favoritos, recientes, workspaces, consola local, **Wake On LAN** de los perfiles con MAC y abrir/ocultar ventana desde el icono de tray. Opción de **iniciar Rustty con el sistema** y **arrancar minimizado** en la bandeja (opt-in, en Preferencias → Sistema).
 - **Exportación granular**: exporta todos los perfiles, los de una carpeta o los de un workspace a JSON desde el menú contextual, preguntando antes si debe incluir contraseñas/passphrases guardadas.
 - **Importación desde otras herramientas**: importa tu `~/.ssh/config` o, con un **asistente por pasos**, conexiones de **mRemoteNG** (`.xml`) o **Ásbrú Connection Manager** (`.yml`) — reconstruye el árbol de carpetas en un perfil-contenedor nuevo, deja elegir qué importar, muestra el progreso y descifra opcionalmente las contraseñas guardadas (todo en local).
 - **Seguridad**:
   - Integración nativa con el keyring del sistema (Secret Service/KWallet en Linux, macOS Keychain, Windows Credential Store).
   - Soporte para bases de datos **KeePass** (`.kdbx`) como fuente de contraseñas.
   - **Credenciales maestras** reutilizables: define una contraseña una vez y refiérela desde varios perfiles con `${master:nombre}`; el valor vive solo en el keyring y rotarlo actualiza todos los perfiles que la usan. Forma parte de un **motor de variables** (`${host}`, `${env:…}`, `${var:…}`, `${ask:…}`) que se resuelve al conectar, también en campos como el host o el usuario.
-  - Atajo `Ctrl+P` para pegar la contraseña del perfil activo sin exponerla en pantalla.
+  - Atajo `Ctrl+P` para pegar la contraseña del perfil activo sin exponerla en pantalla; solo se envía a la sesión SSH conectada y enfocada, y queda bloqueado mientras el *broadcast* está activo para no difundir el secreto.
+  - **Sesión privada / efímera** ("Abrir en privado" desde el menú del perfil): no deja rastro en recientes, centro de actividad, borradores ni grabación de sesión, y la pestaña se marca como privada.
   - Verificación de `known_hosts` con TOFU y aviso ante cambios de fingerprint, más un **gestor visual de `known_hosts`** en Preferencias para revisar huellas y eliminar entradas conflictivas.
   - Aviso y confirmación al **activar el agent forwarding**, para no compartir el agente SSH con hosts no confiables sin darse cuenta.
   - **Retención configurable de los logs de sesión** (por edad y tamaño) con limpieza manual y aviso de contenido sensible.
@@ -71,6 +72,7 @@ Rustty incluye un **editor de atajos** en Preferencias → *Atajos* que permite 
 | `Ctrl+Alt+C`                   | Copiar selección del terminal                          |
 | `Ctrl+Alt+V`                   | Pegar en el terminal                                   |
 | `Ctrl+P`                       | Pegar la contraseña del perfil activo en el shell      |
+| `Ctrl+Shift+E`                 | Abrir el editor multilínea de comandos                 |
 | `Ctrl+K`                       | Buscar conexiones desde cualquier vista                |
 | `Ctrl+F`                       | Buscar dentro del buffer del terminal                  |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Aumentar / disminuir / restablecer el tamaño de fuente |

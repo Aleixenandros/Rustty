@@ -419,6 +419,14 @@ const DEFAULT_PREFS = {
   // sessionLogMaxTotalMb: si el total supera N MB, borra los más antiguos.
   sessionLogMaxAgeDays: null,
   sessionLogMaxTotalMb: null,
+  // Arranque automático con el sistema (opt-in, desactivado por defecto).
+  // `autostart`: registra la app en el arranque del SO.
+  // `autostartMinimized`: si está activo, la ventana no se muestra al frente;
+  //   la app arranca oculta al tray.
+  autostart:          false,
+  autostartMinimized: false,
+  // Borradores del editor multilínea (Ctrl+Shift+E), por profileId / "local".
+  commandDrafts:      {},
 };
 
 // Paleta de colores predefinidos para las carpetas. Cada entrada es el id que
@@ -1446,6 +1454,9 @@ function openSettingsModal() {
   document.getElementById("pref-check-updates-startup").checked =
     prefs.checkUpdatesOnStartup !== false;
 
+  // Sistema: autostart
+  populateAutostartToggles();
+
   // Logs de sesión: rellenar campos de retención y refrescar el contador.
   const slAge = document.getElementById("pref-session-log-max-age");
   const slMb = document.getElementById("pref-session-log-max-mb");
@@ -2112,6 +2123,46 @@ async function populateFontFamilySelect(selected) {
 }
 
 let _cachedAppVersion = null;
+// ─── Autostart ────────────────────────────────────────────────────────────────
+
+/**
+ * Rellena los toggles de la pestaña Sistema con el estado actual de las
+ * preferencias y sincroniza con el estado real del SO vía `isEnabled()`.
+ */
+async function populateAutostartToggles() {
+  const chkAutostart  = document.getElementById("pref-autostart");
+  const chkMinimized  = document.getElementById("pref-autostart-minimized");
+  if (!chkAutostart || !chkMinimized) return;
+
+  // Rellenamos primero con lo que hay en prefs (respuesta inmediata)
+  chkAutostart.checked  = !!prefs.autostart;
+  chkMinimized.checked  = !!prefs.autostartMinimized;
+
+  // Luego sincronizamos con el estado real del SO y corregimos si divergen
+  try {
+    const realEnabled = await invoke("autostart_is_enabled");
+    if (realEnabled !== chkAutostart.checked) {
+      chkAutostart.checked = realEnabled;
+      prefs.autostart = realEnabled;
+    }
+  } catch {
+    // autostart_is_enabled puede no estar disponible en plataformas no soportadas
+  }
+}
+
+/**
+ * Aplica la preferencia de autostart al SO.
+ * Llama al comando Rust `autostart_apply(enable, minimized)` que construye la
+ * entrada correcta del SO con o sin `--minimized`.
+ */
+async function applyAutostartSetting(enable, minimized) {
+  try {
+    await invoke("autostart_apply", { enable, minimized });
+  } catch (e) {
+    console.error("[autostart] Error al aplicar:", e);
+  }
+}
+
 async function populateAboutVersion() {
   const el = document.getElementById("about-version");
   if (!el) return;
@@ -2491,6 +2542,10 @@ function savePrefsFromModal() {
     // Retención de logs de sesión: vacío / inválido → null (sin límite).
     sessionLogMaxAgeDays: readSessionLogLimit("pref-session-log-max-age"),
     sessionLogMaxTotalMb: readSessionLogLimit("pref-session-log-max-mb"),
+    // Autostart: los toggles del panel Sistema. El estado real del SO se
+    // actualiza mediante applyAutostartSetting() al guardar preferencias.
+    autostart:          !!document.getElementById("pref-autostart")?.checked,
+    autostartMinimized: !!document.getElementById("pref-autostart-minimized")?.checked,
     // Los atajos se editan en vivo (setShortcut/resetShortcut ya guardan), así
     // que aquí solo arrastramos lo que haya en memoria para no sobrescribirlos.
     shortcuts:       previousPrefs.shortcuts || {},
@@ -2514,6 +2569,9 @@ function savePrefsFromModal() {
   };
 
   savePrefs();
+  // Aplicar la preferencia de autostart al SO (enable/disable la entrada del SO).
+  applyAutostartSetting(prefs.autostart, prefs.autostartMinimized)
+    .catch((e) => console.error("[autostart] apply", e));
   // Reaplica la disposición del panel SFTP (remoto izquierda/derecha) a los
   // paneles ya abiertos.
   applySftpRemoteSideToAll();
@@ -4609,6 +4667,9 @@ function handleContextMenuAction(action) {
     case "connect":
       connectProfile(id);
       break;
+    case "connect-private":
+      connectPrivateProfile(id);
+      break;
     case "wake-on-lan":
       wakeProfile(id);
       break;
@@ -6337,6 +6398,34 @@ async function connectProfile(profileId, { force = false } = {}) {
   await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false);
 }
 
+/**
+ * Inicia una sesión privada/efímera para el perfil dado. El comportamiento es
+ * idéntico al de una conexión normal salvo que la sesión se marca con
+ * `session.private = true`, lo que suprime toda persistencia:
+ *   - No registra el perfil en recientes ni en el quick launcher del tray.
+ *   - No escribe entradas en el centro de actividad con detalle del host/ruta.
+ *   - No guarda borrador de comando para esa sesión.
+ *   - No activa la grabación de sesión a fichero (session_log desactivado).
+ */
+async function connectPrivateProfile(profileId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+
+  if (_sidebarSearchQuery) {
+    clearSidebarSearch();
+    toggleSidebarTools(false);
+  }
+
+  // Solo SSH soporta sesión privada por ahora.
+  if (profile.connection_type !== "ssh") {
+    return connectProfile(profileId);
+  }
+
+  const creds = await resolveSshCredentials(profile);
+  if (!creds) return;
+  await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false, { private: true });
+}
+
 async function wakeProfile(profileId) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
@@ -6450,7 +6539,7 @@ async function askProfileAnswers(profileId) {
   return await promptAsks(specs);
 }
 
-async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase) {
+async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase, { private: isPrivate = false } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
@@ -6460,7 +6549,7 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   if (askAnswers === null) return;
 
   const sessionId = `ssh-${crypto.randomUUID()}`;
-  createTerminalTab(sessionId, profile, "connecting");
+  createTerminalTab(sessionId, profile, "connecting", { private: isPrivate });
   const session = sessions.get(sessionId);
   appendConnectionLog(sessionId, {
     stage: "preparing",
@@ -6477,6 +6566,9 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
       password:   password   || null,
       passphrase: passphrase || null,
       askAnswers: Object.keys(askAnswers).length ? askAnswers : null,
+      // En sesión privada, desactivar la grabación a fichero aunque el perfil
+      // lo tenga habilitado (el backend aplica el override sobre su copia local).
+      sessionLogOverride: isPrivate ? false : null,
     });
 
     updateTabStatus(sessionId, "connecting");
@@ -6561,7 +6653,7 @@ async function connectRdp(profileId, { passwordOverride = null } = {}) {
 
     sessionObj.status = "connected";
     updateTabStatus(sessionId, "connected");
-    recordRecentConnection(profileId);
+    if (!sessionObj.private) recordRecentConnection(profileId);
 
     // Escuchar el cierre del proceso externo
     const unlisten = await listen(`rdp-closed-${sessionId}`, () => {
@@ -6641,7 +6733,7 @@ async function connectFileTransferProfile(profileId, { passwordOverride = null, 
     await openSftpPanel(sessionId, { passwordOverride: password, passphraseOverride: null });
     sessionObj.status = "connected";
     updateTabStatus(sessionId, "connected");
-    recordRecentConnection(profileId);
+    if (!sessionObj.private) recordRecentConnection(profileId);
     renderConnectionList();
     setActiveTab(sessionId);
     toast(`${profile.connection_type.toUpperCase()} conectado: ${profile.name}`, "success");
@@ -6719,21 +6811,33 @@ function createRdpTab(sessionId, profile, initialStatus) {
  * Crea el elemento de pestaña cableado para selección/multi-selección.
  * El pane asociado debe existir en `sessions.get(sessionId).pane`.
  */
-function createTab(sessionId, profile, initialStatus, { sftp = true } = {}) {
+function createTab(sessionId, profile, initialStatus, { sftp = true, private: isPrivate = false } = {}) {
   const tab = document.createElement("div");
   tab.className = "tab";
   tab.dataset.session = sessionId;
   // Si la sesión recién creada ya trajera un alias temporal, lo respetamos.
   const sessionAlias = (sessions.get(sessionId)?.alias || "").trim();
   const tabLabel = sessionAlias || profile.name;
-  tab.title = buildTabTooltip(profile, sessionAlias);
+  // En sesiones privadas, el tooltip indica el modo efímero.
+  const baseTooltip = buildTabTooltip(profile, sessionAlias);
+  tab.title = isPrivate
+    ? `${baseTooltip} — ${t("private_session.tab_tooltip")}`
+    : baseTooltip;
   if (sessionAlias) tab.classList.add("has-alias");
+  if (isPrivate) tab.classList.add("is-private");
   tab.draggable = true;
   const sftpBtn = sftp ? `<button class="tab-sftp" title="Panel SFTP">⇅</button>` : "";
   const tunnelBtn = sftp ? `<button class="tab-tunnels" title="Túneles SSH">⇄</button>` : "";
+  // Badge de sesión privada: escudo SVG monocromo con currentColor.
+  const privateBadge = isPrivate ? `<span class="tab-private-badge" title="${escHtml(t("private_session.tab_tooltip"))}">
+    <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 2 L13.5 4.5 L13.5 8.5 C13.5 11.5 11 13.5 8 14.5 C5 13.5 2.5 11.5 2.5 8.5 L2.5 4.5 Z"/>
+    </svg>
+  </span>` : "";
   tab.innerHTML = `
     <span class="tab-dot ${initialStatus}"></span>
     <span class="tab-name">${escHtml(tabLabel)}</span>
+    ${privateBadge}
     ${sftpBtn}
     ${tunnelBtn}
     <button class="tab-close" title="Cerrar">✕</button>`;
@@ -7345,6 +7449,9 @@ async function reconnectSshInPlace(s) {
       profileId: profile.id,
       password:   creds.password   || null,
       passphrase: creds.passphrase || null,
+      // Conserva el modo privado al reconectar: no reactivar la grabación de
+      // sesión aunque el perfil la tenga habilitada.
+      sessionLogOverride: s.private ? false : null,
     });
     updateTabStatus(oldSessionId, "connecting");
   } catch (err) {
@@ -8135,7 +8242,7 @@ function handleTerminalLink(_event, uri) {
 }
 
 function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
-  const { sftp = true } = opts;
+  const { sftp = true, private: isPrivate = false } = opts;
 
   // Construir pane y meterlo en #terminals-container para que xterm pueda medir.
   // renderView() lo reubicará según la selección actual.
@@ -8154,7 +8261,7 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   document.getElementById("terminals-container").appendChild(pane);
 
   // Crear pestaña
-  createTab(sessionId, profile, initialStatus, { sftp });
+  createTab(sessionId, profile, initialStatus, { sftp, private: isPrivate });
 
   const terminal = new Terminal({
     cursorBlink: prefs.cursorBlink,
@@ -8202,6 +8309,9 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     tunnelPanel: null,
     connectionLogs: [],
     connectionLogOpen: false,
+    // Sesión privada/efímera: suprime toda persistencia (recientes, actividad,
+    // borrador, session_log). Se establece en createTerminalTab y createTab.
+    private: isPrivate,
   };
   sessions.set(sessionId, sessionObj);
   wirePaneFocusOnClick(pane, sessionId);
@@ -8342,7 +8452,8 @@ function appendConnectionLog(sessionId, rawEntry) {
     s.connectionLogs.push(entry);
   }
   if (s.connectionLogs.length > 120) s.connectionLogs.splice(0, s.connectionLogs.length - 120);
-  if (entry.status !== "info") {
+  // En sesiones privadas no se persiste actividad con detalle del host/perfil.
+  if (entry.status !== "info" && !s.private) {
     const profile = s.profileId ? profiles.find((p) => p.id === s.profileId) : null;
     recordActivity({
       kind: "connection",
@@ -8435,7 +8546,7 @@ async function registerSshListeners(sessionId, terminal) {
     document
       .querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`)
       ?.classList.remove("has-unread-disconnect");
-    if (s?.profileId) recordRecentConnection(s.profileId);
+    if (s?.profileId && !s.private) recordRecentConnection(s.profileId);
     renderConnectionList();
     s?.fitAddon.fit();
     notifyResize(sessionId, terminal);
@@ -8544,9 +8655,13 @@ function sessionHasActiveTransfers(s) {
 async function confirmCloseSession(sessionId) {
   const s = sessions.get(sessionId);
   if (!s) return true;
+  // Las consolas locales siempre tienen status "connected" mientras el PTY vive,
+  // pero no son conexiones remotas: su confirmación propia (aviso de proceso
+  // activo) se gestiona en closeSession justo antes de ejecutar _closeOverride.
+  if (s._closeOverride) return true;
   if (!isSessionLive(s) && !sessionHasActiveTransfers(s)) return true;
   const profile = profiles.find((p) => p.id === s.profileId);
-  const name = profile?.name || s._closeOverride ? "consola local" : (s.type ? s.type.toUpperCase() : "sesión");
+  const name = profile?.name || (s.type ? s.type.toUpperCase() : "sesión");
   const transfers = sessionHasActiveTransfers(s)
     ? "\n\nHay transferencias SFTP en curso que se cancelarán."
     : "";
@@ -8570,8 +8685,23 @@ async function closeSession(sessionId, opts = {}) {
     invoke("sftp_disconnect", { sessionId: s.sftp.sftpSessionId }).catch(() => {});
   }
 
-  // Shell local: usa su propio manejador de cierre
+  // Shell local: usa su propio manejador de cierre.
+  // Antes de cerrar, comprobar si hay un proceso hijo activo (skipConfirm=true
+  // en cierres en lote como "cerrar todas" omite esta comprobación).
   if (s._closeOverride) {
+    if (!skipConfirm) {
+      let hasJob = false;
+      try { hasJob = await invoke("local_shell_has_job", { sessionId }); } catch {}
+      if (hasJob) {
+        const ok = await confirmThemed({
+          title: t("close_local_shell.title"),
+          message: t("close_local_shell.message"),
+          submitLabel: t("close_local_shell.submit"),
+          danger: true,
+        });
+        if (!ok) return;
+      }
+    }
     await s._closeOverride();
     removeTab(sessionId);
     renderConnectionList();
@@ -11438,14 +11568,19 @@ function appendSftpActivity(panel, {
   `;
   log.prepend(row);
   while (log.children.length > 100) log.lastElementChild?.remove();
-  recordActivity({
-    kind: "sftp",
-    status: status === "ok" || status === "renamed" || status === "overwritten" ? "ok" : status,
-    title: label,
-    detail,
-    actionLabel,
-    action: action || (() => revealSftpActivity(panel)),
-  });
+  // En sesiones privadas no se persiste actividad SFTP en el centro de actividad.
+  const _sftpSessionId = panel.closest("[data-session]")?.dataset?.session;
+  const _sftpSession = _sftpSessionId ? sessions.get(_sftpSessionId) : null;
+  if (!_sftpSession?.private) {
+    recordActivity({
+      kind: "sftp",
+      status: status === "ok" || status === "renamed" || status === "overwritten" ? "ok" : status,
+      title: label,
+      detail,
+      actionLabel,
+      action: action || (() => revealSftpActivity(panel)),
+    });
+  }
   updateTransfersVisibility(panel);
 }
 
@@ -14122,6 +14257,7 @@ function bindUIEvents() {
   // Controles de ventana (CSD): min / max / close + detección de plataforma
   initWindowControls();
   initCredentialModalEvents();
+  initCommandEditor();
 
   // ── Modal de preferencias ────────────────────────────────────
   document.getElementById("btn-prefs-close")
@@ -14732,6 +14868,7 @@ const SHORTCUT_ACTIONS = {
   sftp_toggle_sudo:  { default: null,             run: () => toggleActiveSftpElevated() },
   toggle_zen_mode:   { default: "F11",            run: () => toggleZenMode() },
   disconnect_all:    { default: "",               run: () => disconnectAll() },
+  open_command_editor: { default: "Ctrl+Shift+E", run: () => openCommandEditor() },
 };
 
 const SHORTCUT_IDS = Object.keys(SHORTCUT_ACTIONS);
@@ -15100,10 +15237,32 @@ function adjustTerminalFontSize(delta) {
   const next = delta === "reset"
     ? DEFAULT_PREFS.fontSize
     : Math.max(MIN, Math.min(MAX, prefs.fontSize + delta));
-  if (next === prefs.fontSize) return;
-  prefs.fontSize = next;
-  savePrefs();
-  applyPrefsToAllTerminals();
+  if (next !== prefs.fontSize) {
+    prefs.fontSize = next;
+    savePrefs();
+    applyPrefsToAllTerminals();
+  }
+  // Mostrar siempre el indicador (también al tocar los límites o resetear),
+  // para que el usuario tenga referencia del tamaño actual y pueda volver al
+  // 100 % (= tamaño por defecto, restablecible con el atajo de reset).
+  showFontZoomIndicator();
+}
+
+let _fontZoomIndicatorTimer = null;
+/** Indicador efímero con el tamaño de fuente actual del terminal en px y %. */
+function showFontZoomIndicator() {
+  let el = document.getElementById("font-zoom-indicator");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "font-zoom-indicator";
+    document.body.appendChild(el);
+  }
+  const pct = Math.round((prefs.fontSize / DEFAULT_PREFS.fontSize) * 100);
+  el.textContent = `${prefs.fontSize} px · ${pct}%`;
+  el.classList.toggle("at-default", prefs.fontSize === DEFAULT_PREFS.fontSize);
+  el.classList.add("visible");
+  clearTimeout(_fontZoomIndicatorTimer);
+  _fontZoomIndicatorTimer = setTimeout(() => el.classList.remove("visible"), 1200);
 }
 
 function buildTerminalSearchBar(sessionId) {
@@ -15207,23 +15366,32 @@ async function pasteIntoActiveTerminal() {
 async function pasteSessionPasswordIntoActiveTerminal() {
   if (!activeSessionId) return;
   const s = sessions.get(activeSessionId);
-  if (!s || s.status === "closed") return;
+  if (!s) return;
   if (s._closeOverride || s.type === "rdp" || !s.profileId) {
-    toast("Ctrl+P solo funciona en sesiones SSH con perfil", "warning");
+    toast(t("toast.paste_password_ssh_only"), "warning");
+    return;
+  }
+  if (s.status !== "connected") {
+    toast(t("toast.paste_password_not_connected"), "warning");
+    return;
+  }
+  if (isBroadcastOn() && viewSelection.includes(activeSessionId) && viewSelection.length > 1) {
+    toast(t("toast.paste_password_broadcast_blocked"), "warning");
     return;
   }
   let password;
   try {
     password = await invoke("get_profile_password", { profileId: s.profileId });
   } catch (err) {
-    toast(`No se pudo leer la contraseña: ${err}`, "error");
+    toast(t("toast.paste_password_read_error", { err: String(err) }), "error");
     return;
   }
   if (!password) {
-    toast("El perfil no tiene una contraseña guardada", "warning");
+    toast(t("toast.paste_password_no_password"), "warning");
     return;
   }
   const data = Array.from(new TextEncoder().encode(password));
+  password = null;
   invoke("ssh_send_input", { sessionId: activeSessionId, data }).catch(() => {});
 }
 
@@ -15241,6 +15409,148 @@ function clearActiveTerminal() {
   if (!s?.terminal) return;
   s.terminal.clear();
   s.terminal.focus();
+}
+
+// ── Editor multilínea (Ctrl+Shift+E) ──────────────────────────────────────
+
+let _cmdEditorDraftTimer = null;
+
+/** Devuelve la clave de borrador para la sesión: profileId o "local". */
+function _cmdEditorDraftKey(session) {
+  if (!session) return null;
+  // Las sesiones privadas no persisten el borrador de comando.
+  if (session.private) return null;
+  if (session.type === "ssh" && session.profileId) return session.profileId;
+  if (session.type === "local") return "local";
+  return null;
+}
+
+/**
+ * Abre el editor de comandos multilínea para la sesión activa.
+ * Si la sesión activa es RDP o no hay sesión, muestra un aviso y no abre.
+ */
+function openCommandEditor() {
+  const overlay = document.getElementById("cmd-editor-overlay");
+  if (!overlay) return;
+
+  if (!activeSessionId) {
+    toast(t("cmd_editor.toast_no_session"), "warning");
+    return;
+  }
+  const session = sessions.get(activeSessionId);
+  if (!session || session.type === "rdp") {
+    toast(t("cmd_editor.toast_rdp"), "warning");
+    return;
+  }
+  if (session.status === "closed") {
+    toast(t("cmd_editor.toast_no_session"), "warning");
+    return;
+  }
+
+  // Precarga borrador guardado
+  const draftKey = _cmdEditorDraftKey(session);
+  const textarea = document.getElementById("cmd-editor-textarea");
+  if (textarea) {
+    const saved = draftKey && prefs.commandDrafts?.[draftKey];
+    textarea.value = saved || "";
+  }
+
+  overlay.classList.remove("hidden");
+  textarea?.focus();
+}
+
+/** Cierra el editor sin insertar. Guarda el borrador si hay texto. */
+function closeCommandEditor(clearDraft = false) {
+  const overlay = document.getElementById("cmd-editor-overlay");
+  if (!overlay) return;
+
+  // Guarda o limpia borrador
+  const session = activeSessionId ? sessions.get(activeSessionId) : null;
+  const draftKey = _cmdEditorDraftKey(session);
+  const textarea = document.getElementById("cmd-editor-textarea");
+  const text = textarea?.value ?? "";
+
+  if (draftKey) {
+    if (clearDraft || text.trim() === "") {
+      if (prefs.commandDrafts) delete prefs.commandDrafts[draftKey];
+    } else {
+      if (!prefs.commandDrafts) prefs.commandDrafts = {};
+      prefs.commandDrafts[draftKey] = text;
+    }
+    savePrefs();
+  }
+
+  overlay.classList.add("hidden");
+
+  // Devuelve el foco al terminal activo
+  if (activeSessionId) {
+    const s = sessions.get(activeSessionId);
+    s?.terminal?.focus();
+  }
+}
+
+/** Inserta el texto del textarea en la sesión activa y cierra el editor. */
+function insertCommandEditor() {
+  const textarea = document.getElementById("cmd-editor-textarea");
+  const text = textarea?.value ?? "";
+  if (!text) { closeCommandEditor(false); return; }
+
+  if (!activeSessionId) {
+    toast(t("cmd_editor.toast_no_session"), "warning");
+    return;
+  }
+  const session = sessions.get(activeSessionId);
+  if (!session || session.status === "closed") {
+    toast(t("cmd_editor.toast_no_session"), "warning");
+    return;
+  }
+
+  sendTerminalInput(session, text);
+  closeCommandEditor(true); // limpia borrador tras insertar
+}
+
+/** Inicializa los listeners del overlay del editor de comandos. */
+function initCommandEditor() {
+  const overlay  = document.getElementById("cmd-editor-overlay");
+  const textarea = document.getElementById("cmd-editor-textarea");
+  const btnInsert = document.getElementById("cmd-editor-insert");
+  const btnCancel = document.getElementById("cmd-editor-cancel");
+  const btnClose  = document.getElementById("cmd-editor-close");
+  if (!overlay || !textarea) return;
+
+  // Ctrl+Enter = insertar
+  textarea.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      insertCommandEditor();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeCommandEditor(false);
+    }
+  });
+
+  // Debounce al escribir: guarda borrador 800 ms tras parar
+  textarea.addEventListener("input", () => {
+    clearTimeout(_cmdEditorDraftTimer);
+    _cmdEditorDraftTimer = setTimeout(() => {
+      const session = activeSessionId ? sessions.get(activeSessionId) : null;
+      const draftKey = _cmdEditorDraftKey(session);
+      if (draftKey) {
+        if (!prefs.commandDrafts) prefs.commandDrafts = {};
+        prefs.commandDrafts[draftKey] = textarea.value;
+        savePrefs();
+      }
+    }, 800);
+  });
+
+  btnInsert?.addEventListener("click", () => insertCommandEditor());
+  btnCancel?.addEventListener("click", () => closeCommandEditor(false));
+  btnClose?.addEventListener("click",  () => closeCommandEditor(false));
+
+  // Clic en el backdrop cierra sin insertar
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeCommandEditor(false);
+  });
 }
 
 /**
@@ -15395,7 +15705,12 @@ async function initWindowControls() {
     // Así el estado del plugin window-state ya está aplicado cuando la ventana
     // se hace visible y evitamos un salto visible tras el primer paint.
     await restoreWindowStateNow(win);
-    revealWindowAfterPaint(win);
+    // Si la app fue lanzada por el autostart del SO con --minimized, no
+    // mostramos la ventana: queda oculta y el tray sigue operativo.
+    const launchedMinimized = await invoke("is_launched_minimized").catch(() => false);
+    if (!launchedMinimized) {
+      revealWindowAfterPaint(win);
+    }
     initWindowResizeHandles(win);
   } catch {
     return; // fuera de Tauri (p. ej. vite dev puro): no hay ventana

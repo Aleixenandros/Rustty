@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.21.0"
+version = "1.22.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -74,3 +74,7 @@ serde_yaml = "0.9"
 blowfish = "0.9"
 md-5 = "0.10"
 hex = "0.4"
+# Arranque automático con el sistema (opt-in). Se usa el crate `auto-launch`
+# directamente para construir la entrada de autostart con o sin `--minimized`
+# y para consultar su estado, sin depender de un plugin adicional.
+auto-launch = "0.5"

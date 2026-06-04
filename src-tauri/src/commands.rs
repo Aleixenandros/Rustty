@@ -17,7 +17,7 @@ use crate::sync::{
     pack_state, resolve_sync_folder, unpack_state, OAuthFinishResult, OAuthProvider,
     OAuthStartResult, SnapshotEntry, SyncBackendKind, SyncConfig, SyncManager, SyncState,
 };
-use crate::DataDir;
+use crate::{DataDir, LaunchMinimized};
 
 // ─── Comandos de aplicación ─────────────────────────────────────────────────
 
@@ -120,6 +120,9 @@ pub fn ssh_connect(
     passphrase: Option<String>,
     session_id: Option<String>,
     ask_answers: Option<std::collections::HashMap<String, String>>,
+    // Cuando es Some(false) desactiva session_log aunque el perfil lo tenga activo.
+    // Usado por sesiones privadas/efímeras desde el frontend.
+    session_log_override: Option<bool>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
@@ -127,6 +130,11 @@ pub fn ssh_connect(
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
     credentials::substitute_connection_fields(&mut profile, &cred_state);
+
+    // Aplicar override de session_log si se solicita (sesión privada → false).
+    if let Some(log_val) = session_log_override {
+        profile.session_log = log_val;
+    }
 
     let resolved_password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
 
@@ -459,6 +467,18 @@ pub fn local_shell_close(
     session_id: String,
 ) -> Result<(), String> {
     shell_state.close(&session_id)
+}
+
+/// Comprueba si el shell local de la sesión tiene procesos hijos activos
+/// (p. ej. `vim`, `top`, una compilación en curso).
+/// Devuelve `true` si hay al menos un hijo vivo; `false` si la consola está
+/// idle o si no se puede determinar (Windows o `pgrep` no disponible).
+#[tauri::command]
+pub fn local_shell_has_job(
+    shell_state: State<'_, LocalShellManager>,
+    session_id: String,
+) -> bool {
+    shell_state.has_running_job(&session_id)
 }
 
 // ─── Comandos SFTP ────────────────────────────────────────────────────────────
@@ -1652,4 +1672,96 @@ pub fn master_cred_delete(
     force: bool,
 ) -> Result<(), String> {
     credentials::cred_delete(&store, &data_dir.0, id, force).map_err(|e| e.to_string())
+}
+
+// ─── Autostart ────────────────────────────────────────────────────────────────
+
+/// Activa o desactiva el arranque automático con el sistema.
+///
+/// Si `enable` es `true` y `minimized` es `true`, la entrada del SO incluye
+/// el argumento `--minimized` para que la app arranque en el tray sin mostrar
+/// la ventana. Si `enable` es `false`, elimina la entrada del SO.
+///
+/// Usa `auto_launch::AutoLaunchBuilder` directamente para poder construir la
+/// entrada con o sin `--minimized` en tiempo de ejecución. Es el **único**
+/// mecanismo de autostart: tanto el alta/baja (`autostart_apply`) como la
+/// consulta de estado (`autostart_is_enabled`) comparten este builder, así que
+/// el toggle del frontend nunca se desincroniza de la entrada real del SO.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn autostart_handle(minimized: bool) -> Result<auto_launch::AutoLaunch, String> {
+    use auto_launch::AutoLaunchBuilder;
+
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "linux")]
+    let app_path = {
+        // En AppImage preferimos registrar el AppImage en lugar del binario interno.
+        std::env::var("APPIMAGE").unwrap_or_else(|_| exe.display().to_string())
+    };
+    #[cfg(not(target_os = "linux"))]
+    let app_path = exe.display().to_string();
+
+    let mut builder = AutoLaunchBuilder::new();
+    builder.set_app_name("Rustty");
+    builder.set_app_path(&app_path);
+
+    #[cfg(target_os = "macos")]
+    {
+        // macOS: usar Launch Agent (plist en ~/Library/LaunchAgents/)
+        builder.set_use_launch_agent(true);
+        // Si el exe está dentro de un .app, registrar el bundle
+        let path_str = exe.canonicalize()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| exe.display().to_string());
+        let parts: Vec<&str> = path_str.split(".app/").collect();
+        if parts.len() == 2 {
+            builder.set_app_path(&format!("{}.app", parts[0]));
+        }
+    }
+
+    if minimized {
+        builder.set_args(&["--minimized"]);
+    }
+
+    builder.build().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn autostart_apply(enable: bool, minimized: bool) -> Result<(), String> {
+    let al = autostart_handle(enable && minimized)?;
+    if enable {
+        al.enable().map_err(|e| e.to_string())
+    } else {
+        al.disable().map_err(|e| e.to_string())
+    }
+}
+
+/// Devuelve `true` si la entrada de autostart del SO está activa. Los args
+/// (`--minimized`) no afectan a la detección, que se hace por `app_name`.
+#[tauri::command]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn autostart_is_enabled() -> Result<bool, String> {
+    autostart_handle(false)?.is_enabled().map_err(|e| e.to_string())
+}
+
+/// Versión no-op para plataformas móviles (Android/iOS): el autostart no aplica.
+#[tauri::command]
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn autostart_apply(_enable: bool, _minimized: bool) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn autostart_is_enabled() -> Result<bool, String> {
+    Ok(false)
+}
+
+/// Devuelve `true` si la app fue lanzada con el argumento `--minimized`
+/// (es decir, por el autostart del SO con la opción "arrancar minimizado").
+/// El frontend lo consulta al arrancar para ocultar la ventana al tray.
+#[tauri::command]
+pub fn is_launched_minimized(state: State<LaunchMinimized>) -> bool {
+    state.0
 }

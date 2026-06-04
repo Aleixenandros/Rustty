@@ -25,6 +25,11 @@ use ssh_manager::SshManager;
 use sync::SyncManager;
 use tauri::{Manager, WindowEvent};
 
+/// Señal de arranque minimizado: la app fue lanzada por el autostart del SO
+/// con el argumento `--minimized`. El frontend consulta este estado para decidir
+/// si ocultar la ventana al tray en lugar de mostrarla al frente.
+pub struct LaunchMinimized(pub bool);
+
 /// Directorio de datos efectivo de la aplicación.
 ///
 /// Habitualmente coincide con `app.path().app_data_dir()` (en Linux:
@@ -65,12 +70,16 @@ pub fn resolve_data_dir() -> PathBuf {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Detectar si la app fue lanzada por el autostart del SO con --minimized
+    // ANTES de construir el Builder para que el estado esté disponible en setup().
+    let launched_minimized = std::env::args().any(|a| a == "--minimized");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .setup(|app| {
+        .setup(move |app| {
             // Si es la build portable de Windows, los datos viajan junto al
             // .exe en `.conf/com.rustty.app/`. Si no, ruta estándar (identifier).
             let data_dir = resolve_data_dir();
@@ -86,6 +95,9 @@ pub fn run() {
             app.manage(CredentialStore::new(data_dir.clone()));
             app.manage(SyncManager::new(data_dir.clone()));
             app.manage(DataDir(data_dir));
+            // Señal de arranque minimizado: el frontend la consulta al inicio
+            // para decidir si ocultar la ventana en lugar de mostrarla.
+            app.manage(LaunchMinimized(launched_minimized));
             app_tray::setup(app);
 
             Ok(())
@@ -101,6 +113,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // ── Aplicación
             commands::close_app,
+            commands::autostart_apply,
+            commands::autostart_is_enabled,
+            commands::is_launched_minimized,
             app_tray::tray_update_quick_launcher,
             // ── Perfiles de conexión
             commands::get_profiles,
@@ -142,6 +157,7 @@ pub fn run() {
             commands::local_shell_send_input,
             commands::local_shell_resize,
             commands::local_shell_close,
+            commands::local_shell_has_job,
             // ── SFTP
             commands::sftp_connect,
             commands::sftp_disconnect,
