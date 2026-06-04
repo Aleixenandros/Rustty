@@ -72,7 +72,7 @@ tauri-plugin-clipboard-manager = "2"
 # por eso este flujo vive en el backend.
 serde_yaml = "0.9"
 blowfish = "0.9"
-md-5 = "0.10"
+md-5 = "0.11"
 hex = "0.4"
 # Arranque automático con el sistema (opt-in). Se usa el crate `auto-launch`
 # directamente para construir la entrada de autostart con o sin `--minimized`
