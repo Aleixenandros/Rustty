@@ -12,8 +12,7 @@
 
 use std::collections::HashMap;
 
-use blowfish::cipher::generic_array::GenericArray;
-use blowfish::cipher::{BlockDecrypt, KeyInit};
+use blowfish::cipher::{Block, BlockCipherDecrypt, KeyInit};
 use blowfish::Blowfish;
 use md5::{Digest, Md5};
 use serde::Serialize;
@@ -201,7 +200,8 @@ pub fn asbru_decrypt(blob: String) -> Result<String, String> {
     let mut out: Vec<u8> = Vec::with_capacity(ct.len());
     let mut prev: [u8; 8] = iv.try_into().unwrap();
     for chunk in ct.chunks(8) {
-        let mut block = GenericArray::clone_from_slice(chunk);
+        let mut block = Block::<Blowfish>::try_from(chunk)
+            .map_err(|_| "bloque de tamaño inválido".to_string())?;
         cipher.decrypt_block(&mut block);
         let mut plain = [0u8; 8];
         for i in 0..8 {
