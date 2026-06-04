@@ -5,6 +5,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { check as checkUpdate } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { ask, save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { readText as readClipboardText, writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import * as sync from "./sync.js";
@@ -2244,7 +2246,92 @@ function setAboutUpdateStatus(text, type = "") {
   el.textContent = text;
 }
 
+/**
+ * El updater de Tauri solo se usa para autoinstalar en Windows y macOS, donde el
+ * formato de paquete es único y la actualización in-place es fiable. En Linux
+ * (deb/rpm/AppImage/Flatpak/Arch) el formato es ambiguo, así que se mantiene el
+ * aviso clásico que abre la página de releases.
+ */
+function platformSupportsUpdater() {
+  const ua = navigator.userAgent || "";
+  return /Windows/.test(ua) || /Mac OS X|Macintosh/.test(ua);
+}
+
 async function checkForUpdates({ interactive = true } = {}) {
+  if (platformSupportsUpdater()) {
+    const handled = await checkForUpdatesViaUpdater({ interactive });
+    if (handled) return;
+    // Si el updater no estaba disponible (p. ej. ejecutando fuera del bundle),
+    // caemos al aviso clásico por la API de GitHub.
+  }
+  await checkForUpdatesViaGithub({ interactive });
+}
+
+/**
+ * Comprueba e instala una actualización con el updater de Tauri.
+ * @returns {Promise<boolean>} true si gestionó el flujo (con o sin actualización);
+ *   false si el updater no está disponible y conviene usar el fallback.
+ */
+async function checkForUpdatesViaUpdater({ interactive }) {
+  const btn = document.getElementById("btn-about-check-updates");
+  if (btn) btn.disabled = true;
+  if (interactive) setAboutUpdateStatus(t("prefs_about.checking_updates"));
+  try {
+    const update = await checkUpdate();
+    if (!update) {
+      if (interactive) {
+        recordActivity({ kind: "update", status: "ok", title: t("prefs_about.update_current") });
+        setAboutUpdateStatus(t("prefs_about.update_current"), "success");
+      }
+      return true;
+    }
+
+    const version = `v${normalizeVersion(update.version) || update.version}`;
+    recordActivity({
+      kind: "update",
+      status: "warning",
+      title: t("prefs_about.update_available", { version }),
+    });
+    setAboutUpdateStatus(t("prefs_about.update_available", { version }), "warning");
+
+    const doInstall = await ask(
+      t("prefs_about.update_install_prompt", { version }),
+      { title: t("prefs_about.check_updates"), kind: "info" }
+    );
+    if (!doInstall) {
+      try { await update.close(); } catch {}
+      return true;
+    }
+
+    let total = 0;
+    let received = 0;
+    await update.downloadAndInstall((event) => {
+      if (event.event === "Started") {
+        total = event.data.contentLength || 0;
+        setAboutUpdateStatus(t("prefs_about.update_downloading", { pct: 0 }), "warning");
+      } else if (event.event === "Progress") {
+        received += event.data.chunkLength || 0;
+        const pct = total > 0 ? Math.min(100, Math.round((received / total) * 100)) : 0;
+        setAboutUpdateStatus(t("prefs_about.update_downloading", { pct }), "warning");
+      } else if (event.event === "Finished") {
+        setAboutUpdateStatus(t("prefs_about.update_installing"), "warning");
+      }
+    });
+
+    setAboutUpdateStatus(t("prefs_about.update_restarting"), "success");
+    await relaunch();
+    return true;
+  } catch (err) {
+    console.warn("[updates] updater failed", err);
+    // El updater no está disponible (ejecución fuera del bundle, plugin no
+    // inicializado, etc.): deja que el caller use el fallback de GitHub.
+    return false;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function checkForUpdatesViaGithub({ interactive = true } = {}) {
   const btn = document.getElementById("btn-about-check-updates");
   if (btn) btn.disabled = true;
   if (interactive) setAboutUpdateStatus(t("prefs_about.checking_updates"));

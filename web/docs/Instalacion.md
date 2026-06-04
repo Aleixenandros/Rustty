@@ -63,11 +63,20 @@ Requiere el runtime `org.freedesktop.Platform 24.08`; si no lo tienes lo descarg
 
 En Windows 10 22H2 y Windows 11 el runtime **Microsoft Edge WebView2** viene preinstalado. Si tu sistema no lo tiene, el instalador MSI o NSIS lo descargará automáticamente.
 
-- **MSI** (`Rustty_<version>_x64.msi`): instalador tradicional, doble clic y seguir.
+- **MSI** (`Rustty_<version>_x64.msi`): instalador tradicional, doble clic y seguir. **Recomendado para actualizar**: al reinstalar sobre una versión anterior hace la actualización *in-place*, sin pasos extra.
 - **NSIS** (`Rustty_<version>_x64-setup.exe`): instalador alternativo, más ligero.
 - **Portable** (`Rustty_<version>_x64-portable.exe`): ejecutable único, ideal para USB o equipos bloqueados.
 
 > Los binarios de Windows aún **no están firmados**. Algunos antivirus pueden marcar un falso positivo. Puedes verificar el `sha256` publicado junto al release para confirmar que el fichero no ha sido alterado.
+
+### Actualizar Rustty
+
+La forma más cómoda es la **actualización desde la propia app**: en Windows y macOS, Rustty puede descargar e instalar la nueva versión y reiniciarse solo. Compruébalo en **Preferencias → Acerca de → Comprobar actualizaciones** (o activa **Comprobar al iniciar**).
+
+Si actualizas **manualmente** con un instalador:
+
+- Con el **MSI**, basta con ejecutar el de la versión nueva: actualiza encima de la anterior.
+- Con el **NSIS** (`.exe`), al detectar una instalación previa verás la página *"Already Installed"* con dos opciones; **"Uninstall before installing"** es la recomendada y conserva tus datos (perfiles, preferencias y notas viven en `%APPDATA%\com.rustty.app`, no se borran al desinstalar).
 
 ## macOS (Apple Silicon)
 

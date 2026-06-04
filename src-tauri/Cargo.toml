@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.23.1"
+version = "1.24.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -78,3 +78,5 @@ hex = "0.4"
 # directamente para construir la entrada de autostart con o sin `--minimized`
 # y para consultar su estado, sin depender de un plugin adicional.
 auto-launch = "0.5"
+tauri-plugin-updater = "2.10.1"
+tauri-plugin-process = "2.3.1"

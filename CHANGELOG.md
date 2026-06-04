@@ -2,6 +2,25 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.24.0] - 2026-06-05
+
+### Añadido
+
+- **Actualización automática (Windows y macOS)**: Rustty puede descargar e
+  instalar la nueva versión y reiniciarse desde dentro de la app, sin volver a
+  ejecutar el instalador. Disponible en **Preferencias → Acerca de → Comprobar
+  actualizaciones** (y al iniciar, si está activado). En Linux se mantiene el
+  aviso que abre la página de descargas.
+
+### Cambiado
+
+- **Actualizar en Windows**: el instalador **`.msi`** queda recomendado para
+  actualizar (hace la actualización in-place); el `.exe` (NSIS) sigue mostrando
+  la página "Already Installed", donde "Uninstall before installing" es la opción
+  segura y conserva tus datos. Documentado en la guía de instalación.
+- Dependencias del importador de Ásbrú actualizadas (`md-5` 0.11, `blowfish`
+  0.10) con la migración del cifrado Blowfish-CBC a la API cipher 0.5.
+
 ## [1.23.1] - 2026-06-05
 
 ### Corregido

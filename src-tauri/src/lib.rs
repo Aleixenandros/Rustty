@@ -80,8 +80,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(move |app| {
+            // Updater de Tauri (solo escritorio): permite actualizar la app
+            // desde dentro sin re-lanzar el instalador. Las actualizaciones se
+            // verifican con la clave pública de `tauri.conf.json`.
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
             // Si es la build portable de Windows, los datos viajan junto al
             // .exe en `.conf/com.rustty.app/`. Si no, ruta estándar (identifier).
             let data_dir = resolve_data_dir();
