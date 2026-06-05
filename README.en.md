@@ -40,23 +40,23 @@
 
 Welcome screen with the system light theme:
 
-![Welcome screen](docs/img/Captura1.png)
+![Welcome screen](images/Captura1.png)
 
 Several sessions open in tabs and the connection panel context menu (dark theme):
 
-![Tabs and context menu](docs/img/Captura2.png)
+![Tabs and context menu](images/Captura2.png)
 
 Grid split view: four panels in the same tab with the *layout* selector in the top-right corner:
 
-![Grid split view](docs/img/Captura5.png)
+![Grid split view](images/Captura5.png)
 
 Preferences → **Appearance**: global interface theme and an independent terminal theme (with the "Same as interface" *swatch* for inheritance):
 
-![Theme selector](docs/img/Captura4.png)
+![Theme selector](images/Captura4.png)
 
 Preferences → **Language**: interface available in Spanish, English, French and Portuguese:
 
-![Language selector](docs/img/Captura3.png)
+![Language selector](images/Captura3.png)
 
 ## Keyboard shortcuts
 

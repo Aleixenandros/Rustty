@@ -40,23 +40,23 @@
 
 Pantalla de bienvenida con el tema claro del sistema:
 
-![Pantalla de bienvenida](docs/img/Captura1.png)
+![Pantalla de bienvenida](images/Captura1.png)
 
 Varias sesiones abiertas en pestañas y menú contextual del panel de conexiones (tema oscuro):
 
-![Pestañas y menú contextual](docs/img/Captura2.png)
+![Pestañas y menú contextual](images/Captura2.png)
 
 Vista dividida en rejilla: cuatro paneles en la misma pestaña con el selector de *layout* en la esquina superior derecha:
 
-![Vista dividida en rejilla](docs/img/Captura5.png)
+![Vista dividida en rejilla](images/Captura5.png)
 
 Preferencias → **Apariencia**: tema global de la interfaz y tema independiente del terminal (con el *swatch* "Igual que la interfaz" para herencia):
 
-![Selector de temas](docs/img/Captura4.png)
+![Selector de temas](images/Captura4.png)
 
 Preferencias → **Idioma**: interfaz disponible en español, inglés, francés y portugués:
 
-![Selector de idioma](docs/img/Captura3.png)
+![Selector de idioma](images/Captura3.png)
 
 ## Atajos de teclado
 
