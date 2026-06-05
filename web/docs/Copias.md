@@ -44,7 +44,7 @@ Cuando configuras la sincronización en un **equipo recién instalado**, su conf
 
 En **Preferencias → Copias de seguridad** hay un desplegable **Restaurar copia** con todos los snapshots disponibles en el backend remoto, ordenados por fecha. Al elegir uno y pulsar **Restaurar**, Rustty descarga el blob, lo descifra con tu passphrase y aplica el estado al frontend con la misma rutina que **Importar fichero**.
 
-La acción pide confirmación porque sustituye perfiles, preferencias, temas y atajos por los de la copia seleccionada.
+La acción pide confirmación porque sustituye perfiles, preferencias, temas, notas y atajos por los de la copia seleccionada.
 
 ## Proveedores disponibles
 

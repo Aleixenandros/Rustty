@@ -26,6 +26,7 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl+Alt+V`   | Pegar en el terminal                                |
 | `Ctrl+P`       | Pegar la contraseña del perfil activo               |
 | `Ctrl+Shift+E` | Abrir el editor multilínea de comandos              |
+| `Ctrl+Shift+M` | Abrir el editor de notas de la conexión activa      |
 | `Ctrl+F`       | Buscar dentro del buffer del terminal               |
 | `Ctrl++`       | Aumentar tamaño de fuente                           |
 | `Ctrl+-`       | Disminuir tamaño de fuente                          |
@@ -54,7 +55,7 @@ Al aplicar un preset Rustty pide confirmación y sustituye el mapa actual; los a
 
 La cabecera de la barra lateral tiene dos iconos junto al logo:
 
-- **🔍 Lupa** — abre un popover compacto con solo el cuadro de búsqueda; filtra los perfiles por nombre, host, usuario o grupo y oculta las carpetas vacías mientras escribes.
+- **🔍 Lupa** — abre un popover compacto con solo el cuadro de búsqueda; filtra los perfiles por nombre, host, usuario, grupo y también por el título, las etiquetas o el contenido de su nota, y oculta las carpetas vacías mientras escribes.
 - **≡ Filtros** — abre el popover completo con switcher de workspace, modos de vista (workspace actual / todos / favoritos), toggles de vista compacta y carpetas primero, y el mismo buscador.
 
 `Ctrl+K` enfoca la búsqueda de forma global y se comporta exactamente como pulsar el icono 🔍: funciona desde inicio, desde una sesión SSH/RDP o desde un split activo. Si estás dentro de una sesión, Rustty abre la barra lateral si hace falta y te deja buscar por nombre, IP/host, usuario o grupo sin volver al dashboard.

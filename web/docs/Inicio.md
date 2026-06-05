@@ -17,16 +17,17 @@
 - Configurar opciones avanzadas SSH por perfil: **keep-alive**, **ProxyJump**, **agent forwarding**, **X11 forwarding** y compatibilidad opcional con cifrados / kex / MAC legacy.
 - Buscar dentro del buffer del terminal con `Ctrl+F` y filtrar perfiles desde la barra lateral.
 - Redactar comandos largos con el **editor multilínea** (`Ctrl+Shift+E`): una hoja flotante que guarda un borrador por perfil y, al confirmar, inserta el comando en la sesión activa.
+- Adjuntar una **nota Markdown por conexión (runbook)** con clic derecho: editor con previsualización en vivo, variables `${host}/${user}/…`, panel lateral junto a la sesión con casillas de tarea interactivas y sincronización. Ver la [guía de notas](?page=Notas).
 - Abrir una **sesión privada / efímera** ("Abrir en privado" desde el menú del perfil) que no deja rastro en recientes, actividad, borradores ni grabación de sesión.
 - **Iniciar Rustty con el sistema** y, opcionalmente, **arrancar minimizado** en la bandeja, desde **Preferencias → Sistema** (opt-in).
 - **Exportar el historial** de una sesión a un fichero de texto desde el menú contextual de la pestaña: vuelca todo el buffer del terminal (comandos introducidos y salida del servidor) en texto plano.
 - Renombrar pestañas con un **alias temporal** desde su menú contextual, sin modificar el perfil: útil al duplicar sesiones o abrir varias a la vez. Dejar el alias vacío restablece el nombre del perfil.
 - **Desconectar todo** de golpe desde el botón de emergencia del rail o un atajo configurable: cierra las sesiones SSH, SFTP, RDP y consolas locales, cierra los túneles y cancela las transferencias en curso, tras confirmar con el recuento afectado.
 - Guardar contraseñas y passphrases en el **keyring del sistema** (KWallet, GNOME Keyring, Keychain, Credential Store) o tomarlas de una base **KeePass** (`.kdbx`).
-- Crear **copias de seguridad cifradas** y sincronizar perfiles, carpetas, preferencias, temas, snippets y atajos con Google Drive, iCloud Drive, una carpeta local/NAS o WebDAV. La sincronización se dispara al iniciar y al detectar cambios; puedes restaurar snapshots anteriores cuando lo necesites.
+- Crear **copias de seguridad cifradas** y sincronizar perfiles, carpetas, preferencias, temas, notas, snippets y atajos con Google Drive, iCloud Drive, una carpeta local/NAS o WebDAV. La sincronización se dispara al iniciar y al detectar cambios; puedes restaurar snapshots anteriores cuando lo necesites.
 - Personalizar la apariencia con **temas base y variantes** (Catppuccin, Dracula, Nord, Solarized, Gruvbox, Tokyo Night…), tema del terminal independiente del de UI, fuente configurable, **ligaduras tipográficas opcionales** (FiraCode, JetBrains Mono…) y **atajos de teclado** editables con presets *Vim-like* y *Tmux-like*.
 - Lanzar **escritorio remoto RDP** mediante `xfreerdp`, `rdesktop`, `mstsc` o el cliente registrado del sistema, según plataforma.
-- Recordar tamaño y posición de la ventana y comprobar actualizaciones al iniciar si lo activas.
+- Recordar tamaño y posición de la ventana y **actualizarse automáticamente**: en Windows, macOS y AppImage de Linux, Rustty descarga e instala la nueva versión desde dentro de la app y se reinicia; en el resto de formatos de Linux avisa y abre la página de descargas.
 
 ## Primeros pasos
 

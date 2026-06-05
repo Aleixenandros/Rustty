@@ -4,7 +4,7 @@
 
 Solo si lo activas explícitamente. En **Preferencias → Copias de seguridad** puedes marcar **Contraseñas guardadas (cifradas E2E)**. Entonces Rustty lee las contraseñas/passphrases del keyring local, las cifra dentro de `rustty-sync.bin` con tu passphrase y las restaura en el keyring de otros equipos.
 
-La base KeePass desbloqueada nunca se sube. Si no marcas ese check, la sincronización solo incluye perfiles, carpetas, preferencias, temas, snippets y atajos.
+La base KeePass desbloqueada nunca se sube. Si no marcas ese check, la sincronización solo incluye perfiles, carpetas, preferencias, temas, notas, snippets y atajos.
 
 ## ¿Qué pasa si pierdo la passphrase de sincronización?
 
@@ -20,7 +20,7 @@ Sí, usando sus clientes de escritorio y seleccionando una carpeta local sincron
 
 ## ¿Cuándo sincroniza Rustty?
 
-Al arrancar la app y cada vez que detecta un cambio local relevante (debounce de 1,2 s para agrupar ráfagas). No hay intervalo periódico ni botón de "Auto-sync Sí/No": la sincronización es por evento.
+Al arrancar la app y cada vez que detecta un cambio local relevante (debounce de 1 minuto para agrupar ráfagas de renombrado/movimiento/borrado). No hay intervalo periódico ni botón de "Auto-sync Sí/No": la sincronización es por evento. Si pulsas **Sincronizar ahora**, se ejecuta al momento.
 
 ## ¿Rustty conserva versiones anteriores del backup remoto?
 
@@ -33,6 +33,16 @@ Sí. En **Preferencias → Copias de seguridad**, el desplegable **Restaurar cop
 ## ¿Por qué al abrir la app comprueba actualizaciones?
 
 La comprobación al iniciar es opcional. Puedes activarla o desactivarla en **Preferencias → Acerca de → Comprobar al iniciar**. La comprobación consulta la última release publicada en GitHub.
+
+## ¿Cómo se actualiza Rustty?
+
+En **Windows**, **macOS** y **AppImage de Linux**, Rustty se **actualiza desde dentro de la app**: descarga la nueva versión (verificando su firma), la instala y se reinicia. Lánzalo desde **Preferencias → Acerca de → Comprobar actualizaciones**, o deja activado **Comprobar al iniciar**.
+
+En el resto de formatos de Linux (`.deb`, `.rpm`, Flatpak, Arch) la actualización la hace tu **gestor de paquetes**; Rustty solo te avisa y abre la página de descargas. En Windows, si actualizas con instalador, el `.msi` actualiza in-place; con el `.exe` (NSIS) elige "Uninstall before installing" (conserva tus datos).
+
+## ¿Puedo añadir notas a una conexión?
+
+Sí. Haz clic derecho sobre una conexión → **Añadir nota** y escribe en Markdown, con previsualización en vivo. Cada nota se guarda como un archivo `.md`, se sincroniza y puede mostrarse como **panel runbook** junto a la sesión con casillas de tarea. Más detalles en la [guía de notas](?page=Notas).
 
 ## ¿iCloud necesita Client ID o secret?
 
@@ -68,7 +78,7 @@ Sí. En el panel **⇄** puedes marcar **Guardar** para persistir el túnel, o *
 
 ## ¿Por qué las transferencias SFTP iban tan lentas?
 
-Hasta la 1.2.x el camino SFTP era serie con buffer de 64 KiB, así que el techo de velocidad era `chunk_size / RTT` (~5 MB/s con 12-15 ms de latencia). Desde la **1.3.0** Rustty mantiene 16 peticiones SFTP simultáneamente en vuelo con chunks de 256 KiB, lo que satura el ancho de banda real de la conexión en lugar de quedarse limitado por la latencia.
+Hasta la 1.2.x el camino SFTP era serie con buffer de 64 KiB, así que el techo de velocidad era `chunk_size / RTT` (~5 MB/s con 12-15 ms de latencia). Desde la **1.3.0** Rustty mantiene **varias peticiones SFTP en vuelo** con chunks de 256 KiB, lo que satura el ancho de banda real en lugar de quedarse limitado por la latencia. El número de peticiones en paralelo es **configurable** en **Preferencias → FTP/SFTP** (`sftpMaxConcurrent`, 4 por defecto); súbelo para más velocidad o bájalo para servidores con límite de handles (p. ej. Hetzner Storage Box).
 
 ## ¿Por qué la sidebar cambia sola al moverme entre pestañas?
 

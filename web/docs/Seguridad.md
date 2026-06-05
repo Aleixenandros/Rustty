@@ -10,7 +10,11 @@ Rustty está diseñado como aplicación local-first: no requiere cuenta propia, 
 - Los perfiles no guardan contraseñas en texto plano.
 - La sincronización de contraseñas guardadas es opcional y viaja cifrada E2E dentro de `rustty-sync.bin`.
 - La base KeePass desbloqueada nunca se sincroniza.
-- En Unix, `profiles.json` se escribe con permisos privados `0600`.
+- En Unix, los ficheros locales sensibles (`profiles.json`, `credentials.json` y las notas `notes/*.md`) se escriben con permisos privados `0600`.
+
+## Notas de conexión
+
+Las notas son archivos Markdown (`notes/<id>.md`) pensados para runbooks: comandos, rutas o pasos de mantenimiento. Se renderizan de forma **segura** (el HTML de la nota se escapa; los enlaces solo abren `http`/`https`/`mailto`), así que una nota sincronizada desde otro equipo no puede inyectar código en la app. **No guardes secretos en las notas**: viajan en la copia E2E como el resto de la configuración (no tras el opt-in de contraseñas), pero su contenido no está pensado para credenciales; para eso usa el keyring, KeePass o las credenciales maestras.
 
 ## Credenciales maestras y variables
 
@@ -43,6 +47,10 @@ Rustty puede conectar con Google Drive, WebDAV, iCloud Drive o una carpeta local
 Antes de sobrescribir el estado remoto, Rustty crea snapshots históricos cifrados. Esto ayuda a recuperar estados anteriores si una sincronización no era la esperada.
 
 Si marcas **Contraseñas guardadas (cifradas E2E)**, Rustty lee del keyring local las contraseñas/passphrases guardadas, las mete en el estado cifrado y las restaura en el keyring local de otros equipos. Sin la passphrase de sync no se pueden descifrar.
+
+## Actualizaciones firmadas
+
+La auto-actualización (Windows, macOS y AppImage de Linux) está **firmada criptográficamente**. Cada artefacto publicado lleva una firma generada con una clave privada que solo vive en los secretos del CI del proyecto; la app incluye embebida la **clave pública** correspondiente. Antes de instalar una actualización, Rustty descarga el artefacto y su firma y la **verifica contra la clave pública**: si no cuadra (descarga manipulada o de origen no fiable), la actualización se rechaza. Por eso los ficheros `.sig` aparecen junto a cada binario en la página de releases: son firmas públicas, no exponen ningún secreto.
 
 ## Verificación de host SSH
 
