@@ -18,6 +18,8 @@
 - Buscar dentro del buffer del terminal con `Ctrl+F` y filtrar perfiles desde la barra lateral.
 - Redactar comandos largos con el **editor multilínea** (`Ctrl+Shift+E`): una hoja flotante que guarda un borrador por perfil y, al confirmar, inserta el comando en la sesión activa.
 - Adjuntar una **nota Markdown por conexión (runbook)** con clic derecho: editor con previsualización en vivo, variables `${host}/${user}/…`, panel lateral junto a la sesión con casillas de tarea interactivas y sincronización. Ver la [guía de notas](?page=Notas).
+- Guardar **varios usuarios por conexión**: cada perfil puede tener identidades adicionales (cada una con su contraseña, credencial maestra, clave SSH o agente). Por defecto conecta con la principal; con clic derecho → **Conectar con otro usuario** eliges otra, y `Ctrl+P` pega la contraseña de la que estés usando. Ver [Perfiles](?page=Perfiles).
+- **Reconectar restaurando la pantalla anterior** ("Conectar y restaurar pantalla anterior" desde el menú del perfil): repinta lo que se vio en la última sesión antes de abrir la nueva (restauración visual, configurable y opt-out en Preferencias → Terminal).
 - Abrir una **sesión privada / efímera** ("Abrir en privado" desde el menú del perfil) que no deja rastro en recientes, actividad, borradores ni grabación de sesión.
 - **Iniciar Rustty con el sistema** y, opcionalmente, **arrancar minimizado** en la bandeja, desde **Preferencias → Sistema** (opt-in).
 - **Exportar el historial** de una sesión a un fichero de texto desde el menú contextual de la pestaña: vuelca todo el buffer del terminal (comandos introducidos y salida del servidor) en texto plano.

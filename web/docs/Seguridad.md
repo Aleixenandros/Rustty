@@ -8,6 +8,7 @@ Rustty está diseñado como aplicación local-first: no requiere cuenta propia, 
 - Las passphrases de claves privadas también pueden guardarse en el keyring.
 - Las bases KeePass se descifran solo en memoria mientras están desbloqueadas.
 - Los perfiles no guardan contraseñas en texto plano.
+- Los **usuarios adicionales** de un perfil guardan sus secretos en el keyring bajo claves propias (`password:<perfil>:<id>` / `passphrase:<perfil>:<id>`), nunca en `profiles.json`; se sincronizan solo con el opt-in de contraseñas, como los de la identidad principal.
 - La sincronización de contraseñas guardadas es opcional y viaja cifrada E2E dentro de `rustty-sync.bin`.
 - La base KeePass desbloqueada nunca se sincroniza.
 - En Unix, los ficheros locales sensibles (`profiles.json`, `credentials.json` y las notas `notes/*.md`) se escriben con permisos privados `0600`.
@@ -67,7 +68,7 @@ La salida de un servidor remoto es contenido no confiable, así que Rustty añad
 - **Validación de enlaces**: al pulsar un enlace detectado en la salida, Rustty abre directamente solo los esquemas `http`, `https` y `mailto`. Cualquier otro esquema (o una URL que no se pueda interpretar) pide confirmación antes de abrirse, para que la salida remota no pueda lanzar esquemas arbitrarios.
 - **Confirmación de pegado peligroso**: antes de enviar al terminal un texto **multilínea**, **muy largo** o con **caracteres de control**, Rustty muestra una previsualización y pide confirmación. Así se evita ejecutar comandos pegados por error o secuencias de control ocultas. Está activado por defecto, se ajusta en **Preferencias → Terminal** y puede desactivarse por perfil en sus opciones avanzadas.
 - **Aviso al activar agent forwarding**: el reenvío del agente SSH comparte tu agente local con el host remoto, de modo que un servidor comprometido podría usar tus claves para saltar a otros equipos. Por eso, al activar el toggle de *agent forwarding* en un perfil, Rustty muestra una advertencia y pide confirmación; habilítalo solo en hosts de confianza.
-- **Pegado de contraseña acotado (`Ctrl+P`)**: el atajo que pega la contraseña del perfil activo solo la envía a una sesión SSH **conectada y enfocada**, y queda **bloqueado mientras el *broadcast* está activo**, para que el secreto no se difunda a varias sesiones a la vez. El valor no aparece en logs, historial ni previsualizaciones.
+- **Pegado de contraseña acotado (`Ctrl+P`)**: el atajo pega la contraseña del **usuario con el que se conectó** la sesión activa (la principal o la identidad adicional elegida con «Conectar con otro usuario»). Solo la envía a una sesión SSH **conectada y enfocada**, y queda **bloqueado mientras el *broadcast* está activo**, para que el secreto no se difunda a varias sesiones a la vez. El valor no aparece en logs, historial ni previsualizaciones.
 
 ## Sesión privada
 
@@ -77,6 +78,10 @@ Desde el menú contextual de un perfil, **"Abrir en privado"** inicia una sesió
 
 La grabación de sesión por perfil vuelca la salida a ficheros en `<data_dir>/session_logs/`. Esos registros pueden contener información sensible (comandos y respuestas del servidor), así que en **Preferencias → Copias de seguridad → Logs de sesión** puedes ver cuántos hay y cuánto ocupan, fijar límites de **retención por edad (días)** y **tamaño total (MB)**, limpiarlos manualmente con un botón y abrir su carpeta directamente.
 
+## Restauración de pantalla anterior
+
+«Conectar y restaurar pantalla anterior» repinta lo que se vio en la última sesión de un perfil. Para ello Rustty guarda en disco un *snapshot* por perfil en `<data_dir>/session_snapshots/<id>.snapshot` (en Unix con permisos `0600`). Ese contenido es la **salida visual** del terminal y puede incluir datos sensibles, igual que los logs de sesión. Por eso: está acotado en tamaño, **nunca se captura en sesiones privadas**, **no se sincroniza** y puede desactivarse en **Preferencias → Terminal → «Guardar pantalla para restaurar»**. Al borrar el perfil se elimina también su snapshot. Es restauración visual, no reanudación del proceso remoto.
+
 ## Datos excluidos
 
 Por diseño quedan fuera de la sincronización:
@@ -85,6 +90,7 @@ Por diseño quedan fuera de la sincronización:
 - Rutas locales como `keepassPath` y `keepassKeyfile`.
 - Ficheros transferidos por SFTP.
 - Contenido de sesiones SSH/RDP.
+- Snapshots de pantalla para restaurar sesiones (`session_snapshots/`).
 
 Los exports JSON locales sí pueden incluir una sección `secrets`, pero solo después de confirmación explícita. Ese JSON no va cifrado por sí mismo.
 

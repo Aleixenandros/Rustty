@@ -24,7 +24,7 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 |----------------|-----------------------------------------------------|
 | `Ctrl+Alt+C`   | Copiar selección del terminal                       |
 | `Ctrl+Alt+V`   | Pegar en el terminal                                |
-| `Ctrl+P`       | Pegar la contraseña del perfil activo               |
+| `Ctrl+P`       | Pegar la contraseña del usuario con el que se conectó la sesión |
 | `Ctrl+Shift+E` | Abrir el editor multilínea de comandos              |
 | `Ctrl+Shift+M` | Abrir el editor de notas de la conexión activa      |
 | `Ctrl+F`       | Buscar dentro del buffer del terminal               |
