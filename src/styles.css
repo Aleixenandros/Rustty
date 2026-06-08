@@ -417,6 +417,16 @@ body.sidebar-collapsed #sidebar-resize-handle {
   color: var(--blue);
   letter-spacing: 0;
   line-height: 1;
+  /* Zona de arrastre de la ventana: evitar selección del texto al arrastrar. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* El header del sidebar es zona de arrastre; su espacio libre mueve la ventana,
+   pero los botones de acción siguen siendo clicables. */
+#sidebar-header {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Botones de la cabecera del sidebar (⚙ y +) */
@@ -3253,6 +3263,65 @@ select:hover {
   align-items: center;
 }
 
+/* Filas de usuarios adicionales (identidades múltiples por conexión) */
+#extra-creds-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.extra-cred-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--surface0);
+  border-radius: var(--border-radius);
+  background: color-mix(in srgb, var(--surface0) 30%, transparent);
+}
+
+.extra-cred-line1 {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.extra-cred-line2 {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.extra-cred-line2:empty {
+  display: none;
+}
+
+.extra-cred-line2 > * {
+  flex: 1;
+}
+.extra-cred-line2 .password-field {
+  flex: 1;
+}
+
+.extra-cred-auth,
+.extra-cred-source {
+  min-width: 7.5rem;
+}
+
+.extra-cred-remove {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--subtext0);
+}
+
+.extra-cred-remove:hover {
+  color: var(--red);
+}
+
 .password-field input {
   padding-right: 42px;
 }
@@ -4103,6 +4172,42 @@ input[type="checkbox"] {
 .ctx-item.danger:hover {
   background: var(--red);
   color: var(--crust);
+}
+
+/* Submenú del menú contextual (p. ej. «Conectar con otro usuario») */
+.ctx-has-submenu {
+  position: relative;
+}
+.ctx-submenu-arrow {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.7;
+}
+.ctx-submenu {
+  position: absolute;
+  top: -5px;
+  left: 100%;
+  margin-left: 2px;
+  background: var(--mantle);
+  border: 1px solid var(--surface1);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  min-width: 180px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: none;
+  z-index: 10000;
+}
+.ctx-has-submenu:hover > .ctx-submenu {
+  display: block;
+}
+/* Apertura hacia la izquierda cuando no cabe a la derecha */
+.ctx-submenu.open-left {
+  left: auto;
+  right: 100%;
+  margin-left: 0;
+  margin-right: 2px;
 }
 
 .ctx-item.active {

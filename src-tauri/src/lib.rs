@@ -248,6 +248,11 @@ pub fn run() {
             commands::session_logs_dir,
             commands::session_logs_list,
             commands::session_logs_prune,
+            // ── Snapshots de pantalla por sesión (restaurar sesión anterior)
+            commands::session_snapshot_set,
+            commands::session_snapshot_get,
+            commands::session_snapshot_delete,
+            commands::session_snapshot_list,
         ])
         .run(tauri::generate_context!())
         .expect("Error al iniciar la aplicación Rustty");

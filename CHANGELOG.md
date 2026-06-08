@@ -2,6 +2,23 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.25.0] - 2026-06-08
+
+### Añadido
+
+- **Varios usuarios por conexión**: el formulario de conexión permite añadir
+  identidades adicionales con el botón «Añadir otro usuario», cada una con su
+  propia autenticación (contraseña, credencial maestra, clave SSH o agente). Al
+  conectar se usa la principal; con clic derecho aparece **Conectar con otro
+  usuario** para elegir una identidad alternativa. La sesión recuerda con qué
+  usuario se conectó, de modo que **Ctrl+P** (pegar contraseña) pega la
+  contraseña de ese usuario. Disponible en SSH, RDP y SFTP/FTP.
+- **Conectar y restaurar pantalla anterior**: clic derecho sobre una conexión
+  ofrece reconectar repintando lo que se vio en la última sesión (restauración
+  **visual** del scrollback, no del proceso remoto). La captura se guarda en
+  disco por perfil y puede desactivarse en **Preferencias → Terminal → Guardar
+  pantalla para restaurar**. No se sincroniza.
+
 ## [1.24.1] - 2026-06-05
 
 ### Añadido

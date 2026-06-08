@@ -82,6 +82,13 @@ async function addProfileSecretItems(items, profiles, prefs, deviceId) {
       [`password:${profile.id}`, `secret:password:${profile.id}`],
       [`passphrase:${profile.id}`, `secret:passphrase:${profile.id}`],
     ];
+    // Contraseñas de las identidades adicionales (usuarios extra).
+    for (const c of profile.extra_credentials || []) {
+      pairs.push([
+        `password:${profile.id}:${c.id}`,
+        `secret:password:${profile.id}:${c.id}`,
+      ]);
+    }
     for (const [key, itemKey] of pairs) {
       const secret = await readProfileSecret(key);
       if (!secret) continue;

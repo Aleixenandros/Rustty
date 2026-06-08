@@ -61,6 +61,20 @@ El check de guardar contraseña/passphrase aparece marcado por defecto para favo
 
 En perfiles RDP, **Guardar y conectar** usa la contraseña escrita en el formulario para esa conexión aunque no marques guardarla en el keyring. Si no hay contraseña disponible, Rustty la pedirá con el mismo modal integrado con el tema.
 
+### Varios usuarios por conexión
+
+Un mismo equipo se suele administrar con distintas cuentas (p. ej. tu usuario y `root`). En el formulario, la sección **Usuarios adicionales** permite añadir identidades extra con el botón **Añadir otro usuario**. Cada identidad tiene su propio usuario y su propia autenticación (contraseña, credencial maestra, clave SSH o agente), independiente de la principal.
+
+- Al conectar normalmente (doble clic o **Conectar**) se usa siempre la identidad **principal**.
+- Con **clic derecho → Conectar con otro usuario** eliges una de las identidades adicionales; se abre una sesión nueva con esa cuenta.
+- La sesión recuerda con qué usuario se conectó, de modo que el atajo **Ctrl+P** (pegar contraseña) envía la contraseña **de esa** identidad, no la principal.
+
+Las contraseñas/passphrases de las identidades adicionales viven en el keyring (nunca en `profiles.json`) y, si activas la sincronización de contraseñas, viajan cifradas E2E igual que las de la principal. Funciona en SSH, RDP y SFTP/FTP.
+
+### Restaurar la pantalla anterior
+
+Con **clic derecho → Conectar y restaurar pantalla anterior** Rustty reconecta repintando lo que se vio en la última sesión de ese perfil, separado con una línea de la sesión nueva. Es una restauración **visual** del historial en pantalla (scrollback): el proceso remoto anterior no se reanuda (para eso usa `tmux`/`screen` en el servidor). La captura se guarda por perfil en disco, puede desactivarse en **Preferencias → Terminal → Guardar pantalla para restaurar**, no se sincroniza y nunca se captura en sesiones privadas.
+
 ## CLI SSH
 
 Los perfiles SSH guardados también se pueden usar desde terminal para listar conexiones, abrir sesiones interactivas o ejecutar comandos remotos. Rustty reutiliza host/IP, puerto, usuario, método de autenticación, keyring, `known_hosts`, ProxyJump, keepalive, agent forwarding y compatibilidad legacy si estaba activada. Consulta la [guía del CLI SSH](?page=CLI) para ejemplos completos.

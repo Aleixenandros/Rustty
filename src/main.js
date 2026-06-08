@@ -333,6 +333,10 @@ const DEFAULT_PREFS = {
   // largos o con caracteres de control) muestran una previsualización
   // tematizada que el usuario debe confirmar antes de enviarse a la sesión.
   confirmRiskyPaste: true,
+  // Captura la pantalla de cada sesión SSH (no privada) en disco para poder
+  // restaurarla luego con «Conectar y restaurar pantalla anterior». Solo es la
+  // salida visual; puede contener datos sensibles. Excluido de sync.
+  captureScreen:   true,
   sftpConflictPolicy: "ask",   // "ask" | "overwrite" | "skip" | "rename"
   sftpVerifySize:  false,
   // Máximo de peticiones SFTP simultáneas (handles en vuelo) por transferencia
@@ -1428,6 +1432,8 @@ function openSettingsModal() {
   document.getElementById("pref-right-click-paste").checked = prefs.rightClickPaste;
   const confirmRiskyPasteEl = document.getElementById("pref-confirm-risky-paste");
   if (confirmRiskyPasteEl) confirmRiskyPasteEl.checked = prefs.confirmRiskyPaste !== false;
+  const captureScreenEl = document.getElementById("pref-capture-screen");
+  if (captureScreenEl) captureScreenEl.checked = prefs.captureScreen !== false;
   document.getElementById("pref-sftp-conflict-policy").value = normalizeSftpConflictPolicy(prefs.sftpConflictPolicy);
   document.getElementById("pref-sftp-verify-size").checked = !!prefs.sftpVerifySize;
   const maxConcEl = document.getElementById("pref-sftp-max-concurrent");
@@ -2648,6 +2654,7 @@ function savePrefsFromModal() {
     copyOnSelect:    document.getElementById("pref-copy-on-select").checked,
     rightClickPaste: document.getElementById("pref-right-click-paste").checked,
     confirmRiskyPaste: document.getElementById("pref-confirm-risky-paste")?.checked ?? true,
+    captureScreen: document.getElementById("pref-capture-screen")?.checked ?? true,
     sftpConflictPolicy: normalizeSftpConflictPolicy(
       document.getElementById("pref-sftp-conflict-policy")?.value,
     ),
@@ -2882,6 +2889,7 @@ async function init() {
 
   ensureWorkspacesForProfiles();
   await refreshNotesIndex();
+  loadSnapshotIndex();
 
   if (_connListBoot) _connListBoot.removeAttribute("aria-busy");
   renderConnectionList();
@@ -4792,14 +4800,49 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
     el.classList.toggle("hidden", type !== "sidebar")
   );
 
+  // «Conectar con otro usuario»: poblar el submenú con las identidades extra.
+  const connectAsEl = document.getElementById("ctx-connect-as");
+  const submenu = document.getElementById("ctx-connect-as-submenu");
+  const extras = ctxProfile?.extra_credentials || [];
+  if (connectAsEl && submenu) {
+    submenu.innerHTML = "";
+    for (const c of extras) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "ctx-item";
+      item.dataset.ctx = "connect-as";
+      item.dataset.credId = c.id;
+      const icon = document.createElement("span");
+      icon.className = "ctx-icon";
+      icon.textContent = "▶";
+      const label = document.createElement("span");
+      label.textContent = c.label || c.username;
+      item.append(icon, label);
+      submenu.appendChild(item);
+    }
+    connectAsEl.classList.toggle("hidden", type !== "connection" || extras.length === 0);
+  }
+
+  // «Conectar y restaurar pantalla anterior»: solo si hay snapshot guardado.
+  const restoreEl = document.getElementById("ctx-connect-restore");
+  if (restoreEl) {
+    const hasSnapshot = type === "connection" && id && snapshotIndex.has(id);
+    restoreEl.classList.toggle("hidden", !hasSnapshot);
+  }
+
   // Posicionar fuera de pantalla para medir, luego ajustar
   menu.style.left = "0px";
   menu.style.top  = "0px";
   menu.classList.remove("hidden");
 
   const { width, height } = menu.getBoundingClientRect();
-  menu.style.left = Math.min(x, window.innerWidth  - width  - 6) + "px";
+  const finalX = Math.min(x, window.innerWidth  - width  - 6);
+  menu.style.left = finalX + "px";
   menu.style.top  = Math.min(y, window.innerHeight - height - 6) + "px";
+  // Si el menú queda en la mitad derecha, abrir el submenú hacia la izquierda.
+  if (submenu) {
+    submenu.classList.toggle("open-left", finalX + width + 190 > window.innerWidth);
+  }
 }
 
 function hideContextMenu() {
@@ -4831,6 +4874,9 @@ function handleContextMenuAction(action) {
       break;
     case "connect-private":
       connectPrivateProfile(id);
+      break;
+    case "connect-restore":
+      connectProfile(id, { force: true, restore: true });
       break;
     case "wake-on-lan":
       wakeProfile(id);
@@ -5178,6 +5224,7 @@ function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiv
   document.getElementById("modal-title").textContent = "Nueva conexión";
   document.getElementById("form-connection").reset();
   setPasswordVisible(false);
+  clearExtraCredRows();
   document.getElementById("f-conn-type").value = "ssh";
   document.getElementById("f-notes").value = "";
   setupModalNotePane();
@@ -5356,6 +5403,7 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-save-passphrase").checked = true;
   refreshStoredCredentialCheckboxes(profile);
   loadStoredCredentialsIntoConnectionModal(profile);
+  populateExtraCredRows(profile);
 
   populateFolderSelect(profile.group || "", profile.workspace_id || getActiveWorkspaceId());
   document.getElementById("f-keep-alive").value = profile.keep_alive_secs ?? "";
@@ -5389,6 +5437,226 @@ function openEditConnectionModal(profileId) {
   renderConnectionSummary();
   applyConnectionModalSize();
   document.getElementById("modal-overlay").classList.remove("hidden");
+}
+
+// ─── Usuarios adicionales (identidades múltiples por conexión) ──────────────
+// Ids de las identidades extra que existían al abrir el modal, para detectar
+// cuáles se borraron y limpiar su entrada de keyring al guardar.
+let originalExtraCredIds = [];
+
+function clearExtraCredRows() {
+  const list = document.getElementById("extra-creds-list");
+  if (list) list.innerHTML = "";
+  originalExtraCredIds = [];
+}
+
+/** Añade una fila de identidad adicional al formulario. `cred` precarga datos. */
+function addExtraCredRow(cred = null, { focus = true } = {}) {
+  const list = document.getElementById("extra-creds-list");
+  if (!list) return;
+  const existing = !!cred;
+  const row = document.createElement("div");
+  row.className = "extra-cred-row";
+  row.dataset.credId = cred?.id || crypto.randomUUID();
+  row.dataset.existing = existing ? "1" : "0";
+
+  // Línea 1: usuario · tipo de auth · eliminar
+  const line1 = document.createElement("div");
+  line1.className = "extra-cred-line1";
+
+  const userInput = document.createElement("input");
+  userInput.type = "text";
+  userInput.className = "extra-cred-user";
+  userInput.placeholder = t("modal_conn.user_ph");
+  userInput.value = cred?.username || "";
+
+  const authSel = document.createElement("select");
+  authSel.className = "extra-cred-auth";
+  for (const [val, key] of [
+    ["password", "modal_conn.auth_password"],
+    ["public_key", "modal_conn.auth_publickey"],
+    ["agent", "modal_conn.auth_agent"],
+  ]) {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = t(key);
+    authSel.appendChild(opt);
+  }
+  authSel.value = cred?.auth_type || "password";
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "btn-icon extra-cred-remove";
+  removeBtn.title = t("modal_conn.remove_user");
+  removeBtn.setAttribute("aria-label", t("modal_conn.remove_user"));
+  removeBtn.textContent = "✕";
+  removeBtn.addEventListener("click", () => {
+    row.remove();
+    renderConnectionSummary();
+  });
+
+  line1.append(userInput, authSel, removeBtn);
+
+  // Línea 2: campos condicionales según auth/origen
+  const line2 = document.createElement("div");
+  line2.className = "extra-cred-line2";
+
+  authSel.addEventListener("change", () => renderExtraCredFields(row, line2, null));
+  row.append(line1, line2);
+  list.appendChild(row);
+  renderExtraCredFields(row, line2, cred);
+  if (focus) userInput.focus();
+}
+
+/**
+ * Pinta los campos condicionales de una fila de identidad extra según el tipo
+ * de auth y, para contraseña, el origen (propia / credencial maestra).
+ * `cred` precarga valores la primera vez; en cambios de selector va `null`.
+ */
+function renderExtraCredFields(row, line2, cred) {
+  const authType = row.querySelector(".extra-cred-auth").value;
+  const existing = row.dataset.existing === "1";
+  line2.innerHTML = "";
+
+  if (authType === "password") {
+    // Selector de origen: propia o credencial maestra.
+    const srcSel = document.createElement("select");
+    srcSel.className = "extra-cred-source";
+    for (const [val, key] of [
+      ["own", "modal_conn.password_source_own"],
+      ["master", "modal_conn.password_source_master"],
+    ]) {
+      const opt = document.createElement("option");
+      opt.value = val;
+      opt.textContent = t(key);
+      srcSel.appendChild(opt);
+    }
+    srcSel.value = cred?.password_source === "master" ? "master" : "own";
+    srcSel.addEventListener("change", () => renderExtraCredFields(row, line2, null));
+    line2.appendChild(srcSel);
+
+    if (srcSel.value === "master") {
+      const masterSel = document.createElement("select");
+      masterSel.className = "extra-cred-master";
+      for (const m of masterCredentials || []) {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.name;
+        masterSel.appendChild(opt);
+      }
+      if (!masterCredentials?.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = t("modal_conn.master_cred_none");
+        masterSel.appendChild(opt);
+      }
+      if (cred?.master_credential_id) masterSel.value = cred.master_credential_id;
+      line2.appendChild(masterSel);
+    } else {
+      const passWrap = document.createElement("div");
+      passWrap.className = "password-field";
+      const passInput = document.createElement("input");
+      passInput.type = "password";
+      passInput.className = "extra-cred-pass";
+      passInput.placeholder = existing ? "••••••••" : t("modal_conn.password");
+      passWrap.appendChild(passInput);
+      line2.appendChild(passWrap);
+    }
+  } else if (authType === "public_key") {
+    const keyInput = document.createElement("input");
+    keyInput.type = "text";
+    keyInput.className = "extra-cred-keypath";
+    keyInput.placeholder = "~/.ssh/id_rsa";
+    keyInput.value = cred?.key_path || "";
+    line2.appendChild(keyInput);
+
+    const ppWrap = document.createElement("div");
+    ppWrap.className = "password-field";
+    const ppInput = document.createElement("input");
+    ppInput.type = "password";
+    ppInput.className = "extra-cred-passphrase";
+    ppInput.placeholder = existing ? "••••••••" : t("modal_conn.passphrase");
+    ppWrap.appendChild(ppInput);
+    line2.appendChild(ppWrap);
+  }
+  // agent: sin campos adicionales
+}
+
+/** Rellena las filas de identidades extra desde un perfil. */
+async function populateExtraCredRows(profile) {
+  clearExtraCredRows();
+  const creds = profile?.extra_credentials || [];
+  originalExtraCredIds = creds.map((c) => c.id);
+  // Si alguna identidad usa credencial maestra, asegurar el catálogo cargado
+  // para que su selector muestre el nombre correcto.
+  if (creds.some((c) => c.password_source === "master") && !masterCredentials?.length) {
+    try {
+      masterCredentials = ((await invoke("master_cred_list")) || []).filter((c) => c.kind === "master");
+    } catch { /* el selector quedará vacío; no bloquea */ }
+  }
+  for (const c of creds) addExtraCredRow(c, { focus: false });
+}
+
+/**
+ * Recoge las identidades extra del formulario. Devuelve la lista de
+ * `ProfileCredential` (sin secretos), las contraseñas a escribir en keyring y
+ * las claves a borrar (identidades eliminadas o vaciadas).
+ */
+function collectExtraCredsFromForm(profileId) {
+  const rows = [...document.querySelectorAll("#extra-creds-list .extra-cred-row")];
+  const creds = [];
+  const passwordWrites = [];
+  const keptIds = new Set();
+  for (const row of rows) {
+    const id = row.dataset.credId;
+    const username = row.querySelector(".extra-cred-user").value.trim();
+    if (!username) continue; // ignora filas sin usuario
+    keptIds.add(id);
+
+    const authType = row.querySelector(".extra-cred-auth").value;
+    let passwordSource = "own";
+    let masterCredentialId = null;
+    let keyPath = null;
+
+    if (authType === "password") {
+      const source = row.querySelector(".extra-cred-source")?.value || "own";
+      if (source === "master") {
+        passwordSource = "master";
+        masterCredentialId = row.querySelector(".extra-cred-master")?.value || null;
+      } else {
+        const pass = row.querySelector(".extra-cred-pass")?.value;
+        if (pass) passwordWrites.push({ key: credPasswordKey(profileId, id), secret: pass });
+      }
+    } else if (authType === "public_key") {
+      keyPath = row.querySelector(".extra-cred-keypath")?.value.trim() || null;
+      const pp = row.querySelector(".extra-cred-passphrase")?.value;
+      if (pp) passwordWrites.push({ key: credPassphraseKey(profileId, id), secret: pp });
+    }
+
+    creds.push({
+      id,
+      username,
+      label: null,
+      auth_type: authType,
+      key_path: keyPath,
+      password_source: passwordSource,
+      master_credential_id: masterCredentialId,
+    });
+  }
+  // Identidades que existían y ya no están → borrar su keyring (pwd y passphrase).
+  const deletes = [];
+  for (const id of originalExtraCredIds) {
+    if (!keptIds.has(id)) {
+      deletes.push(credPasswordKey(profileId, id));
+      deletes.push(credPassphraseKey(profileId, id));
+    }
+  }
+  return { creds, passwordWrites, deletes };
+}
+
+async function deleteStoredSecret(key) {
+  return invoke("keyring_delete", { service: KEYRING_SERVICE, key })
+    .catch((err) => console.warn("[keyring] delete failed", key, err));
 }
 
 /**
@@ -5824,6 +6092,17 @@ function passwordKey(profileId) {
 
 function passphraseKey(profileId) {
   return `passphrase:${profileId}`;
+}
+
+// Claves de keyring de las identidades adicionales (usuarios extra). La
+// principal usa `password:<id>` / `passphrase:<id>`; cada identidad extra
+// indexa por su `credential_id` para no colisionar.
+function credPasswordKey(profileId, credId) {
+  return `password:${profileId}:${credId}`;
+}
+
+function credPassphraseKey(profileId, credId) {
+  return `passphrase:${profileId}:${credId}`;
 }
 
 async function getStoredSecret(key) {
@@ -6385,8 +6664,12 @@ async function saveAndClose(shouldConnect) {
     : getActiveWorkspaceId();
   const workspaceId = wsFromForm || fallbackWs || "default";
 
+  const profileId = editingProfileId || crypto.randomUUID();
+  const { creds: extraCredentials, passwordWrites: extraPwWrites, deletes: extraPwDeletes } =
+    collectExtraCredsFromForm(profileId);
+
   const profile = {
-    id:                  editingProfileId || crypto.randomUUID(),
+    id:                  profileId,
     name:                document.getElementById("f-name").value.trim(),
     host:                document.getElementById("f-host").value.trim(),
     port:                parseInt(document.getElementById("f-port").value, 10),
@@ -6402,6 +6685,7 @@ async function saveAndClose(shouldConnect) {
     keepass_property:    keepassProperty,
     password_source:     passwordSource,
     master_credential_id: masterCredentialId,
+    extra_credentials:   extraCredentials,
     follow_cwd:          true,
     keep_alive_secs:     keepAliveFromInput(document.getElementById("f-keep-alive").value),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
@@ -6429,6 +6713,13 @@ async function saveAndClose(shouldConnect) {
     }
     if (authType === "public_key" && passphrase && savePassphrase) {
       await saveStoredSecret(passphraseKey(profile.id), passphrase, "passphrase");
+    }
+    // Identidades adicionales: guardar contraseñas nuevas y limpiar las borradas.
+    for (const { key, secret } of extraPwWrites) {
+      await saveStoredSecret(key, secret, "contraseña");
+    }
+    for (const key of extraPwDeletes) {
+      await deleteStoredSecret(key);
     }
 
     // Si se especificó una carpeta nueva, persiste en el workspace del perfil.
@@ -6470,37 +6761,84 @@ async function saveAndClose(shouldConnect) {
  * Resuelve las credenciales SSH del perfil (KeePass / keyring / prompt).
  * Devuelve { password, passphrase } o null si el usuario canceló.
  */
-async function resolveSshCredentials(profile) {
+/** Devuelve la `ProfileCredential` (identidad adicional) por id, o null. */
+function getProfileCredential(profile, credId) {
+  if (!credId) return null;
+  return (profile?.extra_credentials || []).find((c) => c.id === credId) || null;
+}
+
+/**
+ * Vista unificada de una "identidad" del perfil para resolver credenciales:
+ * la principal (`cred == null`) o una adicional. Normaliza usuario, tipo de
+ * auth, ruta de clave, origen de contraseña y las claves de keyring.
+ */
+function identityView(profile, cred) {
+  if (!cred) {
+    return {
+      credId: null,
+      username: profile.username,
+      authType: profile.auth_type,
+      keyPath: profile.key_path,
+      passwordSource: profile.password_source || "own",
+      keepassEntryUuid: profile.keepass_entry_uuid,
+      pwKey: passwordKey(profile.id),
+      ppKey: passphraseKey(profile.id),
+    };
+  }
+  return {
+    credId: cred.id,
+    username: cred.username,
+    authType: cred.auth_type || "password",
+    keyPath: cred.key_path,
+    passwordSource: cred.password_source || "own",
+    keepassEntryUuid: null,
+    pwKey: credPasswordKey(profile.id, cred.id),
+    ppKey: credPassphraseKey(profile.id, cred.id),
+  };
+}
+
+/**
+ * Resuelve las credenciales SSH del perfil para una identidad concreta
+ * (KeePass / credencial maestra / keyring / prompt). `cred` es la identidad
+ * adicional elegida o null para la principal.
+ * Devuelve { password, passphrase } o null si el usuario canceló.
+ */
+async function resolveSshCredentials(profile, cred = null) {
+  const view = identityView(profile, cred);
+  // Etiqueta para los prompts: el perfil con el usuario de la identidad.
+  const promptProfile = { ...profile, username: view.username };
   let password = null, passphrase = null;
-  if (profile.auth_type === "password") {
-    if (profile.keepass_entry_uuid) {
+  if (view.authType === "password") {
+    if (view.keepassEntryUuid) {
       if (!keepassUnlocked) {
         toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
         return null;
       }
+    } else if (view.passwordSource === "master") {
+      // El backend resuelve la credencial maestra; no pedimos nada.
     } else {
-      password = await getStoredSecret(passwordKey(profile.id));
+      password = await getStoredSecret(view.pwKey);
       if (!password) {
-        password = await promptProfileSecret(profile, {
+        password = await promptProfileSecret(promptProfile, {
           titleKey: "modal_credential.password_title",
           messageKey: "modal_credential.ssh_message",
           labelKey: "modal_credential.password_label",
           rememberKey: "modal_credential.remember_password",
-          secretKey: passwordKey(profile.id),
+          secretKey: view.pwKey,
           secretLabel: "contraseña",
         });
         if (password === null) return null;
       }
     }
-  } else if (profile.auth_type === "public_key") {
-    passphrase = await getStoredSecret(passphraseKey(profile.id));
-    if (!passphrase && profile.key_path) {
-      passphrase = await promptProfileSecret(profile, {
+  } else if (view.authType === "public_key") {
+    passphrase = await getStoredSecret(view.ppKey);
+    if (!passphrase && view.keyPath) {
+      passphrase = await promptProfileSecret(promptProfile, {
         titleKey: "modal_credential.passphrase_title",
         messageKey: "modal_credential.passphrase_message",
         labelKey: "modal_credential.passphrase_label",
         rememberKey: "modal_credential.remember_passphrase",
-        secretKey: passphraseKey(profile.id),
+        secretKey: view.ppKey,
         secretLabel: "passphrase",
         submitKey: "modal_credential.accept",
       });
@@ -6514,23 +6852,30 @@ async function resolvePasswordOnlyCredentials(profile, {
   passwordOverride = null,
   titleKey = "modal_credential.sftp_password_title",
   messageKey = "modal_credential.sftp_message",
+  cred = null,
 } = {}) {
-  if (profile.keepass_entry_uuid) {
+  const view = identityView(profile, cred);
+  const promptProfile = { ...profile, username: view.username };
+  if (view.keepassEntryUuid) {
     if (!keepassUnlocked) {
       toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
       return null;
     }
     return passwordOverride || null;
   }
+  if (view.passwordSource === "master") {
+    // El backend resuelve la credencial maestra; no pedimos contraseña.
+    return passwordOverride || null;
+  }
 
-  let password = passwordOverride || await getStoredSecret(passwordKey(profile.id));
+  let password = passwordOverride || await getStoredSecret(view.pwKey);
   if (!password) {
-    password = await promptProfileSecret(profile, {
+    password = await promptProfileSecret(promptProfile, {
       titleKey,
       messageKey,
       labelKey: "modal_credential.password_label",
       rememberKey: "modal_credential.remember_password",
-      secretKey: passwordKey(profile.id),
+      secretKey: view.pwKey,
       secretLabel: "contraseña",
     });
     if (password === null) return null;
@@ -6538,7 +6883,7 @@ async function resolvePasswordOnlyCredentials(profile, {
   return password;
 }
 
-async function connectProfile(profileId, { force = false } = {}) {
+async function connectProfile(profileId, { force = false, credId = null, restore = false } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
@@ -6550,22 +6895,36 @@ async function connectProfile(profileId, { force = false } = {}) {
   }
 
   if (profile.connection_type === "rdp") {
-    return connectRdp(profileId);
+    return connectRdp(profileId, { credId });
   }
 
   if (isFileTransferConnectionType(profile.connection_type)) {
-    return connectFileTransferProfile(profileId, { force });
+    return connectFileTransferProfile(profileId, { force, credId });
   }
 
+  // Con una identidad alternativa abrimos siempre una sesión nueva; solo
+  // reutilizamos una pestaña existente si coincide la misma identidad.
   if (!force) {
     for (const [sid, s] of sessions) {
-      if (s.profileId === profileId && s.status !== "closed") { setActiveTab(sid); return; }
+      if (s.profileId === profileId && s.status !== "closed"
+          && (s.credentialId || null) === (credId || null)) {
+        setActiveTab(sid); return;
+      }
     }
   }
 
-  const creds = await resolveSshCredentials(profile);
+  const cred = getProfileCredential(profile, credId);
+  const creds = await resolveSshCredentials(profile, cred);
   if (!creds) return;
-  await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false);
+  await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false, { credId, restore });
+}
+
+/**
+ * Conecta usando una identidad adicional (usuario alternativo) del perfil.
+ * Abre siempre una sesión nueva con esa identidad.
+ */
+async function connectProfileAs(profileId, credId) {
+  return connectProfile(profileId, { force: true, credId });
 }
 
 /**
@@ -6709,7 +7068,7 @@ async function askProfileAnswers(profileId) {
   return await promptAsks(specs);
 }
 
-async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase, { private: isPrivate = false } = {}) {
+async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase, { private: isPrivate = false, credId = null, restore = false } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
@@ -6719,8 +7078,14 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   if (askAnswers === null) return;
 
   const sessionId = `ssh-${crypto.randomUUID()}`;
-  createTerminalTab(sessionId, profile, "connecting", { private: isPrivate });
+  createTerminalTab(sessionId, profile, "connecting", { private: isPrivate, credId });
   const session = sessions.get(sessionId);
+
+  // Restaurar pantalla de la sesión anterior (solo visual) antes de conectar.
+  if (restore && !isPrivate) {
+    await restorePreviousScreen(sessionId, profileId);
+  }
+
   appendConnectionLog(sessionId, {
     stage: "preparing",
     status: "info",
@@ -6736,6 +7101,7 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
       password:   password   || null,
       passphrase: passphrase || null,
       askAnswers: Object.keys(askAnswers).length ? askAnswers : null,
+      credentialId: credId || null,
       // En sesión privada, desactivar la grabación a fichero aunque el perfil
       // lo tenga habilitado (el backend aplica el override sobre su copia local).
       sessionLogOverride: isPrivate ? false : null,
@@ -6755,34 +7121,42 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
 // CONEXIÓN RDP
 // ═══════════════════════════════════════════════════════════════
 
-async function connectRdp(profileId, { passwordOverride = null } = {}) {
+async function connectRdp(profileId, { passwordOverride = null, credId = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
-  // Si ya hay una sesión activa para este perfil, traerla al frente
+  // Si ya hay una sesión activa para este perfil con la misma identidad,
+  // traerla al frente.
   for (const [sid, s] of sessions) {
-    if (s.profileId === profileId && s.type === "rdp" && s.status !== "closed") {
+    if (s.profileId === profileId && s.type === "rdp" && s.status !== "closed"
+        && (s.credentialId || null) === (credId || null)) {
       setActiveTab(sid);
       return;
     }
   }
 
-  // Obtener contraseña: KeePass (si aplica), si no keyring, si no prompt
+  const cred = getProfileCredential(profile, credId);
+  const view = identityView(profile, cred);
+  const promptProfile = { ...profile, username: view.username };
+
+  // Obtener contraseña: KeePass / maestra (si aplica), si no keyring, si no prompt
   let password = passwordOverride;
-  if (profile.keepass_entry_uuid) {
+  if (view.keepassEntryUuid) {
     if (!keepassUnlocked) {
       toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
       return;
     }
+  } else if (view.passwordSource === "master") {
+    // El backend resuelve la credencial maestra.
   } else if (!password) {
-    password = await getStoredSecret(passwordKey(profileId));
+    password = await getStoredSecret(view.pwKey);
     if (!password) {
-      password = await promptProfileSecret(profile, {
+      password = await promptProfileSecret(promptProfile, {
         titleKey: "modal_credential.rdp_password_title",
         messageKey: "modal_credential.rdp_message",
         labelKey: "modal_credential.password_label",
         rememberKey: "modal_credential.remember_password",
-        secretKey: passwordKey(profileId),
+        secretKey: view.pwKey,
         secretLabel: "contraseña",
       });
       if (password === null) return; // usuario canceló
@@ -6796,6 +7170,7 @@ async function connectRdp(profileId, { passwordOverride = null } = {}) {
     type: "rdp",
     status: "connecting",
     unlisteners: [],
+    credentialId: credId,
     // RDP no usa terminal ni fitAddon
     terminal: null,
     fitAddon: null,
@@ -6807,6 +7182,7 @@ async function connectRdp(profileId, { passwordOverride = null } = {}) {
     const sessionId = await invoke("rdp_connect", {
       profileId,
       password: password || null,
+      credentialId: credId || null,
     });
 
     // Migrar tempId → sessionId real
@@ -6862,12 +7238,13 @@ async function closeRdpSession(sessionId) {
   renderConnectionList();
 }
 
-async function connectFileTransferProfile(profileId, { passwordOverride = null, force = false } = {}) {
+async function connectFileTransferProfile(profileId, { passwordOverride = null, force = false, credId = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
   for (const [sid, s] of [...sessions]) {
-    if (s.profileId === profileId && isFileTransferConnectionType(s.type) && s.status !== "closed") {
+    if (s.profileId === profileId && isFileTransferConnectionType(s.type) && s.status !== "closed"
+        && (s.credentialId || null) === (credId || null)) {
       if (!force) {
         setActiveTab(sid);
         return;
@@ -6876,10 +7253,12 @@ async function connectFileTransferProfile(profileId, { passwordOverride = null, 
     }
   }
 
+  const cred = getProfileCredential(profile, credId);
   const password = await resolvePasswordOnlyCredentials(profile, {
     passwordOverride,
     titleKey: "modal_credential.sftp_password_title",
     messageKey: "modal_credential.sftp_message",
+    cred,
   });
   if (password === null) return;
 
@@ -6893,6 +7272,7 @@ async function connectFileTransferProfile(profileId, { passwordOverride = null, 
     fitAddon: null,
     unlisteners: [],
     remoteCwd: null,
+    credentialId: credId,
     tunnels: new Map(),
     tunnelPanel: null,
   };
@@ -8424,7 +8804,7 @@ function handleTerminalLink(_event, uri) {
 }
 
 function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
-  const { sftp = true, private: isPrivate = false } = opts;
+  const { sftp = true, private: isPrivate = false, credId = null } = opts;
 
   // Construir pane y meterlo en #terminals-container para que xterm pueda medir.
   // renderView() lo reubicará según la selección actual.
@@ -8491,6 +8871,9 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     tunnelPanel: null,
     connectionLogs: [],
     connectionLogOpen: false,
+    // Identidad adicional usada para conectar (`ProfileCredential.id`) o null si
+    // se usó la principal. Lo consulta «pegar contraseña» (Ctrl+P).
+    credentialId: credId,
     // Sesión privada/efímera: suprime toda persistencia (recientes, actividad,
     // borrador, session_log). Se establece en createTerminalTab y createTab.
     private: isPrivate,
@@ -8688,6 +9071,76 @@ function toggleConnectionLogPanel(sessionId) {
   setConnectionLogPanelOpen(sessionId, !s.connectionLogOpen);
 }
 
+// ─── Snapshots de pantalla por sesión (restaurar sesión anterior) ───────────
+// Captura visual del output del terminal SSH para repintarlo como scrollback al
+// reconectar. NO reanuda el proceso remoto; solo restaura lo que se vio.
+
+// Tope del buffer en memoria por sesión (caracteres). Al superarlo se descarta
+// lo más antiguo. ~512 KiB es holgado para el scrollback típico.
+const SCREEN_CAPTURE_MAX = 512 * 1024;
+
+// Ids de perfil con snapshot guardado en disco (alimenta el menú contextual).
+const snapshotIndex = new Set();
+
+/** Acumula output en el buffer de captura de la sesión (si está activado). */
+function captureScreenChunk(s, text) {
+  if (!s || s.private || s.type !== "ssh") return;
+  if (prefs.captureScreen === false) return;
+  s._screenBuf = (s._screenBuf || "") + text;
+  if (s._screenBuf.length > SCREEN_CAPTURE_MAX) {
+    s._screenBuf = s._screenBuf.slice(s._screenBuf.length - SCREEN_CAPTURE_MAX);
+  }
+}
+
+/** Guarda en disco el snapshot acumulado de la sesión (best-effort). */
+async function persistScreenSnapshot(s) {
+  if (!s || s.private || s.type !== "ssh" || !s.profileId) return;
+  if (prefs.captureScreen === false) return;
+  if (s._snapshotSaved) return; // evita doble guardado (close + ssh-closed)
+  const content = s._screenBuf || "";
+  if (!content.trim()) return;
+  s._snapshotSaved = true;
+  try {
+    await invoke("session_snapshot_set", { profileId: s.profileId, content });
+    snapshotIndex.add(s.profileId);
+  } catch (err) {
+    console.warn("[snapshot] save failed", err);
+  }
+}
+
+/**
+ * Repinta en el terminal de una sesión nueva el snapshot guardado del perfil,
+ * con un separador, antes de conectar. Restauración puramente visual.
+ */
+async function restorePreviousScreen(sessionId, profileId) {
+  const s = sessions.get(sessionId);
+  if (!s?.terminal) return;
+  let snapshot = null;
+  try {
+    snapshot = await invoke("session_snapshot_get", { profileId });
+  } catch (err) {
+    console.warn("[snapshot] get failed", err);
+    return;
+  }
+  if (!snapshot) return;
+  const sep = (label) => `\r\n\x1b[2m──────── ${label} ────────\x1b[0m\r\n`;
+  const when = new Date().toLocaleString();
+  s.terminal.write(sep(`${t("ctx.snapshot_restored")} · ${when}`));
+  s.terminal.write(snapshot.endsWith("\n") ? snapshot : snapshot + "\r\n");
+  s.terminal.write(sep(t("ctx.snapshot_new_session")));
+}
+
+/** Carga el índice de perfiles con snapshot al arrancar. */
+async function loadSnapshotIndex() {
+  try {
+    const ids = await invoke("session_snapshot_list");
+    snapshotIndex.clear();
+    for (const id of ids || []) snapshotIndex.add(id);
+  } catch (err) {
+    console.warn("[snapshot] list failed", err);
+  }
+}
+
 async function registerSshListeners(sessionId, terminal) {
   const decoder = new TextDecoder();
   const ul = [];
@@ -8699,6 +9152,7 @@ async function registerSshListeners(sessionId, terminal) {
     if (filtered) {
       terminal.write(applyHighlightRules(filtered));
       markTabActivity(sessionId);
+      captureScreenChunk(s, filtered);
     }
   }));
 
@@ -8781,6 +9235,7 @@ async function registerSshListeners(sessionId, terminal) {
   ul.push(await listen(`ssh-closed-${sessionId}`, () => {
     const s = sessions.get(sessionId);
     if (s) s.status = "closed";
+    persistScreenSnapshot(s);
     appendConnectionLog(sessionId, {
       stage: "closed",
       status: "warning",
@@ -8903,6 +9358,7 @@ async function closeSession(sessionId, opts = {}) {
   }
 
   // SSH
+  await persistScreenSnapshot(s);
   for (const ul of s.unlisteners) { try { ul(); } catch {} }
   await invoke("ssh_disconnect", { sessionId }).catch(() => {});
   s.terminal.dispose();
@@ -9027,6 +9483,13 @@ async function deleteProfile(profileId) {
   if (!confirmed) return;
   try {
     await invoke("delete_profile", { id: profileId });
+    // Limpiar contraseñas de identidades adicionales y el snapshot de pantalla.
+    for (const c of profile.extra_credentials || []) {
+      await deleteStoredSecret(credPasswordKey(profileId, c.id));
+      await deleteStoredSecret(credPassphraseKey(profileId, c.id));
+    }
+    invoke("session_snapshot_delete", { profileId }).catch(() => {});
+    snapshotIndex.delete(profileId);
     profiles = profiles.filter((p) => p.id !== profileId);
     sync.recordTombstone(prefs, "profiles", profileId);
     savePrefs();
@@ -9064,6 +9527,11 @@ async function duplicateProfile(profileId) {
     ]);
     if (pw) await saveStoredSecret(passwordKey(copy.id), pw, "contraseña");
     if (pp) await saveStoredSecret(passphraseKey(copy.id), pp, "passphrase");
+    // Replicar las contraseñas de las identidades adicionales bajo el id nuevo.
+    for (const c of original.extra_credentials || []) {
+      const ePw = await getStoredSecret(credPasswordKey(original.id, c.id));
+      if (ePw) await saveStoredSecret(credPasswordKey(copy.id, c.id), ePw, "contraseña");
+    }
     profiles = await invoke("get_profiles");
     renderConnectionList();
     scheduleProfileAutoSync();
@@ -10208,6 +10676,7 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
       elevated: s.sftp.elevated,
       sessionId: sftpSessionId,
       maxConcurrent: sftpMaxConcurrent(),
+      credentialId: s.credentialId || null,
     });
     s.sftp.sftpSessionId = sftpSessionId;
     appendSftpActivity(panel, {
@@ -10256,25 +10725,29 @@ async function toggleSftpElevated(sessionId) {
   const panel = s.sftp.panel;
   const btn = panel.querySelector('[data-sftp-nav="sudo"]');
 
-  // Resolver credenciales igual que en openSftpPanel (pueden no estar ya cacheadas)
+  // Resolver credenciales igual que en openSftpPanel (pueden no estar ya
+  // cacheadas), respetando la identidad con la que se abrió la sesión.
+  const cred = getProfileCredential(profile, s.credentialId);
+  const view = identityView(profile, cred);
+  const promptProfile = { ...profile, username: view.username };
   let password = null, passphrase = null;
-  if (profile.auth_type === "password") {
-    if (!profile.keepass_entry_uuid) {
-      password = await getStoredSecret(passwordKey(profile.id));
+  if (view.authType === "password") {
+    if (!view.keepassEntryUuid && view.passwordSource !== "master") {
+      password = await getStoredSecret(view.pwKey);
       if (!password) {
-        password = await promptProfileSecret(profile, {
+        password = await promptProfileSecret(promptProfile, {
           titleKey: "modal_credential.sftp_password_title",
           messageKey: "modal_credential.sftp_message",
           labelKey: "modal_credential.password_label",
           rememberKey: "modal_credential.remember_password",
-          secretKey: passwordKey(profile.id),
+          secretKey: view.pwKey,
           secretLabel: "contraseña",
         });
         if (password === null) return;
       }
     }
-  } else if (profile.auth_type === "public_key") {
-    passphrase = await getStoredSecret(passphraseKey(profile.id));
+  } else if (view.authType === "public_key") {
+    passphrase = await getStoredSecret(view.ppKey);
   }
 
   const wasElevated = s.sftp.elevated;
@@ -10311,6 +10784,7 @@ async function toggleSftpElevated(sessionId) {
       elevated: targetElevated,
       sessionId: newSftpSessionId,
       maxConcurrent: sftpMaxConcurrent(),
+      credentialId: s.credentialId || null,
     });
     s.sftp.sftpSessionId = newSftpSessionId;
     s.sftp.elevated = targetElevated;
@@ -10344,6 +10818,7 @@ async function toggleSftpElevated(sessionId) {
         elevated: wasElevated,
         sessionId: fallbackSftpSessionId,
         maxConcurrent: sftpMaxConcurrent(),
+        credentialId: s.credentialId || null,
       });
       s.sftp.sftpSessionId = fallbackSftpSessionId;
       s.sftp.elevated = wasElevated;
@@ -14856,6 +15331,7 @@ function bindUIEvents() {
     setPasswordVisible(input.type === "password");
     input.focus();
   });
+  document.getElementById("btn-add-extra-cred")?.addEventListener("click", () => addExtraCredRow());
   initConnectionModalResizePersistence();
 
   // Selector de carpeta → mostrar/ocultar input manual
@@ -14930,6 +15406,13 @@ function bindUIEvents() {
   document.getElementById("context-menu").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-ctx]");
     if (!btn) return;
+    if (btn.dataset.ctx === "connect-as") {
+      const credId = btn.dataset.credId;
+      const profileId = ctxTarget.id;
+      hideContextMenu();
+      if (profileId && credId) connectProfileAs(profileId, credId);
+      return;
+    }
     if (btn.dataset.ctx === "set-folder-color") {
       const colorId = btn.dataset.colorId || null;
       const { type, folderPath, workspaceId } = ctxTarget;
@@ -15577,7 +16060,10 @@ async function pasteSessionPasswordIntoActiveTerminal() {
   }
   let password;
   try {
-    password = await invoke("get_profile_password", { profileId: s.profileId });
+    password = await invoke("get_profile_password", {
+      profileId: s.profileId,
+      credentialId: s.credentialId || null,
+    });
   } catch (err) {
     toast(t("toast.paste_password_read_error", { err: String(err) }), "error");
     return;

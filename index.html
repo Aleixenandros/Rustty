@@ -98,8 +98,8 @@
 
       <!-- ── Barra lateral izquierda ── -->
       <aside id="sidebar">
-        <div id="sidebar-header">
-          <span class="app-logo">Rustty</span>
+        <div id="sidebar-header" data-tauri-drag-region>
+          <span class="app-logo" data-tauri-drag-region>Rustty</span>
           <div class="sidebar-header-actions">
             <button id="btn-sidebar-search" data-i18n-title="sidebar.search_title" title="Buscar conexiones" aria-label="Buscar conexiones">
               <svg viewBox="0 0 18 18" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -378,6 +378,14 @@
             <circle cx="8" cy="10.5" r="1" fill="currentColor" stroke="none"/>
           </svg>
         </span><span data-i18n="ctx.connect_private">Abrir en privado</span>
+      </button>
+      <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-connect-as-only hidden" id="ctx-connect-as">
+        <span class="ctx-icon">▶</span><span data-i18n="ctx.connect_as">Conectar con otro usuario</span>
+        <span class="ctx-submenu-arrow">▸</span>
+        <div class="ctx-submenu" id="ctx-connect-as-submenu"></div>
+      </div>
+      <button class="ctx-item ctx-conn-only ctx-restore-only hidden" data-ctx="connect-restore" id="ctx-connect-restore">
+        <span class="ctx-icon">⟲</span><span data-i18n="ctx.connect_restore">Conectar y restaurar pantalla anterior</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="wake-on-lan">
         <span class="ctx-icon">⏻</span><span data-i18n="ctx.wake_on_lan">Despertar equipo</span>
@@ -749,6 +757,17 @@
               <input id="f-save-passphrase" type="checkbox" checked />
               <span data-i18n="modal_conn.save_passphrase">Guardar passphrase en el keyring del sistema</span>
             </label>
+          </div>
+
+          <div class="form-row" id="field-extra-creds" data-modal-pane="general">
+            <label data-i18n="modal_conn.extra_users">Usuarios adicionales</label>
+            <p class="form-hint" data-i18n="modal_conn.extra_users_hint">
+              Identidades alternativas con su propia autenticación (contraseña, clave SSH o credencial maestra). Al conectar se usa la principal; con clic derecho puedes elegir «Conectar con otro usuario».
+            </p>
+            <div id="extra-creds-list"></div>
+            <button type="button" class="btn-secondary" id="btn-add-extra-cred">
+              <span class="ctx-icon">＋</span><span data-i18n="modal_conn.add_user">Añadir otro usuario</span>
+            </button>
           </div>
 
           <div class="form-advanced-inline ssh-only" id="field-advanced" data-modal-pane="advanced">
@@ -1247,6 +1266,14 @@
                   <span data-i18n="prefs_terminal.confirm_risky_paste">Confirmar pegados peligrosos</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_terminal.confirm_risky_paste_hint">Pide confirmación antes de pegar texto multilínea, muy largo o con caracteres de control</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-capture-screen" />
+                  <span data-i18n="prefs_terminal.capture_screen">Guardar pantalla para restaurar</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.capture_screen_hint">Guarda en disco la salida de cada sesión SSH (no privada) para «Conectar y restaurar pantalla anterior». Puede contener datos sensibles; no se sincroniza.</p>
               </div>
 
 

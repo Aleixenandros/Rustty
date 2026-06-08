@@ -121,6 +121,8 @@ pub fn ssh_connect(
     passphrase: Option<String>,
     session_id: Option<String>,
     ask_answers: Option<std::collections::HashMap<String, String>>,
+    // Identidad adicional a usar (`ProfileCredential.id`). `None` = principal.
+    credential_id: Option<String>,
     // Cuando es Some(false) desactiva session_log aunque el perfil lo tenga activo.
     // Usado por sesiones privadas/efímeras desde el frontend.
     session_log_override: Option<bool>,
@@ -130,6 +132,9 @@ pub fn ssh_connect(
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
+    if let Some(cid) = credential_id.as_deref() {
+        apply_credential(&mut profile, cid)?;
+    }
     credentials::substitute_connection_fields(&mut profile, &cred_state);
 
     // Aplicar override de session_log si se solicita (sesión privada → false).
@@ -281,6 +286,27 @@ fn resolve_password_from_keepass(
     }
 }
 
+/// Aplica una identidad adicional (`ProfileCredential`) sobre una copia del
+/// perfil: sobrescribe usuario y parámetros de autenticación para que el resto
+/// del flujo (sustitución, resolución de contraseña, conexión) use esa
+/// identidad en vez de la principal. Si el id no existe, devuelve error.
+fn apply_credential(profile: &mut ConnectionProfile, credential_id: &str) -> Result<(), String> {
+    let cred = profile
+        .extra_credentials
+        .iter()
+        .find(|c| c.id == credential_id)
+        .cloned()
+        .ok_or_else(|| format!("Identidad {credential_id} no encontrada en el perfil"))?;
+    profile.username = cred.username;
+    profile.auth_type = cred.auth_type;
+    profile.key_path = cred.key_path;
+    profile.password_source = cred.password_source;
+    profile.master_credential_id = cred.master_credential_id;
+    // La identidad extra no usa la entrada KeePass de la principal.
+    profile.keepass_entry_uuid = None;
+    Ok(())
+}
+
 /// Cierra una sesión SSH activa
 #[tauri::command]
 pub fn ssh_disconnect(ssh_state: State<SshManager>, session_id: String) -> Result<(), String> {
@@ -295,14 +321,26 @@ pub fn get_profile_password(
     profile_state: State<'_, ProfileManager>,
     cred_state: State<'_, CredentialStore>,
     profile_id: String,
+    // Identidad adicional cuya contraseña se quiere pegar. `None` = principal.
+    credential_id: Option<String>,
 ) -> Result<Option<String>, String> {
     use crate::profiles::PasswordSource;
 
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
-    let profile = profiles
+    let mut profile = profiles
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
+
+    // Clave de keyring de la contraseña propia: la principal usa
+    // `password:<id>`; cada identidad extra usa `password:<id>:<cred_id>`.
+    let keyring_key = match credential_id.as_deref() {
+        Some(cid) => {
+            apply_credential(&mut profile, cid)?;
+            format!("password:{}:{}", profile_id, cid)
+        }
+        None => format!("password:{}", profile_id),
+    };
 
     let has_keepass = profile
         .keepass_entry_uuid
@@ -317,7 +355,7 @@ pub fn get_profile_password(
     }
 
     // 2) keyring (si el usuario guardó la contraseña al crear el perfil)
-    let entry = keyring::Entry::new("rustty", &format!("password:{}", profile.id))
+    let entry = keyring::Entry::new("rustty", &keyring_key)
         .map_err(|e| e.to_string())?;
     match entry.get_password() {
         Ok(p) => Ok(Some(p)),
@@ -391,12 +429,16 @@ pub fn rdp_connect(
     profile_id: String,
     password: Option<String>,
     ask_answers: Option<std::collections::HashMap<String, String>>,
+    credential_id: Option<String>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
+    if let Some(cid) = credential_id.as_deref() {
+        apply_credential(&mut profile, cid)?;
+    }
     credentials::substitute_connection_fields(&mut profile, &cred_state);
 
     let password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
@@ -499,12 +541,16 @@ pub async fn sftp_connect(
     session_id: Option<String>,
     ask_answers: Option<std::collections::HashMap<String, String>>,
     max_concurrent: Option<usize>,
+    credential_id: Option<String>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
+    if let Some(cid) = credential_id.as_deref() {
+        apply_credential(&mut profile, cid)?;
+    }
     credentials::substitute_connection_fields(&mut profile, &cred_state);
 
     let password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
@@ -1563,6 +1609,120 @@ pub fn session_logs_prune(
     }
 
     Ok(SessionLogsPruneResult { removed, freed_bytes })
+}
+
+// ─── Snapshots de pantalla por sesión (restaurar sesión anterior) ────────────
+//
+// Guardan lo último que se vio en el terminal de una conexión (serializado por
+// el frontend con sus secuencias ANSI) para poder repintarlo como scrollback al
+// reconectar. Es restauración *visual*, no reanudación del proceso remoto.
+// Un fichero por perfil en `<data_dir>/session_snapshots/<profile_id>.snapshot`
+// con permisos 0o600. Nunca se sincroniza ni se captura en sesiones privadas.
+
+fn session_snapshots_dir(data_dir: &State<crate::DataDir>) -> PathBuf {
+    data_dir.0.join("session_snapshots")
+}
+
+/// Solo caracteres seguros para nombre de fichero (evita path traversal).
+fn valid_snapshot_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+#[cfg(unix)]
+fn write_snapshot_file(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(data)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_snapshot_file(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, data)
+}
+
+/// Guarda (o reemplaza) el snapshot de pantalla del perfil.
+#[tauri::command]
+pub fn session_snapshot_set(
+    data_dir: State<crate::DataDir>,
+    profile_id: String,
+    content: String,
+) -> Result<(), String> {
+    if !valid_snapshot_id(&profile_id) {
+        return Err("Identificador de perfil no válido".to_string());
+    }
+    let dir = session_snapshots_dir(&data_dir);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{profile_id}.snapshot"));
+    write_snapshot_file(&path, content.as_bytes()).map_err(|e| e.to_string())
+}
+
+/// Devuelve el snapshot guardado del perfil, o `None` si no hay.
+#[tauri::command]
+pub fn session_snapshot_get(
+    data_dir: State<crate::DataDir>,
+    profile_id: String,
+) -> Result<Option<String>, String> {
+    if !valid_snapshot_id(&profile_id) {
+        return Err("Identificador de perfil no válido".to_string());
+    }
+    let path = session_snapshots_dir(&data_dir).join(format!("{profile_id}.snapshot"));
+    match std::fs::read_to_string(&path) {
+        Ok(s) => Ok(Some(s)),
+        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Borra el snapshot del perfil (idempotente).
+#[tauri::command]
+pub fn session_snapshot_delete(
+    data_dir: State<crate::DataDir>,
+    profile_id: String,
+) -> Result<(), String> {
+    if !valid_snapshot_id(&profile_id) {
+        return Err("Identificador de perfil no válido".to_string());
+    }
+    let path = session_snapshots_dir(&data_dir).join(format!("{profile_id}.snapshot"));
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Lista los `profile_id` que tienen snapshot guardado (para el menú contextual).
+#[tauri::command]
+pub fn session_snapshot_list(data_dir: State<crate::DataDir>) -> Result<Vec<String>, String> {
+    let dir = session_snapshots_dir(&data_dir);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut ids = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        if let Some(name) = entry.file_name().to_str() {
+            if let Some(id) = name.strip_suffix(".snapshot") {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    Ok(ids)
 }
 
 // ─── Preguntas al ejecutar (`${ask:}`) ───────────────────────────────────────

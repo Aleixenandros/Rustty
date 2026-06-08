@@ -36,6 +36,10 @@ fn default_conn_type() -> String {
     "ssh".to_string()
 }
 
+fn default_auth_password() -> AuthType {
+    AuthType::Password
+}
+
 fn default_true() -> bool {
     true
 }
@@ -72,6 +76,36 @@ pub struct SshTunnelProfile {
     pub remote_port: Option<u16>,
     #[serde(default)]
     pub auto_start: bool,
+}
+
+/// Identidad adicional (usuario + contraseña) de un perfil. La identidad
+/// principal sigue siendo `ConnectionProfile.username` + su contraseña; estas
+/// son alternativas que el usuario puede elegir con «Conectar con otro usuario».
+/// La contraseña nunca se guarda aquí: vive en el keyring bajo la clave
+/// `password:<profile_id>:<credential_id>` (origen `own`), o se resuelve desde
+/// una credencial maestra cuando `password_source == Master`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileCredential {
+    /// UUID estable. Deriva las claves de keyring
+    /// `password:<profile_id>:<id>` y `passphrase:<profile_id>:<id>`.
+    pub id: String,
+    /// Nombre de usuario de esta identidad.
+    pub username: String,
+    /// Etiqueta opcional para el menú; si falta se muestra el `username`.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Método de autenticación de esta identidad. Default `password`.
+    #[serde(default = "default_auth_password")]
+    pub auth_type: AuthType,
+    /// Ruta a la clave privada cuando `auth_type == PublicKey`.
+    #[serde(default)]
+    pub key_path: Option<String>,
+    /// Origen de la contraseña de esta identidad. Default `own`.
+    #[serde(default)]
+    pub password_source: PasswordSource,
+    /// Id de la credencial maestra cuando `password_source == Master`.
+    #[serde(default)]
+    pub master_credential_id: Option<String>,
 }
 
 /// Perfil de conexión guardado por el usuario.
@@ -124,6 +158,11 @@ pub struct ConnectionProfile {
     /// Referencia `CredentialMeta.id` del catálogo `credentials.json`.
     #[serde(default)]
     pub master_credential_id: Option<String>,
+    /// Identidades adicionales (usuario + contraseña) seleccionables al conectar
+    /// con «Conectar con otro usuario». La principal es `username`. Vacío por
+    /// defecto para no romper perfiles previos a la feature.
+    #[serde(default)]
+    pub extra_credentials: Vec<ProfileCredential>,
     /// Si true, inyecta el hook OSC 7 tras conectar para que el panel SFTP
     /// pueda seguir el cwd del terminal. Solo aplica a conexiones SSH.
     #[serde(default = "default_true")]
