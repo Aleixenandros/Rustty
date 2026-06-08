@@ -2,6 +2,24 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.25.1] - 2026-06-08
+
+### Corregido
+
+- **Usuarios adicionales**: el desplegable de origen de la contraseña no dejaba
+  elegir **Credencial maestra** (volvía solo a «Propia del perfil»). Además, el
+  usuario y su credencial se muestran ahora en la misma línea.
+- **Sincronización**: dejaba una versión restaurable nueva en cada arranque
+  aunque no hubiera cambios; ahora solo se archiva una versión cuando cambia el
+  contenido real (los refrescos de marca de tiempo no cuentan).
+- **Sincronización al iniciar**: si cambiabas de perfil o de workspace mientras
+  sincronizaba, al terminar ya no revierte al que estaba activo al arrancar.
+
+### Cambiado
+
+- **Iconos de los menús contextuales** unificados a SVG, en lugar de la mezcla
+  de emojis y glifos que se renderizaba distinto según el sistema operativo.
+
 ## [1.25.0] - 2026-06-08
 
 ### Añadido

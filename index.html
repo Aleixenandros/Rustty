@@ -321,12 +321,51 @@
     </div>
 
     <!-- ══════════════════════════════════════════════════════
+         Sprite de iconos de los menús contextuales. Cada acción usa
+         <use href="#ci-…"/>; el color/estado lo da `.ctx-icon` (currentColor).
+    ══════════════════════════════════════════════════════ -->
+    <svg width="0" height="0" aria-hidden="true" style="position:absolute" id="ctx-icons">
+      <defs>
+        <symbol id="ci-plus-circle" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5.2v5.6M5.2 8h5.6"/></symbol>
+        <symbol id="ci-disk" viewBox="0 0 16 16"><path d="M4 3h6.2L13 5.8V12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M5.5 3v3.2h4.2V3"/><path d="M5.5 13v-3.3h5V13"/></symbol>
+        <symbol id="ci-edit" viewBox="0 0 16 16"><path d="M3.2 12.8l.7-2.6 6.7-6.7a1 1 0 0 1 1.5 0l.4.4a1 1 0 0 1 0 1.5l-6.7 6.7-2.6.7z"/><path d="M9.6 4.3l2 2"/></symbol>
+        <symbol id="ci-export" viewBox="0 0 16 16"><path d="M8 10V3M5.2 5.8L8 3l2.8 2.8"/><path d="M3.5 10.5v1.4a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-1.4"/></symbol>
+        <symbol id="ci-x" viewBox="0 0 16 16"><path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/></symbol>
+        <symbol id="ci-play" viewBox="0 0 16 16"><path d="M5.5 3.6l6.2 4.4-6.2 4.4z"/></symbol>
+        <symbol id="ci-restore" viewBox="0 0 16 16"><path d="M3.4 8a4.6 4.6 0 1 0 1.3-3.2"/><path d="M2.6 2v3h3"/></symbol>
+        <symbol id="ci-power" viewBox="0 0 16 16"><path d="M8 2.8v5.2"/><path d="M5.3 5.1a4.5 4.5 0 1 0 5.4 0"/></symbol>
+        <symbol id="ci-tunnel" viewBox="0 0 16 16"><path d="M3.5 6h7.5M9 4l2 2-2 2"/><path d="M12.5 10H5M7 8l-2 2 2 2"/></symbol>
+        <symbol id="ci-duplicate" viewBox="0 0 16 16"><path d="M6.2 6.2h6.3v6.3H6.2z"/><path d="M9.7 6.2V4.3a.8.8 0 0 0-.8-.8H3.9a.8.8 0 0 0-.8.8v5a.8.8 0 0 0 .8.8h1.8"/></symbol>
+        <symbol id="ci-key" viewBox="0 0 16 16"><circle cx="10.2" cy="5.8" r="2.6"/><path d="M8.4 7.6 3.5 12.5"/><path d="M5.2 10.8l1.4 1.4M3.9 12.1l1.3 1.3"/></symbol>
+        <symbol id="ci-star" viewBox="0 0 16 16"><path d="M8 2.6l1.6 3.4 3.7.5-2.7 2.6.7 3.7L8 11.6 4.7 13.3l.7-3.7L2.7 7.1l3.7-.5z"/></symbol>
+        <symbol id="ci-pin" viewBox="0 0 16 16"><path d="M5.8 3h4.4"/><path d="M6.4 3 6 7.2 4.2 9.3h7.6L10 7.2 9.6 3"/><path d="M8 9.3V13"/></symbol>
+        <symbol id="ci-arrow-up" viewBox="0 0 16 16"><path d="M8 3v9.5M4.8 6.2 8 3l3.2 3.2"/></symbol>
+        <symbol id="ci-arrow-down" viewBox="0 0 16 16"><path d="M8 13V3.5M4.8 9.8 8 13l3.2-3.2"/></symbol>
+        <symbol id="ci-refresh" viewBox="0 0 16 16"><path d="M12.6 8a4.6 4.6 0 1 1-1.3-3.2"/><path d="M13.4 2v3h-3"/></symbol>
+        <symbol id="ci-folder" viewBox="0 0 16 16"><path d="M3 5.4a1 1 0 0 1 1-1h2.3l1.3 1.5H12a1 1 0 0 1 1 1v4.7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></symbol>
+        <symbol id="ci-file" viewBox="0 0 16 16"><path d="M5 3h4l3 3v6.4a.7.7 0 0 1-.7.7H5a.7.7 0 0 1-.7-.7V3.7A.7.7 0 0 1 5 3z"/><path d="M8.8 3.2V6.2H11.8"/></symbol>
+        <symbol id="ci-download" viewBox="0 0 16 16"><path d="M8 3v6.2M5.4 7.2 8 9.8l2.6-2.6"/><path d="M4 12.5h8"/></symbol>
+        <symbol id="ci-upload" viewBox="0 0 16 16"><path d="M8 9.8V3.6M5.4 6.2 8 3.6l2.6 2.6"/><path d="M4 12.5h8"/></symbol>
+        <symbol id="ci-sliders" viewBox="0 0 16 16"><path d="M3 5.5h4.3M10 5.5h3"/><circle cx="8.6" cy="5.5" r="1.4"/><path d="M3 10.5h2.7M8.4 10.5H13"/><circle cx="7" cy="10.5" r="1.4"/></symbol>
+        <symbol id="ci-export-tray" viewBox="0 0 16 16"><path d="M8 2.8v5.4M5.4 5.6 8 8.2l2.6-2.6"/><path d="M3.5 10v2a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2"/></symbol>
+        <symbol id="ci-columns" viewBox="0 0 16 16"><path d="M3 3.8h10v8.4H3z"/><path d="M6.3 3.8v8.4M9.7 3.8v8.4"/></symbol>
+        <symbol id="ci-rows" viewBox="0 0 16 16"><path d="M3 3.8h10v8.4H3z"/><path d="M3 6.6h10M3 9.4h10"/></symbol>
+        <symbol id="ci-grid" viewBox="0 0 16 16"><path d="M3 3.8h10v8.4H3z"/><path d="M8 3.8v8.4M3 8h10"/></symbol>
+        <symbol id="ci-view-add" viewBox="0 0 16 16"><path d="M3.5 3.8h9v8.4h-9z"/><path d="M8 6.2v3.6M6.2 8h3.6"/></symbol>
+        <symbol id="ci-view-remove" viewBox="0 0 16 16"><path d="M3.5 3.8h9v8.4h-9z"/><path d="M6.2 8h3.6"/></symbol>
+        <symbol id="ci-view-solo" viewBox="0 0 16 16"><path d="M3.5 3.8h9v8.4h-9z"/><path d="M8 3.8v4.4H3.5"/></symbol>
+        <symbol id="ci-arrow-right" viewBox="0 0 16 16"><path d="M3 8h9.5M9.3 4.8 12.5 8l-3.2 3.2"/></symbol>
+        <symbol id="ci-ban" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.2"/><path d="M4.3 4.3l7.4 7.4"/></symbol>
+      </defs>
+    </svg>
+
+    <!-- ══════════════════════════════════════════════════════
          MENÚ CONTEXTUAL (clic derecho en el sidebar)
     ══════════════════════════════════════════════════════ -->
     <div id="context-menu" class="hidden">
       <!-- Siempre visible -->
       <button class="ctx-item" data-ctx="new-connection">
-        <span class="ctx-icon">⊕</span><span data-i18n="ctx.new_conn_here">Nueva conexión aquí</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-plus-circle"/></svg></span><span data-i18n="ctx.new_conn_here">Nueva conexión aquí</span>
       </button>
       <button class="ctx-item" data-ctx="new-folder">
         <span class="ctx-icon app-folder-icon">
@@ -337,16 +376,16 @@
       </button>
       <div class="ctx-sep ctx-sidebar-only"></div>
       <button class="ctx-item ctx-sidebar-only" data-ctx="open-data-dir">
-        <span class="ctx-icon">💾</span><span data-i18n="ctx.open_data_dir">Abrir directorio de datos</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-disk"/></svg></span><span data-i18n="ctx.open_data_dir">Abrir directorio de datos</span>
       </button>
 
       <!-- Solo cuando el clic fue sobre una carpeta -->
       <div class="ctx-sep ctx-folder-only hidden"></div>
       <button class="ctx-item ctx-folder-only hidden" data-ctx="rename-folder">
-        <span class="ctx-icon">✎</span><span data-i18n="ctx.rename_folder">Renombrar carpeta</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="ctx.rename_folder">Renombrar carpeta</span>
       </button>
       <button class="ctx-item ctx-folder-only hidden" data-ctx="export-folder">
-        <span class="ctx-icon">⇪</span><span data-i18n="ctx.export_folder">Exportar conexiones de la carpeta…</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-export"/></svg></span><span data-i18n="ctx.export_folder">Exportar conexiones de la carpeta…</span>
       </button>
       <div class="ctx-colorable ctx-folder-color hidden">
         <span class="ctx-folder-color-label" data-i18n="ctx.folder_color">Color</span>
@@ -363,13 +402,13 @@
         </div>
       </div>
       <button class="ctx-item danger ctx-folder-only hidden" data-ctx="delete-folder">
-        <span class="ctx-icon">✕</span><span data-i18n="ctx.delete_folder">Eliminar carpeta</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></span><span data-i18n="ctx.delete_folder">Eliminar carpeta</span>
       </button>
 
       <!-- Solo cuando el clic fue sobre una conexión -->
       <div class="ctx-sep ctx-conn-only hidden"></div>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="connect">
-        <span class="ctx-icon">▶</span><span data-i18n="ctx.connect">Conectar</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span data-i18n="ctx.connect">Conectar</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="connect-private">
         <span class="ctx-icon">
@@ -380,24 +419,24 @@
         </span><span data-i18n="ctx.connect_private">Abrir en privado</span>
       </button>
       <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-connect-as-only hidden" id="ctx-connect-as">
-        <span class="ctx-icon">▶</span><span data-i18n="ctx.connect_as">Conectar con otro usuario</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span data-i18n="ctx.connect_as">Conectar con otro usuario</span>
         <span class="ctx-submenu-arrow">▸</span>
         <div class="ctx-submenu" id="ctx-connect-as-submenu"></div>
       </div>
       <button class="ctx-item ctx-conn-only ctx-restore-only hidden" data-ctx="connect-restore" id="ctx-connect-restore">
-        <span class="ctx-icon">⟲</span><span data-i18n="ctx.connect_restore">Conectar y restaurar pantalla anterior</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-restore"/></svg></span><span data-i18n="ctx.connect_restore">Conectar y restaurar pantalla anterior</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="wake-on-lan">
-        <span class="ctx-icon">⏻</span><span data-i18n="ctx.wake_on_lan">Despertar equipo</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-power"/></svg></span><span data-i18n="ctx.wake_on_lan">Despertar equipo</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="new-tunnel">
-        <span class="ctx-icon">⇄</span><span data-i18n="ctx.new_tunnel">Nuevo túnel…</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span><span data-i18n="ctx.new_tunnel">Nuevo túnel…</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="edit-conn">
-        <span class="ctx-icon">✎</span><span data-i18n="ctx.edit">Editar</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="ctx.edit">Editar</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="duplicate-conn">
-        <span class="ctx-icon">⎘</span><span data-i18n="ctx.duplicate">Duplicar</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span data-i18n="ctx.duplicate">Duplicar</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="edit-note">
         <span class="ctx-icon">
@@ -416,34 +455,34 @@
         </span><span data-i18n="ctx.delete_note">Eliminar nota</span>
       </button>
       <button class="ctx-item ctx-conn-only ctx-promote-only hidden" data-ctx="promote-master">
-        <span class="ctx-icon">🔑</span><span data-i18n="ctx.promote_master">Promover a credencial maestra…</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-key"/></svg></span><span data-i18n="ctx.promote_master">Promover a credencial maestra…</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-favorite">
-        <span class="ctx-icon">★</span><span data-i18n="ctx.toggle_favorite">Marcar / desmarcar como favorito</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-star"/></svg></span><span data-i18n="ctx.toggle_favorite">Marcar / desmarcar como favorito</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-pinned">
-        <span class="ctx-icon">📌</span><span data-i18n="ctx.toggle_pinned">Anclar / desanclar del dashboard</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-pin"/></svg></span><span data-i18n="ctx.toggle_pinned">Anclar / desanclar del dashboard</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="move-conn-up">
-        <span class="ctx-icon">↑</span><span data-i18n="ctx.move_up">Mover arriba</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></span><span data-i18n="ctx.move_up">Mover arriba</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="move-conn-down">
-        <span class="ctx-icon">↓</span><span data-i18n="ctx.move_down">Mover abajo</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-down"/></svg></span><span data-i18n="ctx.move_down">Mover abajo</span>
       </button>
       <button class="ctx-item danger ctx-conn-only hidden" data-ctx="delete-conn">
-        <span class="ctx-icon">✕</span><span data-i18n="ctx.delete">Eliminar</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></span><span data-i18n="ctx.delete">Eliminar</span>
       </button>
 
       <!-- Solo cuando el clic fue sobre un workspace en vista "Todos" -->
       <div class="ctx-sep ctx-ws-only hidden"></div>
       <button class="ctx-item ctx-ws-only hidden" data-ctx="rename-ws">
-        <span class="ctx-icon">✎</span><span data-i18n="ctx.rename_workspace">Renombrar perfil</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="ctx.rename_workspace">Renombrar perfil</span>
       </button>
       <button class="ctx-item ctx-ws-only hidden" data-ctx="export-ws">
-        <span class="ctx-icon">⇪</span><span data-i18n="ctx.export_workspace">Exportar conexiones del perfil…</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-export"/></svg></span><span data-i18n="ctx.export_workspace">Exportar conexiones del perfil…</span>
       </button>
       <button class="ctx-item danger ctx-ws-only hidden" data-ctx="delete-ws">
-        <span class="ctx-icon">✕</span><span data-i18n="ctx.delete_workspace">Eliminar perfil</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></span><span data-i18n="ctx.delete_workspace">Eliminar perfil</span>
       </button>
     </div>
 
@@ -452,33 +491,33 @@
     ══════════════════════════════════════════════════════ -->
     <div id="sftp-context-menu" class="ctx-menu hidden">
       <button class="ctx-item" data-sftpctx="refresh">
-        <span class="ctx-icon">⟳</span><span>Refrescar</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg></span><span>Refrescar</span>
       </button>
       <button class="ctx-item" data-sftpctx="mkdir">
-        <span class="ctx-icon">📁</span><span>Nueva carpeta</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-folder"/></svg></span><span>Nueva carpeta</span>
       </button>
       <button class="ctx-item" data-sftpctx="touch">
-        <span class="ctx-icon">📄</span><span>Nuevo archivo</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-file"/></svg></span><span>Nuevo archivo</span>
       </button>
       <div class="ctx-sep"></div>
       <button class="ctx-item sftpctx-remote-only sftpctx-needs-selection" data-sftpctx="download">
-        <span class="ctx-icon">⇩</span><span>Descargar selección</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-download"/></svg></span><span>Descargar selección</span>
       </button>
       <button class="ctx-item" data-sftpctx="upload-files">
-        <span class="ctx-icon">⇧</span><span>Subir archivos…</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-upload"/></svg></span><span>Subir archivos…</span>
       </button>
       <button class="ctx-item sftpctx-local-only sftpctx-needs-selection hidden" data-sftpctx="upload-selected">
-        <span class="ctx-icon">⇧</span><span>Subir selección</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-upload"/></svg></span><span>Subir selección</span>
       </button>
       <div class="ctx-sep"></div>
       <button class="ctx-item sftpctx-single-selection" data-sftpctx="rename">
-        <span class="ctx-icon">✎</span><span>Renombrar</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span>Renombrar</span>
       </button>
       <button class="ctx-item sftpctx-needs-selection" data-sftpctx="chmod">
-        <span class="ctx-icon">◫</span><span>Cambiar permisos…</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-sliders"/></svg></span><span>Cambiar permisos…</span>
       </button>
       <button class="ctx-item danger sftpctx-needs-selection" data-sftpctx="delete">
-        <span class="ctx-icon">✕</span><span>Eliminar</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></span><span>Eliminar</span>
       </button>
     </div>
 
@@ -487,56 +526,56 @@
     ══════════════════════════════════════════════════════ -->
     <div id="tab-context-menu" class="ctx-menu hidden">
       <button class="ctx-item" data-tabctx="duplicate">
-        <span class="ctx-icon">⎘</span><span data-i18n="tabctx.duplicate">Duplicar pestaña</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span data-i18n="tabctx.duplicate">Duplicar pestaña</span>
       </button>
 
       <!-- Acciones de división/vista (visibilidad calculada al abrir el menú) -->
       <div class="ctx-sep tabctx-view-sep hidden"></div>
       <button class="ctx-item tabctx-view-add hidden" data-tabctx="view-add">
-        <span class="ctx-icon">⇱</span><span data-i18n="tabctx.view_add">Añadir a la vista actual</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-view-add"/></svg></span><span data-i18n="tabctx.view_add">Añadir a la vista actual</span>
       </button>
       <button class="ctx-item tabctx-view-remove hidden" data-tabctx="view-remove">
-        <span class="ctx-icon">⇲</span><span data-i18n="tabctx.view_remove">Quitar de la vista</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-view-remove"/></svg></span><span data-i18n="tabctx.view_remove">Quitar de la vista</span>
       </button>
       <button class="ctx-item tabctx-view-solo hidden" data-tabctx="view-solo">
-        <span class="ctx-icon">◰</span><span data-i18n="tabctx.view_solo">Mostrar solo esta</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-view-solo"/></svg></span><span data-i18n="tabctx.view_solo">Mostrar solo esta</span>
       </button>
 
       <!-- Cambios de layout (solo cuando hay ≥2 panes) -->
       <div class="ctx-sep tabctx-layout-sep hidden"></div>
       <button class="ctx-item tabctx-layout hidden" data-tabctx="layout-columns">
-        <span class="ctx-icon">⫴</span><span data-i18n="tabctx.layout_columns">Dividir en columnas</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-columns"/></svg></span><span data-i18n="tabctx.layout_columns">Dividir en columnas</span>
       </button>
       <button class="ctx-item tabctx-layout hidden" data-tabctx="layout-rows">
-        <span class="ctx-icon">☰</span><span data-i18n="tabctx.layout_rows">Dividir en filas</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-rows"/></svg></span><span data-i18n="tabctx.layout_rows">Dividir en filas</span>
       </button>
       <button class="ctx-item tabctx-layout hidden" data-tabctx="layout-grid">
-        <span class="ctx-icon">⊞</span><span data-i18n="tabctx.layout_grid">Distribuir en rejilla</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-grid"/></svg></span><span data-i18n="tabctx.layout_grid">Distribuir en rejilla</span>
       </button>
 
       <div class="ctx-sep"></div>
       <button class="ctx-item tabctx-export-history" data-tabctx="export-history">
-        <span class="ctx-icon">⤓</span><span data-i18n="tabctx.export_history">Exportar historial…</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-export-tray"/></svg></span><span data-i18n="tabctx.export_history">Exportar historial…</span>
       </button>
       <div class="ctx-sep"></div>
       <button class="ctx-item" data-tabctx="rename">
-        <span class="ctx-icon">✎</span><span data-i18n="tabctx.rename">Renombrar pestaña…</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="tabctx.rename">Renombrar pestaña…</span>
       </button>
       <button class="ctx-item tabctx-pin" data-tabctx="pin">
-        <span class="ctx-icon">📌</span><span class="tabctx-pin-label" data-i18n="tabctx.pin">Anclar pestaña</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-pin"/></svg></span><span class="tabctx-pin-label" data-i18n="tabctx.pin">Anclar pestaña</span>
       </button>
       <button class="ctx-item" data-tabctx="close">
-        <span class="ctx-icon">✕</span><span data-i18n="tabctx.close">Cerrar</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></span><span data-i18n="tabctx.close">Cerrar</span>
       </button>
       <button class="ctx-item" data-tabctx="close-others">
-        <span class="ctx-icon">⊘</span><span data-i18n="tabctx.close_others">Cerrar las demás</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-ban"/></svg></span><span data-i18n="tabctx.close_others">Cerrar las demás</span>
       </button>
       <button class="ctx-item" data-tabctx="close-right">
-        <span class="ctx-icon">→</span><span data-i18n="tabctx.close_right">Cerrar las de la derecha</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></span><span data-i18n="tabctx.close_right">Cerrar las de la derecha</span>
       </button>
       <div class="ctx-sep"></div>
       <button class="ctx-item danger" data-tabctx="close-all">
-        <span class="ctx-icon">✕</span><span data-i18n="tabctx.close_all">Cerrar todas</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></span><span data-i18n="tabctx.close_all">Cerrar todas</span>
       </button>
     </div>
 

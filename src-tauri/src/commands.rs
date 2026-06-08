@@ -1379,10 +1379,13 @@ pub async fn sync_run(
     let mut merged = current;
     merged.merge(remote.clone());
 
-    // 3. Push solo si el merge cambia el estado lógico remoto. El cifrado age
-    // produce bytes distintos en cada escritura, así que comparar el blob
-    // cifrado crearía falsos positivos y snapshots innecesarios.
-    if !merged.logically_eq(&remote) {
+    // 3. Push solo si el merge aporta un cambio de CONTENIDO al remoto.
+    // Comparamos por contenido (ignorando `updated_at`): un mero refresco de
+    // timestamps —mismo dato— no debe subir ni archivar una versión, o se
+    // acumularían snapshots "restaurables" idénticos en cada arranque. El
+    // cifrado age además produce bytes distintos en cada escritura, así que
+    // comparar el blob cifrado crearía falsos positivos.
+    if !merged.content_eq(&remote) {
         let history_keep = config.history_keep.max(1);
         backend
             .archive_existing(history_keep)

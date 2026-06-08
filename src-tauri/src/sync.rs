@@ -276,14 +276,19 @@ impl Default for SyncState {
 }
 
 impl SyncState {
-    pub fn logically_eq(&self, other: &SyncState) -> bool {
+    /// Igualdad **de contenido**: ignora los `updated_at` de items y
+    /// tombstones y el `device_id`. Compara solo qué datos hay y qué claves
+    /// están borradas. Sirve para decidir si un push aporta un cambio real al
+    /// remoto: un mero refresco de timestamps (mismo contenido) no debe archivar
+    /// una versión "restaurable", o se acumularían snapshots idénticos en cada
+    /// arranque.
+    pub fn content_eq(&self, other: &SyncState) -> bool {
         self.version == other.version
-            && self.tombstones == other.tombstones
+            && self.tombstones.len() == other.tombstones.len()
+            && self.tombstones.keys().all(|k| other.tombstones.contains_key(k))
             && self.items.len() == other.items.len()
             && self.items.iter().all(|(key, item)| {
-                other.items.get(key).is_some_and(|other_item| {
-                    item.updated_at == other_item.updated_at && item.data == other_item.data
-                })
+                other.items.get(key).is_some_and(|other_item| item.data == other_item.data)
             })
     }
 
@@ -336,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn logical_equality_ignores_device_id() {
+    fn content_eq_ignora_device_id() {
         let mut a = SyncState::default();
         a.items.insert(
             "prefs:bundle".into(),
@@ -349,24 +354,44 @@ mod tests {
             sync_item(json!({"theme": "dark"}), "device-b"),
         );
 
-        assert!(a.logically_eq(&b));
+        assert!(a.content_eq(&b));
     }
 
     #[test]
-    fn logical_equality_detects_data_changes() {
+    fn content_eq_ignora_los_timestamps() {
+        // Mismo dato, distinto updated_at: NO es un cambio de contenido, así que
+        // un push no debe archivar una versión nueva.
         let mut a = SyncState::default();
-        a.items.insert(
-            "prefs:bundle".into(),
-            sync_item(json!({"theme": "dark"}), "device-a"),
-        );
-
+        a.items
+            .insert("prefs:bundle".into(), item_en(0, json!({"theme": "dark"})));
         let mut b = SyncState::default();
-        b.items.insert(
-            "prefs:bundle".into(),
-            sync_item(json!({"theme": "light"}), "device-a"),
-        );
+        b.items
+            .insert("prefs:bundle".into(), item_en(999, json!({"theme": "dark"})));
 
-        assert!(!a.logically_eq(&b));
+        assert!(a.content_eq(&b));
+        assert_ne!(a, b); // la igualdad estricta sí distingue el timestamp
+    }
+
+    #[test]
+    fn content_eq_detecta_cambios_de_dato() {
+        let mut a = SyncState::default();
+        a.items
+            .insert("prefs:bundle".into(), item_en(0, json!({"theme": "dark"})));
+        let mut b = SyncState::default();
+        b.items
+            .insert("prefs:bundle".into(), item_en(0, json!({"theme": "light"})));
+
+        assert!(!a.content_eq(&b));
+    }
+
+    #[test]
+    fn content_eq_ignora_timestamp_de_tombstone() {
+        let mut a = SyncState::default();
+        a.tombstones.insert("profile:x".into(), ts(0));
+        let mut b = SyncState::default();
+        b.tombstones.insert("profile:x".into(), ts(500));
+
+        assert!(a.content_eq(&b));
     }
 
     // Construye un SyncItem con un timestamp explícito (segundos desde epoch
@@ -496,7 +521,7 @@ mod tests {
 
         let segunda = local.merge(remoto);
         assert_eq!(segunda, 0);
-        assert!(local.logically_eq(&estado_tras_primera));
+        assert_eq!(local, estado_tras_primera);
     }
 }
 

@@ -1862,7 +1862,6 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
 
   _syncInFlight = true;
   setSyncStatus("busy", "prefs_sync.status_busy");
-  const sidebarTreeState = captureSidebarTreeState();
   try {
     if (persistConfig) {
       await persistSyncConfig();
@@ -1873,6 +1872,11 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     const summary = await sync.runSync({
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
+    // Capturamos el estado de la sidebar AQUÍ, tras el merge, para preservar la
+    // navegación que el usuario haya hecho durante el sync (cambiar de workspace,
+    // abrir/cerrar carpetas). Si capturáramos antes de lanzar el sync, al
+    // restaurar revertiríamos al workspace/perfil que estaba activo al iniciarlo.
+    const sidebarTreeState = captureSidebarTreeState();
     migrateLegacyFolderColors();
     normalizeWorkspaceColors();
     applySyncedUserFolders();
@@ -4814,7 +4818,7 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
       item.dataset.credId = c.id;
       const icon = document.createElement("span");
       icon.className = "ctx-icon";
-      icon.textContent = "▶";
+      icon.innerHTML = '<svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg>';
       const label = document.createElement("span");
       label.textContent = c.label || c.username;
       item.append(icon, label);
@@ -5444,10 +5448,36 @@ function openEditConnectionModal(profileId) {
 // cuáles se borraron y limpiar su entrada de keyring al guardar.
 let originalExtraCredIds = [];
 
+/** Destruye los desplegables mejorados de una fila para no fugar listeners. */
+function destroyRowSelects(row) {
+  row.querySelectorAll("select").forEach((s) => s._destroyEnhanced?.());
+}
+
 function clearExtraCredRows() {
   const list = document.getElementById("extra-creds-list");
-  if (list) list.innerHTML = "";
+  if (list) {
+    list.querySelectorAll(".extra-cred-row").forEach(destroyRowSelects);
+    list.innerHTML = "";
+  }
   originalExtraCredIds = [];
+}
+
+/** Rellena un <select> con el catálogo de credenciales maestras. */
+function fillMasterOptions(sel, selectedId) {
+  sel.innerHTML = "";
+  for (const m of masterCredentials || []) {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.name;
+    sel.appendChild(opt);
+  }
+  if (!masterCredentials?.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = t("modal_conn.master_cred_none");
+    sel.appendChild(opt);
+  }
+  if (selectedId) sel.value = selectedId;
 }
 
 /** Añade una fila de identidad adicional al formulario. `cred` precarga datos. */
@@ -5460,7 +5490,9 @@ function addExtraCredRow(cred = null, { focus = true } = {}) {
   row.dataset.credId = cred?.id || crypto.randomUUID();
   row.dataset.existing = existing ? "1" : "0";
 
-  // Línea 1: usuario · tipo de auth · eliminar
+  // ── Línea 1: usuario · credencial principal · eliminar ──
+  // El usuario y su credencial (contraseña / credencial maestra / clave) van
+  // a la misma altura para leerse como un par.
   const line1 = document.createElement("div");
   line1.className = "extra-cred-line1";
 
@@ -5469,6 +5501,47 @@ function addExtraCredRow(cred = null, { focus = true } = {}) {
   userInput.className = "extra-cred-user";
   userInput.placeholder = t("modal_conn.user_ph");
   userInput.value = cred?.username || "";
+
+  const credSlot = document.createElement("div");
+  credSlot.className = "extra-cred-cred";
+
+  const passWrap = document.createElement("div");
+  passWrap.className = "password-field extra-cred-passwrap";
+  const passInput = document.createElement("input");
+  passInput.type = "password";
+  passInput.className = "extra-cred-pass";
+  passInput.placeholder = existing ? "••••••••" : t("modal_conn.password");
+  passWrap.appendChild(passInput);
+
+  const masterSel = document.createElement("select");
+  masterSel.className = "extra-cred-master";
+  fillMasterOptions(masterSel, cred?.master_credential_id);
+
+  const keyInput = document.createElement("input");
+  keyInput.type = "text";
+  keyInput.className = "extra-cred-keypath";
+  keyInput.placeholder = "~/.ssh/id_rsa";
+  keyInput.value = cred?.key_path || "";
+
+  credSlot.append(passWrap, masterSel, keyInput);
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "btn-icon extra-cred-remove";
+  removeBtn.title = t("modal_conn.remove_user");
+  removeBtn.setAttribute("aria-label", t("modal_conn.remove_user"));
+  removeBtn.textContent = "✕";
+  removeBtn.addEventListener("click", () => {
+    destroyRowSelects(row);
+    row.remove();
+    renderConnectionSummary();
+  });
+
+  line1.append(userInput, credSlot, removeBtn);
+
+  // ── Línea 2: tipo de auth · origen (contraseña) / passphrase (clave) ──
+  const line2 = document.createElement("div");
+  line2.className = "extra-cred-line2";
 
   const authSel = document.createElement("select");
   authSel.className = "extra-cred-auth";
@@ -5484,102 +5557,66 @@ function addExtraCredRow(cred = null, { focus = true } = {}) {
   }
   authSel.value = cred?.auth_type || "password";
 
-  const removeBtn = document.createElement("button");
-  removeBtn.type = "button";
-  removeBtn.className = "btn-icon extra-cred-remove";
-  removeBtn.title = t("modal_conn.remove_user");
-  removeBtn.setAttribute("aria-label", t("modal_conn.remove_user"));
-  removeBtn.textContent = "✕";
-  removeBtn.addEventListener("click", () => {
-    row.remove();
-    renderConnectionSummary();
-  });
+  const srcSel = document.createElement("select");
+  srcSel.className = "extra-cred-source";
+  for (const [val, key] of [
+    ["own", "modal_conn.password_source_own"],
+    ["master", "modal_conn.password_source_master"],
+  ]) {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = t(key);
+    srcSel.appendChild(opt);
+  }
+  srcSel.value = cred?.password_source === "master" ? "master" : "own";
 
-  line1.append(userInput, authSel, removeBtn);
+  const ppWrap = document.createElement("div");
+  ppWrap.className = "password-field extra-cred-ppwrap";
+  const ppInput = document.createElement("input");
+  ppInput.type = "password";
+  ppInput.className = "extra-cred-passphrase";
+  ppInput.placeholder = existing ? "••••••••" : t("modal_conn.passphrase");
+  ppWrap.appendChild(ppInput);
 
-  // Línea 2: campos condicionales según auth/origen
-  const line2 = document.createElement("div");
-  line2.className = "extra-cred-line2";
+  line2.append(authSel, srcSel, ppWrap);
 
-  authSel.addEventListener("change", () => renderExtraCredFields(row, line2, null));
   row.append(line1, line2);
   list.appendChild(row);
-  renderExtraCredFields(row, line2, cred);
+
+  // Mejorar los <select> al desplegable personalizado del resto del formulario.
+  enhanceSelect(authSel);
+  enhanceSelect(srcSel);
+  enhanceSelect(masterSel);
+
+  authSel.addEventListener("change", () => renderExtraCredFields(row));
+  srcSel.addEventListener("change", () => renderExtraCredFields(row));
+
+  renderExtraCredFields(row);
   if (focus) userInput.focus();
 }
 
 /**
- * Pinta los campos condicionales de una fila de identidad extra según el tipo
- * de auth y, para contraseña, el origen (propia / credencial maestra).
- * `cred` precarga valores la primera vez; en cambios de selector va `null`.
+ * Muestra u oculta los campos de una fila de identidad extra según el tipo de
+ * auth y, para contraseña, el origen (propia / credencial maestra). No recrea
+ * los controles: solo alterna su visibilidad, de modo que el valor elegido en
+ * cada desplegable se conserva.
  */
-function renderExtraCredFields(row, line2, cred) {
+function renderExtraCredFields(row) {
   const authType = row.querySelector(".extra-cred-auth").value;
-  const existing = row.dataset.existing === "1";
-  line2.innerHTML = "";
+  const source = row.querySelector(".extra-cred-source").value;
+  const isPwd = authType === "password";
+  const isKey = authType === "public_key";
+  const isMaster = isPwd && source === "master";
 
-  if (authType === "password") {
-    // Selector de origen: propia o credencial maestra.
-    const srcSel = document.createElement("select");
-    srcSel.className = "extra-cred-source";
-    for (const [val, key] of [
-      ["own", "modal_conn.password_source_own"],
-      ["master", "modal_conn.password_source_master"],
-    ]) {
-      const opt = document.createElement("option");
-      opt.value = val;
-      opt.textContent = t(key);
-      srcSel.appendChild(opt);
-    }
-    srcSel.value = cred?.password_source === "master" ? "master" : "own";
-    srcSel.addEventListener("change", () => renderExtraCredFields(row, line2, null));
-    line2.appendChild(srcSel);
-
-    if (srcSel.value === "master") {
-      const masterSel = document.createElement("select");
-      masterSel.className = "extra-cred-master";
-      for (const m of masterCredentials || []) {
-        const opt = document.createElement("option");
-        opt.value = m.id;
-        opt.textContent = m.name;
-        masterSel.appendChild(opt);
-      }
-      if (!masterCredentials?.length) {
-        const opt = document.createElement("option");
-        opt.value = "";
-        opt.textContent = t("modal_conn.master_cred_none");
-        masterSel.appendChild(opt);
-      }
-      if (cred?.master_credential_id) masterSel.value = cred.master_credential_id;
-      line2.appendChild(masterSel);
-    } else {
-      const passWrap = document.createElement("div");
-      passWrap.className = "password-field";
-      const passInput = document.createElement("input");
-      passInput.type = "password";
-      passInput.className = "extra-cred-pass";
-      passInput.placeholder = existing ? "••••••••" : t("modal_conn.password");
-      passWrap.appendChild(passInput);
-      line2.appendChild(passWrap);
-    }
-  } else if (authType === "public_key") {
-    const keyInput = document.createElement("input");
-    keyInput.type = "text";
-    keyInput.className = "extra-cred-keypath";
-    keyInput.placeholder = "~/.ssh/id_rsa";
-    keyInput.value = cred?.key_path || "";
-    line2.appendChild(keyInput);
-
-    const ppWrap = document.createElement("div");
-    ppWrap.className = "password-field";
-    const ppInput = document.createElement("input");
-    ppInput.type = "password";
-    ppInput.className = "extra-cred-passphrase";
-    ppInput.placeholder = existing ? "••••••••" : t("modal_conn.passphrase");
-    ppWrap.appendChild(ppInput);
-    line2.appendChild(ppWrap);
-  }
-  // agent: sin campos adicionales
+  const show = (sel, on) => {
+    const el = row.querySelector(sel);
+    if (el) (el.closest(".custom-select") || el).classList.toggle("hidden", !on);
+  };
+  show(".extra-cred-source", isPwd);
+  show(".extra-cred-passwrap", isPwd && !isMaster);
+  show(".extra-cred-master", isMaster);
+  show(".extra-cred-keypath", isKey);
+  show(".extra-cred-ppwrap", isKey);
 }
 
 /** Rellena las filas de identidades extra desde un perfil. */
@@ -17082,27 +17119,39 @@ function enhanceSelect(selectEl) {
     toggle();
   });
 
-  document.addEventListener("mousedown", (e) => {
+  const onDocMouseDown = (e) => {
     if (list.classList.contains("hidden")) return;
     if (wrapper.contains(e.target) || list.contains(e.target)) return;
     close();
-  });
-
-  window.addEventListener("resize", () => {
+  };
+  const onResize = () => {
     if (!list.classList.contains("hidden")) position();
-  });
-
-  document.addEventListener("keydown", (e) => {
+  };
+  const onKeyDown = (e) => {
     if (e.key === "Escape" && !list.classList.contains("hidden")) close();
-  });
+  };
+  document.addEventListener("mousedown", onDocMouseDown);
+  window.addEventListener("resize", onResize);
+  document.addEventListener("keydown", onKeyDown);
 
   // Observar cambios en las options (innerHTML = …, appendChild, etc.)
-  new MutationObserver(refresh).observe(selectEl, {
+  const observer = new MutationObserver(refresh);
+  observer.observe(selectEl, {
     childList: true,
     subtree: true,
     attributes: true,
     attributeFilter: ["selected", "disabled", "value"],
   });
+
+  // Limpieza para los <select> dinámicos (filas de usuarios extra): al quitar la
+  // fila se invoca para no dejar la lista flotante ni los listeners colgando.
+  selectEl._destroyEnhanced = () => {
+    observer.disconnect();
+    list.remove();
+    document.removeEventListener("mousedown", onDocMouseDown);
+    window.removeEventListener("resize", onResize);
+    document.removeEventListener("keydown", onKeyDown);
+  };
 
   // Interceptar asignaciones `selectEl.value = X` para actualizar el display
   const proto = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");

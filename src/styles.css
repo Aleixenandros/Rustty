@@ -3283,9 +3283,20 @@ select:hover {
 
 .extra-cred-line1 {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr 1fr auto;
   gap: 6px;
   align-items: center;
+}
+
+/* Slot de la credencial principal (contraseña / credencial maestra / clave),
+   a la misma altura que el usuario. Sólo uno de sus hijos es visible. */
+.extra-cred-cred {
+  display: flex;
+  min-width: 0;
+}
+.extra-cred-cred > * {
+  flex: 1;
+  min-width: 0;
 }
 
 .extra-cred-line2 {
@@ -3293,20 +3304,10 @@ select:hover {
   gap: 6px;
   align-items: center;
 }
-.extra-cred-line2:empty {
-  display: none;
-}
 
 .extra-cred-line2 > * {
   flex: 1;
-}
-.extra-cred-line2 .password-field {
-  flex: 1;
-}
-
-.extra-cred-auth,
-.extra-cred-source {
-  min-width: 7.5rem;
+  min-width: 0;
 }
 
 .extra-cred-remove {
@@ -4223,6 +4224,20 @@ input[type="checkbox"] {
   flex-shrink: 0;
   color: var(--blue);
   font-weight: 600;
+}
+
+/* Iconos SVG del menú contextual (sprite `#ctx-icons` + <use>). Heredan el
+   color de `.ctx-icon` (azul / crust al hover / rojo en danger) vía
+   `currentColor`, igual que los glifos a los que sustituyen. */
+.ctx-icon-svg {
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .ctx-sep {
