@@ -2,6 +2,17 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.26.1] - 2026-06-10
+
+### Cambiado
+
+- **Mantenimiento de dependencias Rust**: fusionados los PRs de Dependabot para
+  `keepass` 0.13.8, `suppaftp` 8.0.4, `auto-launch` 0.6.0, `uuid` 1.23.3 y
+  `russh` 0.61.2. La actualización de `suppaftp` corrige el estado interno de
+  la conexión de datos FTP tras comandos rechazados por el servidor, y `russh`
+  incorpora fixes de agente SSH y soporte de claves EC SEC1 con parámetros de
+  dominio completos.
+
 ## [1.26.0] - 2026-06-10
 
 ### Añadido
