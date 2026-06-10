@@ -27,7 +27,7 @@ serde_json = "1"
 # nos permite arrancar un sftp-server elevado con `sudo` sobre un canal exec.
 russh = "0.61"
 russh-sftp = "2.3"
-suppaftp = { version = "8.0.3", features = ["rustls-ring"] }
+suppaftp = { version = "8.0.4", features = ["rustls-ring"] }
 webpki-roots = "1"
 tokio = { version = "1", features = ["rt", "net", "io-util", "io-std", "sync", "fs", "macros", "time"] }
 # Configuración fina de sockets TCP (SO_KEEPALIVE + TCP_KEEPIDLE/INTVL) para
