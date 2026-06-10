@@ -77,6 +77,6 @@ hex = "0.4"
 # Arranque automático con el sistema (opt-in). Se usa el crate `auto-launch`
 # directamente para construir la entrada de autostart con o sin `--minimized`
 # y para consultar su estado, sin depender de un plugin adicional.
-auto-launch = "0.5"
+auto-launch = "0.6"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
