@@ -10,7 +10,7 @@ use crate::host_keys::fingerprint_sha256;
 use crate::keepass_manager;
 use crate::local_shell_manager::LocalShellManager;
 use crate::notes::{NoteDoc, NoteSummary, NotesManager};
-use crate::profiles::{ConnectionProfile, ProfileManager};
+use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
 use crate::rdp_manager::RdpManager;
 use crate::sftp_manager::{FileEntry, SftpManager, TransferConflictPolicy};
 use crate::ssh_manager::{SshManager, SshTunnelConfig, SshTunnelInfo};
@@ -100,6 +100,50 @@ fn parse_mac_address(input: &str) -> Result<[u8; 6], String> {
 
 // ─── Comandos SSH ─────────────────────────────────────────────────────────────
 
+/// Overrides puntuales de «Duplicar sesión con cambios»: se aplican sobre la
+/// copia del perfil cargada para esta conexión, sin tocar el perfil guardado.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ConnectOverrides {
+    pub username: Option<String>,
+    pub port: Option<u16>,
+    /// `Some("")` quita el bastion del perfil; `Some(s)` lo sustituye;
+    /// `None` conserva el del perfil.
+    pub proxy_jump: Option<String>,
+    /// Cambia el método de autenticación. Si se indica, la contraseña o
+    /// passphrase necesarias llegan en los parámetros `password`/`passphrase`
+    /// y se ignoran las fuentes del perfil (keyring/KeePass/maestra).
+    pub auth_type: Option<AuthType>,
+    /// Ruta de la clave privada cuando `auth_type == Some(PublicKey)`.
+    pub key_path: Option<String>,
+}
+
+/// Aplica los overrides de conexión sobre la copia local del perfil.
+fn apply_connect_overrides(profile: &mut ConnectionProfile, ov: &ConnectOverrides) {
+    if let Some(u) = ov.username.as_deref() {
+        if !u.trim().is_empty() {
+            profile.username = u.trim().to_string();
+        }
+    }
+    if let Some(p) = ov.port {
+        if p > 0 {
+            profile.port = p;
+        }
+    }
+    if let Some(j) = ov.proxy_jump.as_deref() {
+        let j = j.trim();
+        profile.proxy_jump = if j.is_empty() { None } else { Some(j.to_string()) };
+    }
+    if let Some(at) = ov.auth_type.clone() {
+        profile.auth_type = at;
+        profile.key_path = ov.key_path.clone();
+        // Con autenticación puntual no aplican las fuentes del perfil: la
+        // contraseña (si hace falta) llega en el parámetro `password`.
+        profile.keepass_entry_uuid = None;
+        profile.master_credential_id = None;
+        profile.password_source = PasswordSource::Own;
+    }
+}
+
 /// Inicia una sesión SSH a partir de un perfil guardado.
 /// Devuelve el session_id que el frontend usará para identificar la sesión.
 ///
@@ -126,6 +170,9 @@ pub fn ssh_connect(
     // Cuando es Some(false) desactiva session_log aunque el perfil lo tenga activo.
     // Usado por sesiones privadas/efímeras desde el frontend.
     session_log_override: Option<bool>,
+    // Overrides puntuales (usuario/puerto/bastion/auth) de «Duplicar sesión
+    // con cambios». No se persisten en el perfil.
+    overrides: Option<ConnectOverrides>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
@@ -134,6 +181,9 @@ pub fn ssh_connect(
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
     if let Some(cid) = credential_id.as_deref() {
         apply_credential(&mut profile, cid)?;
+    }
+    if let Some(ov) = overrides.as_ref() {
+        apply_connect_overrides(&mut profile, ov);
     }
     credentials::substitute_connection_fields(&mut profile, &cred_state);
 

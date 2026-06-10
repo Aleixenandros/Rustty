@@ -2,6 +2,36 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.26.0] - 2026-06-10
+
+### Añadido
+
+- **Duplicar sesión con cambios**: nueva acción **Conectar con cambios…** en el
+  menú contextual del perfil y **Duplicar con cambios…** en el de la pestaña
+  (sesiones SSH). Un mini formulario prefijado con los valores del perfil
+  permite cambiar usuario, puerto, carpeta inicial, bastion y autenticación
+  (contraseña puntual, clave privada o agente SSH) solo para esa sesión: el
+  perfil guardado no se modifica y nada se persiste en el keyring. Los cambios
+  se reaplican al reconectar y la pestaña muestra el usuario alternativo.
+
+### Corregido
+
+- **Panel SFTP**: al cambiar la disposición (remoto a la izquierda/derecha) en
+  Preferencias, las flechas de los botones de subir/descargar del divisor
+  central no se invertían y apuntaban al lado equivocado.
+- **Ventanas emergentes con fondo blanco**: las confirmaciones de eliminar
+  conexión, borrar túnel guardado, restaurar copia de seguridad e instalar o
+  abrir una actualización usaban diálogos nativos del sistema que ignoraban el
+  tema de la app. Ahora usan los modales tematizados propios.
+
+### Cambiado
+
+- **Redimensionado del terminal más eficiente**: arrastrar la sidebar, el
+  divisor SFTP o los splits ya no dispara una tormenta de avisos de tamaño al
+  backend; el ajuste visual sigue siendo inmediato y el aviso se agrupa y
+  deduplica por sesión. Además, cada pane observa su propio tamaño, por lo que
+  el terminal se reajusta correctamente en cualquier cambio de layout.
+
 ## [1.25.1] - 2026-06-08
 
 ### Corregido

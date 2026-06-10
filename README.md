@@ -165,6 +165,15 @@ Rustty necesita **WebKitGTK 4.1** y **libayatana-appindicator** en tiempo de eje
   sudo pacman -U Rustty-*-1-x86_64.pkg.tar.zst
   ```
 
+- **Flatpak (`Rustty-<version>-x86_64.flatpak`)** — bundle autocontenido, sin añadir remotos:
+
+  ```bash
+  flatpak install ./Rustty-*-x86_64.flatpak
+  flatpak run es.rustty.Rustty
+  ```
+
+  Requiere el runtime `org.freedesktop.Platform 24.08` (Flatpak lo descarga la primera vez).
+
   Si tu distribución no incluye WebKitGTK 4.1 por defecto, instálalo primero (ver "Requisitos previos" más abajo).
 
 ### Windows

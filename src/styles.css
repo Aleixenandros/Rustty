@@ -2836,6 +2836,7 @@ body.terminal-bell-visual::after {
 #known-hosts-overlay,
 #cred-edit-overlay,
 #ask-modal-overlay,
+#dup-modal-overlay,
 #import-wizard-overlay {
   position: fixed;
   inset: 0;
@@ -2849,7 +2850,8 @@ body.terminal-bell-visual::after {
 
 #known-hosts-modal,
 #cred-edit-modal,
-#ask-modal {
+#ask-modal,
+#dup-modal {
   width: 520px;
   max-width: calc(100vw - 40px);
   max-height: 86vh;
@@ -2863,7 +2865,8 @@ body.terminal-bell-visual::after {
 }
 
 #cred-edit-form,
-#ask-modal-form {
+#ask-modal-form,
+#dup-modal-form {
   padding: 18px 20px;
   display: flex;
   flex-direction: column;
@@ -5885,6 +5888,12 @@ body.sftp-panel-resizing {
     "header header header"
     "local divider remote"
     "transfers transfers transfers";
+}
+
+/* Con los lados intercambiados, las flechas de transferencia deben apuntar
+   al lado contrario: se voltean horizontalmente los glifos del divisor. */
+.sftp-panel-split.sftp-remote-right .sftp-xfer-btn {
+  transform: scaleX(-1);
 }
 
 .sftp-path {

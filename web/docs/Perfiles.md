@@ -108,6 +108,17 @@ Desde el menú contextual de un perfil de la sidebar puedes **Duplicar conexión
 
 Sobre la pestaña de una sesión activa, el menú contextual permite **Duplicar sesión**: abre una nueva sesión con el mismo perfil. Para shell local replica con un nuevo PTY; para RDP relanza el cliente externo.
 
+### Conectar / duplicar con cambios
+
+Para abrir una sesión puntual sin tocar el perfil guardado, usa **Conectar con cambios…** (menú contextual del perfil) o **Duplicar con cambios…** (menú contextual de la pestaña, solo SSH). Se abre un mini formulario prefijado con los valores del perfil donde puedes cambiar:
+
+- **Usuario** y **puerto**.
+- **Carpeta inicial**: al abrir el shell, Rustty entra automáticamente en ese directorio.
+- **Bastion / Jump host**: cámbialo o déjalo vacío para conectar en directo aunque el perfil tenga uno.
+- **Autenticación**: igual que el perfil, preguntar contraseña, clave privada (con su ruta y passphrase opcional) o agente SSH.
+
+Los cambios solo aplican a esa sesión: el perfil no se modifica y nada se guarda en el keyring. Si la sesión se cae y se reconecta, los cambios se reaplican (con autenticación puntual se vuelve a pedir el secreto). Cuando cambias el usuario, la pestaña lo muestra como `Nombre (usuario)`.
+
 ## Organización
 
 Los perfiles pueden agruparse en carpetas de la barra lateral. Cada workspace tiene su propio árbol de carpetas; las carpetas manuales, incluidas las vacías, se sincronizan entre equipos cuando está activa la sincronización de perfiles/preferencias.

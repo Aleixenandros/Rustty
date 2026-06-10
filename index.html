@@ -438,6 +438,9 @@
       <button class="ctx-item ctx-conn-only hidden" data-ctx="duplicate-conn">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span data-i18n="ctx.duplicate">Duplicar</span>
       </button>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="connect-overrides">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span data-i18n="ctx.connect_overrides">Conectar con cambios…</span>
+      </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="edit-note">
         <span class="ctx-icon">
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
@@ -527,6 +530,9 @@
     <div id="tab-context-menu" class="ctx-menu hidden">
       <button class="ctx-item" data-tabctx="duplicate">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span data-i18n="tabctx.duplicate">Duplicar pestaña</span>
+      </button>
+      <button class="ctx-item tabctx-dup-overrides hidden" data-tabctx="duplicate-overrides">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span data-i18n="tabctx.duplicate_overrides">Duplicar con cambios…</span>
       </button>
 
       <!-- Acciones de división/vista (visibilidad calculada al abrir el menú) -->
@@ -1130,6 +1136,54 @@
           <div class="modal-actions">
             <button type="button" class="btn-secondary" id="btn-ask-cancel" data-i18n="modal_ask.cancel">Cancelar</button>
             <button type="submit" class="btn-primary" id="btn-ask-submit" data-i18n="modal_ask.submit">Conectar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Duplicar sesión con cambios (overrides puntuales)
+    ══════════════════════════════════════════════════════ -->
+    <div id="dup-modal-overlay" class="hidden">
+      <div id="dup-modal" role="dialog" aria-modal="true" aria-labelledby="dup-modal-title">
+        <div class="modal-header">
+          <h2 id="dup-modal-title" data-i18n="modal_dup.title">Duplicar sesión con cambios</h2>
+          <button class="btn-icon" id="btn-dup-close" data-i18n-aria-label="modal_dup.close" aria-label="Cerrar">✕</button>
+        </div>
+        <form id="dup-modal-form" autocomplete="off">
+          <p class="credential-message" id="dup-modal-message"></p>
+          <div class="form-row">
+            <label for="dup-ov-username" data-i18n="modal_dup.username">Usuario</label>
+            <input id="dup-ov-username" type="text" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="form-row">
+            <label for="dup-ov-port" data-i18n="modal_dup.port">Puerto</label>
+            <input id="dup-ov-port" type="number" min="1" max="65535" />
+          </div>
+          <div class="form-row">
+            <label for="dup-ov-dir" data-i18n="modal_dup.initial_dir">Carpeta inicial (opcional)</label>
+            <input id="dup-ov-dir" type="text" placeholder="/var/www" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="form-row">
+            <label for="dup-ov-bastion" data-i18n="modal_dup.bastion">Bastion / Jump host (opcional)</label>
+            <input id="dup-ov-bastion" type="text" placeholder="usuario@bastion:22" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="form-row">
+            <label for="dup-ov-auth" data-i18n="modal_dup.auth">Autenticación</label>
+            <select id="dup-ov-auth">
+              <option value="same" data-i18n="modal_dup.auth_same">Igual que el perfil</option>
+              <option value="password" data-i18n="modal_dup.auth_password">Preguntar contraseña</option>
+              <option value="public_key" data-i18n="modal_dup.auth_key">Clave privada…</option>
+              <option value="agent" data-i18n="modal_dup.auth_agent">Agente SSH</option>
+            </select>
+          </div>
+          <div class="form-row hidden" id="dup-ov-key-row">
+            <label for="dup-ov-key" data-i18n="modal_dup.key_path">Ruta de la clave privada</label>
+            <input id="dup-ov-key" type="text" placeholder="~/.ssh/id_ed25519" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="btn-dup-cancel" data-i18n="modal_dup.cancel">Cancelar</button>
+            <button type="submit" class="btn-primary" id="btn-dup-submit" data-i18n="modal_dup.submit">Conectar</button>
           </div>
         </form>
       </div>

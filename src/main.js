@@ -7,7 +7,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { check as checkUpdate } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { ask, save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+// Solo los selectores de fichero siguen siendo nativos (no hay alternativa
+// web); las confirmaciones usan confirmThemed para respetar el tema de la app.
+import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { readText as readClipboardText, writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import * as sync from "./sync.js";
 import { Terminal } from "@xterm/xterm";
@@ -2129,7 +2131,13 @@ async function syncRestoreSnapshot() {
     toast(t("prefs_sync.snapshots_none"), "warning");
     return;
   }
-  if (!window.confirm(t("prefs_sync.snapshots_confirm"))) return;
+  const okRestore = await confirmThemed({
+    title: t("prefs_sync.snapshots_restore"),
+    message: t("prefs_sync.snapshots_confirm"),
+    submitLabel: t("prefs_sync.snapshots_restore"),
+    danger: true,
+  });
+  if (!okRestore) return;
   try {
     setSyncStatus("busy", "prefs_sync.status_busy");
     const summary = await sync.restoreSnapshot(id, {
@@ -2313,10 +2321,11 @@ async function checkForUpdatesViaUpdater({ interactive }) {
     });
     setAboutUpdateStatus(t("prefs_about.update_available", { version }), "warning");
 
-    const doInstall = await ask(
-      t("prefs_about.update_install_prompt", { version }),
-      { title: t("prefs_about.check_updates"), kind: "info" }
-    );
+    const doInstall = await confirmThemed({
+      title: t("prefs_about.check_updates"),
+      message: t("prefs_about.update_install_prompt", { version }),
+      submitLabel: t("modal_credential.accept"),
+    });
     if (!doInstall) {
       try { await update.close(); } catch {}
       return true;
@@ -2377,10 +2386,11 @@ async function checkForUpdatesViaGithub({ interactive = true } = {}) {
         t("prefs_about.update_available", { version: `v${latest}` }),
         "warning"
       );
-      const openRelease = await ask(
-        t("prefs_about.open_release", { version: `v${latest}` }),
-        { title: t("prefs_about.check_updates"), kind: "info" }
-      );
+      const openRelease = await confirmThemed({
+        title: t("prefs_about.check_updates"),
+        message: t("prefs_about.open_release", { version: `v${latest}` }),
+        submitLabel: t("modal_credential.accept"),
+      });
       if (openRelease) {
         invoke("plugin:opener|open_url", { url: release.html_url || RELEASES_PAGE_URL })
           .catch((err) => toast(`No se pudo abrir ${RELEASES_PAGE_URL}: ${err}`, "error", 6000));
@@ -4894,6 +4904,9 @@ function handleContextMenuAction(action) {
     case "duplicate-conn":
       duplicateProfile(id);
       break;
+    case "connect-overrides":
+      duplicateSessionWithOverrides(id);
+      break;
     case "edit-note":
       if (id) openNoteEditor(id);
       break;
@@ -7105,7 +7118,124 @@ async function askProfileAnswers(profileId) {
   return await promptAsks(specs);
 }
 
-async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase, { private: isPrivate = false, credId = null, restore = false } = {}) {
+// ─── Duplicar sesión con cambios (overrides puntuales) ───────────
+// Mini formulario para abrir una sesión nueva del mismo perfil cambiando
+// usuario, puerto, carpeta inicial, bastion o autenticación. Los cambios
+// solo aplican a esa sesión; el perfil guardado no se toca.
+let _dupPromptResolve = null;
+
+function promptSessionOverrides(profile) {
+  const overlay = document.getElementById("dup-modal-overlay");
+  if (!overlay) return Promise.resolve(null);
+  if (_dupPromptResolve) closeDupPrompt(null);
+
+  document.getElementById("dup-modal-message").textContent =
+    t("modal_dup.message", { name: profile.name, host: profile.host });
+  document.getElementById("dup-ov-username").value = profile.username || "";
+  document.getElementById("dup-ov-port").value = profile.port || 22;
+  document.getElementById("dup-ov-dir").value = "";
+  document.getElementById("dup-ov-bastion").value = profile.proxy_jump || "";
+  document.getElementById("dup-ov-auth").value = "same";
+  document.getElementById("dup-ov-key").value = profile.key_path || "";
+  document.getElementById("dup-ov-key-row").classList.add("hidden");
+
+  overlay.classList.remove("hidden");
+  setTimeout(() => document.getElementById("dup-ov-username")?.focus(), 0);
+  return new Promise((resolve) => { _dupPromptResolve = resolve; });
+}
+
+function closeDupPrompt(result) {
+  document.getElementById("dup-modal-overlay")?.classList.add("hidden");
+  const resolve = _dupPromptResolve;
+  _dupPromptResolve = null;
+  if (resolve) resolve(result);
+}
+
+function collectDupOverridesForm() {
+  return {
+    username: document.getElementById("dup-ov-username")?.value ?? "",
+    port: document.getElementById("dup-ov-port")?.value ?? "",
+    initialDir: document.getElementById("dup-ov-dir")?.value ?? "",
+    bastion: document.getElementById("dup-ov-bastion")?.value ?? "",
+    auth: document.getElementById("dup-ov-auth")?.value ?? "same",
+    keyPath: document.getElementById("dup-ov-key")?.value ?? "",
+  };
+}
+
+async function duplicateSessionWithOverrides(profileId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+  if (profile.connection_type !== "ssh") {
+    toast(t("modal_dup.only_ssh"), "warning");
+    return;
+  }
+  const form = await promptSessionOverrides(profile);
+  if (!form) return;
+
+  // Solo viajan al backend los campos que difieren del perfil.
+  const overrides = {};
+  const username = form.username.trim();
+  if (username && username !== profile.username) overrides.username = username;
+  const port = parseInt(form.port, 10);
+  if (Number.isFinite(port) && port > 0 && port <= 65535 && port !== profile.port) {
+    overrides.port = port;
+  }
+  const bastion = form.bastion.trim();
+  if (bastion !== (profile.proxy_jump || "").trim()) overrides.proxy_jump = bastion;
+  if (form.auth !== "same") {
+    overrides.auth_type = form.auth;
+    if (form.auth === "public_key") {
+      const keyPath = form.keyPath.trim();
+      if (!keyPath) {
+        toast(t("modal_dup.key_required"), "warning");
+        return;
+      }
+      overrides.key_path = keyPath;
+    }
+  }
+
+  const creds = await resolveOverrideAuthCredentials(profile, overrides);
+  if (!creds) return;
+
+  await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false, {
+    overrides: Object.keys(overrides).length ? overrides : null,
+    initialDir: form.initialDir.trim() || null,
+  });
+}
+
+/**
+ * Resuelve credenciales según el método elegido en los overrides: con auth
+ * puntual pregunta lo necesario (contraseña / passphrase de la clave) sin
+ * guardar nada; sin override de auth reutiliza el flujo normal del perfil.
+ */
+async function resolveOverrideAuthCredentials(profile, overrides) {
+  if (!overrides?.auth_type) {
+    return resolveSshCredentials(profile, getProfileCredential(profile, null));
+  }
+  if (overrides.auth_type === "password") {
+    const target = credentialTarget({ ...profile, username: overrides.username || profile.username });
+    const result = await promptCredential({
+      title: t("modal_credential.password_title"),
+      message: t("modal_credential.ssh_message", { target }),
+      label: t("modal_credential.password_label"),
+    });
+    if (!result) return null;
+    return { password: result.value, passphrase: null };
+  }
+  if (overrides.auth_type === "public_key") {
+    const result = await promptCredential({
+      title: t("modal_dup.passphrase_title"),
+      message: t("modal_dup.passphrase_message"),
+      label: t("modal_dup.passphrase_label"),
+    });
+    if (!result) return null;
+    return { password: null, passphrase: result.value || null };
+  }
+  // Agente SSH: no requiere secretos del frontend.
+  return { password: null, passphrase: null };
+}
+
+async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase, { private: isPrivate = false, credId = null, restore = false, overrides = null, initialDir = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
@@ -7115,8 +7245,16 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   if (askAnswers === null) return;
 
   const sessionId = `ssh-${crypto.randomUUID()}`;
-  createTerminalTab(sessionId, profile, "connecting", { private: isPrivate, credId });
+  // Con override de usuario, la pestaña lo muestra para distinguir la sesión.
+  const tabProfile = overrides?.username
+    ? { ...profile, name: `${profile.name} (${overrides.username})` }
+    : profile;
+  createTerminalTab(sessionId, tabProfile, "connecting", { private: isPrivate, credId });
   const session = sessions.get(sessionId);
+  // Overrides puntuales de «Duplicar con cambios»: se conservan en la sesión
+  // para reaplicarlos al reconectar (manual o tras caída).
+  session._overrides = overrides || null;
+  session._initialDir = initialDir || null;
 
   // Restaurar pantalla de la sesión anterior (solo visual) antes de conectar.
   if (restore && !isPrivate) {
@@ -7142,6 +7280,7 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
       // En sesión privada, desactivar la grabación a fichero aunque el perfil
       // lo tenga habilitado (el backend aplica el override sobre su copia local).
       sessionLogOverride: isPrivate ? false : null,
+      overrides: overrides || null,
     });
 
     updateTabStatus(sessionId, "connecting");
@@ -8027,7 +8166,11 @@ async function reconnectSshInPlace(s) {
     return;
   }
 
-  const creds = await resolveSshCredentials(profile);
+  // Con auth puntual («Duplicar con cambios») se vuelve a preguntar lo
+  // necesario; con la del perfil se reutiliza el flujo normal.
+  const creds = s._overrides?.auth_type
+    ? await resolveOverrideAuthCredentials(profile, s._overrides)
+    : await resolveSshCredentials(profile);
   if (!creds) return;
 
   for (const ul of s.unlisteners) { try { ul(); } catch {} }
@@ -8051,6 +8194,7 @@ async function reconnectSshInPlace(s) {
       // Conserva el modo privado al reconectar: no reactivar la grabación de
       // sesión aunque el perfil la tenga habilitada.
       sessionLogOverride: s.private ? false : null,
+      overrides: s._overrides || null,
     });
     updateTabStatus(oldSessionId, "connecting");
   } catch (err) {
@@ -8840,6 +8984,24 @@ function handleTerminalLink(_event, uri) {
   })();
 }
 
+// Observador compartido de panes: cuando cambia el tamaño del contenedor de un
+// terminal (arrastre de sidebar, divisor SFTP, splits, ventana), re-ajusta el
+// terminal sin depender de los fit() manuales dispersos. El fit() se coalesce
+// por frame con rAF; el aviso de cols/rows al backend va aparte con debounce
+// (scheduleBackendResize, disparado por terminal.onResize si cambian las dims).
+const paneResizeObserver = typeof ResizeObserver !== "undefined"
+  ? new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const s = sessions.get(entry.target.dataset.session);
+        if (!s?.fitAddon || s._fitRaf) continue;
+        s._fitRaf = requestAnimationFrame(() => {
+          s._fitRaf = null;
+          try { s.fitAddon.fit(); } catch {}
+        });
+      }
+    })
+  : null;
+
 function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   const { sftp = true, private: isPrivate = false, credId = null } = opts;
 
@@ -8858,6 +9020,7 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   pane.appendChild(buildReconnectOverlay(sessionId));
   pane.appendChild(buildConnectionLogPanel(sessionId));
   document.getElementById("terminals-container").appendChild(pane);
+  paneResizeObserver?.observe(pane);
 
   // Crear pestaña
   createTab(sessionId, profile, initialStatus, { sftp, private: isPrivate });
@@ -9000,9 +9163,7 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     handleTerminalInput(sessionObj, data);
   });
 
-  terminal.onResize(({ cols, rows }) => {
-    invoke("ssh_resize", { sessionId: sessionObj.id, cols, rows }).catch(() => {});
-  });
+  terminal.onResize(() => scheduleBackendResize(sessionObj));
 
   document.getElementById("welcome-screen").classList.add("hidden");
   selectSession(sessionId, false);
@@ -9222,7 +9383,16 @@ async function registerSshListeners(sessionId, terminal) {
     if (s?.profileId && !s.private) recordRecentConnection(s.profileId);
     renderConnectionList();
     s?.fitAddon.fit();
-    notifyResize(sessionId, terminal);
+    // El PTY recién abierto pudo crearse con un tamaño ya desfasado si el
+    // usuario redimensionó durante el connect: reenviar siempre.
+    notifyResize(sessionId, terminal, { force: true });
+    // Carpeta inicial puntual («Duplicar con cambios»): entrar al directorio
+    // nada más abrir el shell. El espacio inicial esquiva el historial en
+    // shells con HISTCONTROL=ignorespace.
+    if (s?._initialDir) {
+      const dir = s._initialDir.replace(/'/g, `'\\''`);
+      invoke("ssh_send_input", { sessionId, data: ` cd '${dir}'\r` }).catch(() => {});
+    }
     startProfileAutoTunnels(sessionId);
   }));
 
@@ -9475,7 +9645,11 @@ async function disconnectAll() {
 
 function removeTab(sessionId) {
   document.querySelector(`.tab[data-session="${sessionId}"]`)?.remove();
-  document.querySelector(`.terminal-pane[data-session="${sessionId}"]`)?.remove();
+  const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
+  if (pane) {
+    paneResizeObserver?.unobserve(pane);
+    pane.remove();
+  }
   // Expandir al instante la pestaña de Inicio si era la última sesión
   // (sin esperar al ciclo renderView, que llega tras varias operaciones).
   updateTabSelectionClasses();
@@ -9501,9 +9675,41 @@ function removeTab(sessionId) {
   syncSidebarToActiveSession({ scroll: true });
 }
 
-function notifyResize(sessionId, terminal) {
-  if (!terminal) return;
-  invoke("ssh_resize", { sessionId, cols: terminal.cols, rows: terminal.rows }).catch(() => {});
+// ── Resize del terminal → backend: debounce + deduplicación ─────
+// El fit() visual es inmediato (xterm reajusta el layout al momento), pero el
+// aviso de cols/rows por IPC se agrupa por sesión para no disparar tormentas
+// de ssh_resize / local_shell_resize al arrastrar la sidebar, el divisor SFTP
+// o los splits. Las dimensiones ya enviadas se omiten; `force` reenvía siempre
+// (necesario tras (re)conectar: el PTY nuevo puede haberse abierto con un
+// tamaño ya desfasado).
+const RESIZE_IPC_DELAY_MS = 180;
+
+function flushBackendResize(s) {
+  if (s._resizeTimer) { clearTimeout(s._resizeTimer); s._resizeTimer = null; }
+  if (!sessions.has(s.id) || !s.terminal) return;
+  const { cols, rows } = s.terminal;
+  if (!cols || !rows) return;
+  if (s._sentCols === cols && s._sentRows === rows) return;
+  s._sentCols = cols;
+  s._sentRows = rows;
+  invoke(s._resizeCmd || "ssh_resize", { sessionId: s.id, cols, rows }).catch(() => {});
+}
+
+function scheduleBackendResize(s) {
+  if (!s?.terminal) return;
+  if (s._resizeTimer) clearTimeout(s._resizeTimer);
+  s._resizeTimer = setTimeout(() => flushBackendResize(s), RESIZE_IPC_DELAY_MS);
+}
+
+function notifyResize(sessionId, _terminal, { force = false } = {}) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  if (force) {
+    s._sentCols = s._sentRows = undefined;
+    flushBackendResize(s);
+  } else {
+    scheduleBackendResize(s);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -9513,10 +9719,12 @@ function notifyResize(sessionId, terminal) {
 async function deleteProfile(profileId) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
-  const confirmed = await ask(
-    `¿Eliminar "${profile.name}"?\n\nEsta acción no se puede deshacer.`,
-    { title: "Eliminar conexión", kind: "warning" }
-  );
+  const confirmed = await confirmThemed({
+    title: "Eliminar conexión",
+    message: `¿Eliminar "${profile.name}"? Esta acción no se puede deshacer.`,
+    submitLabel: "Eliminar",
+    danger: true,
+  });
   if (!confirmed) return;
   try {
     await invoke("delete_profile", { id: profileId });
@@ -10292,7 +10500,12 @@ async function startSavedGlobalTunnel(profileId, tunnelId) {
 async function deleteSavedGlobalTunnel(profileId, tunnelId) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
-  const ok = await ask("¿Borrar este túnel guardado?", { title: "Túneles SSH", kind: "warning" });
+  const ok = await confirmThemed({
+    title: "Túneles SSH",
+    message: "¿Borrar este túnel guardado?",
+    submitLabel: "Borrar",
+    danger: true,
+  });
   if (!ok) return;
   profile.ssh_tunnels = (profile.ssh_tunnels || []).filter((raw) => normalizeTunnelConfig(raw).id !== tunnelId);
   profile.updated_at = new Date().toISOString();
@@ -10534,6 +10747,8 @@ async function openLocalShell() {
   createTerminalTab(sessionId, fakeProfile, "connecting", { sftp: false });
 
   const s = sessions.get(sessionId);
+  // El resize de la consola local viaja por su propio comando IPC.
+  s._resizeCmd = "local_shell_resize";
   try {
     await invoke("local_shell_open", {
       sessionId,
@@ -10561,10 +10776,9 @@ async function openLocalShell() {
     s.unlisteners.push(ul, ulClose);
 
     // Nota: el input ya lo enruta `handleTerminalInput` (registrado en createTerminalTab)
-    // detectando el tipo de sesión por `_closeOverride`. Solo hace falta el resize aquí.
-    s.terminal.onResize(({ cols, rows }) => {
-      invoke("local_shell_resize", { sessionId, cols, rows }).catch(() => {});
-    });
+    // detectando el tipo de sesión por `_closeOverride`. El resize también lo
+    // gestiona el onResize de createTerminalTab vía scheduleBackendResize, que
+    // enruta al comando correcto gracias a `_resizeCmd` (fijado arriba).
 
     // Sobreescribir el cierre de sesión para usar el comando de shell.
     // closeSession llama a removeTab() tras ejecutar este override.
@@ -15219,6 +15433,27 @@ function bindUIEvents() {
       if (e.target.id === "ask-modal-overlay") closeAskPrompt(null);
     });
 
+  // Diálogo «Duplicar sesión con cambios»
+  document.getElementById("dup-modal-form")
+    ?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      closeDupPrompt(collectDupOverridesForm());
+    });
+  document.getElementById("btn-dup-cancel")
+    ?.addEventListener("click", () => closeDupPrompt(null));
+  document.getElementById("btn-dup-close")
+    ?.addEventListener("click", () => closeDupPrompt(null));
+  document.getElementById("dup-modal-overlay")
+    ?.addEventListener("mousedown", (e) => {
+      if (e.target.id === "dup-modal-overlay") closeDupPrompt(null);
+    });
+  // La fila de la ruta de clave solo se muestra con auth "Clave privada".
+  document.getElementById("dup-ov-auth")
+    ?.addEventListener("change", (e) => {
+      document.getElementById("dup-ov-key-row")
+        ?.classList.toggle("hidden", e.target.value !== "public_key");
+    });
+
   // Panel global de túneles SSH
   document.getElementById("btn-global-tunnels-close")
     ?.addEventListener("click", closeGlobalTunnelsModal);
@@ -15511,6 +15746,12 @@ function bindUIEvents() {
       }
       if (isCredEditModalOpen()) {
         closeCredEditModal();
+        e.preventDefault();
+        return;
+      }
+      const dupOverlay = document.getElementById("dup-modal-overlay");
+      if (dupOverlay && !dupOverlay.classList.contains("hidden")) {
+        closeDupPrompt(null);
         e.preventDefault();
         return;
       }
@@ -17199,6 +17440,12 @@ function showTabContextMenu(x, y, sessionId) {
   const canExportHistory = !!ctxSession?.terminal;
   menu.querySelector(".tabctx-export-history")?.classList.toggle("hidden", !canExportHistory);
 
+  // "Duplicar con cambios" solo aplica a sesiones SSH con perfil (no consola
+  // local, RDP ni FTP).
+  const canDupOverrides = ctxSession?.type === "ssh" && !!ctxSession.profileId
+    && !ctxSession._closeOverride;
+  menu.querySelector(".tabctx-dup-overrides")?.classList.toggle("hidden", !canDupOverrides);
+
   const targetTab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
   const isPinned = !!targetTab?.classList.contains("is-pinned");
   const pinLabel = menu.querySelector(".tabctx-pin-label");
@@ -17313,6 +17560,11 @@ async function handleTabContextAction(action) {
     if (s._closeOverride) { openLocalShell(); return; }
     if (s.type === "rdp") { connectRdp(s.profileId); return; }
     if (s.profileId) { connectProfile(s.profileId, { force: true }); return; }
+    return;
+  }
+  if (action === "duplicate-overrides") {
+    const s = sessions.get(targetId);
+    if (s?.profileId && s.type === "ssh") duplicateSessionWithOverrides(s.profileId);
     return;
   }
   if (action === "view-add") {
