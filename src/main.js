@@ -401,6 +401,11 @@ const DEFAULT_PREFS = {
   // se añaden al final ordenadas alfabéticamente. Solo se usa con
   // `connectionSortMode === "manual"`.
   connectionOrder: {},
+  // Orden manual de carpetas por contenedor padre. Clave = `${workspaceId}|${parentPath}`
+  // (parentPath = "" para las carpetas de primer nivel), valor = array de
+  // nombres de carpeta hija en el orden deseado. Las no listadas se añaden al
+  // final alfabéticamente. Solo se usa con `connectionSortMode === "manual"`.
+  folderOrder: {},
   // Si está activo, las carpetas se renderizan antes que las conexiones dentro
   // de cada nodo del árbol de la sidebar, respetando luego el modo de orden.
   foldersFirst: true,
@@ -3076,6 +3081,85 @@ function moveConnectionInOrder(profileId, delta) {
   scheduleProfileAutoSync();
 }
 
+function folderOrderKey(wsId, parentPath) {
+  return `${wsId || "default"}|${parentPath || ""}`;
+}
+
+/**
+ * Ordena una lista de nombres de carpeta hermanas según el modo activo:
+ * "alpha" (alfabético) o "manual" (`prefs.folderOrder[wsId|parentPath]`, con
+ * las no listadas al final por orden alfabético).
+ */
+function orderFolderNames(names, workspaceId, parentPath) {
+  const alpha = [...names].sort((a, b) => {
+    const an = a.toLowerCase(), bn = b.toLowerCase();
+    return an < bn ? -1 : an > bn ? 1 : 0;
+  });
+  if (prefs.connectionSortMode !== "manual") return alpha;
+  const orderArr = Array.isArray(prefs.folderOrder?.[folderOrderKey(workspaceId, parentPath)])
+    ? prefs.folderOrder[folderOrderKey(workspaceId, parentPath)]
+    : [];
+  const rank = new Map(orderArr.map((n, i) => [n, i]));
+  const known = alpha.filter((n) => rank.has(n)).sort((a, b) => rank.get(a) - rank.get(b));
+  const unknown = alpha.filter((n) => !rank.has(n));
+  return [...known, ...unknown];
+}
+
+/** Entradas `[nombre, nodo]` de las carpetas hijas de `node`, ya ordenadas. */
+function sortedFolderEntries(node, workspaceId) {
+  const entries = Object.entries(node.folders || {});
+  if (entries.length < 2) return entries;
+  const order = orderFolderNames(entries.map((e) => e[0]), workspaceId, node.path || "");
+  const byName = new Map(entries);
+  return order.map((name) => [name, byName.get(name)]);
+}
+
+/** Nombres de las carpetas hijas inmediatas de `parentPath` en un workspace. */
+function siblingFolderNames(workspaceId, parentPath) {
+  const prefix = parentPath ? `${parentPath}/` : "";
+  const names = new Set();
+  for (const p of getAllFolderPaths(workspaceId)) {
+    if (parentPath && !p.startsWith(prefix)) continue;
+    const rest = p.slice(prefix.length);
+    if (!rest || rest.includes("/")) continue; // vacío o no es hijo inmediato
+    names.add(rest);
+  }
+  return [...names];
+}
+
+/**
+ * Mueve una carpeta arriba o abajo entre sus hermanas (mismo padre y
+ * workspace). Cambia a modo manual la primera vez que se invoca.
+ * @param {string} workspaceId
+ * @param {string} folderPath  ruta completa de la carpeta a mover
+ * @param {-1 | 1} delta
+ */
+function moveFolderInOrder(workspaceId, folderPath, delta) {
+  if (!folderPath) return;
+  const parts = folderPath.split("/").filter(Boolean);
+  const name = parts.pop();
+  const parentPath = parts.join("/");
+  const siblings = siblingFolderNames(workspaceId, parentPath);
+  if (siblings.length < 2) return;
+
+  if (prefs.connectionSortMode !== "manual") {
+    prefs.connectionSortMode = "manual";
+  }
+  prefs.folderOrder = prefs.folderOrder || {};
+  const key = folderOrderKey(workspaceId, parentPath);
+
+  const current = orderFolderNames(siblings, workspaceId, parentPath);
+  const idx = current.indexOf(name);
+  const target = idx + delta;
+  if (idx < 0 || target < 0 || target >= current.length) return;
+  [current[idx], current[target]] = [current[target], current[idx]];
+  prefs.folderOrder[key] = current;
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+  renderConnectionList();
+  scheduleProfileAutoSync();
+}
+
 /**
  * Crea (si no existe) toda la cadena de nodos para una ruta y devuelve el nodo hoja.
  */
@@ -4131,7 +4215,7 @@ function renderTreeNode(node, depth, workspaceId = getActiveWorkspaceId()) {
     for (const p of node.connections) html += renderConnectionItem(p, depth);
   };
   const renderFolders = () => {
-    for (const [name, child] of Object.entries(node.folders)) {
+    for (const [name, child] of sortedFolderEntries(node, workspaceId)) {
       html += renderFolderNode(name, child, depth, workspaceId);
     }
   };
@@ -4903,6 +4987,12 @@ function handleContextMenuAction(action) {
       break;
     case "rename-folder":
       renameFolder(folderPath, targetWs);
+      break;
+    case "move-folder-up":
+      if (folderPath) moveFolderInOrder(targetWs, folderPath, -1);
+      break;
+    case "move-folder-down":
+      if (folderPath) moveFolderInOrder(targetWs, folderPath, +1);
       break;
     case "delete-folder":
       deleteFolderAndMoveConnections(folderPath, targetWs);
@@ -11544,6 +11634,7 @@ function applySftpRemoteSideToAll() {
 function buildSftpPanel(sessionId) {
   const panel = document.createElement("div");
   panel.className = "sftp-panel sftp-panel-split";
+  panel.dataset.session = sessionId;
   applySftpRemoteSide(panel);
   panel.innerHTML = `
     <div class="sftp-resize-handle" title="Redimensionar panel SFTP"></div>
@@ -12369,6 +12460,83 @@ function setupSftpDropTargets(panel, sessionId) {
       await transferRows(sessionId, direction, payload.rows);
       clearSftpDragPayload();
     });
+  });
+}
+
+// ── Arrastrar ficheros del SO hacia el panel SFTP remoto ──────────────────
+//
+// Con `dragDropEnabled` (por defecto) Tauri intercepta los drops de ficheros
+// del sistema operativo, así que NO llegan por los eventos `drop` de HTML5
+// (esos solo sirven para el arrastre interno local↔remoto). En su lugar el
+// webview emite `onDragDropEvent` con las rutas y la posición física del
+// cursor. Mapeamos esa posición al panel SFTP remoto que haya debajo y, si su
+// sesión SFTP está conectada, subimos las rutas soltadas a su directorio
+// remoto actual.
+
+function osDropClearHighlight() {
+  document.querySelectorAll(".sftp-files.os-dragover")
+    .forEach((el) => el.classList.remove("os-dragover"));
+}
+
+/** Devuelve el panel SFTP remoto (conectado) bajo una posición física, o null. */
+function remoteSftpFilesAtPosition(position) {
+  if (!position) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const el = document.elementFromPoint(position.x / dpr, position.y / dpr);
+  if (!el) return null;
+  const files = el.closest('.sftp-files[data-side="remote"]');
+  if (!files) return null;
+  const sessionId = files.closest(".sftp-panel")?.dataset.session;
+  if (!sessionId) return null;
+  const s = sessions.get(sessionId);
+  if (!s?.sftp?.sftpSessionId) return null; // SFTP aún no conectado
+  return { files, sessionId };
+}
+
+/** Sube rutas locales (de un drop del SO) al directorio remoto de la sesión. */
+async function uploadOsPathsToRemote(sessionId, paths) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp?.sftpSessionId) return;
+  const rows = [];
+  for (const path of paths) {
+    // Detectamos directorios probando a listarlos: si `local_list_dir` tiene
+    // éxito es una carpeta; si lanza, lo tratamos como archivo.
+    let isDir = false;
+    try {
+      await invoke("local_list_dir", { path });
+      isDir = true;
+    } catch {
+      isDir = false;
+    }
+    rows.push({ path, name: localNameFromPath(path), isDir, isSymlink: false });
+  }
+  if (rows.length) transferRows(sessionId, "upload", rows);
+}
+
+async function initOsFileDrop() {
+  let webview;
+  try {
+    const mod = await import("@tauri-apps/api/webview");
+    webview = mod.getCurrentWebview();
+  } catch (err) {
+    console.warn("[sftp] arrastre de ficheros del SO no disponible:", err);
+    return;
+  }
+  await webview.onDragDropEvent((event) => {
+    const p = event.payload;
+    if (p.type === "enter" || p.type === "over") {
+      const target = remoteSftpFilesAtPosition(p.position);
+      osDropClearHighlight();
+      if (target) target.files.classList.add("os-dragover");
+    } else if (p.type === "leave") {
+      osDropClearHighlight();
+    } else if (p.type === "drop") {
+      osDropClearHighlight();
+      const target = remoteSftpFilesAtPosition(p.position);
+      if (!target) return; // soltado fuera de un panel remoto conectado
+      const paths = Array.isArray(p.paths) ? p.paths : [];
+      if (paths.length) uploadOsPathsToRemote(target.sessionId, paths);
+    }
   });
 }
 
@@ -15201,6 +15369,7 @@ function bindUIEvents() {
   initNoteEditor();
   initUiZoomControl();
   loadCommandHistory();
+  initOsFileDrop();
 
   // ── Modal de preferencias ────────────────────────────────────
   document.getElementById("btn-prefs-close")

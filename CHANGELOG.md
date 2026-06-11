@@ -2,6 +2,22 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.27.1] - 2026-06-11
+
+### Añadido
+
+- **Arrastrar ficheros del sistema al panel SFTP remoto**: ahora se pueden
+  arrastrar archivos o carpetas desde el explorador del sistema operativo y
+  soltarlos sobre el panel **Remoto** del SFTP para subirlos al directorio
+  remoto actual. Soltarlos sobre el panel es el gesto explícito; si se sueltan
+  fuera de un panel remoto conectado no ocurre nada. Reutiliza la cola de
+  transferencias, los conflictos y la verificación de tamaño existentes.
+- **Orden manual de carpetas**: con el orden de la barra lateral en «Manual»,
+  el menú contextual de una carpeta incluye **Mover arriba** / **Mover abajo**
+  para reordenarla entre sus carpetas hermanas. Se suma al reordenado manual de
+  conexiones, que ya existía en el menú contextual de cada máquina. El orden se
+  guarda por contenedor y se sincroniza.
+
 ## [1.27.0] - 2026-06-11
 
 ### Añadido

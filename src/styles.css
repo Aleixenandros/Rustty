@@ -6158,7 +6158,8 @@ body.sftp-panel-resizing {
   position: relative;
 }
 
-.sftp-files.sftp-dragover {
+.sftp-files.sftp-dragover,
+.sftp-files.os-dragover {
   outline: var(--drag-outline-width) dashed var(--drag-color);
   outline-offset: var(--drag-outline-offset);
   background: var(--drag-bg-soft);
