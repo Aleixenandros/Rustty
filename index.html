@@ -1363,6 +1363,14 @@
 
               <div class="settings-row">
                 <label class="checkbox-label">
+                  <input type="checkbox" id="pref-share-command-history" />
+                  <span data-i18n="prefs_terminal.share_command_history">Historial de comandos compartido entre pestañas</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.share_command_history_hint">Guarda los comandos tecleados en cualquier sesión y los ofrece desde el editor multilínea (Ctrl+Shift+E) en todas las pestañas. No se sincroniza en la nube.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
                   <input type="checkbox" id="pref-capture-screen" />
                   <span data-i18n="prefs_terminal.capture_screen">Guardar pantalla para restaurar</span>
                 </label>
@@ -1696,6 +1704,17 @@
                   <option value="compact" data-i18n="prefs_appearance.density_compact">Compacta</option>
                 </select>
                 <p class="settings-hint" data-i18n="prefs_appearance.density_hint">Reduce padding y altura de filas en la barra lateral, pestañas y modales sin tocar el tamaño del terminal.</p>
+              </div>
+
+              <div class="settings-row">
+                <label data-i18n="prefs_appearance.ui_zoom">Tamaño de la interfaz</label>
+                <div class="ui-zoom-control">
+                  <button type="button" class="btn-secondary" id="pref-ui-zoom-out" data-i18n-aria-label="prefs_appearance.ui_zoom_out" aria-label="Reducir tamaño de la interfaz">−</button>
+                  <span id="pref-ui-zoom-value" class="ui-zoom-value">100%</span>
+                  <button type="button" class="btn-secondary" id="pref-ui-zoom-in" data-i18n-aria-label="prefs_appearance.ui_zoom_in" aria-label="Aumentar tamaño de la interfaz">+</button>
+                  <button type="button" class="btn-secondary" id="pref-ui-zoom-reset" data-i18n="prefs_appearance.ui_zoom_reset">Restablecer</button>
+                </div>
+                <p class="settings-hint" data-i18n="prefs_appearance.ui_zoom_hint">Escala el rail, la barra lateral, las pestañas y los modales sin afectar al terminal. También con Ctrl+Alt y +/−/0.</p>
               </div>
 
               <div class="settings-row">
@@ -2216,10 +2235,17 @@
       <div id="cmd-editor-modal" role="dialog" aria-modal="true" aria-labelledby="cmd-editor-title">
         <div class="modal-header">
           <h2 id="cmd-editor-title" data-i18n="cmd_editor.title">Editor de comandos</h2>
+          <button class="btn-icon" id="cmd-editor-history-btn" data-i18n-title="cmd_editor.history" title="Historial de comandos" aria-label="Historial de comandos">
+            <svg viewBox="0 0 18 18" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 4.5v4.5l3 1.8"/>
+              <path d="M2.7 9a6.3 6.3 0 1 0 1.4-3.9M2.7 4.2v2.6h2.6"/>
+            </svg>
+          </button>
           <button class="btn-icon" id="cmd-editor-close" data-i18n-aria-label="cmd_editor.close" aria-label="Cerrar">✕</button>
         </div>
         <div class="cmd-editor-body">
           <p class="cmd-editor-hint" data-i18n="cmd_editor.hint">Redacta el comando. Ctrl+Enter para insertar, Esc para cerrar.</p>
+          <div id="cmd-editor-history-list" class="cmd-editor-history-list hidden" role="listbox"></div>
           <textarea
             id="cmd-editor-textarea"
             class="cmd-editor-textarea"

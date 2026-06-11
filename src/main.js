@@ -437,6 +437,10 @@ const DEFAULT_PREFS = {
   autostartMinimized: false,
   // Borradores del editor multilínea (Ctrl+Shift+E), por profileId / "local".
   commandDrafts:      {},
+  // Historial de comandos compartido entre pestañas (opt-in). El contenido del
+  // historial vive en localStorage (clave `rustty-command-history`), no en
+  // prefs, para no entrar en la sincronización en la nube.
+  shareCommandHistory: false,
 };
 
 // Paleta de colores predefinidos para las carpetas. Cada entrada es el id que
@@ -702,10 +706,25 @@ function adjustUiZoom(delta) {
   let next;
   if (delta === "reset") next = 1;
   else next = clampUiZoom(current + (Number(delta) || 0) * 0.1);
-  if (next === current) return;
+  if (next === current) { syncUiZoomControl(); return; }
   prefs.uiZoom = next;
   applyUiZoom(next);
+  syncUiZoomControl();
   savePrefs();
+}
+
+/** Refleja el zoom actual en la etiqueta del control de Preferencias. */
+function syncUiZoomControl() {
+  const label = document.getElementById("pref-ui-zoom-value");
+  if (label) label.textContent = `${Math.round(clampUiZoom(prefs.uiZoom ?? 1) * 100)}%`;
+}
+
+/** Cablea los botones del control de tamaño de la interfaz (Preferencias). */
+function initUiZoomControl() {
+  document.getElementById("pref-ui-zoom-out")?.addEventListener("click", () => adjustUiZoom(-1));
+  document.getElementById("pref-ui-zoom-in")?.addEventListener("click", () => adjustUiZoom(+1));
+  document.getElementById("pref-ui-zoom-reset")?.addEventListener("click", () => adjustUiZoom("reset"));
+  syncUiZoomControl();
 }
 
 /**
@@ -1434,6 +1453,8 @@ function openSettingsModal() {
   document.getElementById("pref-right-click-paste").checked = prefs.rightClickPaste;
   const confirmRiskyPasteEl = document.getElementById("pref-confirm-risky-paste");
   if (confirmRiskyPasteEl) confirmRiskyPasteEl.checked = prefs.confirmRiskyPaste !== false;
+  const shareHistEl = document.getElementById("pref-share-command-history");
+  if (shareHistEl) shareHistEl.checked = !!prefs.shareCommandHistory;
   const captureScreenEl = document.getElementById("pref-capture-screen");
   if (captureScreenEl) captureScreenEl.checked = prefs.captureScreen !== false;
   document.getElementById("pref-sftp-conflict-policy").value = normalizeSftpConflictPolicy(prefs.sftpConflictPolicy);
@@ -1449,6 +1470,7 @@ function openSettingsModal() {
   document.getElementById("pref-cursor-style").value        = prefs.cursorStyle;
   const _densitySel = document.getElementById("pref-ui-density");
   if (_densitySel) _densitySel.value = prefs.uiDensity === "compact" ? "compact" : "comfortable";
+  syncUiZoomControl();
   const _cbSafe = document.getElementById("pref-color-blind-safe");
   if (_cbSafe) _cbSafe.checked = !!prefs.colorBlindSafe;
   const _searchAllWorkspaces = document.getElementById("pref-search-all-workspaces");
@@ -2668,6 +2690,7 @@ function savePrefsFromModal() {
     copyOnSelect:    document.getElementById("pref-copy-on-select").checked,
     rightClickPaste: document.getElementById("pref-right-click-paste").checked,
     confirmRiskyPaste: document.getElementById("pref-confirm-risky-paste")?.checked ?? true,
+    shareCommandHistory: !!document.getElementById("pref-share-command-history")?.checked,
     captureScreen: document.getElementById("pref-capture-screen")?.checked ?? true,
     sftpConflictPolicy: normalizeSftpConflictPolicy(
       document.getElementById("pref-sftp-conflict-policy")?.value,
@@ -2694,6 +2717,7 @@ function savePrefsFromModal() {
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     bell:            document.getElementById("pref-bell").value,
     uiDensity:       (document.getElementById("pref-ui-density")?.value === "compact" ? "compact" : "comfortable"),
+    uiZoom:          clampUiZoom(Number(previousPrefs.uiZoom ?? 1)),
     colorBlindSafe:  !!document.getElementById("pref-color-blind-safe")?.checked,
     searchAllWorkspaces: document.getElementById("pref-search-all-workspaces")?.checked ?? true,
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
@@ -6288,7 +6312,7 @@ function promptCredential({
         closeCredentialPrompt({
           action: action.value,
           value: input.value,
-          remember: !!remember?.checked,
+          remember: !!document.getElementById("credential-modal-remember")?.checked,
         });
       });
       actionsRow.insertBefore(btn, submitBtn);
@@ -8209,6 +8233,7 @@ async function reconnectSshInPlace(s) {
 
 function handleTerminalInput(sessionObj, data) {
   if (!sessionObj) return;
+  captureCommandKeystroke(sessionObj, data);
   if (isBroadcastOn() && viewSelection.includes(sessionObj.id) && viewSelection.length > 1) {
     viewSelection.forEach((sid) => {
       sendTerminalInput(sessions.get(sid), data);
@@ -9036,6 +9061,12 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     bellStyle: prefs.bell,
     theme: getTerminalTheme(),
     allowProposedApi: true,
+    // Desplazamiento con la rueda: el default de xterm (1) avanza muy pocas
+    // líneas por muesca y se siente "atrancado". Subimos la sensibilidad para
+    // que el scroll acompañe mejor a la velocidad real del ratón; el modo
+    // rápido (Alt+rueda) avanza aún más para saltos largos.
+    scrollSensitivity: 3,
+    fastScrollSensitivity: 8,
     // Selección inteligente con doble clic: trata como parte de la palabra
     // los caracteres comunes de rutas, URLs, SHAs y nombres con guiones.
     // El default de xterm corta por /, :, -, etc. Slice estético #22.
@@ -15161,12 +15192,15 @@ function bindUIEvents() {
   // Toggle de la barra lateral (persistido en localStorage)
   initSidebarToggle();
   initSidebarResize();
+  initSidebarScrollSpeed();
 
   // Controles de ventana (CSD): min / max / close + detección de plataforma
   initWindowControls();
   initCredentialModalEvents();
   initCommandEditor();
   initNoteEditor();
+  initUiZoomControl();
+  loadCommandHistory();
 
   // ── Modal de preferencias ────────────────────────────────────
   document.getElementById("btn-prefs-close")
@@ -16751,6 +16785,80 @@ function setupModalNotePane() {
   }
 }
 
+// ── Historial de comandos compartido entre pestañas (opt-in) ──────────────
+//
+// Cuando `prefs.shareCommandHistory` está activo, los comandos tecleados en
+// cualquier sesión SSH o consola local se acumulan en un único historial que
+// se comparte entre todas las pestañas y se puede reutilizar desde el editor
+// multilínea (Ctrl+Shift+E). El contenido vive en localStorage (no se
+// sincroniza en la nube). La captura es best-effort: acumula los caracteres
+// imprimibles por sesión y cierra la línea al pulsar Enter; un eco desajustado
+// en el servidor puede producir alguna entrada imperfecta, aceptable para un
+// historial de conveniencia.
+
+const COMMAND_HISTORY_KEY = "rustty-command-history";
+const COMMAND_HISTORY_MAX = 200;
+let sharedCommandHistory = [];
+
+function loadCommandHistory() {
+  try {
+    const raw = localStorage.getItem(COMMAND_HISTORY_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    sharedCommandHistory = Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
+  } catch {
+    sharedCommandHistory = [];
+  }
+}
+
+function persistCommandHistory() {
+  try {
+    localStorage.setItem(COMMAND_HISTORY_KEY, JSON.stringify(sharedCommandHistory));
+  } catch {}
+}
+
+function pushCommandHistory(cmd) {
+  const c = (cmd || "").trim();
+  if (!c || c.length > 2000) return;
+  // Evita duplicar el comando inmediatamente anterior.
+  if (sharedCommandHistory[sharedCommandHistory.length - 1] === c) return;
+  sharedCommandHistory.push(c);
+  if (sharedCommandHistory.length > COMMAND_HISTORY_MAX) {
+    sharedCommandHistory.splice(0, sharedCommandHistory.length - COMMAND_HISTORY_MAX);
+  }
+  persistCommandHistory();
+}
+
+/**
+ * Acumula las pulsaciones de una sesión para reconstruir la línea de comando
+ * y empujarla al historial al pulsar Enter. Solo actúa si el historial está
+ * activado y la sesión tiene terminal (no RDP).
+ */
+function captureCommandKeystroke(sessionObj, data) {
+  if (!prefs.shareCommandHistory) return;
+  if (!sessionObj || sessionObj.type === "rdp") return;
+  if (typeof data !== "string" || data.length === 0) return;
+
+  let buf = sessionObj._histBuf || "";
+  for (let i = 0; i < data.length; i++) {
+    const ch = data[i];
+    const code = data.charCodeAt(i);
+    if (ch === "\r" || ch === "\n") {
+      pushCommandHistory(buf);
+      buf = "";
+    } else if (ch === "\x7f" || ch === "\b") {
+      buf = buf.slice(0, -1);                 // backspace
+    } else if (code === 0x1b) {
+      break;                                  // secuencia de escape (flechas…): ignora el resto del chunk
+    } else if (code === 0x03 || code === 0x15) {
+      buf = "";                               // Ctrl+C / Ctrl+U: descarta la línea
+    } else if (code >= 0x20) {
+      buf += ch;                              // imprimible
+    }
+    // otros caracteres de control (Tab, etc.) se ignoran sin romper la línea
+  }
+  sessionObj._histBuf = buf;
+}
+
 // ── Editor multilínea (Ctrl+Shift+E) ──────────────────────────────────────
 
 let _cmdEditorDraftTimer = null;
@@ -16795,6 +16903,7 @@ function openCommandEditor() {
     textarea.value = saved || "";
   }
 
+  hideCommandHistoryList();
   overlay.classList.remove("hidden");
   textarea?.focus();
 }
@@ -16887,10 +16996,65 @@ function initCommandEditor() {
   btnCancel?.addEventListener("click", () => closeCommandEditor(false));
   btnClose?.addEventListener("click",  () => closeCommandEditor(false));
 
-  // Clic en el backdrop cierra sin insertar
+  // Botón de historial: alterna el desplegable de comandos recientes
+  const btnHistory = document.getElementById("cmd-editor-history-btn");
+  btnHistory?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleCommandHistoryList();
+  });
+
+  // Clic en el backdrop cierra sin insertar (y oculta el historial)
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) closeCommandEditor(false);
+    hideCommandHistoryList();
   });
+}
+
+/** Muestra u oculta el desplegable de historial del editor de comandos. */
+function toggleCommandHistoryList() {
+  const list = document.getElementById("cmd-editor-history-list");
+  if (!list) return;
+  if (list.classList.contains("hidden")) renderCommandHistoryList();
+  else hideCommandHistoryList();
+}
+
+function hideCommandHistoryList() {
+  document.getElementById("cmd-editor-history-list")?.classList.add("hidden");
+}
+
+/** Rellena el desplegable con los comandos recientes (más reciente arriba). */
+function renderCommandHistoryList() {
+  const list = document.getElementById("cmd-editor-history-list");
+  const textarea = document.getElementById("cmd-editor-textarea");
+  if (!list || !textarea) return;
+  list.innerHTML = "";
+
+  const items = sharedCommandHistory.slice(-40).reverse();
+  if (items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "cmd-editor-history-empty";
+    empty.textContent = prefs.shareCommandHistory
+      ? t("cmd_editor.history_empty")
+      : t("cmd_editor.history_disabled");
+    list.appendChild(empty);
+  } else {
+    for (const cmd of items) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "cmd-editor-history-row";
+      row.setAttribute("role", "option");
+      row.textContent = cmd;
+      row.title = cmd;
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        textarea.value = cmd;
+        hideCommandHistoryList();
+        textarea.focus();
+      });
+      list.appendChild(row);
+    }
+  }
+  list.classList.remove("hidden");
 }
 
 /**
@@ -16967,6 +17131,30 @@ function initSidebarToggle() {
 const SIDEBAR_WIDTH_KEY = "rustty-sidebar-width";
 const SIDEBAR_WIDTH_MIN = 180;
 const SIDEBAR_WIDTH_MAX = 520;
+
+/**
+ * Acelera el scroll de la rueda en la lista de conexiones. El scroll nativo de
+ * WebKitGTK avanza en pasos pequeños y se siente "atrancado"; aquí tomamos el
+ * control del evento `wheel` y desplazamos una cantidad proporcional a la
+ * velocidad real del ratón (con un multiplicador), de forma análoga a
+ * `scrollSensitivity` en xterm. No se toca el zoom (Ctrl+rueda) ni el scroll
+ * horizontal.
+ */
+const SIDEBAR_SCROLL_MULTIPLIER = 1.8;
+
+function initSidebarScrollSpeed() {
+  const list = document.getElementById("connection-list");
+  if (!list) return;
+  list.addEventListener("wheel", (e) => {
+    if (e.ctrlKey) return;                                  // reservado para zoom
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;    // gesto horizontal
+    if (list.scrollHeight <= list.clientHeight) return;     // sin overflow: nada que hacer
+    // deltaMode 1 = líneas (rueda clásica) → px aproximados; 0 = píxeles (trackpad)
+    const pixels = e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY;
+    list.scrollTop += pixels * SIDEBAR_SCROLL_MULTIPLIER;
+    e.preventDefault();
+  }, { passive: false });
+}
 
 function initSidebarResize() {
   const handle = document.getElementById("sidebar-resize-handle");

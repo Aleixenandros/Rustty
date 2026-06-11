@@ -202,14 +202,17 @@ a:focus-visible,
   overflow: hidden;
 }
 
-/* Zoom de UI: solo afecta al chrome (rail, sidebar y tab-bar). El terminal y
-   sus paneles quedan fuera del zoom porque tienen su propio control de fuente.
-   Compatible con WebKit/Chromium; `zoom` reescala tanto el tamaño visual como
-   el espacio ocupado dentro del flex padre, así que la barra lateral y el rail
-   acompañan al usuario de forma proporcional. */
+/* Zoom de UI: afecta al chrome (rail, sidebar, tab-bar) y a los modales, pero
+   nunca al buffer xterm ni a sus paneles, que tienen su propio control de
+   fuente. Compatible con WebKit/Chromium; `zoom` reescala tanto el tamaño
+   visual como el espacio ocupado dentro del flex padre, así que la barra
+   lateral y el rail acompañan al usuario de forma proporcional. Los diálogos
+   (`[role="dialog"]`) se escalan dentro de su overlay centrado, que mantiene
+   el centrado al ser flex. */
 #rail,
 #sidebar,
-#tab-bar {
+#tab-bar,
+[role="dialog"] {
   zoom: var(--ui-zoom, 1);
 }
 
@@ -2961,6 +2964,67 @@ body.terminal-bell-visual::after {
   gap: 8px;
   border-top: 1px solid var(--surface0);
   flex-shrink: 0;
+}
+
+/* Desplegable de historial de comandos compartido */
+.cmd-editor-history-list {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--surface1);
+  border-radius: 5px;
+  background: var(--crust);
+  padding: 4px;
+}
+
+.cmd-editor-history-list.hidden {
+  display: none;
+}
+
+.cmd-editor-history-row {
+  text-align: left;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85em;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-editor-history-row:hover {
+  background: var(--surface0);
+}
+
+.cmd-editor-history-empty {
+  color: var(--subtext0);
+  font-size: 0.82em;
+  padding: 8px;
+}
+
+/* Control de tamaño de la interfaz (Preferencias → Apariencia) */
+.ui-zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ui-zoom-control .btn-secondary {
+  min-width: 34px;
+}
+
+.ui-zoom-value {
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
 }
 
 .iw-steps {

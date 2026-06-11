@@ -2,6 +2,37 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.27.0] - 2026-06-11
+
+### Añadido
+
+- **Historial de comandos compartido entre pestañas** (opt-in): activable en
+  Preferencias → Terminal. Cuando está activo, los comandos tecleados en
+  cualquier sesión SSH o consola local se acumulan en un único historial
+  compartido por todas las pestañas y reutilizable desde el editor multilínea
+  (Ctrl+Shift+E), donde un botón despliega los comandos recientes para
+  insertarlos. El historial se guarda en local y **no** se sincroniza en la
+  nube.
+- **Tamaño de la interfaz ajustable** desde Preferencias → Apariencia: control
+  para escalar el rail, la barra lateral, las pestañas y los modales sin tocar
+  el tamaño del terminal, además de los atajos `Ctrl+Alt` con `+` / `-` / `0`.
+
+### Corregido
+
+- **Exportar conexiones sin contraseñas**: el botón «Sin contraseñas» del
+  diálogo de exportación no respondía por un error de ámbito en el modal de
+  credenciales; ahora funciona y arregla también cualquier otra acción
+  secundaria de esos diálogos.
+- **Zoom de la interfaz**: el tamaño elegido se restablecía al 100 % cada vez
+  que se guardaban las preferencias; ahora se conserva.
+
+### Cambiado
+
+- **Desplazamiento más fluido**: la rueda del ratón avanza de forma
+  proporcional a su velocidad en el terminal (mayor sensibilidad de scroll) y
+  en la lista de conexiones de la barra lateral, donde antes el scroll nativo
+  se sentía lento y «atrancado».
+
 ## [1.26.1] - 2026-06-10
 
 ### Cambiado
