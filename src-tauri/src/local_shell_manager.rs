@@ -92,7 +92,11 @@ impl LocalShellManager {
         let sid_r = session_id.clone();
         let app_r = app_handle;
         std::thread::spawn(move || {
-            let mut buf = [0u8; 4096];
+            // Buffer holgado (64 KiB): con salidas masivas (`cat` de un log
+            // grande) `read` devuelve bloques cercanos al tamaño del buffer, así
+            // que emitimos muchos menos eventos IPC que con 4 KiB y aliviamos el
+            // hilo de UI, que es donde se notaba el cuelgue.
+            let mut buf = [0u8; 64 * 1024];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => {

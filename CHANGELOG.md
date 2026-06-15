@@ -2,6 +2,23 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.28.1] - 2026-06-15
+
+### Corregido
+
+- **Salida masiva en terminal**: comandos muy verbosos como `cat` sobre logs de
+  más de 1 MB ya no bloquean la interfaz. El terminal pasa a renderizarse por GPU
+  (WebGL, con vuelta automática al modo DOM si no está disponible) y la salida
+  SSH y de consola local se encola por sesión para drenarse hacia xterm en lotes
+  acotados mediante su callback de escritura. La memoria pendiente está limitada:
+  ante una ráfaga extrema se descarta lo más antiguo (avisándolo en pantalla) en
+  lugar de dejar la WebView colgada. La consola local lee además en bloques
+  mayores para emitir menos eventos hacia el frontend.
+- **Nombres con «/» en el panel de ficheros**: crear o renombrar una carpeta o un
+  archivo con «/» en el nombre (p. ej. `HOLA / MUNDO`) ya no genera por error una
+  jerarquía de subcarpetas. El nombre se valida como un único componente y se
+  avisa al usuario para que lo corrija.
+
 ## [1.28.0] - 2026-06-15
 
 ### Añadido

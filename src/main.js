@@ -17,6 +17,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { LigaturesAddon } from "@xterm/addon-ligatures";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import {
@@ -107,6 +108,12 @@ const DEFAULT_HIGHLIGHT_RULES = [
 function defaultHighlightRules() {
   return DEFAULT_HIGHLIGHT_RULES.map((rule) => ({ ...rule }));
 }
+// Salida de terminal: xterm procesa `write()` de forma asíncrona, pero si le
+// empujamos cientos de chunks seguidos (p. ej. `cat` sobre logs grandes) la
+// WebView puede quedar ocupada durante segundos. Esta cola deja respirar al
+// hilo de UI y acota la memoria pendiente por sesión.
+const TERMINAL_OUTPUT_CHUNK_CHARS = 64 * 1024;
+const TERMINAL_OUTPUT_QUEUE_LIMIT_CHARS = 16 * 1024 * 1024;
 let _trayQuickLauncherTimer = null;
 const RELEASES_API_URL = "https://api.github.com/repos/Aleixenandros/Rustty/releases/latest";
 const RELEASES_PAGE_URL = "https://github.com/Aleixenandros/Rustty/releases/latest";
@@ -6509,8 +6516,8 @@ function promptCredential({
   });
 }
 
-async function promptTextValue({ title, message, label, initialValue = "", submitLabel = "Aceptar" }) {
-  const result = await promptCredential({
+async function promptTextValue({ title, message, label, initialValue = "", submitLabel = "Aceptar", validate = null }) {
+  const promise = promptCredential({
     title,
     message,
     label,
@@ -6518,9 +6525,85 @@ async function promptTextValue({ title, message, label, initialValue = "", submi
     inputType: "text",
     initialValue,
   });
+
+  // Validación en vivo opcional: mientras el valor sea inválido deshabilitamos el
+  // botón y mostramos el motivo en el propio diálogo, en lugar de dejar que el
+  // usuario confirme y avisarle a posteriori. `validate(value)` devuelve el
+  // mensaje de error o `null` si el valor es aceptable.
+  let inputHandler = null;
+  const input = document.getElementById("credential-modal-input");
+  const submitBtn = document.getElementById("btn-credential-submit");
+  const messageEl = document.getElementById("credential-modal-message");
+  if (validate && input && submitBtn && messageEl) {
+    const baseMessage = message || "";
+    inputHandler = () => {
+      const value = input.value.trim();
+      if (!value) {
+        // Vacío: estado neutro (botón inhabilitado, sin texto de error).
+        submitBtn.disabled = true;
+        messageEl.textContent = baseMessage;
+        messageEl.style.color = "";
+        return;
+      }
+      const reason = validate(value);
+      submitBtn.disabled = !!reason;
+      messageEl.textContent = reason || baseMessage;
+      messageEl.style.color = reason ? "var(--danger, #e06c75)" : "";
+    };
+    input.addEventListener("input", inputHandler);
+    inputHandler();
+  }
+
+  const result = await promise;
+
+  if (inputHandler && input) input.removeEventListener("input", inputHandler);
+  if (submitBtn) submitBtn.disabled = false;
+  if (messageEl) messageEl.style.color = "";
+
   if (!result) return null;
   const value = result.value.trim();
   return value || null;
+}
+
+/**
+ * Devuelve el motivo por el que `name` no sirve como nombre de una entrada
+ * (carpeta/archivo) o `null` si es válido. Un nombre debe ser un único
+ * componente: si contiene «/» (separador de rutas en Unix y en el protocolo
+ * SFTP) el sistema lo interpretaría como una jerarquía y crearía subcarpetas
+ * en lugar de una sola entrada con ese nombre. En local sobre Windows «\»
+ * también separa rutas.
+ */
+function invalidEntryNameReason(name, { isLocal = false } = {}) {
+  const value = String(name ?? "").trim();
+  if (!value) return "El nombre no puede estar vacío.";
+  if (value === "." || value === "..") return "Ese nombre está reservado.";
+  if (value.includes("/")) return "El nombre no puede contener «/».";
+  // En remoto (Unix) «\» es un carácter válido en un nombre; solo lo vetamos
+  // en local, donde puede actuar como separador de rutas (Windows).
+  if (isLocal && value.includes("\\")) return "El nombre no puede contener «\\».";
+  return null;
+}
+
+/**
+ * Pide un nombre de entrada y lo valida como componente único. Reintenta
+ * mientras sea inválido (conservando lo escrito) hasta que el usuario teclee
+ * un nombre válido o cancele (→ `null`).
+ */
+async function promptEntryName({ title, message, label, submitLabel, initialValue = "", isLocal = false }) {
+  let current = initialValue;
+  for (;;) {
+    const name = await promptTextValue({
+      title, message, label, submitLabel, initialValue: current,
+      validate: (value) => invalidEntryNameReason(value, { isLocal }),
+    });
+    if (!name) return null;
+    // Red de seguridad: la validación en vivo ya impide confirmar un nombre
+    // inválido, pero revalidamos por si se colara (p. ej. envío por Enter).
+    const reason = invalidEntryNameReason(name, { isLocal });
+    if (!reason) return name;
+    toast(reason, "error");
+    current = name;
+  }
 }
 
 async function confirmThemed({ title, message, submitLabel = "Aceptar", danger = false }) {
@@ -8229,6 +8312,110 @@ function filterSuppressedTerminalOutput(sessionObj, text) {
   return output;
 }
 
+// Recorta la cola por su frente (lo más antiguo) cuando supera el límite. El
+// recorte puede partir una secuencia de escape ANSI a la mitad y dejar un glitch
+// visual puntual en el primer chunk que sí se pinta, pero ya estamos en modo
+// degradado (avisamos del descarte) y conservar el final es lo útil para un `cat`.
+function trimTerminalOutputQueue(sessionObj) {
+  const queue = sessionObj?._outputQueue;
+  if (!queue || (sessionObj._outputQueuedChars || 0) <= TERMINAL_OUTPUT_QUEUE_LIMIT_CHARS) return;
+
+  let dropped = 0;
+  while (queue.length && sessionObj._outputQueuedChars > TERMINAL_OUTPUT_QUEUE_LIMIT_CHARS) {
+    const over = sessionObj._outputQueuedChars - TERMINAL_OUTPUT_QUEUE_LIMIT_CHARS;
+    const first = queue[0] || "";
+    if (first.length <= over) {
+      dropped += first.length;
+      sessionObj._outputQueuedChars -= first.length;
+      queue.shift();
+    } else {
+      queue[0] = first.slice(over);
+      dropped += over;
+      sessionObj._outputQueuedChars -= over;
+    }
+  }
+  if (dropped > 0) sessionObj._outputDroppedChars = (sessionObj._outputDroppedChars || 0) + dropped;
+}
+
+function takeTerminalOutputChunk(sessionObj) {
+  if (!sessionObj?._outputQueue?.length && !sessionObj?._outputDroppedChars) return "";
+
+  let out = "";
+  if (sessionObj._outputDroppedChars) {
+    const droppedKb = Math.ceil(sessionObj._outputDroppedChars / 1024);
+    out += `\r\n\x1b[33m... salida omitida para mantener la terminal fluida (${droppedKb} KiB) ...\x1b[0m\r\n`;
+    sessionObj._outputDroppedChars = 0;
+  }
+
+  const queue = sessionObj._outputQueue || [];
+  while (queue.length && out.length < TERMINAL_OUTPUT_CHUNK_CHARS) {
+    const first = queue[0] || "";
+    const remaining = TERMINAL_OUTPUT_CHUNK_CHARS - out.length;
+    if (first.length <= remaining) {
+      out += first;
+      sessionObj._outputQueuedChars -= first.length;
+      queue.shift();
+    } else {
+      out += first.slice(0, remaining);
+      queue[0] = first.slice(remaining);
+      sessionObj._outputQueuedChars -= remaining;
+    }
+  }
+  return out;
+}
+
+function scheduleTerminalOutputFlush(sessionObj) {
+  if (!sessionObj || sessionObj._outputWriting || sessionObj._outputFlushScheduled) return;
+  sessionObj._outputFlushScheduled = true;
+  const run = () => {
+    sessionObj._outputFlushScheduled = false;
+    flushTerminalOutput(sessionObj);
+  };
+  // `requestAnimationFrame` no se dispara cuando la ventana está oculta o
+  // minimizada. Si en ese estado llega una ráfaga (p. ej. un `cat` en una
+  // pestaña de fondo) la cola dejaría de drenarse y se llenaría hasta el límite,
+  // provocando descartes innecesarios al volver al primer plano. Con la ventana
+  // oculta caemos a un temporizador para que la cola siga vaciándose.
+  if (typeof document !== "undefined" && document.hidden) {
+    setTimeout(run, 32);
+  } else {
+    requestAnimationFrame(run);
+  }
+}
+
+function flushTerminalOutput(sessionObj) {
+  if (!sessionObj?.terminal || sessionObj._outputWriting) return;
+  const chunk = takeTerminalOutputChunk(sessionObj);
+  if (!chunk) return;
+
+  sessionObj._outputWriting = true;
+  sessionObj.terminal.write(chunk, () => {
+    sessionObj._outputWriting = false;
+    if (sessionObj._outputQueue?.length || sessionObj._outputDroppedChars) {
+      scheduleTerminalOutputFlush(sessionObj);
+    }
+  });
+}
+
+function enqueueTerminalOutput(sessionObj, text) {
+  if (!sessionObj?.terminal || !text) return;
+  if (!sessionObj._outputQueue) sessionObj._outputQueue = [];
+  const str = String(text);
+  sessionObj._outputQueue.push(str);
+  sessionObj._outputQueuedChars = (sessionObj._outputQueuedChars || 0) + str.length;
+  trimTerminalOutputQueue(sessionObj);
+  scheduleTerminalOutputFlush(sessionObj);
+}
+
+function clearTerminalOutputQueue(sessionObj) {
+  if (!sessionObj) return;
+  sessionObj._outputQueue = [];
+  sessionObj._outputQueuedChars = 0;
+  sessionObj._outputDroppedChars = 0;
+  sessionObj._outputFlushScheduled = false;
+  sessionObj._outputWriting = false;
+}
+
 /**
  * Inyecta un hook OSC 7 en el shell remoto (bash/zsh) para que emita el
  * cwd después de cada prompt. Sin esto el panel SFTP no puede seguir al
@@ -8329,7 +8516,7 @@ async function reconnectLocalInPlace(s) {
     const ul = await listen(`shell-data-${sessionId}`, (e) => {
       const text = decoder.decode(new Uint8Array(e.payload));
       if (text) {
-        s.terminal.write(text);
+        enqueueTerminalOutput(s, text);
         markTabActivity(sessionId);
       }
     });
@@ -8338,7 +8525,7 @@ async function reconnectLocalInPlace(s) {
       updateTabStatus(sessionId, "error");
       renderDashboard();
       showReconnectOverlay(sessionId, "Consola cerrada");
-      s.terminal.writeln(`\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
+      enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
       markTabActivity(sessionId, { kind: "disconnect" });
     });
     s.unlisteners.push(ul, ulClose);
@@ -9246,6 +9433,22 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   terminal.loadAddon(new WebLinksAddon(handleTerminalLink));
   terminal.loadAddon(searchAddon);
   terminal.open(xtermDiv);
+  // Renderer WebGL: el backend DOM por defecto de xterm es muy costoso al pintar
+  // salidas masivas (un `cat` de un log grande puede saturar el hilo de UI). El
+  // addon WebGL descarga el pintado a la GPU y sube el techo de rendimiento de
+  // forma notable. Se carga tras `open()` (lo exige el addon) y de forma
+  // defensiva: si el contexto no se puede crear (p. ej. WebKitGTK sin WebGL) o
+  // se pierde en caliente, hacemos `dispose()` y xterm vuelve solo al renderer
+  // DOM, así que nunca dejamos el terminal sin pintar.
+  try {
+    const webglAddon = new WebglAddon();
+    webglAddon.onContextLoss(() => {
+      try { webglAddon.dispose(); } catch {}
+    });
+    terminal.loadAddon(webglAddon);
+  } catch (err) {
+    console.warn("[webgl] renderer no disponible, se usa el backend DOM:", err);
+  }
   // Ligaduras: el addon requiere que el terminal ya esté abierto en el DOM.
   // Solo carga si el toggle está activo; cambios en caliente no se aplican
   // a sesiones ya abiertas (avisado en el hint de Preferencias).
@@ -9522,9 +9725,9 @@ async function restorePreviousScreen(sessionId, profileId) {
   if (!snapshot) return;
   const sep = (label) => `\r\n\x1b[2m──────── ${label} ────────\x1b[0m\r\n`;
   const when = new Date().toLocaleString();
-  s.terminal.write(sep(`${t("ctx.snapshot_restored")} · ${when}`));
-  s.terminal.write(snapshot.endsWith("\n") ? snapshot : snapshot + "\r\n");
-  s.terminal.write(sep(t("ctx.snapshot_new_session")));
+  enqueueTerminalOutput(s, sep(`${t("ctx.snapshot_restored")} · ${when}`));
+  enqueueTerminalOutput(s, snapshot.endsWith("\n") ? snapshot : snapshot + "\r\n");
+  enqueueTerminalOutput(s, sep(t("ctx.snapshot_new_session")));
 }
 
 /** Carga el índice de perfiles con snapshot al arrancar. */
@@ -9547,7 +9750,7 @@ async function registerSshListeners(sessionId, terminal) {
     const text = decoder.decode(new Uint8Array(e.payload));
     const filtered = filterSuppressedTerminalOutput(s, text);
     if (filtered) {
-      terminal.write(applyHighlightRules(filtered));
+      enqueueTerminalOutput(s, applyHighlightRules(filtered));
       markTabActivity(sessionId);
       captureScreenChunk(s, filtered);
     }
@@ -9611,12 +9814,10 @@ async function registerSshListeners(sessionId, terminal) {
     updateTabStatus(sessionId, "error");
     showReconnectOverlay(sessionId, isHostKeyAlert ? "Host key cambiada" : "Error de conexión");
     if (isHostKeyAlert) {
-      terminal.writeln(
-        `\r\n\x1b[1;41;97m  ⚠ HOST KEY CAMBIADA  \x1b[0m\r\n\x1b[31m${message}\x1b[0m\r\n`,
-      );
+      enqueueTerminalOutput(s, `\r\n\x1b[1;41;97m  ⚠ HOST KEY CAMBIADA  \x1b[0m\r\n\x1b[31m${message}\x1b[0m\r\n`);
       toast(message, "error", 12000);
     } else {
-      terminal.writeln(`\r\n\x1b[31m✗ Error: ${message}\x1b[0m\r\n`);
+      enqueueTerminalOutput(s, `\r\n\x1b[31m✗ Error: ${message}\x1b[0m\r\n`);
       toast(`Error SSH: ${message}`, "error");
     }
     markTabActivity(sessionId, { kind: "disconnect" });
@@ -9634,7 +9835,7 @@ async function registerSshListeners(sessionId, terminal) {
       message: `Reintentando conexión (${attempt}/${max}) en ${secs}s`,
       timestamp: new Date().toISOString(),
     });
-    terminal.writeln(`\r\n\x1b[33m↻ Reintentando conexión (${attempt}/${max}) en ${secs}s…\x1b[0m`);
+    enqueueTerminalOutput(s, `\r\n\x1b[33m↻ Reintentando conexión (${attempt}/${max}) en ${secs}s…\x1b[0m\r\n`);
     markTabActivity(sessionId, { important: true });
   }));
 
@@ -9650,7 +9851,7 @@ async function registerSshListeners(sessionId, terminal) {
     });
     updateTabStatus(sessionId, "error");
     showReconnectOverlay(sessionId, "Sesión cerrada");
-    terminal.writeln(`\r\n\x1b[33m• ${t("terminal.closed")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
+    enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.closed")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
     markTabActivity(sessionId, { kind: "disconnect" });
     // El subsistema SFTP muere con el canal SSH; cerrar el panel para no dejarlo huérfano.
     if (s?.sftp?.panel) closeSftpPanel(sessionId).catch(() => {});
@@ -9767,6 +9968,7 @@ async function closeSession(sessionId, opts = {}) {
   await persistScreenSnapshot(s);
   for (const ul of s.unlisteners) { try { ul(); } catch {} }
   await invoke("ssh_disconnect", { sessionId }).catch(() => {});
+  clearTerminalOutputQueue(s);
   s.terminal.dispose();
   sessions.delete(sessionId);
   removeTab(sessionId);
@@ -10961,7 +11163,7 @@ async function openLocalShell() {
     const ul = await listen(`shell-data-${sessionId}`, (e) => {
       const text = decoder.decode(new Uint8Array(e.payload));
       if (text) {
-        s.terminal.write(text);
+        enqueueTerminalOutput(s, text);
         markTabActivity(sessionId);
       }
     });
@@ -10969,7 +11171,7 @@ async function openLocalShell() {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
       showReconnectOverlay(sessionId, "Consola cerrada");
-      s.terminal.writeln(`\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
+      enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
       markTabActivity(sessionId, { kind: "disconnect" });
     });
     s.unlisteners.push(ul, ulClose);
@@ -10984,6 +11186,7 @@ async function openLocalShell() {
     s._closeOverride = async () => {
       for (const ul of s.unlisteners) { try { ul(); } catch {} }
       await invoke("local_shell_close", { sessionId }).catch(() => {});
+      clearTerminalOutputQueue(s);
       s.terminal.dispose();
       sessions.delete(sessionId);
     };
@@ -13196,11 +13399,12 @@ function cssAttrEscape(value) {
 async function promptMkdir(sessionId, side) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
-  const name = await promptTextValue({
+  const name = await promptEntryName({
     title: "Nueva carpeta",
     message: `Crear carpeta en ${side === "local" ? "Local" : "Remoto"}.`,
     label: "Nombre",
     submitLabel: "Crear",
+    isLocal: side === "local",
   });
   if (!name) return;
   const where = side === "local" ? "Local" : "Remoto";
@@ -13234,11 +13438,12 @@ async function promptMkdir(sessionId, side) {
 async function promptCreateFile(sessionId, side) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
-  const name = await promptTextValue({
+  const name = await promptEntryName({
     title: "Nuevo archivo",
     message: `Crear archivo vacío en ${side === "local" ? "Local" : "Remoto"}.`,
     label: "Nombre",
     submitLabel: "Crear",
+    isLocal: side === "local",
   });
   if (!name) return;
   const where = side === "local" ? "Local" : "Remoto";
@@ -13272,12 +13477,13 @@ async function promptCreateFile(sessionId, side) {
 async function promptRename(sessionId, side, oldPath, oldName) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
-  const newName = await promptTextValue({
+  const newName = await promptEntryName({
     title: "Renombrar",
     message: `Cambiar nombre en ${side === "local" ? "Local" : "Remoto"}.`,
     label: "Nuevo nombre",
     initialValue: oldName,
     submitLabel: "Renombrar",
+    isLocal: side === "local",
   });
   if (!newName || newName === oldName) return;
   const where = side === "local" ? "Local" : "Remoto";
