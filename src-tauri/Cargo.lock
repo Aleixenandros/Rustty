@@ -5013,6 +5013,7 @@ dependencies = [
  "data-encoding",
  "delegate",
  "der",
+ "des",
  "digest 0.11.3",
  "ecdsa",
  "ed25519-dalek",
@@ -5268,7 +5269,7 @@ dependencies = [
 
 [[package]]
 name = "rustty"
-version = "1.27.1"
+version = "1.28.0"
 dependencies = [
  "age",
  "async-trait",

@@ -2,6 +2,31 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.28.0] - 2026-06-15
+
+### Añadido
+
+- **Selección granular de algoritmos legacy**: al activar **«Permitir cifrados /
+  kex / MAC antiguos»** en las opciones avanzadas de un perfil SSH, se despliega
+  una lista con casillas, agrupadas por categoría (**Cifrados**, **Intercambio
+  de claves (KEX)**, **MAC** y **Claves de host**), para elegir exactamente qué
+  algoritmos ofrecer en la negociación. El catálogo lo expone el backend (fuente
+  única de verdad), de modo que lo que se muestra es lo que se negocia. Se añade
+  además **`3des-cbc`** para servidores muy antiguos.
+
+### Corregido
+
+- **Conexión con servidores que solo aceptan MAC antiguas** (`hmac-sha1`): la
+  opción legacy volvía a no ofrecer ningún MAC antiguo porque `russh` 0.61 dejó
+  de incluir `hmac-sha1` en sus algoritmos por defecto. Ahora se ofrecen
+  explícitamente `hmac-sha1` y `hmac-sha1-etm`, resolviendo el error
+  *«No common Mac algorithm»*.
+- **Doble clic en una conexión ya abierta**: ahora abre siempre una sesión
+  nueva, en lugar de limitarse a activar la pestaña existente.
+- **Hueco entre el terminal y la barra de estado** con la ventana sin
+  maximizar: el terminal se alinea al fondo, de modo que el sobrante de fila
+  parcial de xterm queda arriba y la última línea queda pegada al pie.
+
 ## [1.27.1] - 2026-06-11
 
 ### Añadido

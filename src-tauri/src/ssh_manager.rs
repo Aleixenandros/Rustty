@@ -20,7 +20,7 @@ use std::borrow::Cow;
 use russh::client::{self, AuthResult};
 use russh::keys::ssh_key::Algorithm;
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
-use russh::{cipher, kex, ChannelMsg, Preferred};
+use russh::{cipher, kex, mac, ChannelMsg, Preferred};
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
@@ -564,7 +564,7 @@ async fn run_connection_test(
     app_handle: AppHandle,
 ) -> Result<(), AppError> {
     let preferred = if profile.allow_legacy_algorithms {
-        legacy_preferred()
+        legacy_preferred(profile.legacy_algorithms.as_deref())
     } else {
         Preferred::default()
     };
@@ -871,7 +871,7 @@ async fn run_session(
         .map(|s| Duration::from_secs(s as u64))
         .unwrap_or_else(|| Duration::from_secs(DEFAULT_SSH_KEEPALIVE_SECS));
     let preferred = if profile.allow_legacy_algorithms {
-        legacy_preferred()
+        legacy_preferred(profile.legacy_algorithms.as_deref())
     } else {
         Preferred::default()
     };
@@ -1711,46 +1711,131 @@ async fn authenticate_with_agent(
     ))
 }
 
-/// Construye una lista de algoritmos preferidos que conserva los modernos
-/// como prioritarios pero añade variantes legacy (CBC, 3DES, DH-SHA1,
-/// HMAC-SHA1, ssh-rsa) al final para poder negociar con servidores antiguos.
-pub(crate) fn legacy_preferred() -> Preferred {
+/// Tipo de un algoritmo legacy del catálogo, ligado a la lista de `Preferred`
+/// a la que se anexa al negociar.
+enum LegacyKind {
+    Cipher(cipher::Name),
+    Kex(kex::Name),
+    Mac(mac::Name),
+    HostKey(Algorithm),
+}
+
+/// Una entrada del catálogo de algoritmos legacy. `id` es el nombre wire que se
+/// persiste en el perfil y se muestra en la UI; `category` agrupa en la interfaz.
+struct LegacyEntry {
+    id: &'static str,
+    category: &'static str,
+    kind: LegacyKind,
+}
+
+/// Catálogo único de algoritmos legacy soportados (russh no implementa otros
+/// como umac-64 o hmac-ripemd160, así que no pueden ofrecerse). Es la **fuente
+/// de verdad** tanto de `legacy_preferred` (lo que se negocia) como del comando
+/// IPC que alimenta la UI (lo que se muestra), de modo que ambos no divergen.
+/// El default de russh ya no incluye hmac-sha1, por eso debe ofrecerse aquí.
+fn legacy_catalog() -> Vec<LegacyEntry> {
+    vec![
+        LegacyEntry { id: "aes256-cbc", category: "cipher", kind: LegacyKind::Cipher(cipher::AES_256_CBC) },
+        LegacyEntry { id: "aes192-cbc", category: "cipher", kind: LegacyKind::Cipher(cipher::AES_192_CBC) },
+        LegacyEntry { id: "aes128-cbc", category: "cipher", kind: LegacyKind::Cipher(cipher::AES_128_CBC) },
+        LegacyEntry { id: "3des-cbc", category: "cipher", kind: LegacyKind::Cipher(cipher::TRIPLE_DES_CBC) },
+        LegacyEntry { id: "diffie-hellman-group-exchange-sha1", category: "kex", kind: LegacyKind::Kex(kex::DH_GEX_SHA1) },
+        LegacyEntry { id: "diffie-hellman-group14-sha1", category: "kex", kind: LegacyKind::Kex(kex::DH_G14_SHA1) },
+        LegacyEntry { id: "diffie-hellman-group1-sha1", category: "kex", kind: LegacyKind::Kex(kex::DH_G1_SHA1) },
+        LegacyEntry { id: "hmac-sha1", category: "mac", kind: LegacyKind::Mac(mac::HMAC_SHA1) },
+        LegacyEntry { id: "hmac-sha1-etm@openssh.com", category: "mac", kind: LegacyKind::Mac(mac::HMAC_SHA1_ETM) },
+        LegacyEntry { id: "ssh-rsa", category: "hostkey", kind: LegacyKind::HostKey(Algorithm::Rsa { hash: None }) },
+    ]
+}
+
+/// Devuelve el catálogo legacy como pares `(id, categoría)` para que la UI
+/// muestre exactamente lo que `legacy_preferred` puede negociar.
+pub fn legacy_catalog_info() -> Vec<(String, String)> {
+    legacy_catalog()
+        .into_iter()
+        .map(|e| (e.id.to_string(), e.category.to_string()))
+        .collect()
+}
+
+/// Construye una lista de algoritmos preferidos que conserva los modernos como
+/// prioritarios pero añade variantes legacy (CBC, 3DES, DH-SHA1, HMAC-SHA1,
+/// ssh-rsa) al final para poder negociar con servidores antiguos. `selected`
+/// filtra el catálogo: `None` ofrece todos; `Some(ids)` solo los nombres wire
+/// indicados. Los ids del catálogo que NO se seleccionan se excluyen incluso si
+/// el default de russh ya los traía (caso de `ssh-rsa`), de modo que la casilla
+/// tenga efecto real.
+pub(crate) fn legacy_preferred(selected: Option<&[String]>) -> Preferred {
     let default = Preferred::default();
+    let catalog = legacy_catalog();
 
-    let mut cipher: Vec<cipher::Name> = default.cipher.iter().copied().collect();
-    for extra in [
-        cipher::AES_256_CBC,
-        cipher::AES_192_CBC,
-        cipher::AES_128_CBC,
-    ] {
-        if !cipher.contains(&extra) {
-            cipher.push(extra);
-        }
-    }
-
-    let mut kex_list: Vec<kex::Name> = default.kex.iter().copied().collect();
-    for extra in [kex::DH_GEX_SHA1, kex::DH_G14_SHA1, kex::DH_G1_SHA1] {
-        if !kex_list.contains(&extra) {
-            kex_list.push(extra);
-        }
-    }
-
-    // mac::HMAC_SHA1 ya está en el orden por defecto, así que no toca añadirlo.
-
-    let mut keys: Vec<Algorithm> = default.key.iter().cloned().collect();
-    let rsa_sha1 = Algorithm::Rsa { hash: None };
-    if !keys
+    let is_selected = |id: &str| match selected {
+        Some(list) => list.iter().any(|s| s == id),
+        None => true,
+    };
+    let excluded: Vec<&'static str> = catalog
         .iter()
-        .any(|k| matches!(k, Algorithm::Rsa { hash: None }))
-    {
-        keys.push(rsa_sha1);
+        .filter(|e| !is_selected(e.id))
+        .map(|e| e.id)
+        .collect();
+
+    let mut cipher: Vec<cipher::Name> = default
+        .cipher
+        .iter()
+        .copied()
+        .filter(|c| !excluded.contains(&c.as_ref()))
+        .collect();
+    let mut kex_list: Vec<kex::Name> = default
+        .kex
+        .iter()
+        .copied()
+        .filter(|k| !excluded.contains(&k.as_ref()))
+        .collect();
+    let mut macs: Vec<mac::Name> = default
+        .mac
+        .iter()
+        .copied()
+        .filter(|m| !excluded.contains(&m.as_ref()))
+        .collect();
+    let mut keys: Vec<Algorithm> = default
+        .key
+        .iter()
+        .cloned()
+        .filter(|k| !excluded.contains(&k.as_str()))
+        .collect();
+
+    for entry in catalog {
+        if !is_selected(entry.id) {
+            continue;
+        }
+        match entry.kind {
+            LegacyKind::Cipher(c) => {
+                if !cipher.contains(&c) {
+                    cipher.push(c);
+                }
+            }
+            LegacyKind::Kex(k) => {
+                if !kex_list.contains(&k) {
+                    kex_list.push(k);
+                }
+            }
+            LegacyKind::Mac(m) => {
+                if !macs.contains(&m) {
+                    macs.push(m);
+                }
+            }
+            LegacyKind::HostKey(a) => {
+                if !keys.contains(&a) {
+                    keys.push(a);
+                }
+            }
+        }
     }
 
     Preferred {
         kex: Cow::Owned(kex_list),
         key: Cow::Owned(keys),
         cipher: Cow::Owned(cipher),
-        mac: default.mac.clone(),
+        mac: Cow::Owned(macs),
         compression: default.compression.clone(),
     }
 }
@@ -1824,4 +1909,77 @@ fn generate_x11_cookie() -> String {
     let nonce = uuid::Uuid::new_v4();
     let digest = sha2::Sha256::digest(nonce.as_bytes());
     digest.iter().take(16).map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has_cipher(p: &Preferred, name: &str) -> bool {
+        p.cipher.iter().any(|c| c.as_ref() == name)
+    }
+    fn has_kex(p: &Preferred, name: &str) -> bool {
+        p.kex.iter().any(|k| k.as_ref() == name)
+    }
+    fn has_mac(p: &Preferred, name: &str) -> bool {
+        p.mac.iter().any(|m| m.as_ref() == name)
+    }
+    fn has_key(p: &Preferred, name: &str) -> bool {
+        p.key.iter().any(|k| k.as_str() == name)
+    }
+
+    fn present(p: &Preferred, category: &str, id: &str) -> bool {
+        match category {
+            "cipher" => has_cipher(p, id),
+            "kex" => has_kex(p, id),
+            "mac" => has_mac(p, id),
+            "hostkey" => has_key(p, id),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn legacy_preferred_none_includes_whole_catalog() {
+        let p = legacy_preferred(None);
+        for entry in legacy_catalog() {
+            assert!(
+                present(&p, entry.category, entry.id),
+                "legacy_preferred(None) debería incluir {} ({})",
+                entry.id,
+                entry.category
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_preferred_some_filters_to_selection() {
+        let sel = vec!["hmac-sha1".to_string()];
+        let p = legacy_preferred(Some(&sel));
+
+        // El único legacy seleccionado está presente.
+        assert!(has_mac(&p, "hmac-sha1"));
+
+        // Ningún otro extra legacy del catálogo se añade.
+        for entry in legacy_catalog() {
+            if entry.id == "hmac-sha1" {
+                continue;
+            }
+            assert!(
+                !present(&p, entry.category, entry.id),
+                "selección parcial no debería añadir {} ({})",
+                entry.id,
+                entry.category
+            );
+        }
+
+        // Los algoritmos modernos del default se conservan.
+        let def = Preferred::default();
+        assert!(p.cipher.len() >= def.cipher.len());
+        assert!(p.kex.len() >= def.kex.len());
+    }
+
+    #[test]
+    fn legacy_catalog_info_matches_catalog() {
+        assert_eq!(legacy_catalog_info().len(), legacy_catalog().len());
+    }
 }

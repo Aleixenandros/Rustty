@@ -495,7 +495,7 @@ async fn run_ssh_session(profile: ConnectionProfile, secrets: CliSecrets) -> Res
             Duration::from_secs(crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_SECS)
         });
     let preferred = if profile.allow_legacy_algorithms {
-        legacy_preferred()
+        legacy_preferred(profile.legacy_algorithms.as_deref())
     } else {
         Preferred::default()
     };
@@ -588,7 +588,7 @@ async fn run_remote_command(
             Duration::from_secs(crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_SECS)
         });
     let preferred = if profile.allow_legacy_algorithms {
-        legacy_preferred()
+        legacy_preferred(profile.legacy_algorithms.as_deref())
     } else {
         Preferred::default()
     };

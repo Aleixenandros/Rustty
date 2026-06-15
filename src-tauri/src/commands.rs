@@ -13,7 +13,7 @@ use crate::notes::{NoteDoc, NoteSummary, NotesManager};
 use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
 use crate::rdp_manager::RdpManager;
 use crate::sftp_manager::{FileEntry, SftpManager, TransferConflictPolicy};
-use crate::ssh_manager::{SshManager, SshTunnelConfig, SshTunnelInfo};
+use crate::ssh_manager::{legacy_catalog_info, SshManager, SshTunnelConfig, SshTunnelInfo};
 use crate::sync::{
     pack_state, resolve_sync_folder, unpack_state, OAuthFinishResult, OAuthProvider,
     OAuthStartResult, SnapshotEntry, SyncBackendKind, SyncConfig, SyncManager, SyncState,
@@ -44,6 +44,25 @@ pub fn close_app(
 #[tauri::command]
 pub fn get_profiles(state: State<ProfileManager>) -> Result<Vec<ConnectionProfile>, String> {
     state.load_all().map_err(|e| e.to_string())
+}
+
+/// Una entrada del catálogo de algoritmos legacy para la UI.
+#[derive(serde::Serialize)]
+pub struct LegacyAlgoInfo {
+    /// Nombre wire del algoritmo (p. ej. `hmac-sha1`, `aes256-cbc`).
+    pub id: String,
+    /// Categoría estable para agrupar en la interfaz: `cipher`, `kex`, `mac`, `hostkey`.
+    pub category: String,
+}
+
+/// Devuelve el catálogo de algoritmos legacy seleccionables. La UI lo usa para
+/// mostrar exactamente lo que se ofrecerá al activar los algoritmos antiguos.
+#[tauri::command]
+pub fn legacy_algorithm_catalog() -> Vec<LegacyAlgoInfo> {
+    legacy_catalog_info()
+        .into_iter()
+        .map(|(id, category)| LegacyAlgoInfo { id, category })
+        .collect()
 }
 
 /// Crea o actualiza un perfil (upsert).

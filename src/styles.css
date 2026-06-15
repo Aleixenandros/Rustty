@@ -2283,6 +2283,14 @@ body.terminal-bell-visual::after {
   flex: 1;
   overflow: hidden;
   border-radius: 4px;
+  /* El `.xterm` mide rows×cellHeight (entero), así que sobra <1 fila respecto al
+     contenedor. Alineamos el terminal abajo para que ese sobrante quede arriba
+     (junto a las pestañas) y la última línea quede pegada a la barra de estado,
+     en lugar de dejar un hueco entre el contenido y el footer. No afecta al fit:
+     el FitAddon mide el clientHeight del contenedor, que no cambia. */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 
 /* ─── Dashboard inicial ──────────────────────────────────────── */
@@ -4775,6 +4783,51 @@ input[type="checkbox"] {
 
 .form-hint.warning {
   color: var(--red, #e57373);
+}
+
+/* Aviso con icono SVG (en lugar de emoji): alinea el triángulo con la primera
+   línea del texto. Solo aplica a los hints que incluyen .hint-warn-icon. */
+.form-hint.warning:has(.hint-warn-icon) {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.hint-warn-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+/* Lista granular de algoritmos legacy (se despliega bajo el toggle). */
+.legacy-algos {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--surface1);
+  border-radius: var(--border-radius, 6px);
+  background: var(--surface0);
+}
+.legacy-algos > .form-hint {
+  margin-top: 0;
+  color: var(--subtext0);
+}
+.legacy-algo-group {
+  margin-top: 10px;
+}
+.legacy-algo-cat {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--subtext1);
+  margin-bottom: 5px;
+}
+.legacy-algo-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 4px 14px;
+}
+.legacy-algo-item span {
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 /* Aviso de fallback cuando la credencial maestra referenciada ya no existe. */

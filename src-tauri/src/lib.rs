@@ -141,6 +141,7 @@ pub fn run() {
             commands::save_profile,
             commands::delete_profile,
             commands::wake_on_lan,
+            commands::legacy_algorithm_catalog,
             // ── Catálogo de credenciales (master / var / secret)
             commands::master_cred_list,
             commands::master_cred_set,

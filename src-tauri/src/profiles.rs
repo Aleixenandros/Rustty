@@ -172,10 +172,18 @@ pub struct ConnectionProfile {
     #[serde(default)]
     pub keep_alive_secs: Option<u32>,
     /// Si true, extiende las listas de algoritmos preferidos con variantes
-    /// legacy (aes-cbc, 3des-cbc, dh-group14-sha1, hmac-sha1, ssh-rsa) para
-    /// poder conectar con servidores antiguos. Reduce la seguridad.
+    /// legacy (aes-cbc, 3des-cbc, dh-sha1, hmac-sha1, ssh-rsa) para poder
+    /// conectar con servidores antiguos. Reduce la seguridad. Actúa como
+    /// interruptor maestro: si está desactivado, `legacy_algorithms` se ignora.
     #[serde(default)]
     pub allow_legacy_algorithms: bool,
+    /// Selección granular de algoritmos legacy a ofrecer cuando
+    /// `allow_legacy_algorithms` está activo. Cada entrada es el nombre wire de
+    /// un algoritmo del catálogo (p. ej. `hmac-sha1`, `aes256-cbc`, `ssh-rsa`).
+    /// `None` = todos los del catálogo (compat con perfiles antiguos y cubre
+    /// algoritmos que se añadan en el futuro); `Some(lista)` = exactamente esos.
+    #[serde(default)]
+    pub legacy_algorithms: Option<Vec<String>>,
     /// Si true, permite reenviar el agente SSH local hacia la sesión remota.
     #[serde(default)]
     pub agent_forwarding: bool,

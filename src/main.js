@@ -4524,7 +4524,9 @@ function bindTreeEvents(container) {
     });
     el.addEventListener("dblclick", (e) => {
       if (e.target.closest("[data-action]")) return;
-      connectProfile(el.dataset.id);
+      // El doble clic siempre abre una sesión nueva, aunque ya haya una pestaña
+      // abierta de este perfil (force evita reutilizar la pestaña existente).
+      connectProfile(el.dataset.id, { force: true });
     });
   });
 
@@ -5349,6 +5351,78 @@ function setPasswordVisible(visible) {
  * @param {string|null} preselectedFolder  Carpeta a preseleccionar en el picker
  * @param {string|null} workspaceId Workspace inicial
  */
+// ── Algoritmos legacy seleccionables ───────────────────────────────────────
+// El catálogo viene del backend (comando `legacy_algorithm_catalog`) para que
+// lo que se muestra sea exactamente lo que se negocia. Se cachea tras la primera
+// carga. Orden de categorías en la UI.
+let legacyAlgoCatalog = null;
+const LEGACY_CATEGORY_ORDER = ["cipher", "kex", "mac", "hostkey"];
+
+async function ensureLegacyAlgoCatalog() {
+  if (legacyAlgoCatalog) return legacyAlgoCatalog;
+  try {
+    legacyAlgoCatalog = await invoke("legacy_algorithm_catalog");
+  } catch (e) {
+    console.error("No se pudo cargar el catálogo de algoritmos legacy", e);
+    legacyAlgoCatalog = [];
+  }
+  return legacyAlgoCatalog;
+}
+
+// Pinta las casillas agrupadas por categoría. `selectedIds` null = todas
+// marcadas (perfil sin selección explícita); array = solo esas marcadas.
+function renderLegacyAlgorithms(catalog, selectedIds) {
+  const host = document.getElementById("legacy-algorithms-groups");
+  if (!host) return;
+  const isOn = (id) => selectedIds == null || selectedIds.includes(id);
+  const byCat = {};
+  for (const e of catalog) (byCat[e.category] ||= []).push(e);
+  const cats = LEGACY_CATEGORY_ORDER.filter((c) => byCat[c]);
+  host.innerHTML = cats
+    .map((cat) => {
+      const items = byCat[cat]
+        .map(
+          (e) => `
+        <label class="checkbox-label legacy-algo-item">
+          <input type="checkbox" class="legacy-algo-cb" value="${escHtml(e.id)}"${isOn(e.id) ? " checked" : ""} />
+          <span>${escHtml(e.id)}</span>
+        </label>`,
+        )
+        .join("");
+      return `<div class="legacy-algo-group">
+        <div class="legacy-algo-cat">${escHtml(t("modal_conn.legacy_cat_" + cat))}</div>
+        <div class="legacy-algo-items">${items}</div>
+      </div>`;
+    })
+    .join("");
+}
+
+function updateLegacyAlgosVisibility() {
+  const on = document.getElementById("f-allow-legacy")?.checked;
+  const box = document.getElementById("legacy-algorithms-list");
+  if (box) box.hidden = !on;
+}
+
+// Renderiza las casillas con el estado del perfil y ajusta la visibilidad.
+async function applyLegacyAlgorithmsUI(selectedIds) {
+  const catalog = await ensureLegacyAlgoCatalog();
+  renderLegacyAlgorithms(catalog, selectedIds);
+  updateLegacyAlgosVisibility();
+}
+
+// Devuelve el valor a persistir: null si el toggle está apagado o si están
+// todas marcadas (= todas, incluye futuras ampliaciones); array de ids si es
+// una selección parcial.
+function collectLegacyAlgorithms() {
+  const on = document.getElementById("f-allow-legacy")?.checked;
+  if (!on) return null;
+  const cbs = Array.from(document.querySelectorAll(".legacy-algo-cb"));
+  if (cbs.length === 0) return null;
+  const checked = cbs.filter((c) => c.checked).map((c) => c.value);
+  if (checked.length === cbs.length) return null;
+  return checked;
+}
+
 function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiveWorkspaceId()) {
   editingProfileId = null;
   resetConnectionTestPanel();
@@ -5361,6 +5435,7 @@ function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiv
   setupModalNotePane();
   document.getElementById("f-save-password").checked = true;
   document.getElementById("f-save-passphrase").checked = true;
+  applyLegacyAlgorithmsUI(null);
   setPasswordSource("own");
   populateMasterCredSelect(null);
   refreshKeepassStatus().then(() => {
@@ -5539,6 +5614,7 @@ function openEditConnectionModal(profileId) {
   populateFolderSelect(profile.group || "", profile.workspace_id || getActiveWorkspaceId());
   document.getElementById("f-keep-alive").value = profile.keep_alive_secs ?? "";
   document.getElementById("f-allow-legacy").checked = !!profile.allow_legacy_algorithms;
+  applyLegacyAlgorithmsUI(profile.legacy_algorithms ?? null);
   document.getElementById("f-agent-forwarding").checked = !!profile.agent_forwarding;
   const disablePasteConfirmEl = document.getElementById("f-disable-paste-confirm");
   if (disablePasteConfirmEl) disablePasteConfirmEl.checked = !!profile.disable_paste_confirm;
@@ -6634,6 +6710,7 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     follow_cwd: true,
     keep_alive_secs: keepAliveFromInput(document.getElementById("f-keep-alive").value),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
+    legacy_algorithms: collectLegacyAlgorithms(),
     agent_forwarding: document.getElementById("f-agent-forwarding").checked,
     disable_paste_confirm: document.getElementById("f-disable-paste-confirm")?.checked ?? false,
     x11_forwarding: document.getElementById("f-x11-forwarding").checked,
@@ -6853,6 +6930,7 @@ async function saveAndClose(shouldConnect) {
     follow_cwd:          true,
     keep_alive_secs:     keepAliveFromInput(document.getElementById("f-keep-alive").value),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
+    legacy_algorithms:   collectLegacyAlgorithms(),
     agent_forwarding:    document.getElementById("f-agent-forwarding").checked,
     disable_paste_confirm: document.getElementById("f-disable-paste-confirm")?.checked ?? false,
     x11_forwarding:      document.getElementById("f-x11-forwarding").checked,
@@ -14428,6 +14506,7 @@ async function importFromSshConfig() {
     follow_cwd: true,
     keep_alive_secs: fields.keep_alive_secs,
     allow_legacy_algorithms: false,
+    legacy_algorithms: null,
     agent_forwarding: false,
     disable_paste_confirm: false,
     x11_forwarding: false,
@@ -14992,6 +15071,7 @@ async function importWizardRun() {
       follow_cwd: true,
       keep_alive_secs: null,
       allow_legacy_algorithms: false,
+      legacy_algorithms: null,
       agent_forwarding: false,
       disable_paste_confirm: false,
       x11_forwarding: false,
@@ -15095,6 +15175,18 @@ function bindUIEvents() {
       renderConnectionSummary();
     });
     _connForm.addEventListener("change", () => renderConnectionSummary());
+  }
+
+  // Despliega/oculta la lista granular de algoritmos legacy al activar la opción.
+  const legacyToggle = document.getElementById("f-allow-legacy");
+  if (legacyToggle) {
+    legacyToggle.addEventListener("change", async () => {
+      const host = document.getElementById("legacy-algorithms-groups");
+      if (legacyToggle.checked && host && !host.children.length) {
+        await applyLegacyAlgorithmsUI(null);
+      }
+      updateLegacyAlgosVisibility();
+    });
   }
 
   // Confirmación al activar el reenvío del agente SSH: es peligroso heredarlo

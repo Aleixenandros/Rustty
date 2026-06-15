@@ -836,9 +836,20 @@
                 <input id="f-allow-legacy" type="checkbox" />
                 <span data-i18n="modal_conn.allow_legacy">Permitir cifrados / kex / MAC antiguos</span>
               </label>
-              <p class="form-hint warning" data-i18n="modal_conn.allow_legacy_hint">
-                ⚠️ Añade aes-cbc, dh-sha1, hmac-sha1 y ssh-rsa a la negociación. Reduce la seguridad: úsalo solo con servidores antiguos.
+              <p class="form-hint warning">
+                <svg class="hint-warn-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                  <path d="M8 2 L15 14 H1 Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                  <line x1="8" y1="6.3" x2="8" y2="9.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                  <circle cx="8" cy="11.8" r="0.95" fill="currentColor"/>
+                </svg>
+                <span data-i18n="modal_conn.allow_legacy_hint">Añade aes-cbc, 3des-cbc, dh-sha1, hmac-sha1 y ssh-rsa a la negociación. Reduce la seguridad: úsalo solo con servidores antiguos.</span>
               </p>
+              <div id="legacy-algorithms-list" class="legacy-algos" hidden>
+                <p class="form-hint" data-i18n="modal_conn.legacy_select_hint">
+                  Selecciona qué algoritmos antiguos ofrecer en la negociación:
+                </p>
+                <div id="legacy-algorithms-groups"></div>
+              </div>
             </div>
 
             <div class="form-row">
