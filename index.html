@@ -472,6 +472,9 @@
       <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-pinned">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-pin"/></svg></span><span data-i18n="ctx.toggle_pinned">Anclar / desanclar del dashboard</span>
       </button>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-template">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span id="ctx-template-label" data-i18n="templates.ctx_mark">Usar como plantilla</span>
+      </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="move-conn-up">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></span><span data-i18n="ctx.move_up">Mover arriba</span>
       </button>
@@ -614,6 +617,14 @@
         </nav>
 
         <form id="form-connection" autocomplete="off" class="modal-paned" data-active-pane="general">
+
+          <!-- Selector de plantilla. Solo visible al crear (oculto al editar). -->
+          <div class="form-row" id="field-template" data-modal-pane="general">
+            <label for="f-template" data-i18n="templates.field_label">Plantilla</label>
+            <select id="f-template">
+              <option value="" data-i18n="templates.field_none">En blanco</option>
+            </select>
+          </div>
 
           <div class="form-row" data-modal-pane="general">
             <label for="f-conn-type" data-i18n="modal_conn.conn_type">Tipo de conexión</label>
@@ -1109,6 +1120,107 @@
     </div>
 
     <!-- ══════════════════════════════════════════════════════
+         MODAL: Editor de snippet remoto
+    ══════════════════════════════════════════════════════ -->
+    <div id="snippet-edit-overlay" class="hidden">
+      <div id="snippet-edit-modal" role="dialog" aria-modal="true" aria-labelledby="snippet-edit-title">
+        <div class="modal-header">
+          <h2 id="snippet-edit-title" data-i18n="modal_snippet.title_new">Nuevo snippet</h2>
+          <button class="btn-icon" id="btn-snippet-edit-close" data-i18n-aria-label="modal_snippet.close" aria-label="Cerrar">✕</button>
+        </div>
+        <form id="snippet-edit-form" autocomplete="off">
+          <div class="form-group">
+            <label for="snippet-edit-name" data-i18n="modal_snippet.name">Nombre</label>
+            <input id="snippet-edit-name" type="text" data-i18n-placeholder="modal_snippet.name_ph" placeholder="Reiniciar nginx" required />
+          </div>
+          <div class="form-group">
+            <label for="snippet-edit-group"><span data-i18n="modal_snippet.group">Grupo</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+            <input id="snippet-edit-group" type="text" data-i18n-placeholder="modal_snippet.group_ph" placeholder="Servicios" />
+          </div>
+          <div class="form-group">
+            <label for="snippet-edit-desc"><span data-i18n="modal_snippet.description">Descripción</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+            <input id="snippet-edit-desc" type="text" data-i18n-placeholder="modal_snippet.description_ph" placeholder="Recarga la configuración de nginx" />
+          </div>
+          <div class="form-group">
+            <label for="snippet-edit-command" data-i18n="modal_snippet.command">Comando</label>
+            <textarea id="snippet-edit-command" rows="4" data-i18n-placeholder="modal_snippet.command_ph" placeholder="sudo systemctl restart nginx" required></textarea>
+            <p class="form-hint" data-i18n="modal_snippet.command_hint">Admite ${host}, ${user}, ${port}, ${var:nombre} y ${ask:Etiqueta}.</p>
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input id="snippet-edit-enter" type="checkbox" />
+              <span data-i18n="modal_snippet.send_enter">Enviar Enter al final (ejecutar)</span>
+            </label>
+            <label class="checkbox-label">
+              <input id="snippet-edit-confirm" type="checkbox" />
+              <span data-i18n="modal_snippet.confirm">Pedir confirmación antes de insertar</span>
+            </label>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="btn-snippet-edit-cancel" data-i18n="modal_snippet.cancel">Cancelar</button>
+            <button type="submit" class="btn-primary" data-i18n="modal_snippet.save">Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Editor de comando local
+    ══════════════════════════════════════════════════════ -->
+    <div id="localcmd-edit-overlay" class="hidden">
+      <div id="localcmd-edit-modal" role="dialog" aria-modal="true" aria-labelledby="localcmd-edit-title">
+        <div class="modal-header">
+          <h2 id="localcmd-edit-title" data-i18n="modal_localcmd.title_new">Nuevo comando local</h2>
+          <button class="btn-icon" id="btn-localcmd-edit-close" data-i18n-aria-label="modal_localcmd.close" aria-label="Cerrar">✕</button>
+        </div>
+        <form id="localcmd-edit-form" autocomplete="off">
+          <div class="form-group">
+            <label for="localcmd-edit-name" data-i18n="modal_localcmd.name">Nombre</label>
+            <input id="localcmd-edit-name" type="text" data-i18n-placeholder="modal_localcmd.name_ph" placeholder="Abrir carpeta de descargas" required />
+          </div>
+          <div class="form-group">
+            <label for="localcmd-edit-type" data-i18n="modal_localcmd.type">Acción</label>
+            <select id="localcmd-edit-type">
+              <option value="shell" data-i18n="modal_localcmd.type_shell">Ejecutar comando</option>
+              <option value="url" data-i18n="modal_localcmd.type_url">Abrir URL</option>
+              <option value="path" data-i18n="modal_localcmd.type_path">Abrir archivo o carpeta</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="localcmd-edit-command" id="localcmd-edit-command-label" data-i18n="modal_localcmd.command">Comando</label>
+            <textarea id="localcmd-edit-command" rows="3" data-i18n-placeholder="modal_localcmd.command_ph" placeholder="xdg-open ~/Descargas" required></textarea>
+            <p class="form-hint" id="localcmd-edit-command-hint" data-i18n="modal_localcmd.command_hint">Se ejecuta en este equipo con el shell del sistema. Admite ${host}, ${user}, ${var:nombre} y ${ask:Etiqueta}.</p>
+          </div>
+          <div class="form-group">
+            <label for="localcmd-edit-desc"><span data-i18n="modal_localcmd.description">Descripción</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+            <input id="localcmd-edit-desc" type="text" data-i18n-placeholder="modal_localcmd.description_ph" placeholder="" />
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input id="localcmd-edit-confirm" type="checkbox" />
+              <span data-i18n="modal_localcmd.confirm">Pedir confirmación antes de ejecutar</span>
+            </label>
+          </div>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="btn-localcmd-edit-cancel" data-i18n="modal_localcmd.cancel">Cancelar</button>
+            <button type="submit" class="btn-primary" data-i18n="modal_localcmd.save">Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         PALETA: búsqueda global (perfiles, snippets, comandos, acciones)
+    ══════════════════════════════════════════════════════ -->
+    <div id="command-palette-overlay" class="hidden">
+      <div id="command-palette-modal" role="dialog" aria-modal="true" aria-label="Paleta de comandos">
+        <input id="command-palette-input" type="text" autocomplete="off" spellcheck="false"
+               data-i18n-placeholder="palette.placeholder" placeholder="Buscar perfiles, snippets, comandos…" />
+        <div id="command-palette-list" role="listbox"></div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
          MODAL: Credenciales bajo demanda
     ══════════════════════════════════════════════════════ -->
     <div id="credential-modal-overlay" class="hidden">
@@ -1328,6 +1440,10 @@
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="credentials">
               <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_credentials">Credenciales</span>
+            </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="commands">
+              <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 9 12 4 17"/><line x1="12" y1="17" x2="20" y2="17"/></svg></span>
+              <span class="prefs-nav-label" data-i18n="prefs_commands.tab">Comandos</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="shortcuts">
               <span class="prefs-nav-icon">⌘</span>
@@ -1876,6 +1992,30 @@
               </div>
 
               <div id="cred-list" class="global-tunnel-list"></div>
+            </section>
+
+            <!-- ── Comandos: snippets remotos + comandos locales ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="commands">
+              <h3 class="prefs-panel-title" data-i18n="prefs_commands.title">Snippets y comandos</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_commands.hint">
+                Los snippets se insertan en el terminal activo; los comandos locales se ejecutan en este equipo. Ambos admiten variables como ${host}, ${user}, ${var:nombre} y ${ask:Etiqueta}, y se encuentran rápido desde la paleta de comandos.
+              </p>
+
+              <div class="settings-row settings-row-inline">
+                <label data-i18n="prefs_commands.snippets_label">Snippets remotos</label>
+                <div class="settings-control">
+                  <button type="button" class="btn-primary" id="btn-snippet-add" data-i18n="prefs_commands.snippet_add">Añadir snippet…</button>
+                </div>
+              </div>
+              <div id="snippet-list" class="global-tunnel-list"></div>
+
+              <div class="settings-row settings-row-inline">
+                <label data-i18n="prefs_commands.localcmds_label">Comandos locales</label>
+                <div class="settings-control">
+                  <button type="button" class="btn-primary" id="btn-localcmd-add" data-i18n="prefs_commands.localcmd_add">Añadir comando…</button>
+                </div>
+              </div>
+              <div id="localcmd-list" class="global-tunnel-list"></div>
             </section>
 
             <!-- ── Atajos de teclado ── -->

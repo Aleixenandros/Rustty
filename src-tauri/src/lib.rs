@@ -225,6 +225,7 @@ pub fn run() {
             asbru::parse_asbru,
             asbru::asbru_decrypt,
             commands::join_path,
+            commands::run_local_command,
             commands::list_monospace_fonts,
             commands::tcp_ping,
             // ── Gestor de known_hosts

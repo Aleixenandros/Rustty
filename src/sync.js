@@ -458,7 +458,7 @@ function saveLocalSnippets(snippets) {
   localStorage.setItem(SNIPPETS_STORAGE_KEY, JSON.stringify(snippets));
 }
 
-function upsertLocalSnippet(snippet) {
+export function upsertLocalSnippet(snippet) {
   const snippets = loadLocalSnippets();
   const idx = snippets.findIndex((item) => item.id === snippet.id);
   if (idx >= 0) snippets[idx] = snippet;
@@ -466,7 +466,7 @@ function upsertLocalSnippet(snippet) {
   saveLocalSnippets(snippets);
 }
 
-function deleteLocalSnippet(id) {
+export function deleteLocalSnippet(id) {
   saveLocalSnippets(loadLocalSnippets().filter((snippet) => snippet.id !== id));
 }
 

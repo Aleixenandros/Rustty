@@ -1166,6 +1166,53 @@ pub fn join_path(base: String, name: String) -> Result<String, String> {
         .into_owned())
 }
 
+/// Salida de un comando local ejecutado por el catálogo de "Comandos locales".
+#[derive(serde::Serialize)]
+pub struct LocalCommandOutput {
+    pub code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Ejecuta `command` con el shell del SO (`sh -c` en Unix, `cmd /C` en Windows)
+/// capturando su salida. No es interactivo. Lo invoca el catálogo de "Comandos
+/// locales" de la UI, que pide confirmación al usuario antes de lanzar acciones
+/// potencialmente destructivas; aquí no hay allowlist porque el catálogo lo
+/// define el propio usuario en su equipo.
+fn run_shell_capture(command: &str) -> std::io::Result<std::process::Output> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", command])
+            .output()
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .output()
+    }
+}
+
+/// Comando IPC que ejecuta un comando local y devuelve código + stdout/stderr.
+#[tauri::command]
+pub async fn run_local_command(command: String) -> Result<LocalCommandOutput, String> {
+    let command = command.trim().to_string();
+    if command.is_empty() {
+        return Err("comando vacío".into());
+    }
+    let output = tauri::async_runtime::spawn_blocking(move || run_shell_capture(&command))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    Ok(LocalCommandOutput {
+        code: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
 /// Lista las familias de fuentes instaladas en el sistema.
 /// Se usa en Preferencias → Terminal para elegir la familia del xterm.js.
 /// Devuelve primero las monoespaciadas y después el resto, ambas en orden
@@ -2069,4 +2116,24 @@ pub fn note_search(notes: State<NotesManager>, query: String) -> Result<Vec<Note
 #[tauri::command]
 pub fn notes_dir(notes: State<NotesManager>) -> Result<String, String> {
     Ok(notes.dir().to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn run_shell_capture_devuelve_stdout() {
+        let out = run_shell_capture("echo hola").expect("ejecuta echo");
+        assert!(out.status.success());
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hola");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_shell_capture_propaga_codigo_de_error() {
+        let out = run_shell_capture("exit 3").expect("ejecuta exit");
+        assert_eq!(out.status.code(), Some(3));
+    }
 }

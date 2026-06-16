@@ -2848,6 +2848,9 @@ body.terminal-bell-visual::after {
 #cred-edit-overlay,
 #ask-modal-overlay,
 #dup-modal-overlay,
+#snippet-edit-overlay,
+#localcmd-edit-overlay,
+#command-palette-overlay,
 #import-wizard-overlay {
   position: fixed;
   inset: 0;
@@ -2862,6 +2865,8 @@ body.terminal-bell-visual::after {
 #known-hosts-modal,
 #cred-edit-modal,
 #ask-modal,
+#snippet-edit-modal,
+#localcmd-edit-modal,
 #dup-modal {
   width: 520px;
   max-width: calc(100vw - 40px);
@@ -2877,11 +2882,117 @@ body.terminal-bell-visual::after {
 
 #cred-edit-form,
 #ask-modal-form,
+#snippet-edit-form,
+#localcmd-edit-form,
 #dup-modal-form {
   padding: 18px 20px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* Vista previa del comando de un snippet / comando local en su fila. */
+.cmd-row-preview {
+  font-family: var(--terminal-font, monospace);
+  font-size: 11.5px;
+  color: var(--subtext0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 4px;
+}
+
+/* ── Paleta de comandos global (Ctrl+Shift+P) ── */
+#command-palette-overlay {
+  align-items: flex-start;
+  justify-content: center;
+}
+#command-palette-modal {
+  width: 640px;
+  max-width: calc(100vw - 40px);
+  margin-top: 12vh;
+  max-height: 70vh;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  border-radius: 10px;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.58);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#command-palette-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  border-bottom: 1px solid var(--surface0);
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  padding: 16px 18px;
+  outline: none;
+}
+#command-palette-list {
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.palette-empty {
+  padding: 18px;
+  text-align: center;
+  color: var(--subtext0);
+  font-size: 13px;
+}
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.palette-item.active {
+  background: var(--surface0);
+  border-color: var(--surface1);
+}
+.palette-item-icon {
+  display: flex;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: var(--subtext0);
+}
+.palette-item-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.palette-item-title {
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.palette-item-sub {
+  color: var(--subtext0);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.palette-item-kind {
+  flex: 0 0 auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--subtext0);
+  background: var(--surface0);
+  border-radius: 4px;
+  padding: 2px 6px;
 }
 
 #import-wizard-modal {

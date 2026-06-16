@@ -99,14 +99,16 @@ function resolveBody(body, ctx) {
 }
 
 /**
- * Previsualización NO sensible de una plantilla.
+ * Recorre `template` aplicando `resolve(body)` a cada marcador `${body}`. Misma
+ * gramática que el motor Rust: escape `$${...}` → literal `${...}`, marcador sin
+ * cierre o cuyo `resolve` devuelve `null` → literal, y sustitución de una sola
+ * pasada (el resultado no se reescanea, anti-fuga). Es la base común de
+ * `substitutePreview` y de los resolutores de snippets/comandos del cliente.
  * @param {string} template plantilla con marcadores `${...}`.
- * @param {object} ctx contexto con los internos
- *   ({ host, port, user, profileName, workspace }).
- * @returns {string} texto con los internos resueltos y secret/master
- *   redactados; el resto de marcadores se conserva literal.
+ * @param {(body: string) => (string|null)} resolve reemplazo, o null = literal.
+ * @returns {string}
  */
-export function substitutePreview(template, ctx = {}) {
+export function substituteWith(template, resolve) {
   if (typeof template !== "string") {
     return "";
   }
@@ -135,9 +137,9 @@ export function substitutePreview(template, ctx = {}) {
       const close = template.indexOf("}", i + 2);
       if (close !== -1) {
         const body = template.slice(i + 2, close);
-        const resolved = resolveBody(body, ctx);
-        // null → marcador desconocido/sin resolver: literal tal cual.
-        out += resolved !== null ? resolved : template.slice(i, close + 1);
+        const resolved = resolve(body);
+        // null/undefined → marcador desconocido/sin resolver: literal tal cual.
+        out += resolved != null ? resolved : template.slice(i, close + 1);
         i = close + 1;
         continue;
       }
@@ -149,4 +151,16 @@ export function substitutePreview(template, ctx = {}) {
     i += 1;
   }
   return out;
+}
+
+/**
+ * Previsualización NO sensible de una plantilla.
+ * @param {string} template plantilla con marcadores `${...}`.
+ * @param {object} ctx contexto con los internos
+ *   ({ host, port, user, profileName, workspace }).
+ * @returns {string} texto con los internos resueltos y secret/master
+ *   redactados; el resto de marcadores se conserva literal.
+ */
+export function substitutePreview(template, ctx = {}) {
+  return substituteWith(template, (body) => resolveBody(body, ctx));
 }

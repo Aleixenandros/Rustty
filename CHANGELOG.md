@@ -2,6 +2,30 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.29.0] - 2026-06-16
+
+### Añadido
+
+- **Biblioteca de snippets**: catálogo de comandos remotos con nombre, grupo y
+  descripción en **Preferencias → Comandos**, insertables en el terminal activo.
+  Cada snippet admite sustituciones `${host}`, `${user}`, `${port}`,
+  `${var:nombre}` y `${ask:Etiqueta}` (las preguntas se piden al insertar), una
+  opción **«Enviar Enter al final»** para ejecutarlo y otra de **confirmación**
+  previa. Se sincronizan junto al resto de ajustes.
+- **Comandos locales**: catálogo de acciones que se ejecutan en tu equipo —
+  **ejecutar un comando** (con el shell del sistema), **abrir una URL** o **abrir
+  un archivo o carpeta**— con confirmación opcional y las mismas sustituciones que
+  los snippets. No se sincronizan, porque suelen depender de rutas locales.
+- **Paleta de comandos global** (`Ctrl+Shift+P`): buscador difuso sobre perfiles
+  (conectar), snippets (insertar), comandos locales (ejecutar) y acciones de la
+  app (nueva conexión, nueva desde plantilla, consola local, preferencias).
+  Navegación con flechas, `Enter` ejecuta y `Esc` cierra.
+- **Plantillas de perfil**: al crear una conexión, un selector **«Plantilla»**
+  rellena el formulario con valores por defecto (Linux SSH, SSH con clave, SSH con
+  bastión, SSH heredado, RDP Windows, FTPS). Además puedes **marcar tus propios
+  perfiles como plantilla** desde el menú contextual para reutilizarlos como base
+  de nuevas conexiones.
+
 ## [1.28.1] - 2026-06-15
 
 ### Corregido

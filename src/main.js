@@ -29,7 +29,7 @@ import {
   applyTranslations,
 } from "./i18n.js";
 import { renderMarkdownMinimal, toggleTaskInBody } from "./modules/markdown.js";
-import { substitutePreview } from "./modules/subst.js";
+import { substitutePreview, substituteWith } from "./modules/subst.js";
 
 // ═══════════════════════════════════════════════════════════════
 // ESTADO DE LA APLICACIÓN
@@ -1450,6 +1450,11 @@ function switchPrefsTab(tab) {
   );
   // Refrescar la lista de credenciales al entrar en su pestaña.
   if (tab === "credentials") renderCredList();
+  // Refrescar snippets y comandos locales al entrar en "Comandos".
+  if (tab === "commands") {
+    renderSnippetList();
+    renderLocalCommandList();
+  }
 }
 
 function openSettingsModal() {
@@ -2759,6 +2764,7 @@ function savePrefsFromModal() {
     workspaceColors: previousPrefs.workspaceColors || {},
     highlightRules:  readHighlightRulesFromEditor(),
     _highlightRulesSeeded: true,
+    templateProfileIds: previousPrefs.templateProfileIds || [],
     tombstones:      previousPrefs.tombstones || {},
     _shortcutsTs:    previousPrefs._shortcutsTs || {},
     _lastSyncAt:     previousPrefs._lastSyncAt || null,
@@ -4917,6 +4923,11 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   const hasNote = type === "connection" && id ? profileHasNote(id) : false;
   const noteLabel = document.getElementById("ctx-note-label");
   if (noteLabel) noteLabel.textContent = hasNote ? t("ctx.edit_note") : t("ctx.add_note");
+  // Plantilla: etiqueta según si el perfil ya está marcado como tal.
+  const tplLabel = document.getElementById("ctx-template-label");
+  if (tplLabel && type === "connection" && id) {
+    tplLabel.textContent = isProfileTemplate(id) ? t("templates.ctx_unmark") : t("templates.ctx_mark");
+  }
   menu.querySelectorAll(".ctx-note-exists").forEach((el) =>
     el.classList.toggle("hidden", !hasNote)
   );
@@ -5044,6 +5055,9 @@ function handleContextMenuAction(action) {
       break;
     case "toggle-pinned":
       if (id) togglePinnedProfile(id);
+      break;
+    case "toggle-template":
+      if (id) toggleProfileTemplate(id);
       break;
     case "move-conn-up":
       if (id) moveConnectionInOrder(id, -1);
@@ -5451,6 +5465,9 @@ function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiv
   });
   populateFolderSelect(preselectedFolder, workspaceId);
   populateWorkspaceFormSelect(workspaceId);
+  // Las plantillas solo se ofrecen al crear (no al editar).
+  document.getElementById("field-template")?.classList.remove("hidden");
+  populateTemplateSelect();
   setConnectionModalPane("general");
   clearAllConnectionModalErrors();
   renderConnectionSummary();
@@ -5597,6 +5614,7 @@ function openEditConnectionModal(profileId) {
   editingProfileId = profileId;
   resetConnectionTestPanel();
   setupModalNotePane();
+  document.getElementById("field-template")?.classList.add("hidden");
   document.getElementById("modal-title").textContent = "Editar conexión";
 
   document.getElementById("f-name").value  = profile.name;
@@ -15919,6 +15937,9 @@ function bindUIEvents() {
       if (e.target.id === "cred-edit-overlay") closeCredEditModal();
     });
 
+  // Snippets, comandos locales, plantillas y paleta de comandos.
+  initCommandsAndPalette();
+
   // Diálogo de preguntas al conectar (${ask:})
   document.getElementById("ask-modal-form")
     ?.addEventListener("submit", (e) => {
@@ -16285,6 +16306,704 @@ function bindUIEvents() {
 // "Ctrl+Shift+N"). Las teclas se codifican con keyLabelFromCode() para
 // evitar la ambigüedad de e.key por layout/locale.
 
+/* ════════════════════════════════════════════════════════════════════════
+   Plantillas de perfil · Snippets remotos · Comandos locales · Paleta global
+   Comparten el motor de sustitución ${...} (subst.substituteWith) para
+   resolver internos, ${var:nombre} (catálogo) y ${ask:Etiqueta} (diálogo).
+   ════════════════════════════════════════════════════════════════════════ */
+
+/** Fecha local YYYY-MM-DD (espejo del motor Rust). */
+function substLocalDate() {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+/** Hora local HH:MM:SS. */
+function substLocalTime() {
+  const d = new Date();
+  const h = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const s = String(d.getSeconds()).padStart(2, "0");
+  return `${h}:${mi}:${s}`;
+}
+
+/** Contexto de internos a partir de la sesión/perfil activos. */
+function activeSubstContext() {
+  const pid = activeProfileId();
+  const profile = pid ? profiles.find((p) => p.id === pid) : null;
+  let workspace = "";
+  if (profile?.workspace_id) {
+    workspace = (prefs.workspaces || []).find((w) => w.id === profile.workspace_id)?.name || "";
+  }
+  return {
+    host: profile?.host || "",
+    port: profile?.port != null ? String(profile.port) : "",
+    user: profile?.username || "",
+    profileName: profile?.name || "",
+    workspace,
+  };
+}
+
+/** Lee las variables (kind "var") del catálogo de credenciales en un mapa. */
+async function loadSubstVarMap() {
+  try {
+    const creds = await invoke("master_cred_list");
+    const map = {};
+    for (const c of creds || []) {
+      if (c.kind === "var" && typeof c.value === "string") map[c.name] = c.value;
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+/** Recolecta los `${ask:Etiqueta|op1|op2}` distintos de un texto. */
+function collectAskSpecs(text) {
+  const specs = [];
+  const seen = new Set();
+  substituteWith(String(text || ""), (body) => {
+    if (body.startsWith("ask:")) {
+      const parts = body.slice(4).split("|");
+      const label = parts[0];
+      if (label && !seen.has(label)) {
+        seen.add(label);
+        specs.push({ label, options: parts.slice(1) });
+      }
+    }
+    return null;
+  });
+  return specs;
+}
+
+/** Resuelve un cuerpo `${...}` para snippets/comandos. null = dejar literal. */
+function resolveCommandBody(body, ctx, varMap, askMap) {
+  switch (body) {
+    case "host": return ctx.host;
+    case "port": return ctx.port;
+    case "user": return ctx.user;
+    case "profileName": return ctx.profileName;
+    case "workspace": return ctx.workspace;
+    case "date": return substLocalDate();
+    case "time": return substLocalTime();
+  }
+  const idx = body.indexOf(":");
+  if (idx < 0) return null;
+  const prefix = body.slice(0, idx);
+  const rest = body.slice(idx + 1);
+  if (prefix === "var") {
+    return Object.prototype.hasOwnProperty.call(varMap, rest) ? varMap[rest] : null;
+  }
+  if (prefix === "ask") {
+    const label = rest.split("|")[0];
+    return Object.prototype.hasOwnProperty.call(askMap, label) ? askMap[label] : null;
+  }
+  // env/secret/master/cmd: no se resuelven en cliente; quedan literales.
+  return null;
+}
+
+/**
+ * Resuelve un texto de snippet/comando: pide los `${ask:}` pendientes y sustituye
+ * internos + `${var:}`. Devuelve la cadena resuelta, o `null` si el usuario
+ * cancela el diálogo de preguntas.
+ */
+async function resolveCommandText(text) {
+  const specs = collectAskSpecs(text);
+  let askMap = {};
+  if (specs.length) {
+    askMap = await promptAsks(specs);
+    if (askMap === null) return null;
+  }
+  const varMap = await loadSubstVarMap();
+  const ctx = activeSubstContext();
+  return substituteWith(String(text || ""), (body) => resolveCommandBody(body, ctx, varMap, askMap));
+}
+
+/* ── Plantillas de perfil ──────────────────────────────────────────────── */
+
+// Catálogo de plantillas integradas. `defaults` es un perfil parcial que se
+// vuelca sobre el formulario de nueva conexión.
+const PROFILE_TEMPLATES = [
+  { id: "linux-ssh",   nameKey: "templates.linux_ssh",   defaults: { connection_type: "ssh", port: 22, auth_type: "password" } },
+  { id: "ssh-key",     nameKey: "templates.ssh_key",     defaults: { connection_type: "ssh", port: 22, auth_type: "public_key" } },
+  { id: "bastion",     nameKey: "templates.bastion",     defaults: { connection_type: "ssh", port: 22, auth_type: "public_key", proxy_jump: "usuario@bastion:22" } },
+  { id: "ssh-legacy",  nameKey: "templates.ssh_legacy",  defaults: { connection_type: "ssh", port: 22, auth_type: "password", allow_legacy: true } },
+  { id: "rdp-windows", nameKey: "templates.rdp_windows", defaults: { connection_type: "rdp", port: 3389, auth_type: "password" } },
+  { id: "ftps",        nameKey: "templates.ftps",        defaults: { connection_type: "ftps", port: 21, auth_type: "password" } },
+];
+
+function isProfileTemplate(id) {
+  return (prefs.templateProfileIds || []).includes(id);
+}
+
+function toggleProfileTemplate(id) {
+  if (!id) return;
+  prefs.templateProfileIds = prefs.templateProfileIds || [];
+  const idx = prefs.templateProfileIds.indexOf(id);
+  if (idx >= 0) {
+    prefs.templateProfileIds.splice(idx, 1);
+    toast(t("templates.toast_unmarked"), "info");
+  } else {
+    prefs.templateProfileIds.push(id);
+    toast(t("templates.toast_marked"), "success");
+  }
+  savePrefs();
+}
+
+/** Rellena el `<select>` de plantilla del modal de conexión. */
+function populateTemplateSelect() {
+  const sel = document.getElementById("f-template");
+  if (!sel) return;
+  const builtin = PROFILE_TEMPLATES
+    .map((tpl) => `<option value="builtin:${escHtml(tpl.id)}">${escHtml(t(tpl.nameKey))}</option>`)
+    .join("");
+  const userTpls = (prefs.templateProfileIds || [])
+    .map((pid) => profiles.find((p) => p.id === pid))
+    .filter(Boolean);
+  const userOpts = userTpls.length
+    ? `<optgroup label="${escHtml(t("templates.from_profiles"))}">` +
+        userTpls.map((p) => `<option value="profile:${escHtml(p.id)}">${escHtml(p.name)}</option>`).join("") +
+      `</optgroup>`
+    : "";
+  sel.innerHTML =
+    `<option value="">${escHtml(t("templates.field_none"))}</option>` +
+    `<optgroup label="${escHtml(t("templates.builtin"))}">${builtin}</optgroup>` +
+    userOpts;
+  sel.value = "";
+}
+
+/** Aplica al formulario los valores de la plantilla elegida. */
+function applyProfileTemplate(value) {
+  if (!value) return;
+  let defaults = null;
+  if (value.startsWith("builtin:")) {
+    const tpl = PROFILE_TEMPLATES.find((x) => x.id === value.slice(8));
+    if (tpl) defaults = tpl.defaults;
+  } else if (value.startsWith("profile:")) {
+    const p = profiles.find((x) => x.id === value.slice(8));
+    if (p) defaults = profileToTemplateDefaults(p);
+  }
+  if (defaults) applyTemplateDefaultsToForm(defaults);
+}
+
+function profileToTemplateDefaults(p) {
+  return {
+    connection_type: p.connection_type || "ssh",
+    port: p.port,
+    username: p.username || "",
+    domain: p.domain || "",
+    auth_type: p.auth_type || "password",
+    proxy_jump: p.proxy_jump || "",
+    keep_alive_secs: p.keep_alive_secs,
+    auto_reconnect: p.auto_reconnect,
+    allow_legacy: !!p.allow_legacy_algorithms,
+    agent_forwarding: !!p.agent_forwarding,
+    x11_forwarding: !!p.x11_forwarding,
+    session_log: !!p.session_log,
+  };
+}
+
+function applyTemplateDefaultsToForm(d) {
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+  const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+  if (d.connection_type) {
+    const ct = document.getElementById("f-conn-type");
+    if (ct) { ct.value = d.connection_type; updateConnTypeFields(d.connection_type); }
+  }
+  if (d.port != null) setVal("f-port", d.port);
+  if (d.username != null) setVal("f-user", d.username);
+  if (d.domain != null) setVal("f-domain", d.domain);
+  if (d.auth_type) {
+    const at = document.getElementById("f-auth-type");
+    if (at) { at.value = d.auth_type; updateAuthFields(d.auth_type); }
+  }
+  if (d.proxy_jump != null) setVal("f-proxy-jump", d.proxy_jump);
+  if (d.keep_alive_secs != null) setVal("f-keep-alive", d.keep_alive_secs);
+  if (d.auto_reconnect != null) setVal("f-auto-reconnect", d.auto_reconnect);
+  setChk("f-allow-legacy", d.allow_legacy);
+  document.getElementById("f-allow-legacy")?.dispatchEvent(new Event("change"));
+  setChk("f-x11-forwarding", d.x11_forwarding);
+  setChk("f-session-log", d.session_log);
+  renderConnectionSummary();
+}
+
+/** Abre el modal de nueva conexión y enfoca el selector de plantilla. */
+function openNewConnectionFromTemplate() {
+  openNewConnectionModal();
+  setTimeout(() => document.getElementById("f-template")?.focus(), 0);
+}
+
+/* ── Snippets remotos ──────────────────────────────────────────────────── */
+
+function loadSnippets() {
+  return sync.loadLocalSnippets();
+}
+
+function snippetById(id) {
+  return loadSnippets().find((s) => s.id === id) || null;
+}
+
+function snippetSort(a, b) {
+  const ga = (a.group || "").toLowerCase();
+  const gb = (b.group || "").toLowerCase();
+  if (ga !== gb) return ga < gb ? -1 : 1;
+  return (a.name || "").toLowerCase() < (b.name || "").toLowerCase() ? -1 : 1;
+}
+
+function renderSnippetList() {
+  const list = document.getElementById("snippet-list");
+  if (!list) return;
+  const snippets = loadSnippets().slice().sort(snippetSort);
+  if (!snippets.length) {
+    list.innerHTML = `<div class="tunnel-empty">${escHtml(t("prefs_commands.snippets_empty"))}</div>`;
+    return;
+  }
+  list.innerHTML = snippets.map((s) => {
+    const meta = [s.group, s.description].filter(Boolean).join(" · ");
+    const sub = meta ? `<span class="cred-desc" title="${escHtml(meta)}">${escHtml(meta)}</span>` : "";
+    return `
+      <div class="cred-row" data-snippet-id="${escHtml(s.id)}">
+        <div class="cred-row-top">
+          <span class="cred-name" title="${escHtml(s.name)}">${escHtml(s.name)}</span>
+          ${sub}
+          <span class="cred-row-actions">
+            <button type="button" class="global-tunnel-action" data-snippet-action="run">${escHtml(t("prefs_commands.insert"))}</button>
+            <button type="button" class="global-tunnel-action" data-snippet-action="edit">${escHtml(t("prefs_commands.edit"))}</button>
+            <button type="button" class="global-tunnel-action danger" data-snippet-action="delete">${escHtml(t("prefs_commands.delete"))}</button>
+          </span>
+        </div>
+        <div class="cmd-row-preview">${escHtml(s.command || "")}</div>
+      </div>`;
+  }).join("");
+}
+
+/** Sesión activa con terminal donde insertar texto (SSH o consola local). */
+function activeTerminalSession() {
+  const s = activeSessionId ? sessions.get(activeSessionId) : null;
+  if (s && s.terminal && s.status !== "closed" && s.type !== "rdp") return s;
+  return null;
+}
+
+async function runSnippet(snippet) {
+  if (!snippet) return;
+  const target = activeTerminalSession();
+  if (!target) {
+    toast(t("prefs_commands.toast_no_session"), "warning");
+    return;
+  }
+  if (snippet.confirm) {
+    const ok = await confirmThemed({
+      title: t("prefs_commands.confirm_insert_title"),
+      message: snippet.name,
+      submitLabel: t("prefs_commands.insert"),
+    });
+    if (!ok) return;
+  }
+  const resolved = await resolveCommandText(snippet.command || "");
+  if (resolved === null) return;
+  sendTerminalInput(target, snippet.sendEnter ? resolved + "\r" : resolved);
+  target.terminal?.focus();
+}
+
+let _editingSnippetId = null;
+
+function openSnippetEditor(snippet) {
+  _editingSnippetId = snippet ? snippet.id : null;
+  document.getElementById("snippet-edit-title").textContent =
+    snippet ? t("modal_snippet.title_edit") : t("modal_snippet.title_new");
+  document.getElementById("snippet-edit-name").value = snippet?.name || "";
+  document.getElementById("snippet-edit-group").value = snippet?.group || "";
+  document.getElementById("snippet-edit-desc").value = snippet?.description || "";
+  document.getElementById("snippet-edit-command").value = snippet?.command || "";
+  document.getElementById("snippet-edit-enter").checked = !!snippet?.sendEnter;
+  document.getElementById("snippet-edit-confirm").checked = !!snippet?.confirm;
+  document.getElementById("snippet-edit-overlay").classList.remove("hidden");
+  setTimeout(() => document.getElementById("snippet-edit-name").focus(), 0);
+}
+
+function closeSnippetEditor() {
+  document.getElementById("snippet-edit-overlay")?.classList.add("hidden");
+  _editingSnippetId = null;
+}
+
+function submitSnippetEditor(e) {
+  e.preventDefault();
+  const name = document.getElementById("snippet-edit-name").value.trim();
+  const command = document.getElementById("snippet-edit-command").value;
+  if (!name || !command.trim()) return;
+  const snippet = {
+    id: _editingSnippetId || crypto.randomUUID(),
+    name,
+    group: document.getElementById("snippet-edit-group").value.trim(),
+    description: document.getElementById("snippet-edit-desc").value.trim(),
+    command,
+    sendEnter: document.getElementById("snippet-edit-enter").checked,
+    confirm: document.getElementById("snippet-edit-confirm").checked,
+    updated_at: new Date().toISOString(),
+  };
+  sync.upsertLocalSnippet(snippet);
+  closeSnippetEditor();
+  renderSnippetList();
+  scheduleProfileAutoSync();
+}
+
+async function deleteSnippetById(id) {
+  const s = snippetById(id);
+  const ok = await confirmThemed({
+    title: t("prefs_commands.delete_snippet_title"),
+    message: s?.name || "",
+    submitLabel: t("prefs_commands.delete"),
+    danger: true,
+  });
+  if (!ok) return;
+  sync.deleteLocalSnippet(id);
+  sync.recordTombstone(prefs, "snippets", id);
+  savePrefs();
+  renderSnippetList();
+  scheduleProfileAutoSync();
+}
+
+/* ── Comandos locales (no sincronizados: pueden depender del equipo) ────── */
+
+const LOCAL_CMDS_KEY = "rustty-local-commands";
+
+function loadLocalCommands() {
+  try {
+    const v = JSON.parse(localStorage.getItem(LOCAL_CMDS_KEY) || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+function saveLocalCommandsList(list) {
+  localStorage.setItem(LOCAL_CMDS_KEY, JSON.stringify(list));
+}
+function localCommandById(id) {
+  return loadLocalCommands().find((c) => c.id === id) || null;
+}
+function upsertLocalCommand(cmd) {
+  const list = loadLocalCommands();
+  const idx = list.findIndex((c) => c.id === cmd.id);
+  if (idx >= 0) list[idx] = cmd;
+  else list.push(cmd);
+  saveLocalCommandsList(list);
+}
+function deleteLocalCommandById(id) {
+  saveLocalCommandsList(loadLocalCommands().filter((c) => c.id !== id));
+}
+function localCommandTypeLabel(type) {
+  return t("modal_localcmd.type_" + (type || "shell"));
+}
+
+function renderLocalCommandList() {
+  const list = document.getElementById("localcmd-list");
+  if (!list) return;
+  const cmds = loadLocalCommands().slice()
+    .sort((a, b) => ((a.name || "").toLowerCase() < (b.name || "").toLowerCase() ? -1 : 1));
+  if (!cmds.length) {
+    list.innerHTML = `<div class="tunnel-empty">${escHtml(t("prefs_commands.localcmds_empty"))}</div>`;
+    return;
+  }
+  list.innerHTML = cmds.map((c) => {
+    const meta = c.description ? `<span class="cred-desc" title="${escHtml(c.description)}">${escHtml(c.description)}</span>` : "";
+    const badge = `<span class="cred-kind-badge">${escHtml(localCommandTypeLabel(c.type))}</span>`;
+    return `
+      <div class="cred-row" data-localcmd-id="${escHtml(c.id)}">
+        <div class="cred-row-top">
+          <span class="cred-name" title="${escHtml(c.name)}">${escHtml(c.name)}</span>
+          ${badge}
+          ${meta}
+          <span class="cred-row-actions">
+            <button type="button" class="global-tunnel-action" data-localcmd-action="run">${escHtml(t("prefs_commands.run"))}</button>
+            <button type="button" class="global-tunnel-action" data-localcmd-action="edit">${escHtml(t("prefs_commands.edit"))}</button>
+            <button type="button" class="global-tunnel-action danger" data-localcmd-action="delete">${escHtml(t("prefs_commands.delete"))}</button>
+          </span>
+        </div>
+        <div class="cmd-row-preview">${escHtml(c.command || "")}</div>
+      </div>`;
+  }).join("");
+}
+
+async function runLocalCommand(cmd) {
+  if (!cmd) return;
+  if (cmd.confirm) {
+    const ok = await confirmThemed({
+      title: t("prefs_commands.confirm_run_title"),
+      message: cmd.name,
+      submitLabel: t("prefs_commands.run"),
+      danger: cmd.type === "shell",
+    });
+    if (!ok) return;
+  }
+  const resolved = await resolveCommandText(cmd.command || "");
+  if (resolved === null) return;
+  const value = resolved.trim();
+  if (!value) return;
+  try {
+    if (cmd.type === "url") {
+      await invoke("plugin:opener|open_url", { url: value });
+      toast(t("prefs_commands.toast_opened"), "success");
+    } else if (cmd.type === "path") {
+      await invoke("plugin:opener|open_path", { path: value });
+      toast(t("prefs_commands.toast_opened"), "success");
+    } else {
+      const out = await invoke("run_local_command", { command: value });
+      if (out && out.code === 0) {
+        toast(t("prefs_commands.toast_ran").replace("{name}", cmd.name), "success");
+      } else {
+        const detail = (out?.stderr || out?.stdout || "").trim().slice(0, 200);
+        toast(
+          t("prefs_commands.toast_ran_error").replace("{code}", String(out?.code ?? "?")) +
+            (detail ? ": " + detail : ""),
+          "error",
+          6000
+        );
+      }
+    }
+  } catch (err) {
+    toast(String(err), "error");
+  }
+}
+
+let _editingLocalCmdId = null;
+
+function openLocalCmdEditor(cmd) {
+  _editingLocalCmdId = cmd ? cmd.id : null;
+  document.getElementById("localcmd-edit-title").textContent =
+    cmd ? t("modal_localcmd.title_edit") : t("modal_localcmd.title_new");
+  document.getElementById("localcmd-edit-name").value = cmd?.name || "";
+  document.getElementById("localcmd-edit-type").value = cmd?.type || "shell";
+  document.getElementById("localcmd-edit-command").value = cmd?.command || "";
+  document.getElementById("localcmd-edit-desc").value = cmd?.description || "";
+  document.getElementById("localcmd-edit-confirm").checked = cmd ? !!cmd.confirm : true;
+  updateLocalCmdTypeUi();
+  document.getElementById("localcmd-edit-overlay").classList.remove("hidden");
+  setTimeout(() => document.getElementById("localcmd-edit-name").focus(), 0);
+}
+
+function updateLocalCmdTypeUi() {
+  const type = document.getElementById("localcmd-edit-type").value;
+  const label = document.getElementById("localcmd-edit-command-label");
+  const hint = document.getElementById("localcmd-edit-command-hint");
+  if (label) label.textContent = t("modal_localcmd.label_" + type);
+  if (hint) hint.textContent = t("modal_localcmd.hint_" + type);
+}
+
+function closeLocalCmdEditor() {
+  document.getElementById("localcmd-edit-overlay")?.classList.add("hidden");
+  _editingLocalCmdId = null;
+}
+
+function submitLocalCmdEditor(e) {
+  e.preventDefault();
+  const name = document.getElementById("localcmd-edit-name").value.trim();
+  const command = document.getElementById("localcmd-edit-command").value;
+  if (!name || !command.trim()) return;
+  const cmd = {
+    id: _editingLocalCmdId || crypto.randomUUID(),
+    name,
+    type: document.getElementById("localcmd-edit-type").value,
+    command,
+    description: document.getElementById("localcmd-edit-desc").value.trim(),
+    confirm: document.getElementById("localcmd-edit-confirm").checked,
+    updated_at: new Date().toISOString(),
+  };
+  upsertLocalCommand(cmd);
+  closeLocalCmdEditor();
+  renderLocalCommandList();
+}
+
+async function deleteLocalCmd(id) {
+  const c = localCommandById(id);
+  const ok = await confirmThemed({
+    title: t("prefs_commands.delete_cmd_title"),
+    message: c?.name || "",
+    submitLabel: t("prefs_commands.delete"),
+    danger: true,
+  });
+  if (!ok) return;
+  deleteLocalCommandById(id);
+  renderLocalCommandList();
+}
+
+/* ── Paleta de comandos global ─────────────────────────────────────────── */
+
+const PALETTE_ICONS = {
+  action: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg>',
+  template: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>',
+  profile: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M2 18h20"/></svg>',
+  snippet: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 9 12 4 17"/><line x1="12" y1="17" x2="20" y2="17"/></svg>',
+  localcmd: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>',
+};
+
+let _paletteItems = [];
+let _paletteFiltered = [];
+let _paletteActive = 0;
+
+/** Construye la lista plana de entradas de la paleta. */
+function buildPaletteSources() {
+  const items = [];
+  items.push({ kind: "action", title: t("palette.action_new_connection"), icon: PALETTE_ICONS.action, run: () => openNewConnectionModal() });
+  items.push({ kind: "action", title: t("palette.action_new_template"), icon: PALETTE_ICONS.template, run: () => openNewConnectionFromTemplate() });
+  items.push({ kind: "action", title: t("palette.action_local_shell"), icon: PALETTE_ICONS.action, run: () => openLocalShell() });
+  items.push({ kind: "action", title: t("palette.action_preferences"), icon: PALETTE_ICONS.action, run: () => openSettingsModal() });
+  for (const p of profiles) {
+    const sub = `${p.username ? p.username + "@" : ""}${p.host || ""}`;
+    items.push({ kind: "profile", title: p.name || p.host || "", sub, icon: PALETTE_ICONS.profile, run: () => connectProfile(p.id) });
+  }
+  for (const s of loadSnippets()) {
+    items.push({ kind: "snippet", title: s.name, sub: [s.group, s.description].filter(Boolean).join(" · "), icon: PALETTE_ICONS.snippet, run: () => runSnippet(s) });
+  }
+  for (const c of loadLocalCommands()) {
+    items.push({ kind: "localcmd", title: c.name, sub: [localCommandTypeLabel(c.type), c.description].filter(Boolean).join(" · "), icon: PALETTE_ICONS.localcmd, run: () => runLocalCommand(c) });
+  }
+  return items;
+}
+
+/** Puntuación simple: subcadena > subsecuencia > -1 (descarte). */
+function paletteScore(q, text) {
+  if (!q) return 0;
+  const hay = (text || "").toLowerCase();
+  const needle = q.toLowerCase();
+  const idx = hay.indexOf(needle);
+  if (idx >= 0) return 1000 - idx;
+  let ti = 0;
+  for (let qi = 0; qi < needle.length; qi++) {
+    ti = hay.indexOf(needle[qi], ti);
+    if (ti < 0) return -1;
+    ti++;
+  }
+  return 200 - needle.length;
+}
+
+function renderPaletteResults(query) {
+  const list = document.getElementById("command-palette-list");
+  if (!list) return;
+  const q = (query || "").trim();
+  let results;
+  if (!q) {
+    results = _paletteItems.slice(0, 50);
+  } else {
+    results = _paletteItems
+      .map((it) => ({ it, score: Math.max(paletteScore(q, it.title), paletteScore(q, it.sub || "") - 50) }))
+      .filter((x) => x.score > -1)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 50)
+      .map((x) => x.it);
+  }
+  _paletteFiltered = results;
+  if (_paletteActive >= results.length) _paletteActive = 0;
+  if (!results.length) {
+    list.innerHTML = `<div class="palette-empty">${escHtml(t("palette.empty"))}</div>`;
+    return;
+  }
+  list.innerHTML = results.map((it, i) => `
+    <div class="palette-item${i === _paletteActive ? " active" : ""}" data-palette-idx="${i}" role="option">
+      <span class="palette-item-icon">${it.icon || ""}</span>
+      <span class="palette-item-body">
+        <span class="palette-item-title">${escHtml(it.title)}</span>
+        ${it.sub ? `<span class="palette-item-sub">${escHtml(it.sub)}</span>` : ""}
+      </span>
+      <span class="palette-item-kind">${escHtml(t("palette.kind_" + it.kind))}</span>
+    </div>`).join("");
+}
+
+function openCommandPalette() {
+  const overlay = document.getElementById("command-palette-overlay");
+  const input = document.getElementById("command-palette-input");
+  if (!overlay || !input) return;
+  _paletteItems = buildPaletteSources();
+  _paletteActive = 0;
+  input.value = "";
+  overlay.classList.remove("hidden");
+  renderPaletteResults("");
+  setTimeout(() => input.focus(), 0);
+}
+
+function closeCommandPalette() {
+  document.getElementById("command-palette-overlay")?.classList.add("hidden");
+}
+
+function paletteMoveActive(delta) {
+  if (!_paletteFiltered.length) return;
+  _paletteActive = (_paletteActive + delta + _paletteFiltered.length) % _paletteFiltered.length;
+  const list = document.getElementById("command-palette-list");
+  list?.querySelectorAll(".palette-item").forEach((el, i) => {
+    el.classList.toggle("active", i === _paletteActive);
+    if (i === _paletteActive) el.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function executePaletteIndex(i) {
+  const item = _paletteFiltered[i];
+  if (!item) return;
+  closeCommandPalette();
+  try { item.run(); } catch (err) { console.error("[palette]", err); }
+}
+
+function paletteInputKeydown(e) {
+  if (e.key === "ArrowDown") { e.preventDefault(); paletteMoveActive(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); paletteMoveActive(-1); }
+  else if (e.key === "Enter") { e.preventDefault(); executePaletteIndex(_paletteActive); }
+  else if (e.key === "Escape") { e.preventDefault(); closeCommandPalette(); }
+}
+
+/** Cablea los listeners de snippets, comandos locales, plantilla y paleta. */
+function initCommandsAndPalette() {
+  document.getElementById("btn-snippet-add")?.addEventListener("click", () => openSnippetEditor(null));
+  document.getElementById("snippet-list")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-snippet-action]");
+    if (!btn) return;
+    const id = btn.closest("[data-snippet-id]")?.dataset.snippetId;
+    if (!id) return;
+    const action = btn.dataset.snippetAction;
+    if (action === "run") runSnippet(snippetById(id));
+    else if (action === "edit") openSnippetEditor(snippetById(id));
+    else if (action === "delete") deleteSnippetById(id);
+  });
+  document.getElementById("snippet-edit-form")?.addEventListener("submit", submitSnippetEditor);
+  document.getElementById("btn-snippet-edit-close")?.addEventListener("click", closeSnippetEditor);
+  document.getElementById("btn-snippet-edit-cancel")?.addEventListener("click", closeSnippetEditor);
+  document.getElementById("snippet-edit-overlay")?.addEventListener("mousedown", (e) => {
+    if (e.target.id === "snippet-edit-overlay") closeSnippetEditor();
+  });
+
+  document.getElementById("btn-localcmd-add")?.addEventListener("click", () => openLocalCmdEditor(null));
+  document.getElementById("localcmd-list")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-localcmd-action]");
+    if (!btn) return;
+    const id = btn.closest("[data-localcmd-id]")?.dataset.localcmdId;
+    if (!id) return;
+    const action = btn.dataset.localcmdAction;
+    if (action === "run") runLocalCommand(localCommandById(id));
+    else if (action === "edit") openLocalCmdEditor(localCommandById(id));
+    else if (action === "delete") deleteLocalCmd(id);
+  });
+  document.getElementById("localcmd-edit-form")?.addEventListener("submit", submitLocalCmdEditor);
+  document.getElementById("localcmd-edit-type")?.addEventListener("change", updateLocalCmdTypeUi);
+  document.getElementById("btn-localcmd-edit-close")?.addEventListener("click", closeLocalCmdEditor);
+  document.getElementById("btn-localcmd-edit-cancel")?.addEventListener("click", closeLocalCmdEditor);
+  document.getElementById("localcmd-edit-overlay")?.addEventListener("mousedown", (e) => {
+    if (e.target.id === "localcmd-edit-overlay") closeLocalCmdEditor();
+  });
+
+  document.getElementById("f-template")?.addEventListener("change", (e) => applyProfileTemplate(e.target.value));
+
+  const paletteInput = document.getElementById("command-palette-input");
+  paletteInput?.addEventListener("keydown", paletteInputKeydown);
+  paletteInput?.addEventListener("input", (e) => { _paletteActive = 0; renderPaletteResults(e.target.value); });
+  document.getElementById("command-palette-list")?.addEventListener("mousedown", (e) => {
+    const item = e.target.closest("[data-palette-idx]");
+    if (!item) return;
+    e.preventDefault();
+    executePaletteIndex(Number(item.dataset.paletteIdx));
+  });
+  document.getElementById("command-palette-overlay")?.addEventListener("mousedown", (e) => {
+    if (e.target.id === "command-palette-overlay") closeCommandPalette();
+  });
+}
+
 const SHORTCUT_ACTIONS = {
   paste_terminal:    { default: "Ctrl+Alt+V",     run: () => pasteIntoActiveTerminal() },
   copy_terminal:     { default: "Ctrl+Alt+C",     run: () => copyActiveSelection() },
@@ -16315,6 +17034,7 @@ const SHORTCUT_ACTIONS = {
   disconnect_all:    { default: "",               run: () => disconnectAll() },
   open_command_editor: { default: "Ctrl+Shift+E", run: () => openCommandEditor() },
   open_note_editor:    { default: "Ctrl+Shift+M", run: () => openActiveSessionNote() },
+  command_palette:     { default: "Ctrl+Shift+P", run: () => openCommandPalette() },
 };
 
 /** Abre el editor de notas del perfil de la sesión activa (atajo). */
