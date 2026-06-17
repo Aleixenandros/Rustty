@@ -1,8 +1,28 @@
 # Migración del IPC de terminal a `Channel` binario
 
-> Estado: **propuesta / pendiente** · Creado: 2026-06-15
+> Estado: **IMPLEMENTADO en v1.32.0** (2026-06-18) · Creado: 2026-06-15
 > Ámbito: rendimiento del streaming de datos del terminal (SSH y consola local).
 > Relacionado: fix del cuelgue con `cat` de logs grandes (WebGL + cola con descarte + buffer de 64 KiB).
+>
+> ## Resumen de lo implementado
+>
+> - `ssh_connect` y `local_shell_open` reciben `on_data: Channel<tauri::ipc::Response>`.
+> - Backend: `SshManager::connect`/`run_session_with_reconnect`/`run_session` y
+>   `LocalShellManager::open` envían el caudal con `on_data.send(Response::new(bytes))`
+>   (`InvokeResponseBody::Raw`); el canal se clona por intento de reconexión.
+> - **Coalescing SSH**: `SSH_DATA_FLUSH_THRESHOLD` = 32 KiB con vaciado por
+>   inactividad `SSH_DATA_FLUSH_QUIET` = 4 ms (rama de timer en el `select!`) y
+>   flush final al cerrar. Consola local: bloques de 64 KiB (sin coalescing extra).
+> - Frontend: `import { Channel }`, `channelBytesToU8` (defensivo), handler de
+>   datos movido a `dataChannel.onmessage` en `registerSshListeners`,
+>   `openLocalShell` y `reconnectLocalInPlace`; se pasa `onData` a los `invoke`.
+> - Eliminados `EventKind::SshData`/`ShellData` (ipc.rs) y `EVENT_PREFIX.sshData`/
+>   `shellData` (events.js) con sus tests.
+> - **Fase 0 resuelta por análisis de fuentes** (`tauri-2.10.3/src/ipc/channel.rs`):
+>   el payload de `onmessage` es siempre `ArrayBuffer` y el umbral binario nativo
+>   es `MAX_RAW_DIRECT_EXECUTE_THRESHOLD` = 1024 B. `cargo test` (71) + vitest (24)
+>   + `vite build` verdes. **Pendiente**: medición comparativa de CPU/RAM y prueba
+>   multiplataforma (WebKitGTK/WebView2/WKWebView) en máquina real.
 
 ## 1. Motivación
 

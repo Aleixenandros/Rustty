@@ -18,8 +18,6 @@ pub enum EventKind {
     SshLog,
     /// `ssh-connected-{sessionId}` — autenticación SSH correcta.
     SshConnected,
-    /// `ssh-data-{sessionId}` — bytes recibidos del servidor (caliente).
-    SshData,
     /// `ssh-error-{sessionId}` — error con mensaje.
     SshError,
     /// `ssh-closed-{sessionId}` — sesión SSH cerrada.
@@ -28,8 +26,6 @@ pub enum EventKind {
     SshReconnecting,
     /// `ssh-tunnel-traffic-{sessionId}` — tráfico acumulado por túnel.
     SshTunnelTraffic,
-    /// `shell-data-{sessionId}` — bytes de la consola local (caliente).
-    ShellData,
     /// `shell-closed-{sessionId}` — consola local cerrada.
     ShellClosed,
     /// `sftp-log-{sessionId}` — etapa de conexión SFTP/FTP.
@@ -48,12 +44,10 @@ impl EventKind {
         match self {
             EventKind::SshLog => "ssh-log-",
             EventKind::SshConnected => "ssh-connected-",
-            EventKind::SshData => "ssh-data-",
             EventKind::SshError => "ssh-error-",
             EventKind::SshClosed => "ssh-closed-",
             EventKind::SshReconnecting => "ssh-reconnecting-",
             EventKind::SshTunnelTraffic => "ssh-tunnel-traffic-",
-            EventKind::ShellData => "shell-data-",
             EventKind::ShellClosed => "shell-closed-",
             EventKind::SftpLog => "sftp-log-",
             EventKind::SftpProgress => "sftp-progress-",
@@ -65,7 +59,7 @@ impl EventKind {
 /// Nombre completo de un evento por sesión/transferencia: `prefijo + sufijo`.
 ///
 /// ```ignore
-/// let _ = app.emit(&event_name(EventKind::SshData, &session_id), bytes);
+/// let _ = app.emit(&event_name(EventKind::SshConnected, &session_id), &name);
 /// ```
 #[must_use]
 pub fn event_name(kind: EventKind, suffix: &str) -> String {
@@ -83,7 +77,7 @@ mod tests {
 
     #[test]
     fn event_name_concatena_prefijo_y_sufijo() {
-        assert_eq!(event_name(EventKind::SshData, "abc"), "ssh-data-abc");
+        assert_eq!(event_name(EventKind::SshConnected, "abc"), "ssh-connected-abc");
         assert_eq!(
             event_name(EventKind::SftpProgress, "t-1"),
             "sftp-progress-t-1"
@@ -99,12 +93,10 @@ mod tests {
         for kind in [
             EventKind::SshLog,
             EventKind::SshConnected,
-            EventKind::SshData,
             EventKind::SshError,
             EventKind::SshClosed,
             EventKind::SshReconnecting,
             EventKind::SshTunnelTraffic,
-            EventKind::ShellData,
             EventKind::ShellClosed,
             EventKind::SftpLog,
             EventKind::SftpProgress,

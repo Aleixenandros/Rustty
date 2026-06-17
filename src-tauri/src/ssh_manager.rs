@@ -23,6 +23,7 @@ use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
 use russh::{cipher, kex, mac, ChannelMsg, Preferred};
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
+use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -49,6 +50,18 @@ pub(crate) const DEFAULT_SSH_KEEPALIVE_MAX: usize = 4;
 /// Intentos del connect inicial. Con backoff 1s/2s/4s la latencia añadida en
 /// el peor caso es ~7 s.
 pub(crate) const TCP_CONNECT_MAX_ATTEMPTS: u32 = 3;
+
+/// Umbral de coalescing del caudal SSH. `russh` entrega `ChannelMsg::Data` de
+/// tamaño variable (a menudo < 32 KiB); acumulamos bytes contiguos hasta este
+/// tamaño antes de enviarlos por el `Channel` para cruzar holgadamente el
+/// umbral del canal binario nativo de Tauri (1 KiB) y reducir el nº de mensajes
+/// IPC en salidas masivas (`cat` de un log grande, `journalctl -f`, `yes`).
+const SSH_DATA_FLUSH_THRESHOLD: usize = 32 * 1024;
+/// Ventana de inactividad tras la cual se vacía el buffer aunque no se haya
+/// alcanzado el umbral. Mantiene la latencia del eco interactivo imperceptible
+/// (un frame son ~16 ms) sin penalizar el coalescing de ráfagas: durante una
+/// ráfaga continua el temporizador se reinicia y domina el corte por tamaño.
+const SSH_DATA_FLUSH_QUIET: Duration = Duration::from_millis(4);
 
 /// Abre un `TcpStream` al destino con SO_KEEPALIVE activo y timeout. La
 /// detección de microcortes a nivel SO (TCP_KEEPIDLE/INTVL) complementa al
@@ -220,9 +233,10 @@ impl SshManager {
     }
 
     /// Inicia una conexión SSH en un hilo dedicado con runtime tokio.
-    /// Emite eventos Tauri para notificar al frontend:
+    /// Los bytes del servidor (stdout + stderr) se entregan por `on_data`
+    /// (`tauri::ipc::Channel`, binario, con coalescing). El resto del protocolo
+    /// se notifica al frontend con eventos Tauri:
     ///   - `ssh-connected-{id}` : conexión establecida
-    ///   - `ssh-data-{id}`      : bytes recibidos del servidor (stdout + stderr)
     ///   - `ssh-log-{id}`       : etapa de diagnóstico de conexión
     ///   - `ssh-error-{id}`     : error de conexión/autenticación
     ///   - `ssh-reconnecting-{id}` : intentando reconectar (payload: número de intento)
@@ -234,6 +248,7 @@ impl SshManager {
         password: Option<String>,
         passphrase: Option<String>,
         app_handle: AppHandle,
+        on_data: Channel<Response>,
         default_log_dir: PathBuf,
     ) -> Result<(), AppError> {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
@@ -265,6 +280,7 @@ impl SshManager {
                 cmd_rx,
                 worker_cmd_tx,
                 ah.clone(),
+                on_data,
                 default_log_dir,
             ));
             let _ = ah.emit(&event_name(EventKind::SshClosed, &sid), "");
@@ -433,6 +449,7 @@ async fn run_session_with_reconnect(
     mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     app_handle: AppHandle,
+    on_data: Channel<Response>,
     default_log_dir: PathBuf,
 ) {
     let max_attempts = profile.auto_reconnect.unwrap_or(0);
@@ -461,6 +478,7 @@ async fn run_session_with_reconnect(
             &mut cmd_rx,
             cmd_tx.clone(),
             app_handle.clone(),
+            on_data.clone(),
             log_path.clone(),
         )
         .await;
@@ -857,6 +875,7 @@ async fn run_session(
     cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     app_handle: AppHandle,
+    on_data: Channel<Response>,
     log_path: Option<PathBuf>,
 ) -> SessionExit {
     // Si está activado el log de sesión, abrimos el fichero en modo append.
@@ -1236,6 +1255,11 @@ async fn run_session(
     // 4. Bucle de E/S: multiplexa datos del servidor y comandos del frontend
     let mut exit_kind = SessionExit::ServerClosed;
     let mut tunnels: HashMap<String, ActiveTunnel> = HashMap::new();
+    // Buffer de coalescing del caudal de salida. Acumula bytes contiguos
+    // (stdout + stderr, en orden de llegada) y los entrega por `on_data` cuando
+    // supera el umbral o tras una breve ventana de inactividad. Ver
+    // `SSH_DATA_FLUSH_THRESHOLD` / `SSH_DATA_FLUSH_QUIET`.
+    let mut out_buf: Vec<u8> = Vec::with_capacity(SSH_DATA_FLUSH_THRESHOLD);
     loop {
         tokio::select! {
             msg = channel.wait() => {
@@ -1244,16 +1268,20 @@ async fn run_session(
                         if let Some(f) = log_file.as_mut() {
                             let _ = f.write_all(&data).await;
                         }
-                        let _ = app_handle
-                            .emit(&event_name(EventKind::SshData, &session_id), data.to_vec());
+                        out_buf.extend_from_slice(&data);
+                        if out_buf.len() >= SSH_DATA_FLUSH_THRESHOLD {
+                            let _ = on_data.send(Response::new(std::mem::take(&mut out_buf)));
+                        }
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
                         // stderr → lo mezclamos con stdout, como hacía ssh2.
                         if let Some(f) = log_file.as_mut() {
                             let _ = f.write_all(&data).await;
                         }
-                        let _ = app_handle
-                            .emit(&event_name(EventKind::SshData, &session_id), data.to_vec());
+                        out_buf.extend_from_slice(&data);
+                        if out_buf.len() >= SSH_DATA_FLUSH_THRESHOLD {
+                            let _ = on_data.send(Response::new(std::mem::take(&mut out_buf)));
+                        }
                     }
                     Some(ChannelMsg::Eof)
                     | Some(ChannelMsg::Close)
@@ -1262,6 +1290,13 @@ async fn run_session(
                     Some(_) => {}
                     None => break,
                 }
+            }
+            // Vaciado por inactividad: si hay datos pendientes y el caudal se
+            // detiene durante `SSH_DATA_FLUSH_QUIET`, los entregamos sin esperar
+            // a llenar el umbral. Durante una ráfaga continua el temporizador se
+            // reinicia en cada iteración y nunca llega a dispararse.
+            _ = tokio::time::sleep(SSH_DATA_FLUSH_QUIET), if !out_buf.is_empty() => {
+                let _ = on_data.send(Response::new(std::mem::take(&mut out_buf)));
             }
             cmd = cmd_rx.recv() => {
                 match cmd {
@@ -1346,6 +1381,11 @@ async fn run_session(
     }
 
     // 5. Cierre limpio
+    // Vaciar cualquier resto del buffer de coalescing antes de cerrar, para no
+    // perder el último tramo de salida si el loop terminó con datos pendientes.
+    if !out_buf.is_empty() {
+        let _ = on_data.send(Response::new(std::mem::take(&mut out_buf)));
+    }
     if let Some(mut f) = log_file.take() {
         let _ = f.flush().await;
     }

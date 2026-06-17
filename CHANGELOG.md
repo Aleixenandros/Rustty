@@ -2,6 +2,30 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.32.0] - 2026-06-18
+
+### Cambiado
+
+- **Terminal más fluido con salidas enormes**: el caudal de datos del terminal
+  (sesiones SSH y consola local) viaja ahora por un **canal binario** en lugar
+  de serializarse como texto JSON. Un `cat` de un log grande, `journalctl -f` o
+  cualquier salida sostenida consumen bastante menos CPU y memoria en la
+  interfaz. El resto del protocolo (estado de conexión, errores, registro) no
+  cambia.
+- **Consola local más capaz**: en Windows se prioriza PowerShell moderno
+  (`pwsh`) → Windows PowerShell → `cmd`; en todos los sistemas se anuncia color
+  verdadero (`COLORTERM=truecolor`) y se fija un locale UTF-8 cuando el entorno
+  no define ninguno, para que `readline` y las TUIs no caigan a ASCII.
+
+### Corregido
+
+- **Escritura con IME (chino/japonés/coreano y teclas muertas)**: ya no se
+  duplica el Enter ni se corta la composición mientras se escribe con un método
+  de entrada activo.
+- **Consolas locales huérfanas**: si la apertura del PTY falla a medias se mata
+  el proceso del shell, y al terminar el shell su sesión se retira del registro
+  interno en vez de quedar acumulada.
+
 ## [1.31.0] - 2026-06-17
 
 ### Añadido

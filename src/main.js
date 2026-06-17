@@ -3,7 +3,7 @@
  * Stack: Vite + Vanilla JS + Xterm.js + Tauri 2 API
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { check as checkUpdate } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -7569,9 +7569,11 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   });
 
   try {
-    session.unlisteners = await registerSshListeners(sessionId, session.terminal);
+    const dataChannel = new Channel();
+    session.unlisteners = await registerSshListeners(sessionId, session.terminal, dataChannel);
     await invoke("ssh_connect", {
       sessionId,
+      onData: dataChannel,
       profileId,
       password:   password   || null,
       passphrase: passphrase || null,
@@ -8527,8 +8529,20 @@ async function reconnectLocalInPlace(s) {
   updateTabStatus(sessionId, "connecting");
 
   try {
+    // El caudal del shell viaja por el Channel binario; se asigna su handler
+    // antes del invoke para no perder bytes iniciales.
+    const decoder = new TextDecoder();
+    const dataChannel = new Channel();
+    dataChannel.onmessage = (payload) => {
+      const text = decoder.decode(channelBytesToU8(payload));
+      if (text) {
+        enqueueTerminalOutput(s, text);
+        markTabActivity(sessionId);
+      }
+    };
     await invoke("local_shell_open", {
       sessionId,
+      onData: dataChannel,
       cols: s.terminal.cols,
       rows: s.terminal.rows,
     });
@@ -8537,14 +8551,6 @@ async function reconnectLocalInPlace(s) {
     updateTabStatus(sessionId, "connected");
     renderDashboard();
 
-    const decoder = new TextDecoder();
-    const ul = await listen(eventName("shellData", sessionId), (e) => {
-      const text = decoder.decode(new Uint8Array(e.payload));
-      if (text) {
-        enqueueTerminalOutput(s, text);
-        markTabActivity(sessionId);
-      }
-    });
     const ulClose = await listen(eventName("shellClosed", sessionId), () => {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
@@ -8553,7 +8559,7 @@ async function reconnectLocalInPlace(s) {
       enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
       markTabActivity(sessionId, { kind: "disconnect" });
     });
-    s.unlisteners.push(ul, ulClose);
+    s.unlisteners.push(ulClose);
   } catch (err) {
     s.status = "error";
     updateTabStatus(sessionId, "error");
@@ -8589,9 +8595,11 @@ async function reconnectSshInPlace(s) {
   });
 
   try {
-    s.unlisteners = await registerSshListeners(oldSessionId, s.terminal);
+    const dataChannel = new Channel();
+    s.unlisteners = await registerSshListeners(oldSessionId, s.terminal, dataChannel);
     await invoke("ssh_connect", {
       sessionId: oldSessionId,
+      onData: dataChannel,
       profileId: profile.id,
       password:   creds.password   || null,
       passphrase: creds.passphrase || null,
@@ -9582,6 +9590,16 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     }
   }, true);
 
+  // IME (CJK, teclas muertas): mientras hay una composición activa no dejamos
+  // que xterm procese las teclas crudas. El texto final ya llega por `onData`
+  // al confirmar la composición, así evitamos Enter duplicados y no cortamos la
+  // escritura. `keyCode === 229` es el valor que emiten los navegadores durante
+  // la composición; `isComposing` lo confirma en navegadores modernos.
+  terminal.attachCustomKeyEventHandler((e) => {
+    if (e.isComposing || e.keyCode === 229) return false;
+    return true;
+  });
+
   terminal.onData((data) => {
     if (sessionObj.status === "closed" || sessionObj.status === "error") {
       if (data === "\r" || data === "\n") reconnectSession(sessionObj.id);
@@ -9766,20 +9784,47 @@ async function loadSnapshotIndex() {
   }
 }
 
-async function registerSshListeners(sessionId, terminal) {
+/**
+ * Normaliza el payload de un `Channel` de datos a `Uint8Array`.
+ *
+ * El backend envía los bytes del terminal con `tauri::ipc::Response::new(bytes)`,
+ * que el runtime entrega en `onmessage` como `ArrayBuffer` (tanto en la vía
+ * binaria nativa de chunks grandes como en el fallback JSON de los pequeños).
+ * Se contemplan defensivamente `ArrayBuffer`, vistas tipadas y, por si acaso,
+ * arrays de enteros.
+ * @param {ArrayBuffer | ArrayBufferView | number[]} payload
+ * @returns {Uint8Array}
+ */
+function channelBytesToU8(payload) {
+  if (payload instanceof ArrayBuffer) return new Uint8Array(payload);
+  if (ArrayBuffer.isView(payload)) {
+    return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+  }
+  return new Uint8Array(payload);
+}
+
+/**
+ * @param {string} sessionId
+ * @param {any} terminal
+ * @param {Channel} dataChannel  Canal binario del caudal de datos (`ssh-data`).
+ *   El caller lo crea y lo pasa también al `invoke("ssh_connect")`.
+ */
+async function registerSshListeners(sessionId, terminal, dataChannel) {
   const decoder = new TextDecoder();
   const ul = [];
 
-  ul.push(await listen(eventName("sshData", sessionId), (e) => {
+  // Caudal de datos del servidor: llega por el Channel binario (sin JSON), no
+  // por un evento `listen`. El canal se libera al recogerse la sesión.
+  dataChannel.onmessage = (payload) => {
     const s = sessions.get(sessionId);
-    const text = decoder.decode(new Uint8Array(e.payload));
+    const text = decoder.decode(channelBytesToU8(payload));
     const filtered = filterSuppressedTerminalOutput(s, text);
     if (filtered) {
       enqueueTerminalOutput(s, applyHighlightRules(filtered));
       markTabActivity(sessionId);
       captureScreenChunk(s, filtered);
     }
-  }));
+  };
 
   ul.push(await listen(eventName("sshLog", sessionId), (/** @type {{ payload: SshLogEvent }} */ e) => {
     appendConnectionLog(sessionId, e.payload || {});
@@ -11176,22 +11221,26 @@ async function openLocalShell() {
   // El resize de la consola local viaja por su propio comando IPC.
   s._resizeCmd = "local_shell_resize";
   try {
+    // El caudal del shell viaja por el Channel binario; se asigna su handler
+    // antes del invoke para no perder bytes iniciales.
+    const decoder = new TextDecoder();
+    const dataChannel = new Channel();
+    dataChannel.onmessage = (payload) => {
+      const text = decoder.decode(channelBytesToU8(payload));
+      if (text) {
+        enqueueTerminalOutput(s, text);
+        markTabActivity(sessionId);
+      }
+    };
     await invoke("local_shell_open", {
       sessionId,
+      onData: dataChannel,
       cols: s.terminal.cols,
       rows: s.terminal.rows,
     });
     s.status = "connected";
     updateTabStatus(sessionId, "connected");
 
-    const decoder = new TextDecoder();
-    const ul = await listen(eventName("shellData", sessionId), (e) => {
-      const text = decoder.decode(new Uint8Array(e.payload));
-      if (text) {
-        enqueueTerminalOutput(s, text);
-        markTabActivity(sessionId);
-      }
-    });
     const ulClose = await listen(eventName("shellClosed", sessionId), () => {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
@@ -11199,7 +11248,7 @@ async function openLocalShell() {
       enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
       markTabActivity(sessionId, { kind: "disconnect" });
     });
-    s.unlisteners.push(ul, ulClose);
+    s.unlisteners.push(ulClose);
 
     // Nota: el input ya lo enruta `handleTerminalInput` (registrado en createTerminalTab)
     // detectando el tipo de sesión por `_closeOverride`. El resize también lo

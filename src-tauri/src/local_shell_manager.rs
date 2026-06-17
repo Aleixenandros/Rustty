@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter};
 
 use crate::ipc::{event_name, EventKind};
@@ -24,24 +25,32 @@ struct ShellHandle {
 /// Usa un PTY nativo para una experiencia de terminal completa
 /// (colores, readline, vim, top, etc.).
 pub struct LocalShellManager {
-    sessions: Mutex<HashMap<String, ShellHandle>>,
+    // `Arc` para que el hilo de lectura pueda retirar su propia entrada del mapa
+    // cuando el shell termina, sin dejar handles muertos acumulados.
+    sessions: Arc<Mutex<HashMap<String, ShellHandle>>>,
 }
 
 impl LocalShellManager {
     pub fn new() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     /// Abre una nueva sesión de shell local.
-    /// Emite:
-    ///   `shell-data-{id}`   → Vec<u8> con bytes del shell
+    ///
+    /// Los bytes del shell se entregan por `on_data` (`tauri::ipc::Channel`),
+    /// que viaja como `ArrayBuffer` binario sin pasar por JSON. El lector usa
+    /// bloques de 64 KiB, muy por encima del umbral de Tauri para el canal
+    /// binario nativo (1 KiB), así que no requiere coalescing adicional.
+    ///
+    /// Emite (vía eventos, baja frecuencia):
     ///   `shell-closed-{id}` → el proceso del shell terminó
     pub fn open(
         &self,
         session_id: String,
         app_handle: AppHandle,
+        on_data: Channel<Response>,
         cols: u16,
         rows: u16,
     ) -> Result<(), String> {
@@ -59,6 +68,19 @@ impl LocalShellManager {
         let shell = get_default_shell();
         let mut cmd = CommandBuilder::new(&shell);
         cmd.env("TERM", "xterm-256color");
+        // Color verdadero en apps que lo detectan por COLORTERM (vim, bat, delta…).
+        cmd.env("COLORTERM", "truecolor");
+        // Locale UTF-8 cuando el entorno no define ninguno, para que readline y
+        // las TUIs no caigan a ASCII/Latin-1. Solo Unix: en Windows ConPTY usa
+        // UTF-16/UTF-8 y forzar un locale rompería más de lo que arregla.
+        #[cfg(unix)]
+        if std::env::var_os("LC_ALL").is_none()
+            && std::env::var_os("LC_CTYPE").is_none()
+            && std::env::var_os("LANG").is_none()
+        {
+            cmd.env("LANG", "C.UTF-8");
+            cmd.env("LC_CTYPE", "C.UTF-8");
+        }
         if let Some(home) = dirs::home_dir() {
             cmd.cwd(home);
         }
@@ -74,14 +96,22 @@ impl LocalShellManager {
         // Cerrar el extremo slave en el proceso padre (necesario en Unix)
         drop(pair.slave);
 
-        let mut reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|e| format!("Error al clonar lector PTY: {e}"))?;
-        let mut writer = pair
-            .master
-            .take_writer()
-            .map_err(|e| format!("Error al tomar escritor PTY: {e}"))?;
+        // Si algún paso posterior al spawn falla, matamos el hijo para no dejar
+        // un proceso shell huérfano sin nadie que lo lea ni lo cierre.
+        let mut reader = match pair.master.try_clone_reader() {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = child.kill();
+                return Err(format!("Error al clonar lector PTY: {e}"));
+            }
+        };
+        let mut writer = match pair.master.take_writer() {
+            Ok(w) => w,
+            Err(e) => {
+                let _ = child.kill();
+                return Err(format!("Error al tomar escritor PTY: {e}"));
+            }
+        };
         let master = pair.master;
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<ShellCommand>();
@@ -93,20 +123,28 @@ impl LocalShellManager {
         // ── Hilo de lectura: shell → frontend ────────────────────
         let sid_r = session_id.clone();
         let app_r = app_handle;
+        let sessions_r = Arc::clone(&self.sessions);
         std::thread::spawn(move || {
             // Buffer holgado (64 KiB): con salidas masivas (`cat` de un log
             // grande) `read` devuelve bloques cercanos al tamaño del buffer, así
-            // que emitimos muchos menos eventos IPC que con 4 KiB y aliviamos el
+            // que enviamos muchos menos mensajes IPC que con 4 KiB y aliviamos el
             // hilo de UI, que es donde se notaba el cuelgue.
             let mut buf = [0u8; 64 * 1024];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => {
+                        // El shell terminó: retira el handle muerto del mapa
+                        // antes de avisar al frontend (evita acumular sesiones
+                        // cerradas si el usuario no cierra la pestaña).
+                        sessions_r.lock().unwrap().remove(&sid_r);
                         let _ = app_r.emit(&event_name(EventKind::ShellClosed, &sid_r), ());
                         break;
                     }
                     Ok(n) => {
-                        let _ = app_r.emit(&event_name(EventKind::ShellData, &sid_r), buf[..n].to_vec());
+                        // Bytes crudos por el Channel binario (sin JSON).
+                        if on_data.send(Response::new(buf[..n].to_vec())).is_err() {
+                            break;
+                        }
                     }
                 }
             }
@@ -207,9 +245,44 @@ impl LocalShellManager {
 
 fn get_default_shell() -> String {
     #[cfg(windows)]
-    return std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+    {
+        // Preferimos PowerShell moderno (pwsh) → Windows PowerShell → cmd.
+        // pwsh.exe no está en una ruta fija, así que lo buscamos en el PATH;
+        // powershell.exe y cmd.exe sí viven en System32 pero también se
+        // resuelven por PATH, con `%COMSPEC%` como último recurso.
+        for candidate in ["pwsh.exe", "powershell.exe", "cmd.exe"] {
+            if find_in_path(candidate) {
+                return candidate.to_string();
+            }
+        }
+        return std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+    }
     #[cfg(not(windows))]
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+    {
+        // `$SHELL` es el login shell real del usuario; caemos a bash y luego a
+        // sh para no quedarnos sin consola en sistemas mínimos.
+        if let Ok(shell) = std::env::var("SHELL") {
+            if !shell.is_empty() {
+                return shell;
+            }
+        }
+        for candidate in ["/bin/bash", "/bin/sh"] {
+            if std::path::Path::new(candidate).exists() {
+                return candidate.to_string();
+            }
+        }
+        "/bin/sh".to_string()
+    }
+}
+
+/// Comprueba si `exe` se resuelve en alguno de los directorios del `PATH`.
+/// Se usa en Windows para elegir el primer shell disponible sin lanzarlo.
+#[cfg(windows)]
+fn find_in_path(exe: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| dir.join(exe).is_file())
 }
 
 /// Detecta si el proceso con PID `pid` tiene al menos un proceso hijo vivo.

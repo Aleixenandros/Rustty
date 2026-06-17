@@ -3,7 +3,7 @@ import { EVENT, EVENT_PREFIX, eventName } from "./events.js";
 
 describe("eventName", () => {
   it("concatena prefijo + sufijo", () => {
-    expect(eventName("sshData", "abc")).toBe("ssh-data-abc");
+    expect(eventName("sshConnected", "abc")).toBe("ssh-connected-abc");
     expect(eventName("sftpProgress", "t-1")).toBe("sftp-progress-t-1");
     expect(eventName("sshTunnelTraffic", "s9")).toBe("ssh-tunnel-traffic-s9");
   });
@@ -28,10 +28,8 @@ describe("contrato de prefijos", () => {
         "sftpLog",
         "sftpProgress",
         "shellClosed",
-        "shellData",
         "sshClosed",
         "sshConnected",
-        "sshData",
         "sshError",
         "sshLog",
         "sshReconnecting",

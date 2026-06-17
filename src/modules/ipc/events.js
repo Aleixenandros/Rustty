@@ -4,8 +4,12 @@
  * Espejo de `src-tauri/src/ipc.rs`: misma lista de prefijos y misma regla de
  * construcción `prefijo + sufijo`, donde el sufijo es el `sessionId` /
  * `transferId`. Centralizar aquí los nombres evita las plantillas sueltas
- * (`` `ssh-data-${id}` ``) repartidas por `main.js` y deja un único sitio que
- * tocar si el backend renombra un evento.
+ * (`` `ssh-connected-${id}` ``) repartidas por `main.js` y deja un único sitio
+ * que tocar si el backend renombra un evento.
+ *
+ * El caudal de datos del terminal (SSH y consola local) NO es un evento: viaja
+ * por `tauri::ipc::Channel` (binario), creado en `main.js` y pasado al
+ * `invoke("ssh_connect" / "local_shell_open")`.
  *
  * Si se añade o renombra un evento, hay que cambiarlo **en los dos ficheros**
  * (este y `ipc.rs`) para que el contrato siga alineado.
@@ -21,8 +25,6 @@ export const EVENT_PREFIX = Object.freeze({
   sshLog: "ssh-log-",
   /** `ssh-connected-{sessionId}` → payload: nombre del perfil (string) */
   sshConnected: "ssh-connected-",
-  /** `ssh-data-{sessionId}` → payload: bytes del servidor (number[] / Uint8Array) */
-  sshData: "ssh-data-",
   /** `ssh-error-{sessionId}` → payload: mensaje (string) */
   sshError: "ssh-error-",
   /** `ssh-closed-{sessionId}` → payload: "" */
@@ -31,8 +33,6 @@ export const EVENT_PREFIX = Object.freeze({
   sshReconnecting: "ssh-reconnecting-",
   /** `ssh-tunnel-traffic-{sessionId}` → {@link SshTunnelTrafficEvent} */
   sshTunnelTraffic: "ssh-tunnel-traffic-",
-  /** `shell-data-{sessionId}` → payload: bytes de la consola local */
-  shellData: "shell-data-",
   /** `shell-closed-{sessionId}` → payload: null */
   shellClosed: "shell-closed-",
   /** `sftp-log-{sessionId}` → {@link SftpLogEvent} */

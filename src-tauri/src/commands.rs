@@ -3,6 +3,7 @@ use std::net::UdpSocket;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
+use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Manager, State};
 
 use crate::credentials::{self, CredentialKind, CredentialMeta, CredentialStore};
@@ -166,9 +167,9 @@ fn apply_connect_overrides(profile: &mut ConnectionProfile, ov: &ConnectOverride
 /// Inicia una sesión SSH a partir de un perfil guardado.
 /// Devuelve el session_id que el frontend usará para identificar la sesión.
 ///
-/// El flujo de eventos emitidos por el backend:
+/// Los bytes recibidos del servidor se entregan por `on_data`
+/// (`tauri::ipc::Channel`, binario). El resto del protocolo va por eventos:
 ///   - `ssh-connected-{id}` : conexión y auth exitosas
-///   - `ssh-data-{id}`      : Vec<u8> con bytes recibidos del servidor
 ///   - `ssh-log-{id}`       : etapa de diagnóstico de conexión
 ///   - `ssh-error-{id}`     : String con el error
 ///   - `ssh-closed-{id}`    : sesión finalizada (limpiamente o por error)
@@ -179,6 +180,9 @@ pub fn ssh_connect(
     cred_state: State<'_, CredentialStore>,
     data_dir: State<'_, DataDir>,
     app_handle: AppHandle,
+    // Canal binario para el caudal de datos del terminal (`ssh-data` ya no se
+    // emite como evento JSON). El frontend crea el `Channel` antes del invoke.
+    on_data: Channel<Response>,
     profile_id: String,
     password: Option<String>,
     passphrase: Option<String>,
@@ -222,6 +226,7 @@ pub fn ssh_connect(
             resolved_password,
             passphrase,
             app_handle,
+            on_data,
             data_dir.0.clone(),
         )
         .map_err(|e| e.to_string())?;
@@ -539,16 +544,18 @@ pub fn rdp_disconnect(rdp_state: State<'_, RdpManager>, session_id: String) -> R
 // ─── Comandos de shell local ──────────────────────────────────────────────────
 
 /// Abre una sesión de shell local con PTY.
-/// Devuelve el session_id. Emite `shell-data-{id}` y `shell-closed-{id}`.
+/// Devuelve el session_id. Los bytes del shell llegan por `on_data` (Channel
+/// binario) y el fin del proceso por el evento `shell-closed-{id}`.
 #[tauri::command]
 pub fn local_shell_open(
     shell_state: State<'_, LocalShellManager>,
     app_handle: AppHandle,
+    on_data: Channel<Response>,
     session_id: String,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    shell_state.open(session_id, app_handle, cols, rows)
+    shell_state.open(session_id, app_handle, on_data, cols, rows)
 }
 
 /// Envía bytes al stdin del shell local
