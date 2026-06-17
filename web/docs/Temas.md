@@ -4,20 +4,9 @@ Rustty separa el tema de la interfaz del tema del terminal. Puedes usar una UI c
 
 ## Temas incluidos
 
-Rustty incluye temas base y variantes listas para usar:
+Rustty incluye una biblioteca amplia de temas listos para usar. Además de los temas base iniciales (Catppuccin, Dracula, Nord, Solarized, Gruvbox, Tokyo Night, Monokai, Tango, xterm clásico y VS Code Dark+), carga un pack ampliado desde `bundled-themes.json` con variantes claras, oscuras y de alto contraste.
 
-- Catppuccin Mocha
-- Catppuccin Latte
-- Dracula
-- Nord
-- xterm clásico
-- VS Code Dark+
-- Tango
-- Solarized Dark
-- Solarized Light
-- Gruvbox Dark
-- Tokyo Night
-- Monokai
+En **Preferencias → Apariencia** puedes buscar por nombre, filtrar por **Todos / Oscuros / Claros / Alto contraste** y restablecer el tema al sistema. El tema activo aparece marcado con un check.
 
 ## Terminal
 
@@ -37,7 +26,7 @@ Los cambios se aplican a las sesiones abiertas cuando es posible. Además del at
 
 Desde **Preferencias → Apariencia** puedes exportar e importar temas JSON. Rustty usa el formato **v2** (`formatVersion: 2`), con tokens separados para la interfaz (`ui`) y la paleta del terminal (`terminal`).
 
-El botón **Exportar plantilla** genera un JSON listo para editar. Los temas personalizados se guardan en las preferencias y pueden viajar con la sincronización cifrada.
+El botón **Exportar plantilla** genera un JSON listo para editar. También puedes importar un tema suelto o un pack con varios temas. Los temas personalizados se guardan en las preferencias y pueden viajar con la sincronización cifrada.
 
 ## Idioma
 

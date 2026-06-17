@@ -17,6 +17,12 @@ Rustty está diseñado como aplicación local-first: no requiere cuenta propia, 
 
 Las notas son archivos Markdown (`notes/<id>.md`) pensados para runbooks: comandos, rutas o pasos de mantenimiento. Se renderizan de forma **segura** (el HTML de la nota se escapa; los enlaces solo abren `http`/`https`/`mailto`), así que una nota sincronizada desde otro equipo no puede inyectar código en la app. **No guardes secretos en las notas**: viajan en la copia E2E como el resto de la configuración (no tras el opt-in de contraseñas), pero su contenido no está pensado para credenciales; para eso usa el keyring, KeePass o las credenciales maestras.
 
+## Snippets y comandos locales
+
+Los snippets se insertan en la terminal activa y pueden sincronizarse dentro del backup cifrado. Trátalos como texto operativo: si contienen comandos destructivos, activa **Pedir confirmación** y revisa si deben enviar `Enter` automáticamente.
+
+Los comandos locales se guardan solo en este equipo (`localStorage`) y **no se sincronizan**. Los de tipo shell se ejecutan con el shell del sistema (`sh -c` o `cmd /C`), así que la confirmación viene activada por defecto y el modal los trata como acciones sensibles. En snippets y comandos locales se resuelven variables internas, `${var:...}` y `${ask:...}`; los marcadores de secretos (`${master:...}` / `${secret:...}`) quedan literales para no exponer valores sensibles en el frontend.
+
 ## Credenciales maestras y variables
 
 En **Preferencias → Credenciales** puedes definir dos tipos reutilizables entre perfiles: **credenciales maestras** y **variables de texto**. Una credencial maestra (contraseña o token) se guarda una sola vez en el keyring del sistema y se referencia con `${master:nombre}`; el perfil guarda únicamente la referencia, nunca el valor, así que **rotar** la credencial actualiza a la vez todos los perfiles que la usan. Las variables (`${var:nombre}`) son texto plano y sirven para reutilizar valores comunes como un dominio o un usuario.
@@ -88,9 +94,10 @@ Por diseño quedan fuera de la sincronización:
 
 - Bases KeePass desbloqueadas en memoria.
 - Rutas locales como `keepassPath` y `keepassKeyfile`.
-- Ficheros transferidos por SFTP.
+- Ficheros transferidos por SFTP/FTP/FTPS.
 - Contenido de sesiones SSH/RDP.
 - Snapshots de pantalla para restaurar sesiones (`session_snapshots/`).
+- Comandos locales de Preferencias → Comandos.
 
 Los exports JSON locales sí pueden incluir una sección `secrets`, pero solo después de confirmación explícita. Ese JSON no va cifrado por sí mismo.
 

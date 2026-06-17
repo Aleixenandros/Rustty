@@ -10,11 +10,11 @@ Rustty agrupa las copias en **Preferencias → Copias de seguridad**. Desde ahí
 - Temas personalizados.
 - Atajos configurados por el usuario.
 - **Notas de conexión** en Markdown (opt-in **Notas**, activo por defecto).
-- Snippets, cuando exista la biblioteca de snippets.
+- Snippets remotos creados en **Preferencias → Comandos**.
 - El catálogo de **credenciales maestras y variables** (metadatos: nombre y tipo). Las variables de texto incluyen su valor; las maestras no.
 - Contraseñas y passphrases guardadas y los **valores de las credenciales maestras**, solo si activas el check **Contraseñas guardadas (cifradas E2E)**.
 
-Las bases KeePass desbloqueadas y rutas locales como `keepassPath` o `keepassKeyfile` no se sincronizan.
+Las bases KeePass desbloqueadas, rutas locales como `keepassPath` o `keepassKeyfile` y los **comandos locales** de Preferencias → Comandos no se sincronizan. Los comandos locales pueden depender de rutas, programas o URLs propias de un equipo.
 
 ## Cifrado
 

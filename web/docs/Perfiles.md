@@ -24,6 +24,21 @@ El formulario de crear/editar conexión incluye el botón **Probar**. En perfile
 
 La prueba no guarda el perfil ni escribe secretos nuevos en el keyring. Si la conexión usa KeePass, Rustty resuelve la contraseña desde la base desbloqueada igual que haría al conectar.
 
+## Plantillas
+
+Al crear una conexión nueva, el formulario muestra el selector **Plantilla** en la cabecera. Sirve para rellenar valores habituales sin guardar todavía el perfil.
+
+Plantillas integradas:
+
+- **Linux SSH (contraseña)**: SSH en puerto 22 con autenticación por contraseña.
+- **SSH con clave**: SSH en puerto 22 con clave pública.
+- **SSH con bastión**: SSH con clave y campo **Bastion / Jump host** preparado.
+- **SSH heredado**: SSH con compatibilidad de algoritmos legacy activada.
+- **RDP Windows**: RDP en puerto 3389.
+- **FTPS (ficheros)**: FTPS explícito en puerto 21.
+
+También puedes marcar un perfil propio como plantilla desde su menú contextual (**Usar como plantilla**). Rustty lo listará en el mismo selector para reutilizar tipo de conexión, puerto, usuario, autenticación y opciones avanzadas comunes. El perfil original no se modifica.
+
 ## Selección múltiple y movimiento
 
 En la sidebar puedes seleccionar varias conexiones con **Ctrl/Cmd+click** y rangos con **Shift+click**. Al arrastrar una conexión seleccionada hacia una carpeta o workspace, Rustty mueve el lote completo de conexiones seleccionadas dentro del mismo workspace origen.
@@ -36,14 +51,16 @@ Cada conexión incluye un botón **estrella** (☆/★) en la sidebar, también 
 
 - **SSH**: sesión interactiva con terminal, SFTP integrado y autenticación por contraseña, clave pública o agente SSH.
 - **RDP**: lanzamiento de escritorio remoto usando `xfreerdp3` / `xfreerdp`, `rdesktop`, `mstsc` o el cliente disponible en el sistema.
+- **FTP**: panel de ficheros para servidores FTP heredados.
+- **FTPS**: FTP explícito sobre TLS para servidores que no ofrecen SFTP.
 
 ## Credenciales
 
-Para SSH puedes elegir:
+Según el tipo de perfil, puedes elegir:
 
 - **Contraseña**: se pide al conectar o se guarda opcionalmente en el keyring.
-- **Clave pública**: selecciona el fichero de clave privada; la passphrase puede guardarse en el keyring.
-- **Agente SSH**: usa el agente del sistema cuando está disponible.
+- **Clave pública**: en SSH, selecciona el fichero de clave privada; la passphrase puede guardarse en el keyring.
+- **Agente SSH**: en SSH, usa el agente del sistema cuando está disponible.
 
 También puedes asociar una entrada KeePass al perfil para resolver la contraseña desde una base `.kdbx` desbloqueada.
 
@@ -69,7 +86,7 @@ Un mismo equipo se suele administrar con distintas cuentas (p. ej. tu usuario y 
 - Con **clic derecho → Conectar con otro usuario** eliges una de las identidades adicionales; se abre una sesión nueva con esa cuenta.
 - La sesión recuerda con qué usuario se conectó, de modo que el atajo **Ctrl+P** (pegar contraseña) envía la contraseña **de esa** identidad, no la principal.
 
-Las contraseñas/passphrases de las identidades adicionales viven en el keyring (nunca en `profiles.json`) y, si activas la sincronización de contraseñas, viajan cifradas E2E igual que las de la principal. Funciona en SSH, RDP y SFTP/FTP.
+Las contraseñas/passphrases de las identidades adicionales viven en el keyring (nunca en `profiles.json`) y, si activas la sincronización de contraseñas, viajan cifradas E2E igual que las de la principal. Funciona en SSH, RDP, FTP y FTPS.
 
 ### Restaurar la pantalla anterior
 

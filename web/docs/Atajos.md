@@ -13,7 +13,9 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl+Shift+Tab` | Pestaña anterior                                  |
 | `Ctrl+1`…`Ctrl+9` | Saltar a la pestaña N (`Ctrl+9` salta a la última) |
 | `Ctrl+K`       | Buscar conexiones desde cualquier vista             |
+| `Ctrl+Shift+P` | Abrir la paleta de comandos                         |
 | `Ctrl+,`       | Abrir preferencias                                  |
+| `F11`          | Activar / desactivar modo zen                       |
 | _(sin asignar)_ | Desconectar todo: cierra sesiones, túneles y cancela transferencias |
 
 «Desconectar todo» también está disponible como botón de emergencia en el rail lateral. No trae combinación por defecto para no pisar otros atajos; asígnale una desde **Preferencias → Atajos** si quieres lanzarla con el teclado.
@@ -27,6 +29,7 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl+P`       | Pegar la contraseña del usuario con el que se conectó la sesión |
 | `Ctrl+Shift+E` | Abrir el editor multilínea de comandos              |
 | `Ctrl+Shift+M` | Abrir el editor de notas de la conexión activa      |
+| `Ctrl+Shift+F` | Abrir / cerrar el panel SFTP o FTP de la sesión activa |
 | `Ctrl+F`       | Buscar dentro del buffer del terminal               |
 | `Ctrl++`       | Aumentar tamaño de fuente                           |
 | `Ctrl+-`       | Disminuir tamaño de fuente                          |
@@ -40,6 +43,8 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 La búsqueda en el buffer abre una barra flotante con next/prev y un toggle de **case-sensitive**. Resalta todas las coincidencias sobre `@xterm/addon-search`.
 
 El pegado en el terminal (`Ctrl+Alt+V`) pide confirmación con una previsualización cuando el texto es **multilínea**, **muy largo** o trae **caracteres de control**. Se configura en **Preferencias → Terminal** y puede desactivarse por perfil desde sus opciones avanzadas.
+
+La paleta (`Ctrl+Shift+P`) busca acciones, perfiles, snippets y comandos locales. `Ctrl+K` se mantiene reservado para buscar conexiones en la sidebar.
 
 ## Presets predefinidos
 

@@ -1,14 +1,13 @@
-# SFTP
+# SFTP, FTP y FTPS
 
-El panel SFTP se abre dentro de una sesión SSH y permite navegar, subir y descargar ficheros sin salir de Rustty.
+El panel de ficheros permite navegar, subir y descargar sin salir de Rustty. En perfiles SSH se abre como **SFTP** dentro de la sesión; en perfiles **FTP** o **FTPS** se abre directamente con el mismo explorador local/remoto.
 
 ## Abrir el panel
 
-1. Conecta a un perfil SSH.
-2. Pulsa el botón **SFTP** de la sesión.
-3. Rustty abre un panel con dos columnas: **remoto** (a la izquierda) y **local** (a la derecha).
+1. Conecta a un perfil SSH y pulsa el botón **SFTP** de la sesión, o abre directamente un perfil FTP/FTPS.
+2. Rustty muestra un panel con dos columnas: **remoto** (a la izquierda) y **local** (a la derecha).
 
-El panel reutiliza los datos de conexión del perfil, pero crea su propio canal SFTP.
+En SSH, el panel reutiliza los datos de conexión del perfil, pero crea su propio canal SFTP. En FTP/FTPS, la pestaña es el propio panel de ficheros.
 
 ## Vista dividida local / remoto
 
@@ -39,7 +38,7 @@ Las transferencias y sus errores aparecen también en el centro global de activi
 
 Cuando **CWD** está activo, Rustty intenta seguir el directorio actual de la terminal usando OSC 7. Si el shell remoto lo soporta, al cambiar de carpeta en la terminal el panel SFTP puede moverse con ella.
 
-El toggle **CWD** está en la propia toolbar del panel SFTP; ya no aparece en el formulario de conexión.
+El toggle **CWD** está en la propia toolbar del panel SFTP; ya no aparece en el formulario de conexión. Solo aplica a sesiones SSH/SFTP, no a perfiles FTP/FTPS.
 
 La barra de estado inferior muestra el directorio remoto como un **breadcrumb clicable**: pulsa cualquier segmento de la ruta para llevar el panel SFTP a esa carpeta (lo abre si hace falta). Un clic en el icono 📂 copia la ruta completa, y `Ctrl/Cmd+clic` sobre un segmento copia su ruta acumulada.
 
@@ -61,7 +60,7 @@ Las transferencias SFTP grandes están preparadas para superar el umbral de 1 Gi
 Justo debajo de la vista dividida hay dos secciones siempre visibles:
 
 - **TRANSFERENCIAS**: cola con barra de progreso, velocidad, ETA y botones de cancelar/reintentar para cada transferencia en curso o terminada.
-- **ACTIVIDAD**: log con cada operación SFTP — etapas de conexión (`connect`, `host_key`, `auth`, `subsystem`, `ready`), `mkdir`, renombrar, eliminar, errores de listado e inicio/fin de cada transferencia. Cada fila muestra estado (`ok`, `error`, `skipped`, `canceled`), etiqueta y tiempo.
+- **ACTIVIDAD**: log con cada operación del panel — etapas de conexión (`connect`, `host_key`, `auth`, `subsystem`, `ready` cuando aplica), `mkdir`, renombrar, eliminar, errores de listado e inicio/fin de cada transferencia. Cada fila muestra estado (`ok`, `error`, `skipped`, `canceled`), etiqueta y tiempo.
 
 Si una transferencia falla o se cancela, el detalle muestra los bytes realmente transferidos junto al total del fichero, no solo el tamaño esperado.
 
@@ -69,11 +68,11 @@ Si una transferencia falla o se cancela, el detalle muestra los bytes realmente 
 
 Las descargas y subidas mantienen varias peticiones SFTP simultáneamente en vuelo con chunks de 256 KiB. Eso elimina el techo de velocidad `chunk × RTT` típico de los clientes SFTP en serie: con un RTT de 12-15 ms y buffer de 64 KiB el techo era de ~5 MB/s; con varios MiB de datos en vuelo a la vez, la transferencia satura el ancho de banda real de la conexión.
 
-Si el servidor caps por sesión (por ejemplo limita a 100 Mbps) verás velocidades estables cerca de ese tope, sin importar la latencia.
+Si el servidor limita el ancho de banda por sesión (por ejemplo a 100 Mbps), verás velocidades estables cerca de ese tope, sin importar la latencia.
 
-### Transferencias simultáneas configurables
+### Peticiones simultáneas configurables
 
-El número de peticiones SFTP en paralelo por transferencia se ajusta en **Preferencias → FTP/SFTP → Transferencias simultáneas (SFTP)** (por defecto **4**, rango 1–64). Súbelo para exprimir más velocidad en redes con latencia alta; **bájalo** si el servidor devuelve `Limit exceeded: Handle limit reached`.
+El número de peticiones SFTP en paralelo por transferencia se ajusta en **Preferencias → FTP/SFTP → Transferencias simultáneas (SFTP)** (por defecto **4**, rango 1–64, acotado internamente por el límite de pipelining). Súbelo para exprimir más velocidad en redes con latencia alta; **bájalo** si el servidor devuelve `Limit exceeded: Handle limit reached`.
 
 Algunos servidores con SFTP restringido —como el **Storage Box de Hetzner**— imponen un límite bajo de *handles* (ficheros abiertos) por sesión. Un valor de concurrencia alto abre demasiados handles a la vez y dispara ese error, sobre todo al descargar carpetas recursivas. Con el valor por defecto de 4 no debería ocurrir. El cambio se aplica a las **sesiones nuevas**.
 
@@ -81,7 +80,7 @@ Algunos servidores con SFTP restringido —como el **Storage Box de Hetzner**—
 
 El botón **sudo** reconecta el SFTP usando `sudo sftp-server` en el servidor remoto. Requiere que el usuario tenga `NOPASSWD` configurado para el binario `sftp-server` correspondiente.
 
-Si el servidor no permite esa elevación, desactiva **sudo** y usa SFTP normal.
+Si el servidor no permite esa elevación, desactiva **sudo** y usa SFTP normal. Esta opción solo existe para SFTP sobre SSH; no aparece en perfiles FTP/FTPS.
 
 ## Cerrar el panel con una transferencia en curso
 

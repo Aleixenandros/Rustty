@@ -4,7 +4,7 @@
 
 Solo si lo activas explícitamente. En **Preferencias → Copias de seguridad** puedes marcar **Contraseñas guardadas (cifradas E2E)**. Entonces Rustty lee las contraseñas/passphrases del keyring local, las cifra dentro de `rustty-sync.bin` con tu passphrase y las restaura en el keyring de otros equipos.
 
-La base KeePass desbloqueada nunca se sube. Si no marcas ese check, la sincronización solo incluye perfiles, carpetas, preferencias, temas, notas, snippets y atajos.
+La base KeePass desbloqueada nunca se sube. Si no marcas ese check, la sincronización incluye perfiles, carpetas, preferencias, temas, notas, snippets, atajos y metadatos de credenciales maestras/variables, pero no valores secretos.
 
 ## ¿Qué pasa si pierdo la passphrase de sincronización?
 
@@ -43,6 +43,10 @@ En el resto de formatos de Linux (`.deb`, `.rpm`, Flatpak, Arch) la actualizaci�
 ## ¿Puedo añadir notas a una conexión?
 
 Sí. Haz clic derecho sobre una conexión → **Añadir nota** y escribe en Markdown, con previsualización en vivo. Cada nota se guarda como un archivo `.md`, se sincroniza y puede mostrarse como **panel runbook** junto a la sesión con casillas de tarea. Más detalles en la [guía de notas](?page=Notas).
+
+## ¿Los snippets y comandos locales se sincronizan?
+
+Los **snippets remotos** sí: viajan dentro del backup cifrado como `snippet:<id>` y aparecen también en la paleta de comandos. Los **comandos locales** no se sincronizan porque pueden depender de rutas, binarios o asociaciones propias de este equipo.
 
 ## ¿iCloud necesita Client ID o secret?
 
