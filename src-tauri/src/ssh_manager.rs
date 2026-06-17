@@ -31,6 +31,7 @@ use tokio::task::JoinHandle;
 
 use crate::error::AppError;
 use crate::host_keys;
+use crate::ipc::{event_name, EventKind};
 use crate::profiles::{AuthType, ConnectionProfile, SshTunnelType};
 
 /// Timeout TCP por defecto al abrir la conexión inicial. Sin techo russh
@@ -157,7 +158,7 @@ fn emit_connection_log(
     message: impl Into<String>,
 ) {
     let _ = app_handle.emit(
-        &format!("ssh-log-{}", session_id),
+        &event_name(EventKind::SshLog, session_id),
         SshConnectionLogEvent {
             stage,
             status,
@@ -249,10 +250,10 @@ impl SshManager {
                 Ok(rt) => rt,
                 Err(e) => {
                     let _ = ah.emit(
-                        &format!("ssh-error-{}", sid),
+                        &event_name(EventKind::SshError, &sid),
                         format!("No se pudo crear runtime tokio: {e}"),
                     );
-                    let _ = ah.emit(&format!("ssh-closed-{}", sid), "");
+                    let _ = ah.emit(&event_name(EventKind::SshClosed, &sid), "");
                     return;
                 }
             };
@@ -266,7 +267,7 @@ impl SshManager {
                 ah.clone(),
                 default_log_dir,
             ));
-            let _ = ah.emit(&format!("ssh-closed-{}", sid), "");
+            let _ = ah.emit(&event_name(EventKind::SshClosed, &sid), "");
         });
 
         self.sessions
@@ -472,7 +473,7 @@ async fn run_session_with_reconnect(
                 // hiciera, para no filtrar el valor a log/eventos.
                 let msg = crate::subst::redact_secrets(&err.to_string(), &secret_values);
                 emit_connection_log(&app_handle, &session_id, "error", "error", msg.clone());
-                let _ = app_handle.emit(&format!("ssh-error-{}", session_id), msg);
+                let _ = app_handle.emit(&event_name(EventKind::SshError, &session_id), msg);
                 return;
             }
             SessionExit::ServerClosed => {
@@ -501,7 +502,7 @@ async fn run_session_with_reconnect(
                     ),
                 );
                 let _ = app_handle.emit(
-                    &format!("ssh-reconnecting-{}", session_id),
+                    &event_name(EventKind::SshReconnecting, &session_id),
                     serde_json::json!({
                         "attempt": attempt,
                         "max": max_attempts,
@@ -933,7 +934,7 @@ async fn run_session(
                         format!("No se puede conectar al bastion {bastion_addr}: {err}"),
                     );
                     let _ = app_handle.emit(
-                        &format!("ssh-error-{}", session_id),
+                        &event_name(EventKind::SshError, &session_id),
                         format!("No se puede conectar al bastion {bastion_addr}: {err}"),
                     );
                     return SessionExit::ServerClosed;
@@ -1130,7 +1131,7 @@ async fn run_session(
                     format!("No se puede conectar a {addr}: {last_err}"),
                 );
                 let _ = app_handle.emit(
-                    &format!("ssh-error-{}", session_id),
+                    &event_name(EventKind::SshError, &session_id),
                     format!("No se puede conectar a {addr}: {last_err}"),
                 );
                 return SessionExit::ServerClosed;
@@ -1230,7 +1231,7 @@ async fn run_session(
         "ok",
         format!("Conectado a {}", profile.name),
     );
-    let _ = app_handle.emit(&format!("ssh-connected-{}", session_id), &profile.name);
+    let _ = app_handle.emit(&event_name(EventKind::SshConnected, &session_id), &profile.name);
 
     // 4. Bucle de E/S: multiplexa datos del servidor y comandos del frontend
     let mut exit_kind = SessionExit::ServerClosed;
@@ -1244,7 +1245,7 @@ async fn run_session(
                             let _ = f.write_all(&data).await;
                         }
                         let _ = app_handle
-                            .emit(&format!("ssh-data-{}", session_id), data.to_vec());
+                            .emit(&event_name(EventKind::SshData, &session_id), data.to_vec());
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
                         // stderr → lo mezclamos con stdout, como hacía ssh2.
@@ -1252,7 +1253,7 @@ async fn run_session(
                             let _ = f.write_all(&data).await;
                         }
                         let _ = app_handle
-                            .emit(&format!("ssh-data-{}", session_id), data.to_vec());
+                            .emit(&event_name(EventKind::SshData, &session_id), data.to_vec());
                     }
                     Some(ChannelMsg::Eof)
                     | Some(ChannelMsg::Close)
@@ -1326,7 +1327,7 @@ async fn run_session(
                                         }
                                         Err(err) => {
                                             let _ = app_handle.emit(
-                                                &format!("ssh-error-{}", session_id),
+                                                &event_name(EventKind::SshError, &session_id),
                                                 format!("No se pudo abrir canal de túnel: {err}"),
                                             );
                                         }
@@ -1432,7 +1433,7 @@ async fn start_tunnel_runtime(
                         }
                         Err(err) => {
                             let _ = app_handle.emit(
-                                &format!("ssh-error-{}", task_session_id),
+                                &event_name(EventKind::SshError, &task_session_id),
                                 format!("Listener de túnel cerrado: {err}"),
                             );
                             break;
@@ -1622,7 +1623,7 @@ async fn pump_tunnel(
                         }
                         bytes_up = bytes_up.saturating_add(n as u64);
                         let _ = app_handle.emit(
-                            &format!("ssh-tunnel-traffic-{}", session_id),
+                            &event_name(EventKind::SshTunnelTraffic, &session_id),
                             SshTunnelTrafficEvent { id: tunnel_id.clone(), bytes_up, bytes_down },
                         );
                     }
@@ -1636,7 +1637,7 @@ async fn pump_tunnel(
                         }
                         bytes_down = bytes_down.saturating_add(data.len() as u64);
                         let _ = app_handle.emit(
-                            &format!("ssh-tunnel-traffic-{}", session_id),
+                            &event_name(EventKind::SshTunnelTraffic, &session_id),
                             SshTunnelTrafficEvent { id: tunnel_id.clone(), bytes_up, bytes_down },
                         );
                     }

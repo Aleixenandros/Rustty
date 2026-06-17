@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
+use crate::ipc::{event_name, EventKind};
+
 /// Información de una sesión RDP activa
 pub struct RdpHandle {
     pub child: std::process::Child,
@@ -78,7 +80,7 @@ impl RdpManager {
             };
 
             if finished {
-                let _ = app_handle.emit(&format!("rdp-closed-{}", sid), ());
+                let _ = app_handle.emit(&event_name(EventKind::RdpClosed, &sid), ());
                 break;
             }
         });

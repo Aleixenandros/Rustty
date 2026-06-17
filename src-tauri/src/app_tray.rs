@@ -203,7 +203,7 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
 }
 
 fn emit_action(app: &AppHandle, payload: serde_json::Value) {
-    let _ = app.emit("tray-action", payload);
+    let _ = app.emit(crate::ipc::TRAY_ACTION, payload);
 }
 
 fn show_main_window(app: &AppHandle) {

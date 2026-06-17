@@ -2,6 +2,31 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.30.0] - 2026-06-17
+
+### Añadido
+
+- **Registro de diagnóstico técnico**: la aplicación escribe ahora un log de
+  actividad propia (`rustty.log`) en el directorio de logs del sistema, con
+  rotación acotada para que no crezca sin límite. Nivel de detalle mayor en las
+  versiones de desarrollo y más conciso en las publicadas. **No** registra el
+  contenido del terminal ni contraseñas; está pensado para diagnóstico.
+
+### Cambiado
+
+- **Mantenimiento de dependencias**: actualización de las librerías de Rust y de
+  Node a sus últimas versiones compatibles.
+- **Contrato interno de eventos unificado**: los nombres de los eventos entre el
+  backend y la interfaz se centralizan en un único punto, reduciendo el riesgo de
+  errores al evolucionar el código. Sin cambios visibles de uso.
+- **Tests automáticos**: se incorpora una primera batería de pruebas (vitest)
+  sobre módulos internos de la interfaz.
+
+### Corregido
+
+- El escape `$${...}` en snippets y comandos perdía un carácter `$`: ahora produce
+  correctamente el literal `${...}` sin sustituir la variable.
+
 ## [1.29.0] - 2026-06-16
 
 ### Añadido

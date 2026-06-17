@@ -5,6 +5,8 @@ use std::sync::{mpsc, Mutex};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use tauri::{AppHandle, Emitter};
 
+use crate::ipc::{event_name, EventKind};
+
 enum ShellCommand {
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
@@ -100,11 +102,11 @@ impl LocalShellManager {
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => {
-                        let _ = app_r.emit(&format!("shell-closed-{sid_r}"), ());
+                        let _ = app_r.emit(&event_name(EventKind::ShellClosed, &sid_r), ());
                         break;
                     }
                     Ok(n) => {
-                        let _ = app_r.emit(&format!("shell-data-{sid_r}"), buf[..n].to_vec());
+                        let _ = app_r.emit(&event_name(EventKind::ShellData, &sid_r), buf[..n].to_vec());
                     }
                 }
             }

@@ -9,6 +9,8 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::ipc::{event_name, EventKind};
+
 /// Handler TOFU para russh:
 /// - si la host key ya coincide con known_hosts, acepta;
 /// - si no hay entrada, la aprende automáticamente;
@@ -359,7 +361,7 @@ fn emit_tunnel_traffic(
         return;
     };
     let _ = app_handle.emit(
-        &format!("ssh-tunnel-traffic-{session_id}"),
+        &event_name(EventKind::SshTunnelTraffic, session_id),
         serde_json::json!({
             "id": tunnel_id,
             "bytesUp": bytes_up,

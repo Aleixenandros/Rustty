@@ -5,6 +5,7 @@ mod commands;
 mod credentials;
 mod error;
 mod host_keys;
+mod ipc;
 mod keepass_manager;
 mod local_shell_manager;
 mod notes;
@@ -70,6 +71,30 @@ pub fn resolve_data_dir() -> PathBuf {
     })
 }
 
+/// Plugin de logging técnico de diagnóstico. Escribe a stdout y a un fichero con
+/// rotación acotada en el directorio de logs de la app (`<log_dir>/rustty.log`),
+/// conservando un único fichero rotado para no crecer sin límite. Nivel `Debug`
+/// en builds de desarrollo, `Info` en release. **No** registra contenido de
+/// terminal ni secretos: solo trazas de la propia aplicación.
+fn build_log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    let level = if cfg!(debug_assertions) {
+        log::LevelFilter::Debug
+    } else {
+        log::LevelFilter::Info
+    };
+    tauri_plugin_log::Builder::new()
+        .level(level)
+        .max_file_size(5_000_000) // ~5 MB por fichero antes de rotar
+        .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+        .targets([
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                file_name: Some("rustty".into()),
+            }),
+        ])
+        .build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Detectar si la app fue lanzada por el autostart del SO con --minimized
@@ -77,12 +102,19 @@ pub fn run() {
     let launched_minimized = std::env::args().any(|a| a == "--minimized");
 
     tauri::Builder::default()
+        .plugin(build_log_plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(move |app| {
+            log::info!(
+                "Rustty {} iniciando ({} {})",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            );
             // Updater de Tauri (solo escritorio): permite actualizar la app
             // desde dentro sin re-lanzar el instalador. Las actualizaciones se
             // verifican con la clave pública de `tauri.conf.json`.

@@ -124,7 +124,9 @@ export function substituteWith(template, resolve) {
     ) {
       const close = template.indexOf("}", i + 3);
       if (close !== -1) {
-        out += template.slice(i + 2, close + 1); // `${` ... `}`
+        // Literal `${` + cuerpo + `}` (se elimina un solo `$`), igual que el
+        // motor Rust (`subst/engine.rs`): empezar en `i + 1` conserva el `$`.
+        out += template.slice(i + 1, close + 1);
         i = close + 1;
         continue;
       }

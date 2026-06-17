@@ -35,6 +35,7 @@ use russh_sftp::client::{Config as SftpConfig, SftpSession};
 use russh_sftp::protocol::{FileAttributes, OpenFlags};
 
 use crate::host_keys;
+use crate::ipc::{event_name, EventKind};
 use crate::profiles::{AuthType, ConnectionProfile};
 
 // ─── Tipos expuestos al frontend ─────────────────────────────────────────────
@@ -56,7 +57,7 @@ fn emit_sftp_log(
     message: impl Into<String>,
 ) {
     let _ = app_handle.emit(
-        &format!("sftp-log-{}", session_id),
+        &event_name(EventKind::SftpLog, session_id),
         SftpLogEvent {
             stage,
             status,
@@ -1735,7 +1736,7 @@ async fn pipelined_download(
     app: &AppHandle,
     controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
-    let event = format!("sftp-progress-{transfer_id}");
+    let event = event_name(EventKind::SftpProgress, transfer_id);
     let _ = app.emit(
         &event,
         serde_json::json!({ "transferred": 0u64, "total": total, "done": false }),
@@ -1886,7 +1887,7 @@ async fn pipelined_upload(
     app: &AppHandle,
     controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
-    let event = format!("sftp-progress-{transfer_id}");
+    let event = event_name(EventKind::SftpProgress, transfer_id);
     let _ = app.emit(
         &event,
         serde_json::json!({ "transferred": 0u64, "total": total, "done": false }),
@@ -2082,7 +2083,7 @@ where
     let mut buf = vec![0u8; 256 * 1024];
     let mut transferred: u64 = 0;
     let mut last_emit: u64 = 0;
-    let event = format!("sftp-progress-{transfer_id}");
+    let event = event_name(EventKind::SftpProgress, transfer_id);
 
     let _ = app.emit(
         &event,
@@ -2260,7 +2261,7 @@ async fn do_download_dir(
     tokio::fs::create_dir_all(local)
         .await
         .map_err(|e| e.to_string())?;
-    let summary_event = format!("sftp-progress-{transfer_id}");
+    let summary_event = event_name(EventKind::SftpProgress, transfer_id);
     let mut idx: u32 = 0;
 
     let mut stack = vec![(remote.to_string(), local.to_path_buf())];
@@ -2324,7 +2325,7 @@ async fn do_upload_dir(
     controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
     let _ = backend.mkdir(remote).await; // ignorar si ya existe
-    let summary_event = format!("sftp-progress-{transfer_id}");
+    let summary_event = event_name(EventKind::SftpProgress, transfer_id);
     let mut idx: u32 = 0;
 
     let mut stack = vec![(local.to_path_buf(), remote.to_string())];

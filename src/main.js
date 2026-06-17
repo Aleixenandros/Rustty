@@ -30,6 +30,13 @@ import {
 } from "./i18n.js";
 import { renderMarkdownMinimal, toggleTaskInBody } from "./modules/markdown.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
+import { EVENT, eventName } from "./modules/ipc/events.js";
+/** @typedef {import("./modules/ipc/events.js").SshLogEvent} SshLogEvent */
+/** @typedef {import("./modules/ipc/events.js").SftpLogEvent} SftpLogEvent */
+/** @typedef {import("./modules/ipc/events.js").SftpProgressEvent} SftpProgressEvent */
+/** @typedef {import("./modules/ipc/events.js").SshTunnelTrafficEvent} SshTunnelTrafficEvent */
+/** @typedef {import("./modules/ipc/events.js").SshReconnectingEvent} SshReconnectingEvent */
+/** @typedef {import("./modules/ipc/events.js").TrayAction} TrayAction */
 
 // ═══════════════════════════════════════════════════════════════
 // ESTADO DE LA APLICACIÓN
@@ -3865,7 +3872,7 @@ async function updateTrayQuickLauncher() {
 }
 
 async function initTrayQuickLauncher() {
-  await listen("tray-action", (event) => {
+  await listen(EVENT.trayAction, (/** @type {{ payload: TrayAction }} */ event) => {
     const payload = event.payload || {};
     if (payload.action === "local-shell") {
       openLocalShell();
@@ -6929,7 +6936,7 @@ async function runConnectionTestFromModal() {
       return;
     }
 
-    _connectionTestUnlisten = await listen(`ssh-log-${testId}`, (event) => {
+    _connectionTestUnlisten = await listen(eventName("sshLog", testId), (event) => {
       appendConnectionTestLog(event.payload || {});
     });
     await invoke("ssh_test_connection", {
@@ -7671,7 +7678,7 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
     if (!sessionObj.private) recordRecentConnection(profileId);
 
     // Escuchar el cierre del proceso externo
-    const unlisten = await listen(`rdp-closed-${sessionId}`, () => {
+    const unlisten = await listen(eventName("rdpClosed", sessionId), () => {
       sessionObj.status = "closed";
       updateTabStatus(sessionId, "error");
       renderConnectionList();
@@ -8531,14 +8538,14 @@ async function reconnectLocalInPlace(s) {
     renderDashboard();
 
     const decoder = new TextDecoder();
-    const ul = await listen(`shell-data-${sessionId}`, (e) => {
+    const ul = await listen(eventName("shellData", sessionId), (e) => {
       const text = decoder.decode(new Uint8Array(e.payload));
       if (text) {
         enqueueTerminalOutput(s, text);
         markTabActivity(sessionId);
       }
     });
-    const ulClose = await listen(`shell-closed-${sessionId}`, () => {
+    const ulClose = await listen(eventName("shellClosed", sessionId), () => {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
       renderDashboard();
@@ -9763,7 +9770,7 @@ async function registerSshListeners(sessionId, terminal) {
   const decoder = new TextDecoder();
   const ul = [];
 
-  ul.push(await listen(`ssh-data-${sessionId}`, (e) => {
+  ul.push(await listen(eventName("sshData", sessionId), (e) => {
     const s = sessions.get(sessionId);
     const text = decoder.decode(new Uint8Array(e.payload));
     const filtered = filterSuppressedTerminalOutput(s, text);
@@ -9774,11 +9781,11 @@ async function registerSshListeners(sessionId, terminal) {
     }
   }));
 
-  ul.push(await listen(`ssh-log-${sessionId}`, (e) => {
+  ul.push(await listen(eventName("sshLog", sessionId), (/** @type {{ payload: SshLogEvent }} */ e) => {
     appendConnectionLog(sessionId, e.payload || {});
   }));
 
-  ul.push(await listen(`ssh-connected-${sessionId}`, () => {
+  ul.push(await listen(eventName("sshConnected", sessionId), () => {
     const s = sessions.get(sessionId);
     if (s) s.status = "connected";
     // Apertura automática de SFTP si se pidió desde un tile fijado del dashboard.
@@ -9816,7 +9823,7 @@ async function registerSshListeners(sessionId, terminal) {
     startProfileAutoTunnels(sessionId);
   }));
 
-  ul.push(await listen(`ssh-error-${sessionId}`, (e) => {
+  ul.push(await listen(eventName("sshError", sessionId), (e) => {
     const s = sessions.get(sessionId);
     if (s) s.status = "error";
     const message = String(e.payload || "Error SSH");
@@ -9841,7 +9848,7 @@ async function registerSshListeners(sessionId, terminal) {
     markTabActivity(sessionId, { kind: "disconnect" });
   }));
 
-  ul.push(await listen(`ssh-reconnecting-${sessionId}`, (e) => {
+  ul.push(await listen(eventName("sshReconnecting", sessionId), (/** @type {{ payload: SshReconnectingEvent }} */ e) => {
     const s = sessions.get(sessionId);
     if (s) s.status = "reconnecting";
     updateTabStatus(sessionId, "error");
@@ -9857,7 +9864,7 @@ async function registerSshListeners(sessionId, terminal) {
     markTabActivity(sessionId, { important: true });
   }));
 
-  ul.push(await listen(`ssh-closed-${sessionId}`, () => {
+  ul.push(await listen(eventName("sshClosed", sessionId), () => {
     const s = sessions.get(sessionId);
     if (s) s.status = "closed";
     persistScreenSnapshot(s);
@@ -9876,7 +9883,7 @@ async function registerSshListeners(sessionId, terminal) {
     renderConnectionList();
   }));
 
-  ul.push(await listen(`ssh-tunnel-traffic-${sessionId}`, (e) => {
+  ul.push(await listen(eventName("sshTunnelTraffic", sessionId), (/** @type {{ payload: SshTunnelTrafficEvent }} */ e) => {
     const s = sessions.get(sessionId);
     const payload = e.payload || {};
     const tunnel = s?.tunnels?.get(payload.id);
@@ -11178,14 +11185,14 @@ async function openLocalShell() {
     updateTabStatus(sessionId, "connected");
 
     const decoder = new TextDecoder();
-    const ul = await listen(`shell-data-${sessionId}`, (e) => {
+    const ul = await listen(eventName("shellData", sessionId), (e) => {
       const text = decoder.decode(new Uint8Array(e.payload));
       if (text) {
         enqueueTerminalOutput(s, text);
         markTabActivity(sessionId);
       }
     });
-    const ulClose = await listen(`shell-closed-${sessionId}`, () => {
+    const ulClose = await listen(eventName("shellClosed", sessionId), () => {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
       showReconnectOverlay(sessionId, "Consola cerrada");
@@ -11327,7 +11334,7 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
   // Preasignar sessionId y registrar listener antes de invocar el connect
   // para no perder los eventos tempranos de etapas de conexión.
   const sftpSessionId = crypto.randomUUID();
-  const ulSftpLog = await listen(`sftp-log-${sftpSessionId}`, (ev) => {
+  const ulSftpLog = await listen(eventName("sftpLog", sftpSessionId), (/** @type {{ payload: SftpLogEvent }} */ ev) => {
     const payload = ev.payload || {};
     const status = payload.status === "ok" || payload.status === "error" ? payload.status : "running";
     if (!payload.message) return;
@@ -11435,7 +11442,7 @@ async function toggleSftpElevated(sessionId) {
 
   // Listener temprano para que las etapas de la reconexión aparezcan en el log.
   const newSftpSessionId = crypto.randomUUID();
-  const ulSftpLog = await listen(`sftp-log-${newSftpSessionId}`, (ev) => {
+  const ulSftpLog = await listen(eventName("sftpLog", newSftpSessionId), (/** @type {{ payload: SftpLogEvent }} */ ev) => {
     const payload = ev.payload || {};
     const status = payload.status === "ok" || payload.status === "error" ? payload.status : "running";
     if (!payload.message) return;
@@ -11471,7 +11478,7 @@ async function toggleSftpElevated(sessionId) {
     // Intentar volver al modo previo para no dejar el panel sin sesión
     try {
       const fallbackSftpSessionId = crypto.randomUUID();
-      const ulFallback = await listen(`sftp-log-${fallbackSftpSessionId}`, (ev) => {
+      const ulFallback = await listen(eventName("sftpLog", fallbackSftpSessionId), (/** @type {{ payload: SftpLogEvent }} */ ev) => {
         const payload = ev.payload || {};
         const status = payload.status === "ok" || payload.status === "error" ? payload.status : "running";
         if (!payload.message) return;
@@ -13280,7 +13287,7 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
   const rowSide = direction === "upload" ? "local" : "remote";
   const rowName = name;
   setSftpRowProgress(panel, rowSide, rowName, 0, true);
-  const ul = await listen(`sftp-progress-${transferId}`, (ev) => {
+  const ul = await listen(eventName("sftpProgress", transferId), (/** @type {{ payload: SftpProgressEvent }} */ ev) => {
     updateTransfer(transferEl, ev.payload);
     const { transferred = 0, total = 0, done = false } = ev.payload || {};
     const pct = total > 0 ? Math.min(100, Math.round((transferred / total) * 100)) : (done ? 100 : 0);

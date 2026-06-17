@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.29.0"
+version = "1.30.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -20,6 +20,10 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 # Persistencia automática de tamaño y posición de la ventana entre ejecuciones
 tauri-plugin-window-state = "2"
+# Logs técnicos de diagnóstico a fichero con rotación acotada (no contenido de
+# terminal ni secretos). Nivel Debug en dev, Info en release. `log` es la fachada.
+tauri-plugin-log = "2"
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # russh + russh-sftp: cliente SSH/SFTP puro en Rust. Lo usan tanto el shell
