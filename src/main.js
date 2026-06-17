@@ -13289,9 +13289,19 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
   setSftpRowProgress(panel, rowSide, rowName, 0, true);
   const ul = await listen(eventName("sftpProgress", transferId), (/** @type {{ payload: SftpProgressEvent }} */ ev) => {
     updateTransfer(transferEl, ev.payload);
-    const { transferred = 0, total = 0, done = false } = ev.payload || {};
+    const { transferred = 0, total = 0, done = false, current, filesDone, filesTotal } = ev.payload || {};
     const pct = total > 0 ? Math.min(100, Math.round((transferred / total) * 100)) : (done ? 100 : 0);
     setSftpRowProgress(panel, rowSide, rowName, pct, !done);
+    // Carpetas (estilo FileZilla): mostrar el archivo/subcarpeta en curso + contador.
+    if (current && !done) {
+      const detailEl = transferEl.querySelector(".sftp-transfer-detail");
+      if (detailEl) {
+        const verb = (transferEl.dataset.label || "").startsWith("⬇") ? "Descargando" : "Subiendo";
+        const counter = filesTotal > 0 ? ` (${filesDone || 0}/${filesTotal})` : "";
+        detailEl.textContent = `${verb}: ${current}${counter}`;
+        detailEl.title = current;
+      }
+    }
   });
 
   try {

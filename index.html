@@ -412,6 +412,7 @@
       </button>
 
       <!-- Solo cuando el clic fue sobre una conexión -->
+      <!-- Grupo 1 · Conectar (lo más frecuente) -->
       <div class="ctx-sep ctx-conn-only hidden"></div>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="connect">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span data-i18n="ctx.connect">Conectar</span>
@@ -432,20 +433,26 @@
       <button class="ctx-item ctx-conn-only ctx-restore-only hidden" data-ctx="connect-restore" id="ctx-connect-restore">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-restore"/></svg></span><span data-i18n="ctx.connect_restore">Conectar y restaurar pantalla anterior</span>
       </button>
-      <button class="ctx-item ctx-conn-only hidden" data-ctx="wake-on-lan">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-power"/></svg></span><span data-i18n="ctx.wake_on_lan">Despertar equipo</span>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="connect-overrides">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span data-i18n="ctx.connect_overrides">Conectar con cambios…</span>
       </button>
-      <button class="ctx-item ctx-conn-only hidden" data-ctx="new-tunnel">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span><span data-i18n="ctx.new_tunnel">Nuevo túnel…</span>
-      </button>
+
+      <!-- Grupo 2 · Editar y organizar -->
+      <div class="ctx-sep ctx-conn-only hidden"></div>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="edit-conn">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="ctx.edit">Editar</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="duplicate-conn">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span data-i18n="ctx.duplicate">Duplicar</span>
       </button>
-      <button class="ctx-item ctx-conn-only hidden" data-ctx="connect-overrides">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span data-i18n="ctx.connect_overrides">Conectar con cambios…</span>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-favorite">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-star"/></svg></span><span data-i18n="ctx.toggle_favorite">Marcar / desmarcar como favorito</span>
+      </button>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-pinned">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-pin"/></svg></span><span data-i18n="ctx.toggle_pinned">Anclar / desanclar del dashboard</span>
+      </button>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-template">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span id="ctx-template-label" data-i18n="templates.ctx_mark">Usar como plantilla</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="edit-note">
         <span class="ctx-icon">
@@ -463,24 +470,30 @@
           </svg>
         </span><span data-i18n="ctx.delete_note">Eliminar nota</span>
       </button>
+
+      <!-- Grupo 3 · Red y avanzado -->
+      <div class="ctx-sep ctx-conn-only hidden"></div>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="new-tunnel">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span><span data-i18n="ctx.new_tunnel">Nuevo túnel…</span>
+      </button>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="wake-on-lan">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-power"/></svg></span><span data-i18n="ctx.wake_on_lan">Despertar equipo</span>
+      </button>
       <button class="ctx-item ctx-conn-only ctx-promote-only hidden" data-ctx="promote-master">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-key"/></svg></span><span data-i18n="ctx.promote_master">Promover a credencial maestra…</span>
       </button>
-      <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-favorite">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-star"/></svg></span><span data-i18n="ctx.toggle_favorite">Marcar / desmarcar como favorito</span>
-      </button>
-      <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-pinned">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-pin"/></svg></span><span data-i18n="ctx.toggle_pinned">Anclar / desanclar del dashboard</span>
-      </button>
-      <button class="ctx-item ctx-conn-only hidden" data-ctx="toggle-template">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span id="ctx-template-label" data-i18n="templates.ctx_mark">Usar como plantilla</span>
-      </button>
+
+      <!-- Grupo 4 · Orden en la lista -->
+      <div class="ctx-sep ctx-conn-only hidden"></div>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="move-conn-up">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></span><span data-i18n="ctx.move_up">Mover arriba</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="move-conn-down">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-down"/></svg></span><span data-i18n="ctx.move_down">Mover abajo</span>
       </button>
+
+      <!-- Grupo 5 · Destructivo -->
+      <div class="ctx-sep ctx-conn-only hidden"></div>
       <button class="ctx-item danger ctx-conn-only hidden" data-ctx="delete-conn">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></span><span data-i18n="ctx.delete">Eliminar</span>
       </button>
@@ -537,6 +550,13 @@
          MENÚ CONTEXTUAL (clic derecho en una pestaña)
     ══════════════════════════════════════════════════════ -->
     <div id="tab-context-menu" class="ctx-menu hidden">
+      <!-- Grupo 1 · Edición rápida de la pestaña -->
+      <button class="ctx-item" data-tabctx="rename">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="tabctx.rename">Renombrar pestaña…</span>
+      </button>
+      <button class="ctx-item tabctx-pin" data-tabctx="pin">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-pin"/></svg></span><span class="tabctx-pin-label" data-i18n="tabctx.pin">Anclar pestaña</span>
+      </button>
       <button class="ctx-item" data-tabctx="duplicate">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span data-i18n="tabctx.duplicate">Duplicar pestaña</span>
       </button>
@@ -544,7 +564,7 @@
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span data-i18n="tabctx.duplicate_overrides">Duplicar con cambios…</span>
       </button>
 
-      <!-- Acciones de división/vista (visibilidad calculada al abrir el menú) -->
+      <!-- Grupo 2 · Acciones de división/vista (visibilidad calculada al abrir el menú) -->
       <div class="ctx-sep tabctx-view-sep hidden"></div>
       <button class="ctx-item tabctx-view-add hidden" data-tabctx="view-add">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-view-add"/></svg></span><span data-i18n="tabctx.view_add">Añadir a la vista actual</span>
@@ -568,17 +588,14 @@
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-grid"/></svg></span><span data-i18n="tabctx.layout_grid">Distribuir en rejilla</span>
       </button>
 
+      <!-- Grupo 3 · Exportar -->
       <div class="ctx-sep"></div>
       <button class="ctx-item tabctx-export-history" data-tabctx="export-history">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-export-tray"/></svg></span><span data-i18n="tabctx.export_history">Exportar historial…</span>
       </button>
+
+      <!-- Grupo 4 · Cerrar pestañas -->
       <div class="ctx-sep"></div>
-      <button class="ctx-item" data-tabctx="rename">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="tabctx.rename">Renombrar pestaña…</span>
-      </button>
-      <button class="ctx-item tabctx-pin" data-tabctx="pin">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-pin"/></svg></span><span class="tabctx-pin-label" data-i18n="tabctx.pin">Anclar pestaña</span>
-      </button>
       <button class="ctx-item" data-tabctx="close">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></span><span data-i18n="tabctx.close">Cerrar</span>
       </button>

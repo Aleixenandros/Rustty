@@ -2248,6 +2248,85 @@ async fn auto_rename_remote_path(backend: &mut dyn FileTransfer, remote: &str) -
 /// preservando la estructura. Cada archivo emite progreso en su propio evento
 /// `sftp-progress-{transfer_id}-{idx}` y al final se emite el resumen en
 /// `sftp-progress-{transfer_id}` con `done: true`.
+/// Emite un evento de progreso de **transferencia de carpeta** sobre el
+/// `transfer_id` de la carpeta (no el del archivo individual). Lleva el archivo
+/// que se está transfiriendo ahora (`current`, ruta relativa a la raíz) y el
+/// contador `filesDone`/`filesTotal`, además de los bytes agregados para que la
+/// barra/velocidad/ETA de la fila reflejen el total de la carpeta. Estilo
+/// FileZilla: el usuario ve qué subcarpeta/archivo va transfiriéndose.
+fn emit_dir_progress(
+    app: &AppHandle,
+    event: &str,
+    bytes_done: u64,
+    bytes_total: u64,
+    current: &str,
+    files_done: u32,
+    files_total: u32,
+) {
+    let _ = app.emit(
+        event,
+        serde_json::json!({
+            "transferred": bytes_done,
+            "total": bytes_total,
+            "done": false,
+            "kind": "dir",
+            "current": current,
+            "filesDone": files_done,
+            "filesTotal": files_total,
+        }),
+    );
+}
+
+/// Cuenta archivos y bytes de un árbol local (mismos criterios que el bucle de
+/// subida: solo archivos regulares, recursión en directorios, symlinks fuera).
+async fn count_local_tree(root: &Path) -> (u32, u64) {
+    let mut files: u32 = 0;
+    let mut bytes: u64 = 0;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(mut read) = tokio::fs::read_dir(&dir).await else {
+            continue;
+        };
+        while let Ok(Some(entry)) = read.next_entry().await {
+            let Ok(ft) = entry.file_type().await else {
+                continue;
+            };
+            if ft.is_dir() {
+                stack.push(entry.path());
+            } else if ft.is_file() {
+                files += 1;
+                if let Ok(meta) = entry.metadata().await {
+                    bytes += meta.len();
+                }
+            }
+        }
+    }
+    (files, bytes)
+}
+
+/// Cuenta archivos y bytes de un árbol remoto recorriéndolo con `list_dir`
+/// (mismos criterios que el bucle de descarga). Hace un recorrido extra de
+/// listados; aceptable para mostrar totales de progreso de carpeta.
+async fn count_remote_tree(backend: &mut dyn FileTransfer, root: &str) -> (u32, u64) {
+    let mut files: u32 = 0;
+    let mut bytes: u64 = 0;
+    let mut stack = vec![root.to_string()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = backend.list_dir(&dir).await else {
+            continue;
+        };
+        for e in entries {
+            if e.is_dir {
+                stack.push(e.path.clone());
+            } else if !e.is_symlink {
+                files += 1;
+                bytes += e.size;
+            }
+        }
+    }
+    (files, bytes)
+}
+
 async fn do_download_dir(
     backend: &mut dyn FileTransfer,
     remote: &str,
@@ -2263,6 +2342,12 @@ async fn do_download_dir(
         .map_err(|e| e.to_string())?;
     let summary_event = event_name(EventKind::SftpProgress, transfer_id);
     let mut idx: u32 = 0;
+
+    // Pre-conteo del árbol remoto para mostrar archivo actual + N/total.
+    let (files_total, bytes_total) = count_remote_tree(backend, remote).await;
+    let mut files_done: u32 = 0;
+    let mut bytes_done: u64 = 0;
+    emit_dir_progress(app, &summary_event, 0, bytes_total, "", 0, files_total);
 
     let mut stack = vec![(remote.to_string(), local.to_path_buf())];
     while let Some((rdir, ldir)) = stack.pop() {
@@ -2288,6 +2373,19 @@ async fn do_download_dir(
                         }
                     }
                 }
+                let rel = {
+                    let r = e.path.strip_prefix(remote).unwrap_or(&e.path).trim_start_matches('/');
+                    if r.is_empty() { e.name.clone() } else { r.to_string() }
+                };
+                emit_dir_progress(
+                    app,
+                    &summary_event,
+                    bytes_done,
+                    bytes_total,
+                    &rel,
+                    files_done + 1,
+                    files_total,
+                );
                 idx += 1;
                 let sub_id = format!("{transfer_id}-{idx}");
                 backend
@@ -2300,13 +2398,16 @@ async fn do_download_dir(
                         controls,
                     )
                     .await?;
+                bytes_done += e.size;
+                files_done += 1;
             }
         }
     }
     let _ = app.emit(
         &summary_event,
         serde_json::json!({
-            "transferred": idx as u64, "total": idx as u64, "done": true, "kind": "dir",
+            "transferred": bytes_total, "total": bytes_total, "done": true, "kind": "dir",
+            "filesDone": files_total, "filesTotal": files_total,
         }),
     );
     Ok(())
@@ -2327,6 +2428,12 @@ async fn do_upload_dir(
     let _ = backend.mkdir(remote).await; // ignorar si ya existe
     let summary_event = event_name(EventKind::SftpProgress, transfer_id);
     let mut idx: u32 = 0;
+
+    // Pre-conteo para conocer el total (estilo FileZilla: archivo actual + N/total).
+    let (files_total, bytes_total) = count_local_tree(local).await;
+    let mut files_done: u32 = 0;
+    let mut bytes_done: u64 = 0;
+    emit_dir_progress(app, &summary_event, 0, bytes_total, "", 0, files_total);
 
     let mut stack = vec![(local.to_path_buf(), remote.to_string())];
     while let Some((ldir, rdir)) = stack.pop() {
@@ -2356,6 +2463,21 @@ async fn do_upload_dir(
                         }
                     }
                 }
+                let fsize = entry.metadata().await.map(|m| m.len()).unwrap_or(0);
+                let rel = path
+                    .strip_prefix(local)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                emit_dir_progress(
+                    app,
+                    &summary_event,
+                    bytes_done,
+                    bytes_total,
+                    &rel,
+                    files_done + 1,
+                    files_total,
+                );
                 idx += 1;
                 let sub_id = format!("{transfer_id}-{idx}");
                 backend
@@ -2368,13 +2490,16 @@ async fn do_upload_dir(
                         controls,
                     )
                     .await?;
+                bytes_done += fsize;
+                files_done += 1;
             }
         }
     }
     let _ = app.emit(
         &summary_event,
         serde_json::json!({
-            "transferred": idx as u64, "total": idx as u64, "done": true, "kind": "dir",
+            "transferred": bytes_total, "total": bytes_total, "done": true, "kind": "dir",
+            "filesDone": files_total, "filesTotal": files_total,
         }),
     );
     Ok(())

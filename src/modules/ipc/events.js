@@ -90,11 +90,14 @@ export function eventName(kind, suffix) {
 
 /**
  * @typedef {object} SftpProgressEvent
- * @property {number} transferred Bytes transferidos hasta ahora.
+ * @property {number} transferred Bytes transferidos hasta ahora (agregado en carpetas).
  * @property {number} total Bytes totales esperados.
  * @property {boolean} done `true` cuando la transferencia ha terminado.
  * @property {boolean} [canceled] `true` si se canceló.
- * @property {string} [kind] `"dir"` en resúmenes de carpeta recursiva.
+ * @property {string} [kind] `"dir"` en transferencias/resúmenes de carpeta recursiva.
+ * @property {string} [current] Ruta relativa del archivo/subcarpeta que se transfiere ahora (solo carpetas).
+ * @property {number} [filesDone] Archivos completados hasta ahora (solo carpetas).
+ * @property {number} [filesTotal] Total de archivos de la carpeta (solo carpetas).
  */
 
 /**

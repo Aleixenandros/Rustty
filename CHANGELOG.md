@@ -2,6 +2,24 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.31.0] - 2026-06-17
+
+### Añadido
+
+- **SFTP: progreso por archivo al transferir carpetas** (estilo FileZilla): al
+  subir o descargar una carpeta con subcarpetas, la transferencia ya no muestra
+  solo un progreso global. Ahora la fila indica **qué archivo o subcarpeta se
+  está transfiriendo** en cada momento y un contador «(3/20)», con barra,
+  velocidad y tiempo restante calculados sobre el total de la carpeta.
+
+### Cambiado
+
+- **Menús contextuales reordenados por uso**: el menú de clic derecho sobre una
+  conexión se agrupa por bloques (conectar · editar y organizar · red y avanzado
+  · orden · eliminar) y «Conectar con cambios…» queda junto al resto de acciones
+  de conexión. En el menú de pestaña, las acciones rápidas (renombrar, anclar,
+  duplicar) suben al principio y las de cierre se agrupan al final.
+
 ## [1.30.0] - 2026-06-17
 
 ### Añadido
