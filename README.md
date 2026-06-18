@@ -180,6 +180,14 @@ Rustty necesita **WebKitGTK 4.1** y **libayatana-appindicator** en tiempo de eje
 
 ### Windows
 
+La forma recomendada es **winget**:
+
+```powershell
+winget install rustty
+```
+
+O descarga un binario directamente del release:
+
 - **MSI (`Rustty_<version>_x64.msi`)** — instalador tradicional. Doble clic y seguir el asistente.
 - **NSIS (`Rustty_<version>_x64-setup.exe`)** — instalador alternativo, más ligero.
 - **Portable (`Rustty_<version>_x64-portable.exe`)** — ejecutable único sin instalar, ideal para memorias USB o equipos bloqueados.

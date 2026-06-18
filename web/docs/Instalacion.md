@@ -63,6 +63,14 @@ Requiere el runtime `org.freedesktop.Platform 24.08`; si no lo tienes lo descarg
 
 En Windows 10 22H2 y Windows 11 el runtime **Microsoft Edge WebView2** viene preinstalado. Si tu sistema no lo tiene, el instalador MSI o NSIS lo descargará automáticamente.
 
+La forma recomendada es **winget**, que instala y actualiza Rustty con un solo comando:
+
+```powershell
+winget install rustty
+```
+
+También puedes descargar un binario directamente del release:
+
 - **MSI** (`Rustty_<version>_x64.msi`): instalador tradicional, doble clic y seguir. **Recomendado para actualizar**: al reinstalar sobre una versión anterior hace la actualización *in-place*, sin pasos extra.
 - **NSIS** (`Rustty_<version>_x64-setup.exe`): instalador alternativo, más ligero.
 - **Portable** (`Rustty_<version>_x64-portable.exe`): ejecutable único, ideal para USB o equipos bloqueados.

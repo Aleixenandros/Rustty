@@ -259,3 +259,37 @@ jobs:
           gh release edit "${GITHUB_REF_NAME}" \
             --draft=false \
             --repo "${GITHUB_REPOSITORY}"
+
+  # ── Publicar en winget (microsoft/winget-pkgs) ────────────────
+  # Va aquí como job dependiente y no en un workflow aparte disparado por
+  # `release:`, porque `publish_release` publica el release con el GITHUB_TOKEN
+  # y los eventos generados por ese token no disparan otros workflows. Al
+  # depender de `publish_release` garantizamos además que el MSI ya está subido.
+  # Requiere el secreto WINGET_TOKEN (PAT classic con scope public_repo); si
+  # falta, el job se omite con un aviso en lugar de fallar.
+  winget:
+    needs: publish_release
+    runs-on: ubuntu-latest
+    name: Publish to winget
+    env:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      - name: Comprobar token y calcular versión
+        id: prep
+        run: |
+          if [ -z "$WINGET_TOKEN" ]; then
+            echo "::warning::Falta el secreto WINGET_TOKEN; se omite la publicación en winget."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+          # winget usa la versión sin la «v» inicial del tag (v1.32.0 -> 1.32.0)
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Submit Rustty to winget-pkgs
+        if: steps.prep.outputs.skip != 'true'
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier:       rustty.Rustty
+          version:          ${{ steps.prep.outputs.version }}
+          release-tag:      ${{ github.ref_name }}
+          installers-regex: '_x64\.msi$'
+          token:            ${{ env.WINGET_TOKEN }}
