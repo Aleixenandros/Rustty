@@ -51,6 +51,7 @@ impl LocalShellManager {
         session_id: String,
         app_handle: AppHandle,
         on_data: Channel<Response>,
+        cwd: Option<String>,
         cols: u16,
         rows: u16,
     ) -> Result<(), String> {
@@ -81,8 +82,15 @@ impl LocalShellManager {
             cmd.env("LANG", "C.UTF-8");
             cmd.env("LC_CTYPE", "C.UTF-8");
         }
-        if let Some(home) = dirs::home_dir() {
-            cmd.cwd(home);
+        // cwd inicial: la ruta configurada si existe como directorio; en otro
+        // caso (vacía, inexistente o no es carpeta) caemos a la carpeta personal.
+        let resolved_cwd = cwd
+            .filter(|p| !p.trim().is_empty())
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_dir())
+            .or_else(dirs::home_dir);
+        if let Some(dir) = resolved_cwd {
+            cmd.cwd(dir);
         }
 
         let mut child = pair

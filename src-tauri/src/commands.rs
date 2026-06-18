@@ -552,10 +552,11 @@ pub fn local_shell_open(
     app_handle: AppHandle,
     on_data: Channel<Response>,
     session_id: String,
+    cwd: Option<String>,
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    shell_state.open(session_id, app_handle, on_data, cols, rows)
+    shell_state.open(session_id, app_handle, on_data, cwd, cols, rows)
 }
 
 /// Envía bytes al stdin del shell local

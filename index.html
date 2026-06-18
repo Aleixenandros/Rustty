@@ -1602,6 +1602,14 @@
               </div>
 
               <div class="settings-row">
+                <label for="pref-local-cwd" data-i18n="prefs_terminal.local_cwd">Carpeta inicial de la consola local</label>
+                <div class="settings-control">
+                  <input type="text" id="pref-local-cwd" placeholder="$HOME" data-i18n-placeholder="prefs_terminal.local_cwd_placeholder" />
+                </div>
+                <p class="settings-hint" data-i18n="prefs_terminal.local_cwd_hint">Carpeta donde se abren las consolas locales nuevas. Vacío = tu carpeta personal. Si la ruta no existe, se usa la carpeta personal.</p>
+              </div>
+
+              <div class="settings-row">
                 <label data-i18n="prefs_terminal.highlight_title">Resaltado por regex</label>
                 <p class="form-hint" data-i18n="prefs_terminal.highlight_hint">
                   Cada regla colorea las coincidencias del patrón en el buffer del terminal. Los matches que crucen un chunk de red no se resaltan.

@@ -2,6 +2,23 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.33.0] - 2026-06-18
+
+### Añadido
+
+- **Carpeta inicial de la consola local configurable**: nueva opción en
+  **Preferencias → Terminal** para elegir en qué carpeta se abren las consolas
+  locales nuevas. Vacío sigue usando tu carpeta personal; si la ruta indicada no
+  existe, se usa la carpeta personal como respaldo.
+
+### Seguridad
+
+- **Blindaje del seguimiento de carpeta (OSC 7)**: cuando el panel SFTP sigue al
+  terminal, los cambios de carpeta que llegan **durante la salida de un comando**
+  se ignoran. Así, mostrar un fichero manipulado (p. ej. `cat` de contenido no
+  confiable) ya no puede redirigir de forma silenciosa el panel de archivos a una
+  ruta arbitraria; solo se aceptan los cambios en la zona del prompt.
+
 ## [1.32.0] - 2026-06-18
 
 ### Cambiado

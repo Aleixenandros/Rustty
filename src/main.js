@@ -374,6 +374,10 @@ const DEFAULT_PREFS = {
   cursorStyle:     "block",   // "block" | "bar" | "underline"
   cursorBlink:     true,
   scrollback:      5000,
+  // Directorio inicial de las consolas locales nuevas. "" = $HOME (o el dir del
+  // usuario). Una ruta válida se usa como cwd al abrir/reabrir la consola; si no
+  // existe, el backend cae a $HOME.
+  localShellCwd:   "",
   bell:            "none",    // "none" | "visual" | "sound"
   // KeePass: rutas persistentes (sin contraseña maestra)
   keepassPath:     "",
@@ -1504,6 +1508,8 @@ function openSettingsModal() {
   if (_ligEl) _ligEl.checked = !!prefs.terminalLigatures;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
   document.getElementById("pref-bell").value                = prefs.bell;
+  const _localCwdEl = document.getElementById("pref-local-cwd");
+  if (_localCwdEl) _localCwdEl.value = prefs.localShellCwd || "";
   renderHighlightRulesEditor();
 
   // Marcar el radio + .selected correspondientes al tema de UI actual
@@ -2740,6 +2746,7 @@ function savePrefsFromModal() {
     terminalLigatures: !!document.getElementById("pref-terminal-ligatures")?.checked,
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     bell:            document.getElementById("pref-bell").value,
+    localShellCwd:   (document.getElementById("pref-local-cwd")?.value || "").trim(),
     uiDensity:       (document.getElementById("pref-ui-density")?.value === "compact" ? "compact" : "comfortable"),
     uiZoom:          clampUiZoom(Number(previousPrefs.uiZoom ?? 1)),
     colorBlindSafe:  !!document.getElementById("pref-color-blind-safe")?.checked,
@@ -8543,6 +8550,7 @@ async function reconnectLocalInPlace(s) {
     await invoke("local_shell_open", {
       sessionId,
       onData: dataChannel,
+      cwd: prefs.localShellCwd || null,
       cols: s.terminal.cols,
       rows: s.terminal.rows,
     });
@@ -9522,6 +9530,13 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   terminal.parser.registerOscHandler(7, (data) => {
     const m = /^file:\/\/[^/]*(\/.*)$/.exec(data);
     if (!m) return false;
+    // Blindaje: si el shell emite OSC 133 y estamos en plena salida de un
+    // comando, ignoramos el OSC 7. Un `cat` de contenido manipulado podría
+    // inyectarlo para redirigir silenciosamente el panel SFTP a una ruta
+    // arbitraria. El OSC 7 legítimo (hook de `injectOsc7Setup`) se emite en el
+    // prompt, fuera de esa ventana. Shells sin OSC 133 mantienen el
+    // comportamiento best-effort (`_inCommandOutput` queda en falsy).
+    if (sessionObj._inCommandOutput) return true;
     try {
       sessionObj.remoteCwd = decodeURIComponent(m[1]);
     } catch { sessionObj.remoteCwd = m[1]; }
@@ -9541,6 +9556,16 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   // marker correspondiente. Slice estético #15.
   terminal.parser.registerOscHandler(133, (data) => {
     const kind = (data || "")[0];
+    // Estado semántico para blindar OSC 7 (ver el handler de OSC 7): mientras
+    // dura la salida de un comando (`C`…`D`) no confiamos en los cambios de cwd,
+    // porque podrían venir inyectados en contenido no confiable. `A` (prompt
+    // start), `B` (command start) y `D` (command end) nos devuelven a la zona
+    // segura del prompt.
+    if (kind === "C") {
+      sessionObj._inCommandOutput = true;
+    } else if (kind === "D" || kind === "A" || kind === "B") {
+      sessionObj._inCommandOutput = false;
+    }
     if (kind === "A") {
       try {
         // Dispose del marker/decoración previos.
@@ -11235,6 +11260,7 @@ async function openLocalShell() {
     await invoke("local_shell_open", {
       sessionId,
       onData: dataChannel,
+      cwd: prefs.localShellCwd || null,
       cols: s.terminal.cols,
       rows: s.terminal.rows,
     });
