@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Espejo frontend (NO sensible) del motor de sustitución de plantillas.
  *
@@ -10,6 +11,16 @@
  * Reglas de parsing iguales al motor Rust: escape `$${...}` → literal `${...}`,
  * marcador desconocido/mal formado/sin cierre → literal, cuerpo leído hasta el
  * primer `}` sin anidamiento, y sustitución de una sola pasada (sin reescaneo).
+ */
+
+/**
+ * Contexto de cliente con los valores de las variables internas.
+ * @typedef {object} SubstContext
+ * @property {string} [host]
+ * @property {string|number} [port]
+ * @property {string} [user]
+ * @property {string} [profileName]
+ * @property {string} [workspace]
  */
 
 /** Placeholder de redacción para secretos/credenciales maestras (4 puntos). */
@@ -29,6 +40,8 @@ const INTERNALS = new Set([
 /**
  * Resuelve un marcador interno desde el contexto.
  * `date`/`time` se calculan en el instante de la sustitución.
+ * @param {string} name nombre del interno.
+ * @param {SubstContext} ctx contexto de cliente.
  * @returns {string|null} el valor, o null si no es un interno conocido.
  */
 function resolveInternal(name, ctx) {
@@ -52,7 +65,11 @@ function resolveInternal(name, ctx) {
   }
 }
 
-/** Fecha local `YYYY-MM-DD`. */
+/**
+ * Fecha local `YYYY-MM-DD`.
+ * @param {Date} d
+ * @returns {string}
+ */
 function formatDate(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -60,7 +77,11 @@ function formatDate(d) {
   return `${y}-${m}-${day}`;
 }
 
-/** Hora local `HH:MM:SS`. */
+/**
+ * Hora local `HH:MM:SS`.
+ * @param {Date} d
+ * @returns {string}
+ */
 function formatTime(d) {
   const h = String(d.getHours()).padStart(2, "0");
   const min = String(d.getMinutes()).padStart(2, "0");
@@ -70,6 +91,8 @@ function formatTime(d) {
 
 /**
  * Interpreta el cuerpo de un marcador `${cuerpo}` (sin llaves).
+ * @param {string} body cuerpo del marcador, sin las llaves.
+ * @param {SubstContext} ctx contexto de cliente.
  * @returns {string|null} el texto de reemplazo, o null si debe quedar literal.
  */
 function resolveBody(body, ctx) {
@@ -158,7 +181,7 @@ export function substituteWith(template, resolve) {
 /**
  * Previsualización NO sensible de una plantilla.
  * @param {string} template plantilla con marcadores `${...}`.
- * @param {object} ctx contexto con los internos
+ * @param {SubstContext} [ctx] contexto con los internos
  *   ({ host, port, user, profileName, workspace }).
  * @returns {string} texto con los internos resueltos y secret/master
  *   redactados; el resto de marcadores se conserva literal.

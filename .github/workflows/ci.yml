@@ -65,6 +65,12 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
         continue-on-error: true
 
+      - name: Lint (eslint)
+        run: npm run lint
+
+      - name: Typecheck (tsc)
+        run: npm run typecheck
+
       - name: Build frontend
         run: npm run build
 
@@ -77,11 +83,13 @@ jobs:
         run: cargo test --locked
 
   # ── Clippy ────────────────────────────────────────────────────────
-  # Arranca como INFORMATIVO (continue-on-error): hoy `cargo clippy
-  # --all-targets -- -D warnings` falla con ~21 warnings (map_or/is_none_or,
-  # needless_as_bytes, etc.). Coherente con el backlog «Habilitar clippy
-  # pedantic como aviso, no fallo». Cuando se limpien los warnings, quitar
-  # `continue-on-error` para hacerlo bloqueante.
+  # Ambos pasos son INFORMATIVOS (continue-on-error):
+  #   1. Baseline `-D warnings`: hoy falla con ~21 warnings (map_or/is_none_or,
+  #      needless_as_bytes, etc.). Cuando se limpien, quitar `continue-on-error`
+  #      para hacerlo bloqueante.
+  #   2. `-W clippy::pedantic`: aviso permanente (nunca bloqueante) para destapar
+  #      mejoras de estilo de cara al troceo de los god-files de backend.
+  # Coherente con el backlog «Habilitar clippy pedantic como aviso, no fallo».
   clippy:
     runs-on: ubuntu-latest
     name: Clippy (advisory)
@@ -110,9 +118,14 @@ jobs:
             libssl-dev \
             pkg-config
 
-      - name: cargo clippy
+      - name: cargo clippy (baseline)
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
+        continue-on-error: true
+
+      - name: cargo clippy (pedantic, advisory)
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -W clippy::pedantic
         continue-on-error: true
 
   # ── Regresión de plataforma: solo build JS + cargo check ──────────

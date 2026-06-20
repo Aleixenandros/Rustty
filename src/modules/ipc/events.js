@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Contrato de nombres de eventos IPC (frontend ⇄ backend).
  *

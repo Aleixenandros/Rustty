@@ -1,0 +1,17 @@
+{
+  "// jsconfig": "Type-checking incremental del frontend con `// @ts-check` + JSDoc, sin migrar a TypeScript. De momento solo cubre los módulos ya extraídos en src/modules/; main.js, i18n.js y styles.css quedan fuera hasta que el refactor por dominios los trocee. Ampliar `include` a medida que se extraigan módulos.",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/modules/**/*.js"],
+  "exclude": ["node_modules", "dist", "**/*.test.js"]
+}

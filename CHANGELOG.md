@@ -2,6 +2,25 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.34.0] - 2026-06-20
+
+### Cambiado
+
+- **Mantenimiento de dependencias**: el importador de Ásbrú deja de usar
+  `serde_yaml` (archivado) y pasa a `serde_yaml_ng`, su continuación mantenida con
+  el mismo formato YAML. Sin cambios de uso.
+- **Calidad del código reforzada**: se incorporan comprobación de tipos del
+  frontend (`// @ts-check` + JSDoc, `npm run typecheck`), un linter
+  (`eslint`, `npm run lint`) y un paso `clippy::pedantic` informativo en la
+  integración continua. Cambios internos, sin efecto visible en la app.
+
+### Corregido
+
+- **Sitio web — instrucciones de instalación**: la sección de instalación de la
+  portada y la página de descargas ya ofrecen **winget** en Windows y el
+  **instalador automático** (`install.sh`) en macOS, además de Linux. La
+  documentación de instalación se actualiza en consecuencia.
+
 ## [1.33.0] - 2026-06-18
 
 ### Añadido

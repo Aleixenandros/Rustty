@@ -103,7 +103,7 @@ fn split_frontmatter(raw: &str) -> (FrontMatter, String) {
     }
     let body: Vec<&str> = lines.collect();
     let body = body.join("\n");
-    let fm = serde_yaml::from_str::<FrontMatter>(&yaml).unwrap_or_default();
+    let fm = serde_yaml_ng::from_str::<FrontMatter>(&yaml).unwrap_or_default();
     (fm, body.trim_start_matches('\n').to_string())
 }
 
@@ -227,7 +227,7 @@ impl NotesManager {
             updated_at: doc.updated_at.clone(),
         };
         let yaml =
-            serde_yaml::to_string(&fm).map_err(|e| AppError::Serialization(e.to_string()))?;
+            serde_yaml_ng::to_string(&fm).map_err(|e| AppError::Serialization(e.to_string()))?;
         let body = doc.body.trim_end_matches('\n');
         let content = format!("---\n{yaml}---\n\n{body}\n");
         write_private_file(&self.path_for(&doc.profile_id), content.as_bytes())?;

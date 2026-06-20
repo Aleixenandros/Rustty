@@ -56,7 +56,7 @@ fn method_to_conn_type(method: &str) -> (String, Option<String>) {
     }
 }
 
-fn val_str(env: &serde_yaml::Value, key: &str) -> Option<String> {
+fn val_str(env: &serde_yaml_ng::Value, key: &str) -> Option<String> {
     env.get(key)
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
@@ -69,8 +69,8 @@ pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
     // Los errores se devuelven como códigos estables («code» o «code|detalle»)
     // para que el frontend los traduzca; ver `import_wizard.err_*` en i18n.js.
     let text = std::fs::read_to_string(&path).map_err(|e| format!("read|{e}"))?;
-    let doc: serde_yaml::Value =
-        serde_yaml::from_str(&text).map_err(|e| format!("yaml|{e}"))?;
+    let doc: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&text).map_err(|e| format!("yaml|{e}"))?;
 
     let envs = doc
         .get("environments")
@@ -80,7 +80,7 @@ pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
     // Indexa nodos por UUID y agrupa hijos por padre, preservando el orden de
     // aparición (Ásbrú no garantiza orden, pero así es estable).
     let mut by_parent: HashMap<String, Vec<String>> = HashMap::new();
-    let mut nodes: HashMap<String, serde_yaml::Value> = HashMap::new();
+    let mut nodes: HashMap<String, serde_yaml_ng::Value> = HashMap::new();
     let mut roots: Vec<String> = Vec::new();
 
     for (uuid_v, env) in envs.iter() {
@@ -98,7 +98,7 @@ pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
 
     fn build(
         uuid: &str,
-        nodes: &HashMap<String, serde_yaml::Value>,
+        nodes: &HashMap<String, serde_yaml_ng::Value>,
         by_parent: &HashMap<String, Vec<String>>,
     ) -> Option<AsbruNode> {
         let env = nodes.get(uuid)?;

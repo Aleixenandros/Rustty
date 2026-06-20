@@ -208,6 +208,8 @@ Salvedades:
 
 Las builds se firman con **Developer ID Application** y se notarizan con el servicio de Apple, así que Gatekeeper no muestra avisos en una instalación limpia.
 
+La forma más rápida es el instalador automático (ver [Instalación rápida con script](#instalación-rápida-con-script)): `curl -sSf https://rustty.es/install.sh | sh`. O descarga un binario directamente del release:
+
 - **DMG (`Rustty_<version>_aarch64.dmg`)**: abrir el `.dmg` y arrastrar `Rustty.app` a `Aplicaciones`.
 - **App bundle (`Rustty_aarch64.app.tar.gz`)**: descomprimir y ejecutar `Rustty.app`.
 

@@ -400,7 +400,7 @@ export async function applyMergedState(merged, ctx) {
   }
 
   // Tombstones
-  for (const [key, ts] of Object.entries(merged.tombstones || {})) {
+  for (const key of Object.keys(merged.tombstones || {})) {
     if (key.startsWith("profile:")) {
       const id = key.slice(8);
       if (localProfileIds.has(id)) {

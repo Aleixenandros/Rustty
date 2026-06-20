@@ -16,7 +16,6 @@ if (!versionRe.test(pkg.version)) {
 }
 
 const version = pkg.version;
-const tag = `v${version}`;
 
 async function updateTextFile(path, transform) {
   let current;

@@ -88,6 +88,16 @@ Si actualizas **manualmente** con un instalador:
 
 ## macOS (Apple Silicon)
 
+### Instalador automático
+
+El mismo script detecta macOS (Apple Silicon), descarga el último release e instala `Rustty.app` en `~/Applications`:
+
+```bash
+curl -sSf https://rustty.es/install.sh | sh
+```
+
+O descarga un binario directamente del release:
+
 - **DMG** (`Rustty_<version>_aarch64.dmg`): abrir el `.dmg` y arrastrar `Rustty.app` a **Aplicaciones**.
 - **App bundle** (`Rustty_aarch64.app.tar.gz`): descomprimir y ejecutar `Rustty.app`.
 
