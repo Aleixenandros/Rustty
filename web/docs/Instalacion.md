@@ -75,7 +75,7 @@ También puedes descargar un binario directamente del release:
 - **NSIS** (`Rustty_<version>_x64-setup.exe`): instalador alternativo, más ligero.
 - **Portable** (`Rustty_<version>_x64-portable.exe`): ejecutable único, ideal para USB o equipos bloqueados.
 
-> Los binarios de Windows aún **no están firmados**. Algunos antivirus pueden marcar un falso positivo. Puedes verificar el `sha256` publicado junto al release para confirmar que el fichero no ha sido alterado.
+> Los binarios de Windows aún **no están firmados** (la firma de código está en evaluación; ver la [política de firma de código](?page=Firma)). Mientras tanto, algún antivirus puede marcar un falso positivo: verifica el `sha256` publicado junto al release para confirmar que el fichero no ha sido alterado.
 
 ### Actualizar Rustty
 
@@ -111,6 +111,8 @@ Junto a cada artefacto se publica su `.sig` (firma del updater de Tauri) y la p�
 sha256sum Rustty_*_amd64.deb
 # comparar con el hash indicado en la release
 ```
+
+Para el detalle de cómo se firman los binarios y cómo verificarlos, consulta la [política de firma de código](?page=Firma).
 
 ## CLI SSH
 

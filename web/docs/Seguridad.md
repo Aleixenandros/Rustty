@@ -55,7 +55,9 @@ Antes de sobrescribir el estado remoto, Rustty crea snapshots históricos cifrad
 
 Si marcas **Contraseñas guardadas (cifradas E2E)**, Rustty lee del keyring local las contraseñas/passphrases guardadas, las mete en el estado cifrado y las restaura en el keyring local de otros equipos. Sin la passphrase de sync no se pueden descifrar.
 
-## Actualizaciones firmadas
+## Firma de código y actualizaciones
+
+Los binarios de **macOS** se firman con **Apple Developer ID** y se **notarizan** con Apple, así que Gatekeeper no muestra avisos en una instalación limpia. La firma de código de **Windows** está en evaluación; hasta entonces los instaladores de Windows se publican sin firma Authenticode y conviene verificar su `sha256`. Los detalles (mecanismos, roles, construcción verificable y cómo verificar una descarga) están en la [política de firma de código](?page=Firma).
 
 La auto-actualización (Windows, macOS y AppImage de Linux) está **firmada criptográficamente**. Cada artefacto publicado lleva una firma generada con una clave privada que solo vive en los secretos del CI del proyecto; la app incluye embebida la **clave pública** correspondiente. Antes de instalar una actualización, Rustty descarga el artefacto y su firma y la **verifica contra la clave pública**: si no cuadra (descarga manipulada o de origen no fiable), la actualización se rechaza. Por eso los ficheros `.sig` aparecen junto a cada binario en la página de releases: son firmas públicas, no exponen ningún secreto.
 

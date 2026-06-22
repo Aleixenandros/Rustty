@@ -22,14 +22,14 @@ Al tratarse de un proyecto mantenido de forma voluntaria, no se garantizan plazo
 
 ## Versiones soportadas
 
-Solo la última versión menor publicada recibe parches de seguridad. La versión actual es la línea **1.31.x** (`package.json` y `src-tauri/Cargo.toml` declaran `1.31.0`).
+Solo la última versión menor publicada recibe parches de seguridad. La versión actual es la línea **1.34.x** (`package.json` y `src-tauri/Cargo.toml` declaran `1.34.0`).
 
 | Versión | Soporte de seguridad |
 | ------- | -------------------- |
-| 1.29.x  | Sí                   |
-| < 1.29  | No                   |
+| 1.34.x  | Sí                   |
+| < 1.34  | No                   |
 
-Si usas una versión anterior, actualiza a la última 1.29.x para recibir correcciones.
+Si usas una versión anterior, actualiza a la última 1.34.x para recibir correcciones.
 
 ## Superficie de seguridad
 
@@ -73,6 +73,13 @@ Las siguientes garantías reflejan el comportamiento real del código y la docum
 ### Ejecución de comandos y SFTP elevado
 
 - El acceso SFTP a rutas privilegiadas (SFTP elevado) es **opt-in** y se realiza lanzando `sudo -n` sobre el binario `sftp-server` del servidor remoto. Requiere que el `sudoers` del servidor permita esa ejecución sin contraseña (`NOPASSWD`); Rustty no eleva privilegios por su cuenta.
+
+### Firma de código y actualizaciones
+
+- Los binarios de **macOS** se firman con **Apple Developer ID Application** y se **notarizan** con Apple. La firma de código de **Windows** está en evaluación; hasta entonces los instaladores de Windows se publican sin firma Authenticode y deben verificarse por su `sha256`.
+- Las **actualizaciones automáticas** (updater de Tauri) van firmadas con una clave **minisign**; la app verifica cada artefacto contra la clave pública embebida antes de instalarlo y rechaza los que no cuadren.
+- Las builds oficiales se construyen **solo desde el código fuente público** vía GitHub Actions; los binarios locales no se firman. Cada release requiere **aprobación manual** antes de firmarse.
+- El detalle completo (mecanismos, roles, build verificable y cómo verificar una descarga) está en [`CODE_SIGNING.md`](CODE_SIGNING.md).
 
 ## Fuera de alcance
 

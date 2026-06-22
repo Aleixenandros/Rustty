@@ -3,7 +3,7 @@
 > 🌐 Versión en español: [README.md](README.md)
 
 > ⚠️ **Notice**: this repository contains code and documentation generated in part with AI agents.
-> Contributions and/or criticism are welcome.
+> Contributions and/or criticism are welcome. When taking part, follow the [Code of Conduct](CODE_OF_CONDUCT.md); for how the binaries are signed see [`CODE_SIGNING.md`](CODE_SIGNING.md).
 
 **Rustty** is a cross-platform, modern and lightweight terminal client and connection manager, designed to deliver a smooth experience for administering remote servers. Built with **Rust** and **Tauri**, it combines the power of low-level tooling with a modern, agile web interface.
 
@@ -194,6 +194,8 @@ Or download a binary directly from the release:
 
 In all cases the **Microsoft Edge WebView2 Runtime** is required (already included in Windows 10 22H2 and Windows 11). If your system does not have it, the MSI/NSIS installer will download it automatically; for the portable build, install it manually from [here](https://developer.microsoft.com/microsoft-edge/webview2/).
 
+> Windows binaries are **not signed yet** (code signing is under evaluation; see [`CODE_SIGNING.md`](CODE_SIGNING.md)). In the meantime some antivirus may flag a false positive: verify the `sha256` published with the release.
+
 #### True portable mode
 
 When Rustty runs as `Rustty_<version>_x64-portable.exe` (filename with the `-portable.exe` suffix), it does **not** use `%APPDATA%`. It stores all configuration in a `.conf\com.rustty.app\` folder created automatically **next to the executable itself**. This includes `profiles.json` and other app data, so the USB drive remains *self-contained*: copy it to another machine and the configuration travels with it.
@@ -223,6 +225,8 @@ Alongside each artifact its `.sig` (Tauri updater signature) is published, and t
 sha256sum Rustty_*_amd64.deb
 # compare with the hash listed in the release
 ```
+
+The **macOS** binaries are signed with Apple Developer ID and notarized, and the **automatic updates** are signed with minisign and verified against the embedded public key. **Windows** code signing is under evaluation. The full signing model (mechanisms, roles, verifiable build and how to verify a download) is in [`CODE_SIGNING.md`](CODE_SIGNING.md).
 
 ## Technologies used
 

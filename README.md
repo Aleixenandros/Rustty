@@ -3,7 +3,7 @@
 > 🌐 English version: [README.en.md](README.en.md)
 
 > ⚠️ **Aviso**: este repositorio contiene código y documentación generados en parte con agentes de IA.
-> Las contribuciones y/o críticas son bienvenidas.
+> Las contribuciones y/o críticas son bienvenidas. Al participar, sigue el [Código de conducta](CODE_OF_CONDUCT.md); para la firma de los binarios consulta [`CODE_SIGNING.md`](CODE_SIGNING.md).
 
 **Rustty** es un cliente de terminal y gestor de conexiones multiplataforma, moderno y ligero, diseñado para ofrecer una experiencia fluida en la administración de servidores remotos. Construido con **Rust** y **Tauri**, combina la potencia de las herramientas de bajo nivel con una interfaz web moderna y ágil.
 
@@ -194,6 +194,8 @@ O descarga un binario directamente del release:
 
 En todos los casos se requiere **Microsoft Edge WebView2 Runtime** (ya incluido en Windows 10 22H2 y Windows 11). Si tu sistema no lo tiene, el instalador MSI/NSIS lo descargará automáticamente; para el portable, instálalo a mano desde [aquí](https://developer.microsoft.com/microsoft-edge/webview2/).
 
+> Los binarios de Windows **aún no están firmados** (la firma de código está en evaluación; ver [`CODE_SIGNING.md`](CODE_SIGNING.md)). Mientras tanto, algún antivirus puede marcar un falso positivo: verifica el `sha256` publicado en el release.
+
 #### Modo portable real
 
 Cuando Rustty se ejecuta como `Rustty_<version>_x64-portable.exe` (filename con sufijo `-portable.exe`), **no usa `%APPDATA%`**. Almacena toda la configuración en una carpeta `.conf\com.rustty.app\` creada automáticamente **junto al propio ejecutable**. Esto incluye `profiles.json` y otros datos de la app, así que el USB queda *self-contained*: cópialo a otro equipo y la configuración viaja con él.
@@ -223,6 +225,8 @@ Junto a cada artefacto se publica su `.sig` (firma del updater de Tauri) y la p�
 sha256sum Rustty_*_amd64.deb
 # comparar con el hash indicado en la release
 ```
+
+Los binarios de **macOS** están firmados con Apple Developer ID y notarizados, y las **actualizaciones automáticas** van firmadas con minisign y se verifican contra la clave pública embebida. La firma de código de **Windows** está en evaluación. El modelo de firma completo (mecanismos, roles, construcción verificable y cómo verificar una descarga) está en [`CODE_SIGNING.md`](CODE_SIGNING.md).
 
 ## Tecnologías utilizadas
 
