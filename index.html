@@ -5,29 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Rustty</title>
     <link rel="icon" type="image/png" href="/favicon.png" />
-    <!-- Anti-flash de tema: aplica la clase del tema guardado y marca el
-         documento como "booting" antes del primer pintado. El CSS de los temas
-         bundled se inyecta más tarde (registerBundledThemePacks), así que el
-         contenido permanece oculto mientras .booting esté presente; init() lo
-         retira cuando los temas ya están registrados y aplicados. -->
-    <script>
-      (function () {
-        try {
-          document.documentElement.classList.add("booting");
-          var p = JSON.parse(localStorage.getItem("rustty-prefs") || "null");
-          var t = (p && p.theme) ? p.theme : "system";
-          if (t === "system") {
-            t = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-          }
-          if (t && t !== "dark") document.documentElement.classList.add("theme-" + t);
-        } catch (e) {}
-        // Salvaguarda: si init() fallara antes de revelar, no dejar la app
-        // oculta indefinidamente.
-        setTimeout(function () {
-          document.documentElement.classList.remove("booting");
-        }, 3000);
-      })();
-    </script>
+    <!-- Anti-flash de tema (fichero externo, no inline, para que la CSP pueda
+         usar script-src 'self' sin 'unsafe-inline'). Bloquea el parseo y corre
+         antes del primer pintado: aplica la clase del tema guardado y marca el
+         documento como "booting"; el CSS mantiene #app oculto mientras esa
+         clase esté presente e init() (main.js) la retira tras aplicar los temas. -->
+    <script src="/boot.js"></script>
     <script type="module" src="/src/main.js"></script>
   </head>
   <body>

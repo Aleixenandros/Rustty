@@ -2,6 +2,19 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.35.0] - 2026-06-23
+
+### Seguridad
+
+- **Política de seguridad de contenido (CSP) explícita**: la ventana de la
+  aplicación restringe ahora de forma estricta qué recursos puede cargar y a qué
+  destinos puede conectarse, permitiendo solo lo imprescindible. Es un refuerzo
+  interno frente a contenido no confiable, sin cambios visibles en el uso.
+- **Escritura de archivos más robusta**: las exportaciones y los archivos
+  temporales se escriben de forma atómica y no pueden seguir un enlace simbólico
+  preparado, evitando archivos a medias o sobrescrituras inesperadas. Los nombres
+  de los temporales se sanean para que no puedan salirse de su carpeta.
+
 ## [1.34.0] - 2026-06-20
 
 ### Cambiado

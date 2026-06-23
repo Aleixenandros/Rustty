@@ -1126,37 +1126,95 @@ pub fn get_download_dir() -> Result<String, String> {
         .ok_or_else(|| "No se pudo determinar el directorio de descargas".into())
 }
 
+/// Sanea un nombre de fichero a su componente final, rechazando rutas
+/// absolutas, separadores y travesías (`..`). Defensa frente a path traversal
+/// cuando el frontend propone el nombre de un temporal: solo se acepta un
+/// único componente «normal» de ruta.
+fn sanitize_file_name(name: &str) -> Result<String, String> {
+    use std::path::Component;
+    let mut comps = std::path::Path::new(name).components();
+    match (comps.next(), comps.next()) {
+        (Some(Component::Normal(s)), None) => {
+            let s = s.to_string_lossy();
+            if s.is_empty() || s == "." || s == ".." {
+                Err("nombre de fichero no válido".into())
+            } else {
+                Ok(s.into_owned())
+            }
+        }
+        _ => Err("nombre de fichero no válido".into()),
+    }
+}
+
+/// Escritura atómica: vuelca a un temporal hermano y renombra sobre el destino.
+/// El `rename` reemplaza de golpe el fichero (o un symlink existente) por uno
+/// regular con el contenido nuevo, así que **no escribe a través de un enlace
+/// simbólico** preparado y no deja un fichero a medias si el proceso muere.
+fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    };
+    let stem = path
+        .file_name()
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "ruta sin nombre de fichero")
+        })?
+        .to_string_lossy()
+        .into_owned();
+    let tmp = dir.join(format!(".{}.rustty-{}.tmp", stem, uuid::Uuid::new_v4()));
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(data)?;
+        f.flush()?;
+    }
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
 /// Escribe un fichero binario en disco.
 /// Se usa para subidas vía input HTML: el frontend pasa los bytes leídos
 /// del File API y esta función los materializa en un path temporal que
-/// luego `sftp_upload` transfiere al servidor.
+/// luego `sftp_upload` transfiere al servidor. El nombre se sanea para que
+/// no pueda salirse de la carpeta de temporales (path traversal).
 #[tauri::command]
 pub fn write_temp_file(
     app_handle: AppHandle,
     name: String,
     data: Vec<u8>,
 ) -> Result<String, String> {
+    let safe_name = sanitize_file_name(&name)?;
     let dir = app_handle
         .path()
         .app_cache_dir()
         .map_err(|e| e.to_string())?
         .join("sftp-uploads");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(&name);
-    std::fs::write(&path, &data).map_err(|e| e.to_string())?;
+    let path = dir.join(&safe_name);
+    write_atomic(&path, &data).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Elimina un fichero del sistema (se usa tras subidas para limpiar temporales)
+/// Elimina un fichero del sistema (se usa tras subidas para limpiar temporales).
+/// `std::fs::remove_file` desenlaza el propio path: sobre un symlink borra el
+/// enlace, nunca su destino.
 #[tauri::command]
 pub fn remove_file(path: String) -> Result<(), String> {
     std::fs::remove_file(&path).map_err(|e| e.to_string())
 }
 
-/// Escribe texto (ej. JSON de export) a un path absoluto.
+/// Escribe texto (ej. JSON de export) a un path absoluto, de forma atómica
+/// (temporal + rename) para no dejar exports a medias ni escribir a través de
+/// un symlink preparado en el destino.
 #[tauri::command]
 pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
-    std::fs::write(&path, contents).map_err(|e| e.to_string())
+    write_atomic(std::path::Path::new(&path), contents.as_bytes()).map_err(|e| e.to_string())
 }
 
 /// Lee un fichero de texto (ej. JSON para import)
@@ -2143,5 +2201,79 @@ mod tests {
     fn run_shell_capture_propaga_codigo_de_error() {
         let out = run_shell_capture("exit 3").expect("ejecuta exit");
         assert_eq!(out.status.code(), Some(3));
+    }
+
+    fn unique_test_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("rustty-test-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("crea dir temporal de test");
+        dir
+    }
+
+    #[test]
+    fn sanitize_file_name_acepta_nombre_simple() {
+        assert_eq!(sanitize_file_name("informe.txt").unwrap(), "informe.txt");
+        assert_eq!(sanitize_file_name("a b c.log").unwrap(), "a b c.log");
+    }
+
+    #[test]
+    fn sanitize_file_name_rechaza_travesias_y_separadores() {
+        for malo in ["", ".", "..", "../evil", "a/b", "/etc/passwd", "sub/dir/x"] {
+            assert!(
+                sanitize_file_name(malo).is_err(),
+                "debería rechazar {malo:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn write_atomic_escribe_y_reemplaza_contenido() {
+        let dir = unique_test_dir("atomic");
+        let path = dir.join("datos.txt");
+        write_atomic(&path, b"primero").expect("primera escritura");
+        assert_eq!(std::fs::read(&path).unwrap(), b"primero");
+        write_atomic(&path, b"segundo mas largo").expect("sobrescritura");
+        assert_eq!(std::fs::read(&path).unwrap(), b"segundo mas largo");
+        // No deja temporales `.tmp` colgando en la carpeta.
+        let sobras = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".rustty-"))
+            .count();
+        assert_eq!(sobras, 0, "no deben quedar temporales");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_reemplaza_symlink_sin_seguirlo() {
+        let dir = unique_test_dir("symlink");
+        let target = dir.join("target");
+        std::fs::write(&target, b"DESTINO-ORIGINAL").expect("crea destino");
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&target, &link).expect("crea symlink");
+        write_atomic(&link, b"NUEVO").expect("escribe sobre el symlink");
+        // El destino real queda intacto (no se escribió a través del enlace).
+        assert_eq!(std::fs::read(&target).unwrap(), b"DESTINO-ORIGINAL");
+        // El path del enlace ahora es un fichero regular con el contenido nuevo.
+        assert_eq!(std::fs::read(&link).unwrap(), b"NUEVO");
+        assert!(!std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_file_sobre_symlink_no_borra_el_destino() {
+        let dir = unique_test_dir("rm-symlink");
+        let target = dir.join("target");
+        std::fs::write(&target, b"X").expect("crea destino");
+        let link = dir.join("link");
+        std::os::unix::fs::symlink(&target, &link).expect("crea symlink");
+        std::fs::remove_file(&link).expect("borra el enlace");
+        assert!(!link.exists(), "el enlace se borró");
+        assert!(target.exists(), "el destino sigue existiendo");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
