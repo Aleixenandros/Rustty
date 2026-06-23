@@ -30,7 +30,7 @@ jobs:
 
     steps:
       # ── Checkout ──────────────────────────────────────────────
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # ── Node.js ───────────────────────────────────────────────
       - name: Setup Node.js
