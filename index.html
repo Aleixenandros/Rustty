@@ -422,6 +422,9 @@
 
       <!-- Grupo 2 · Editar y organizar -->
       <div class="ctx-sep ctx-conn-only hidden"></div>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="rename-conn">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="ctx.connection_rename">Renombrar conexión</span>
+      </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="edit-conn">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="ctx.edit">Editar</span>
       </button>
@@ -1441,6 +1444,10 @@
               <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_credentials">Credenciales</span>
             </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="security">
+              <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/></svg></span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_security">Seguridad</span>
+            </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="commands">
               <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 9 12 4 17"/><line x1="12" y1="17" x2="20" y2="17"/></svg></span>
               <span class="prefs-nav-label" data-i18n="prefs_commands.tab">Comandos</span>
@@ -1488,28 +1495,11 @@
 
               <div class="settings-row">
                 <label class="checkbox-label">
-                  <input type="checkbox" id="pref-confirm-risky-paste" />
-                  <span data-i18n="prefs_terminal.confirm_risky_paste">Confirmar pegados peligrosos</span>
-                </label>
-                <p class="settings-hint" data-i18n="prefs_terminal.confirm_risky_paste_hint">Pide confirmación antes de pegar texto multilínea, muy largo o con caracteres de control</p>
-              </div>
-
-              <div class="settings-row">
-                <label class="checkbox-label">
                   <input type="checkbox" id="pref-share-command-history" />
                   <span data-i18n="prefs_terminal.share_command_history">Historial de comandos compartido entre pestañas</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_terminal.share_command_history_hint">Guarda los comandos tecleados en cualquier sesión y los ofrece desde el editor multilínea (Ctrl+Shift+E) en todas las pestañas. No se sincroniza en la nube.</p>
               </div>
-
-              <div class="settings-row">
-                <label class="checkbox-label">
-                  <input type="checkbox" id="pref-capture-screen" />
-                  <span data-i18n="prefs_terminal.capture_screen">Guardar pantalla para restaurar</span>
-                </label>
-                <p class="settings-hint" data-i18n="prefs_terminal.capture_screen_hint">Guarda en disco la salida de cada sesión SSH (no privada) para «Conectar y restaurar pantalla anterior». Puede contener datos sensibles; no se sincroniza.</p>
-              </div>
-
 
               <div class="settings-row settings-row-inline">
                 <label for="pref-font-family" data-i18n="prefs_terminal.font_family">Familia de fuente</label>
@@ -2054,6 +2044,76 @@
               <div class="shortcuts-list" id="shortcuts-list"></div>
             </section>
 
+            <!-- ── Seguridad ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="security">
+              <h3 class="prefs-panel-title" data-i18n="prefs_security.title">Seguridad</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_security.hint">Cómo gestiona Rustty las acciones sensibles. Aquí nunca se bloquea: tú eliges el comportamiento.</p>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-paste-password-broadcast" data-i18n="prefs_security.broadcast_paste">Pegar contraseña con broadcast activo</label>
+                <select id="pref-paste-password-broadcast">
+                  <option value="all" data-i18n="prefs_security.broadcast_paste_all">Difundir a todas las panes</option>
+                  <option value="active" data-i18n="prefs_security.broadcast_paste_active">Solo en la pane activa</option>
+                  <option value="ask" data-i18n="prefs_security.broadcast_paste_ask">Preguntar cada vez</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="prefs_security.broadcast_paste_hint">Qué hacer al pegar la contraseña del perfil (Ctrl+P) cuando el modo broadcast está replicando la entrada en varias panes.</p>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-confirm-risky-paste" />
+                  <span data-i18n="prefs_terminal.confirm_risky_paste">Confirmar pegados peligrosos</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.confirm_risky_paste_hint">Pide confirmación antes de pegar texto multilínea, muy largo o con caracteres de control</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-capture-screen" />
+                  <span data-i18n="prefs_terminal.capture_screen">Guardar pantalla para restaurar</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.capture_screen_hint">Guarda en disco la salida de cada sesión SSH (no privada) para «Conectar y restaurar pantalla anterior». Puede contener datos sensibles; no se sincroniza.</p>
+              </div>
+
+              <h3 class="prefs-panel-title" style="margin-top: 1.5rem;" data-i18n="prefs_known_hosts.title">Claves de host conocidas</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_known_hosts.hint">
+                Revisa las huellas registradas en <code>~/.ssh/known_hosts</code> y elimina entradas conflictivas sin editar el fichero a mano.
+              </p>
+              <div class="data-actions">
+                <button type="button" class="btn-secondary" id="btn-manage-known-hosts" data-i18n="prefs_known_hosts.manage">
+                  Gestionar known_hosts
+                </button>
+              </div>
+
+              <h3 class="prefs-panel-title" style="margin-top: 1.5rem;" data-i18n="prefs_session_logs.title">Logs de sesión</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_session_logs.hint">
+                Las sesiones con grabación activa vuelcan la salida del shell a ficheros de log. Define una retención para que no se acumulen indefinidamente.
+              </p>
+              <p class="form-hint warning" data-i18n="prefs_session_logs.warning">
+                ⚠️ Los logs pueden contener información sensible (comandos ejecutados y su salida). Guárdalos y bórralos con cuidado.
+              </p>
+
+              <p class="settings-hint" id="session-logs-stats" data-i18n="prefs_session_logs.stats_loading">Calculando…</p>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-session-log-max-age" data-i18n="prefs_session_logs.max_age">Edad máxima (días)</label>
+                <div class="settings-control">
+                  <input type="number" id="pref-session-log-max-age" min="1" step="1" data-i18n-placeholder="prefs_session_logs.no_limit" placeholder="Sin límite" />
+                </div>
+              </div>
+              <div class="settings-row settings-row-inline">
+                <label for="pref-session-log-max-mb" data-i18n="prefs_session_logs.max_total">Tamaño máximo total (MB)</label>
+                <div class="settings-control">
+                  <input type="number" id="pref-session-log-max-mb" min="1" step="1" data-i18n-placeholder="prefs_session_logs.no_limit" placeholder="Sin límite" />
+                </div>
+              </div>
+
+              <div class="data-actions">
+                <button type="button" class="btn-secondary" id="btn-session-logs-prune" data-i18n="prefs_session_logs.prune">Limpiar ahora</button>
+                <button type="button" class="btn-secondary" id="btn-session-logs-open" data-i18n="prefs_session_logs.open_folder">Abrir carpeta</button>
+              </div>
+            </section>
+
             <!-- ── Copias de seguridad ── -->
             <section class="prefs-panel" role="tabpanel" data-prefs-panel="data">
               <h3 class="prefs-panel-title" data-i18n="prefs_sync.title">Sincronización en la nube</h3>
@@ -2261,44 +2321,6 @@
                 <button type="button" class="btn-secondary" id="btn-import-external" data-i18n="prefs_import_external.open">
                   Importar datos de otros programas…
                 </button>
-              </div>
-
-              <h3 class="prefs-panel-title" style="margin-top: 1.5rem;" data-i18n="prefs_known_hosts.title">Claves de host conocidas</h3>
-              <p class="prefs-panel-hint" data-i18n="prefs_known_hosts.hint">
-                Revisa las huellas registradas en <code>~/.ssh/known_hosts</code> y elimina entradas conflictivas sin editar el fichero a mano.
-              </p>
-              <div class="data-actions">
-                <button type="button" class="btn-secondary" id="btn-manage-known-hosts" data-i18n="prefs_known_hosts.manage">
-                  Gestionar known_hosts
-                </button>
-              </div>
-
-              <h3 class="prefs-panel-title" style="margin-top: 1.5rem;" data-i18n="prefs_session_logs.title">Logs de sesión</h3>
-              <p class="prefs-panel-hint" data-i18n="prefs_session_logs.hint">
-                Las sesiones con grabación activa vuelcan la salida del shell a ficheros de log. Define una retención para que no se acumulen indefinidamente.
-              </p>
-              <p class="form-hint warning" data-i18n="prefs_session_logs.warning">
-                ⚠️ Los logs pueden contener información sensible (comandos ejecutados y su salida). Guárdalos y bórralos con cuidado.
-              </p>
-
-              <p class="settings-hint" id="session-logs-stats" data-i18n="prefs_session_logs.stats_loading">Calculando…</p>
-
-              <div class="settings-row settings-row-inline">
-                <label for="pref-session-log-max-age" data-i18n="prefs_session_logs.max_age">Edad máxima (días)</label>
-                <div class="settings-control">
-                  <input type="number" id="pref-session-log-max-age" min="1" step="1" data-i18n-placeholder="prefs_session_logs.no_limit" placeholder="Sin límite" />
-                </div>
-              </div>
-              <div class="settings-row settings-row-inline">
-                <label for="pref-session-log-max-mb" data-i18n="prefs_session_logs.max_total">Tamaño máximo total (MB)</label>
-                <div class="settings-control">
-                  <input type="number" id="pref-session-log-max-mb" min="1" step="1" data-i18n-placeholder="prefs_session_logs.no_limit" placeholder="Sin límite" />
-                </div>
-              </div>
-
-              <div class="data-actions">
-                <button type="button" class="btn-secondary" id="btn-session-logs-prune" data-i18n="prefs_session_logs.prune">Limpiar ahora</button>
-                <button type="button" class="btn-secondary" id="btn-session-logs-open" data-i18n="prefs_session_logs.open_folder">Abrir carpeta</button>
               </div>
             </section>
 

@@ -46,7 +46,7 @@ La barra de estado inferior muestra el directorio remoto como un **breadcrumb cl
 
 - Navegar carpetas locales y remotas.
 - Crear carpetas en cualquiera de los lados.
-- Renombrar ficheros o carpetas.
+- Renombrar ficheros o carpetas (con el botón de la fila, el menú contextual o pulsando **F2** sobre el elemento seleccionado).
 - Eliminar entradas.
 - Cambiar permisos cuando el backend lo permite.
 - Subir y descargar ficheros y **carpetas completas** con progreso.

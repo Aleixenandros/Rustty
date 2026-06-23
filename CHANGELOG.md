@@ -2,6 +2,35 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.36.0] - 2026-06-23
+
+### Añadido
+
+- **Pestaña «Seguridad» en Preferencias**: una sección dedicada que reúne las
+  opciones sensibles bajo un principio claro: Rustty nunca bloquea una acción,
+  siempre ofrece opciones y deja que tú elijas. Incluye el nuevo ajuste de
+  pegado de contraseña con broadcast y recoge, ya existentes, la confirmación de
+  pegados peligrosos, el guardado de pantalla para restaurar, la gestión de
+  `known_hosts` y la retención de logs de sesión.
+- **Renombrar con F2**: pulsa F2 para renombrar el archivo seleccionado en el
+  panel SFTP, o la conexión seleccionada en la barra lateral. El renombrado de
+  conexión también está disponible desde su menú contextual.
+
+### Cambiado
+
+- **Pegado de contraseña con broadcast activo**: al pegar la contraseña (Ctrl+P)
+  con el modo broadcast replicando la entrada en varias panes, ya no se impide la
+  acción. Una preferencia decide el comportamiento: difundir a todas las panes
+  (por defecto), pegar solo en la pane activa o preguntar en cada pegado.
+- **Selección con doble clic en el terminal**: ahora corta en los separadores de
+  campo habituales (`:` `@` `/` `=` `.` `|`) para aislar trozos en salidas densas
+  como las de `grep` o los logs. Los guiones siguen unidos (SHAs, kebab-case).
+
+### Corregido
+
+- Los diálogos de renombrar y eliminar carpeta mostraban la clave de traducción
+  en crudo (`sidebar.rename_folder`…) por un prefijo i18n incorrecto.
+
 ## [1.35.0] - 2026-06-23
 
 ### Seguridad

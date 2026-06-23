@@ -353,6 +353,12 @@ const DEFAULT_PREFS = {
   // restaurarla luego con «Conectar y restaurar pantalla anterior». Solo es la
   // salida visual; puede contener datos sensibles. Excluido de sync.
   captureScreen:   true,
+  // Pegado de contraseña (Ctrl+P) cuando el modo broadcast replica la entrada en
+  // varias panes. Filosofía: nunca bloquear; el usuario elige.
+  //   "all"    → difundir la contraseña a todas las panes del broadcast
+  //   "active" → pegarla solo en la pane enfocada
+  //   "ask"    → preguntar en cada pegado
+  pastePasswordBroadcast: "all", // "all" | "active" | "ask"
   sftpConflictPolicy: "ask",   // "ask" | "overwrite" | "skip" | "rename"
   sftpVerifySize:  false,
   // Máximo de peticiones SFTP simultáneas (handles en vuelo) por transferencia
@@ -1485,6 +1491,8 @@ function openSettingsModal() {
   if (shareHistEl) shareHistEl.checked = !!prefs.shareCommandHistory;
   const captureScreenEl = document.getElementById("pref-capture-screen");
   if (captureScreenEl) captureScreenEl.checked = prefs.captureScreen !== false;
+  const pastePwBcastEl = document.getElementById("pref-paste-password-broadcast");
+  if (pastePwBcastEl) pastePwBcastEl.value = normalizePastePasswordBroadcast(prefs.pastePasswordBroadcast);
   document.getElementById("pref-sftp-conflict-policy").value = normalizeSftpConflictPolicy(prefs.sftpConflictPolicy);
   document.getElementById("pref-sftp-verify-size").checked = !!prefs.sftpVerifySize;
   const maxConcEl = document.getElementById("pref-sftp-max-concurrent");
@@ -2722,6 +2730,9 @@ function savePrefsFromModal() {
     confirmRiskyPaste: document.getElementById("pref-confirm-risky-paste")?.checked ?? true,
     shareCommandHistory: !!document.getElementById("pref-share-command-history")?.checked,
     captureScreen: document.getElementById("pref-capture-screen")?.checked ?? true,
+    pastePasswordBroadcast: normalizePastePasswordBroadcast(
+      document.getElementById("pref-paste-password-broadcast")?.value,
+    ),
     sftpConflictPolicy: normalizeSftpConflictPolicy(
       document.getElementById("pref-sftp-conflict-policy")?.value,
     ),
@@ -5046,6 +5057,9 @@ function handleContextMenuAction(action) {
     case "new-tunnel":
       openTunnelForProfile(id);
       break;
+    case "rename-conn":
+      if (id) renameProfileById(id);
+      break;
     case "edit-conn":
       openEditConnectionModal(id);
       break;
@@ -5233,8 +5247,8 @@ async function renameFolder(folderPath, workspaceId = getActiveWorkspaceId()) {
   const parts = folderPath.split("/");
   const currentName = parts.at(-1);
   const newName = await promptTextValue({
-    title: t("sidebar.rename_folder"),
-    label: t("sidebar.folder_prompt_rename"),
+    title: t("ctx.rename_folder"),
+    label: t("ctx.folder_prompt_rename"),
     initialValue: currentName,
   });
   if (!newName || newName === currentName) return;
@@ -5282,6 +5296,36 @@ async function renameFolder(folderPath, workspaceId = getActiveWorkspaceId()) {
   toast(`Carpeta renombrada a "${newName.trim()}"`, "success");
 }
 
+// Renombrado rápido de una conexión (atajo F2 en la sidebar). Solo cambia el
+// nombre del perfil; el resto de la configuración se edita desde el modal.
+async function renameProfileById(profileId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+  const newName = await promptTextValue({
+    title: t("ctx.connection_rename"),
+    label: t("ctx.connection_prompt_rename"),
+    initialValue: profile.name || "",
+    submitLabel: t("ctx.connection_rename"),
+    validate: (v) => (v.trim() ? null : t("ctx.connection_prompt_rename")),
+  });
+  if (newName == null) return;
+  const trimmed = newName.trim();
+  if (!trimmed || trimmed === profile.name) return;
+
+  const updated = { ...profile, name: trimmed, updated_at: new Date().toISOString() };
+  try {
+    await invoke("save_profile", { profile: updated });
+  } catch (err) {
+    toast(`No se pudo renombrar: ${err}`, "error");
+    return;
+  }
+  const idx = profiles.findIndex((p) => p.id === profileId);
+  if (idx >= 0) profiles[idx] = updated;
+  renderConnectionList();
+  scheduleProfileAutoSync();
+  toast(`Conexión renombrada a "${trimmed}"`, "success");
+}
+
 async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiveWorkspaceId()) {
   const count = profiles.filter(
     (p) => profileWorkspaceId(p) === workspaceId && folderContainsPath(p.group, folderPath)
@@ -5293,7 +5337,7 @@ async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiv
 
   if (count > 0) {
     const ok = await confirmDestructiveTyped({
-      title: t("sidebar.delete_folder"),
+      title: t("ctx.delete_folder"),
       message: `¿Eliminar la carpeta "${folderPath}"?\n${count} conexión(es) se moverán a la raíz.`,
       expectedText: folderName,
       danger: true,
@@ -5301,7 +5345,7 @@ async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiv
     if (!ok) return;
   } else {
     const ok = await confirmThemed({
-      title: t("sidebar.delete_folder"),
+      title: t("ctx.delete_folder"),
       message: `¿Eliminar la carpeta vacía "${folderPath}"?`,
       submitLabel: t("modal_destructive.submit"),
       danger: true,
@@ -9463,10 +9507,12 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     // rápido (Alt+rueda) avanza aún más para saltos largos.
     scrollSensitivity: 3,
     fastScrollSensitivity: 8,
-    // Selección inteligente con doble clic: trata como parte de la palabra
-    // los caracteres comunes de rutas, URLs, SHAs y nombres con guiones.
-    // El default de xterm corta por /, :, -, etc. Slice estético #22.
-    wordSeparator: " ()[]{}'\"`,;<>",
+    // Selección con doble clic: corta en los separadores de campo habituales
+    // para aislar trozos en salidas densas (grep, logs). Además del default,
+    // tratamos como separador :, @, /, =, . y | — así un doble clic selecciona
+    // un único segmento ("web01" en deploy@web01:/srv/app) en lugar de la
+    // ruta/URL/host enteros. Los guiones siguen unidos (SHAs, kebab-case).
+    wordSeparator: " ()[]{}'\"`,;<>:@/=.|",
   });
   const fitAddon = new FitAddon();
   const searchAddon = new SearchAddon();
@@ -12318,7 +12364,7 @@ function renderSftpFiles(sessionId, side, entries) {
       <span class="sftp-size">${e.is_dir ? "" : formatSize(e.size)}</span>
       <span class="sftp-modified">${formatTime(e.modified)}</span>
       <span class="sftp-row-actions">
-        <button class="sftp-row-btn" data-op="rename" title="Renombrar">✎</button>
+        <button class="sftp-row-btn" data-op="rename" title="Renombrar (F2)">✎</button>
         <button class="sftp-row-btn danger" data-op="delete" title="Eliminar">✕</button>
       </span>
       <div class="sftp-row-progress" aria-hidden="true"><span class="sftp-row-progress-bar"></span></div>
@@ -13222,6 +13268,11 @@ function createTransferConflictState() {
 
 function normalizeSftpConflictPolicy(policy) {
   return ["ask", "overwrite", "skip", "rename"].includes(policy) ? policy : "ask";
+}
+
+/** Modo de pegado de contraseña con broadcast activo, saneado. Default: "all". */
+function normalizePastePasswordBroadcast(mode) {
+  return ["all", "active", "ask"].includes(mode) ? mode : "all";
 }
 
 /** Concurrencia SFTP por sesión (handles en vuelo por transferencia), saneada a 1–64. */
@@ -17216,7 +17267,48 @@ function getShortcut(id) {
   return SHORTCUT_ACTIONS[id]?.default ?? null;
 }
 
+// F2: renombra el elemento seleccionado según el contexto enfocado. En un panel
+// SFTP renombra la fila seleccionada; en la sidebar, la conexión seleccionada.
+// Devuelve true si consumió el evento. No interfiere cuando se escribe en un
+// campo de texto (incluido el textarea del terminal), donde F2 debe pasar tal cual.
+function handleRenameHotkey(e) {
+  if (e.code !== "F2" || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return false;
+  const active = document.activeElement;
+  if (active?.closest?.("input, textarea, [contenteditable=\"true\"]")) return false;
+
+  // 1) Panel SFTP enfocado → renombrar la fila seleccionada de ese lado.
+  const filesDiv = active?.closest?.(".sftp-files");
+  if (filesDiv) {
+    const sessionId = filesDiv.closest("[data-session]")?.dataset?.session;
+    const side = filesDiv.dataset.side;
+    if (sessionId && side) {
+      e.preventDefault();
+      e.stopPropagation();
+      const rows = selectedSftpContextRows(sessionId, side);
+      if (rows.length === 1) promptRename(sessionId, side, rows[0].path, rows[0].name);
+      else if (rows.length > 1) toast("Selecciona un único elemento para renombrar", "warning");
+    }
+    return true;
+  }
+
+  // 2) Sidebar de conexiones → renombrar la conexión si hay exactamente una
+  // seleccionada. Se ignora el foco concreto porque las conn-item no son
+  // focusables; basta con que no haya un campo de texto/terminal activo (ya
+  // descartado arriba).
+  if (sidebarSelectedConnectionIds.size === 1) {
+    const [id] = [...sidebarSelectedConnectionIds];
+    if (profiles.some((p) => p.id === id)) {
+      e.preventDefault();
+      e.stopPropagation();
+      renameProfileById(id);
+      return true;
+    }
+  }
+  return false;
+}
+
 function handleGlobalShortcut(e) {
+  if (handleRenameHotkey(e)) return;
   const combo = comboFromEvent(e);
   if (!combo) return;
   // En layouts con +/= compartidos (US, ES…) "Ctrl++" se teclea como
@@ -17645,9 +17737,24 @@ async function pasteSessionPasswordIntoActiveTerminal() {
     toast(t("toast.paste_password_not_connected"), "warning");
     return;
   }
-  if (isBroadcastOn() && viewSelection.includes(activeSessionId) && viewSelection.length > 1) {
-    toast(t("toast.paste_password_broadcast_blocked"), "warning");
-    return;
+  // Con broadcast activo en una vista multipane, el comportamiento lo decide la
+  // preferencia de Seguridad (nunca se bloquea): difundir a todas, solo en la
+  // pane activa, o preguntar en el momento.
+  const broadcastActive =
+    isBroadcastOn() && viewSelection.includes(activeSessionId) && viewSelection.length > 1;
+  let mode = "active";
+  if (broadcastActive) {
+    mode = normalizePastePasswordBroadcast(prefs.pastePasswordBroadcast);
+    if (mode === "ask") {
+      const choice = await chooseThemed({
+        title: t("prefs_security.broadcast_ask_title"),
+        message: t("prefs_security.broadcast_ask_message", { n: viewSelection.length }),
+        submitLabel: t("prefs_security.broadcast_paste_all"),
+        actions: [{ value: "active", label: t("prefs_security.broadcast_paste_active") }],
+      });
+      if (!choice) return; // cancelado: no se pega nada
+      mode = choice.action === "active" ? "active" : "all";
+    }
   }
   let password;
   try {
@@ -17663,9 +17770,14 @@ async function pasteSessionPasswordIntoActiveTerminal() {
     toast(t("toast.paste_password_no_password"), "warning");
     return;
   }
-  const data = Array.from(new TextEncoder().encode(password));
+  // sendTerminalInput no registra en el historial de comandos, así que la
+  // contraseña nunca se captura aunque se difunda.
+  if (mode === "all") {
+    viewSelection.forEach((sid) => sendTerminalInput(sessions.get(sid), password));
+  } else {
+    sendTerminalInput(s, password);
+  }
   password = null;
-  invoke("ssh_send_input", { sessionId: activeSessionId, data }).catch(() => {});
 }
 
 function copyActiveSelection() {

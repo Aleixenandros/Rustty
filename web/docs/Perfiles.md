@@ -90,7 +90,7 @@ Las contraseñas/passphrases de las identidades adicionales viven en el keyring 
 
 ### Restaurar la pantalla anterior
 
-Con **clic derecho → Conectar y restaurar pantalla anterior** Rustty reconecta repintando lo que se vio en la última sesión de ese perfil, separado con una línea de la sesión nueva. Es una restauración **visual** del historial en pantalla (scrollback): el proceso remoto anterior no se reanuda (para eso usa `tmux`/`screen` en el servidor). La captura se guarda por perfil en disco, puede desactivarse en **Preferencias → Terminal → Guardar pantalla para restaurar**, no se sincroniza y nunca se captura en sesiones privadas.
+Con **clic derecho → Conectar y restaurar pantalla anterior** Rustty reconecta repintando lo que se vio en la última sesión de ese perfil, separado con una línea de la sesión nueva. Es una restauración **visual** del historial en pantalla (scrollback): el proceso remoto anterior no se reanuda (para eso usa `tmux`/`screen` en el servidor). La captura se guarda por perfil en disco, puede desactivarse en **Preferencias → Seguridad → Guardar pantalla para restaurar**, no se sincroniza y nunca se captura en sesiones privadas.
 
 ## CLI SSH
 

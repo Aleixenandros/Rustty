@@ -46,6 +46,8 @@ El pegado en el terminal (`Ctrl+Alt+V`) pide confirmación con una previsualizac
 
 La paleta (`Ctrl+Shift+P`) busca acciones, perfiles, snippets y comandos locales. `Ctrl+K` se mantiene reservado para buscar conexiones en la sidebar.
 
+`Ctrl+P` pega la contraseña del perfil de la sesión activa. Si el **modo broadcast** está replicando la entrada en varias panes, el comportamiento lo decide **Preferencias → Seguridad**: difundir la contraseña a todas las panes (por defecto), pegarla solo en la pane activa o preguntar en cada pegado. Rustty nunca bloquea el pegado.
+
 ## Presets predefinidos
 
 Desde **Preferencias → Atajos** puedes aplicar de golpe un preset entero al mapa de atajos:
@@ -64,6 +66,8 @@ La cabecera de la barra lateral tiene dos iconos junto al logo:
 - **≡ Filtros** — abre el popover completo con switcher de workspace, modos de vista (workspace actual / todos / favoritos), toggles de vista compacta y carpetas primero, y el mismo buscador.
 
 `Ctrl+K` enfoca la búsqueda de forma global y se comporta exactamente como pulsar el icono 🔍: funciona desde inicio, desde una sesión SSH/RDP o desde un split activo. Si estás dentro de una sesión, Rustty abre la barra lateral si hace falta y te deja buscar por nombre, IP/host, usuario o grupo sin volver al dashboard.
+
+Con una conexión seleccionada, **F2** la renombra al vuelo (lo mismo está disponible desde su menú contextual con **Renombrar conexión**). En el panel SFTP, **F2** renombra el archivo o carpeta seleccionados. F2 es contextual y no aparece en la lista de atajos configurables.
 
 Dentro del buscador, `Esc` limpia el texto y restablece la lista; un segundo `Esc` cierra el popover. Cerrar el popover por cualquier otra vía (clic fuera, volver a pulsar la lupa…) también descarta el filtro para que la lista no se quede "enganchada". La combinación es reasignable desde **Preferencias → Atajos** como `clear_sidebar_search`.
 
