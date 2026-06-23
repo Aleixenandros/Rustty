@@ -1039,7 +1039,6 @@ const DICTIONARIES = {
       paste_password_not_connected: "La sesión no está conectada; espera a que esté activa",
       paste_password_read_error: "No se pudo leer la contraseña: {err}",
       paste_password_no_password: "El perfil no tiene una contraseña guardada",
-      paste_password_broadcast_blocked: "Pegado de contraseña bloqueado mientras el broadcast está activo",
     },
     time: {
       now: "ahora",
@@ -2083,7 +2082,6 @@ const DICTIONARIES = {
       paste_password_not_connected: "Session is not connected; wait until it is active",
       paste_password_read_error: "Could not read the password: {err}",
       paste_password_no_password: "The profile has no saved password",
-      paste_password_broadcast_blocked: "Password paste blocked while broadcast is active",
     },
     time: {
       now: "just now",
@@ -3007,7 +3005,6 @@ const DICTIONARIES = {
       paste_password_not_connected: "La session n'est pas connectée ; attendez qu'elle soit active",
       paste_password_read_error: "Impossible de lire le mot de passe : {err}",
       paste_password_no_password: "Le profil n'a pas de mot de passe enregistré",
-      paste_password_broadcast_blocked: "Collage du mot de passe bloqué pendant que le broadcast est actif",
     },
     sftp_search: {
       placeholder: "Rechercher par nom…",
@@ -3925,7 +3922,6 @@ const DICTIONARIES = {
       paste_password_not_connected: "A sessão não está conectada; aguarda que esteja ativa",
       paste_password_read_error: "Não foi possível ler a palavra-passe: {err}",
       paste_password_no_password: "O perfil não tem uma palavra-passe guardada",
-      paste_password_broadcast_blocked: "Colagem da palavra-passe bloqueada enquanto o broadcast está ativo",
     },
     sftp_search: {
       placeholder: "Procurar por nome…",
@@ -4963,7 +4959,6 @@ const DICTIONARIES = {
       paste_password_not_connected: "Die Sitzung ist nicht verbunden; warte, bis sie aktiv ist",
       paste_password_read_error: "Passwort konnte nicht gelesen werden: {err}",
       paste_password_no_password: "Das Profil hat kein gespeichertes Passwort",
-      paste_password_broadcast_blocked: "Passwort-Einfügen gesperrt, während Broadcast aktiv ist",
     },
     time: {
       now: "gerade eben",
