@@ -634,6 +634,8 @@
             <select id="f-conn-type">
               <option value="ssh" data-i18n="modal_conn.conn_type_ssh">SSH — Terminal remota</option>
               <option value="rdp" data-i18n="modal_conn.conn_type_rdp">RDP — Escritorio remoto</option>
+              <option value="vnc" data-i18n="modal_conn.conn_type_vnc">VNC — Escritorio remoto</option>
+              <option value="telnet" data-i18n="modal_conn.conn_type_telnet">Telnet — Terminal (sin cifrar)</option>
               <option value="ftp" data-i18n="modal_conn.conn_type_ftp">FTP — Ficheros</option>
               <option value="ftps" data-i18n="modal_conn.conn_type_ftps">FTPS — Ficheros seguros</option>
             </select>
@@ -668,15 +670,29 @@
             <select id="f-workspace"></select>
           </div>
 
-          <!-- Selector de carpeta (reemplaza al campo "Grupo") -->
+          <!-- Selector de carpeta: árbol navegable (reemplaza al campo "Grupo") -->
           <div class="form-row" data-modal-pane="general">
             <label><span data-i18n="modal_conn.folder">Carpeta</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
             <div class="folder-picker-row">
-              <select id="f-folder-select">
-                <option value="" data-i18n="modal_conn.folder_none">Sin carpeta (raíz)</option>
-                <!-- Opciones generadas dinámicamente -->
-                <option value="__new__" data-i18n="modal_conn.folder_new">+ Nueva carpeta…</option>
-              </select>
+              <div class="folder-tree-picker" id="f-folder-picker" data-mode="select" data-value="">
+                <button type="button" class="folder-tree-trigger" id="f-folder-trigger"
+                        aria-haspopup="tree" aria-expanded="false">
+                  <svg class="folder-tree-trigger-icon" aria-hidden="true"><use href="#ci-folder"/></svg>
+                  <span class="folder-tree-trigger-label" id="f-folder-label" data-i18n="modal_conn.folder_none">Sin carpeta (raíz)</span>
+                  <span class="folder-tree-trigger-caret" aria-hidden="true">▾</span>
+                </button>
+                <div class="folder-tree-popover hidden" id="f-folder-popover" role="dialog"
+                     data-i18n-aria-label="modal_conn.folder_pick" aria-label="Seleccionar carpeta">
+                  <input type="text" class="folder-tree-search" id="f-folder-search" autocomplete="off"
+                         data-i18n-placeholder="modal_conn.folder_search_ph" placeholder="Buscar carpeta…" />
+                  <div class="folder-tree-list" id="f-folder-tree" role="tree"></div>
+                  <div class="folder-tree-footer">
+                    <button type="button" class="folder-tree-newbtn" id="f-folder-newbtn">
+                      <span aria-hidden="true">+</span>&nbsp;<span data-i18n="modal_conn.folder_new_short">Nueva carpeta…</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
               <input id="f-folder-input" type="text" class="hidden"
                      data-i18n-placeholder="modal_conn.folder_ph" placeholder="ej: Producción/Web" />
             </div>

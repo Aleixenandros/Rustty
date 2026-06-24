@@ -51,6 +51,8 @@ Cada conexión incluye un botón **estrella** (☆/★) en la sidebar, también 
 
 - **SSH**: sesión interactiva con terminal, SFTP integrado y autenticación por contraseña, clave pública o agente SSH.
 - **RDP**: lanzamiento de escritorio remoto usando `xfreerdp3` / `xfreerdp`, `rdesktop`, `mstsc` o el cliente disponible en el sistema.
+- **VNC**: lanzamiento del escritorio remoto en el visor VNC del sistema (TigerVNC / `vncviewer` en Linux, Pantalla compartida en macOS, el visor instalado o `vnc://` en Windows). El visor pide la contraseña VNC si el servidor la requiere.
+- **Telnet**: abre el cliente `telnet` del sistema dentro de un emulador de terminal. Útil para equipos de red y dispositivos antiguos; recuerda que Telnet no cifra el tráfico.
 - **FTP**: panel de ficheros para servidores FTP heredados.
 - **FTPS**: FTP explícito sobre TLS para servidores que no ofrecen SFTP.
 

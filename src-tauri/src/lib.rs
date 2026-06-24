@@ -4,6 +4,7 @@ pub mod cli;
 mod commands;
 mod credentials;
 mod error;
+mod external_client;
 mod host_keys;
 mod ipc;
 mod keepass_manager;
@@ -19,6 +20,7 @@ mod sync;
 use std::path::PathBuf;
 
 use credentials::CredentialStore;
+use external_client::{TelnetManager, VncManager};
 use local_shell_manager::LocalShellManager;
 use notes::NotesManager;
 use profiles::ProfileManager;
@@ -130,6 +132,8 @@ pub fn run() {
             // Estado global gestionado por Tauri (inyectado en los comandos vía State<T>)
             app.manage(SshManager::new());
             app.manage(RdpManager::new());
+            app.manage(VncManager::new());
+            app.manage(TelnetManager::new());
             app.manage(LocalShellManager::new());
             app.manage(SftpManager::new());
             let profile_manager = ProfileManager::new(data_dir.clone());
@@ -158,6 +162,8 @@ pub fn run() {
                 window.state::<SftpManager>().disconnect_all();
                 window.state::<LocalShellManager>().close_all();
                 window.state::<RdpManager>().disconnect_all();
+                window.state::<VncManager>().disconnect_all();
+                window.state::<TelnetManager>().disconnect_all();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -213,6 +219,11 @@ pub fn run() {
             // ── Sesiones RDP
             commands::rdp_connect,
             commands::rdp_disconnect,
+            // ── Sesiones VNC / Telnet (lanzador externo)
+            commands::vnc_connect,
+            commands::vnc_disconnect,
+            commands::telnet_connect,
+            commands::telnet_disconnect,
             // ── Shell local
             commands::local_shell_open,
             commands::local_shell_send_input,

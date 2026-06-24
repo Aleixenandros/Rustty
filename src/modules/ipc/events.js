@@ -42,6 +42,10 @@ export const EVENT_PREFIX = Object.freeze({
   sftpProgress: "sftp-progress-",
   /** `rdp-closed-{sessionId}` → payload: null */
   rdpClosed: "rdp-closed-",
+  /** `vnc-closed-{sessionId}` → payload: null */
+  vncClosed: "vnc-closed-",
+  /** `telnet-closed-{sessionId}` → payload: null */
+  telnetClosed: "telnet-closed-",
 });
 
 /**

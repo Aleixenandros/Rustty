@@ -34,6 +34,10 @@ pub enum EventKind {
     SftpProgress,
     /// `rdp-closed-{sessionId}` — proceso RDP externo terminado.
     RdpClosed,
+    /// `vnc-closed-{sessionId}` — visor VNC externo terminado.
+    VncClosed,
+    /// `telnet-closed-{sessionId}` — cliente Telnet externo terminado.
+    TelnetClosed,
 }
 
 impl EventKind {
@@ -52,6 +56,8 @@ impl EventKind {
             EventKind::SftpLog => "sftp-log-",
             EventKind::SftpProgress => "sftp-progress-",
             EventKind::RdpClosed => "rdp-closed-",
+            EventKind::VncClosed => "vnc-closed-",
+            EventKind::TelnetClosed => "telnet-closed-",
         }
     }
 }
@@ -101,6 +107,8 @@ mod tests {
             EventKind::SftpLog,
             EventKind::SftpProgress,
             EventKind::RdpClosed,
+            EventKind::VncClosed,
+            EventKind::TelnetClosed,
         ] {
             assert!(kind.prefix().ends_with('-'), "{kind:?} sin guion final");
         }

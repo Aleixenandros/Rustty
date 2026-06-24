@@ -4539,6 +4539,10 @@ function connectionProtocolMeta(type) {
   switch (type) {
     case "rdp":
       return { className: "rdp", label: "RDP", icon: "▣" };
+    case "vnc":
+      return { className: "vnc", label: "VNC", icon: "▢" };
+    case "telnet":
+      return { className: "telnet", label: "TELNET", icon: "T>" };
     case "ftp":
       return { className: "ftp", label: "FTP", icon: "↕" };
     case "ftps":
@@ -4547,6 +4551,11 @@ function connectionProtocolMeta(type) {
     default:
       return { className: "ssh", label: "SSH", icon: ">_" };
   }
+}
+
+/** Tipos de conexión que se lanzan en un cliente externo (sin terminal embebido). */
+function isExternalLauncherType(type) {
+  return type === "rdp" || type === "vnc" || type === "telnet";
 }
 
 function isFileTransferConnectionType(type) {
@@ -6266,27 +6275,276 @@ function initConnectionModalResizePersistence() {
 }
 
 /** Rellena el <select> de carpetas con todos los paths existentes */
+/**
+ * Construye un árbol jerárquico de SOLO carpetas a partir de la lista plana de
+ * rutas (`a`, `a/b`, `a/b/c`…). Devuelve nodos `{name, path, children}` ordenados.
+ * @param {string[]} paths
+ */
+function buildFolderPathTree(paths) {
+  const root = { children: new Map() };
+  for (const full of paths) {
+    const parts = full.split("/").filter(Boolean);
+    let node = root;
+    let cur = "";
+    for (const part of parts) {
+      cur = cur ? `${cur}/${part}` : part;
+      if (!node.children.has(part)) {
+        node.children.set(part, { name: part, path: cur, children: new Map() });
+      }
+      node = node.children.get(part);
+    }
+  }
+  const toArr = (node) =>
+    [...node.children.values()]
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+      .map((child) => ({ name: child.name, path: child.path, children: toArr(child) }));
+  return toArr(root);
+}
+
+/** Renderiza recursivamente los nodos del árbol de carpetas del selector. */
+function renderFolderTreeNodes(nodes, selectedPath, openSet, depth = 0) {
+  let html = "";
+  for (const node of nodes) {
+    const hasChildren = node.children.length > 0;
+    const isOpen = openSet.has(node.path);
+    const isSel = node.path === selectedPath;
+    const pad = 8 + depth * 14;
+    html += `<div class="ft-node" data-path="${escHtml(node.path)}">`;
+    html += `<div class="ft-row${isSel ? " selected" : ""}" role="treeitem"`
+      + ` aria-selected="${isSel}" data-path="${escHtml(node.path)}" style="padding-left:${pad}px">`;
+    html += hasChildren
+      ? `<span class="ft-arrow${isOpen ? " open" : ""}" data-arrow="1">▶</span>`
+      : `<span class="ft-arrow ft-arrow-empty"></span>`;
+    html += `<svg class="ft-icon" aria-hidden="true"><use href="#ci-folder"/></svg>`;
+    html += `<span class="ft-label">${escHtml(node.name)}</span>`;
+    html += `</div>`;
+    if (hasChildren) {
+      html += `<div class="ft-children${isOpen ? "" : " hidden"}">`;
+      html += renderFolderTreeNodes(node.children, selectedPath, openSet, depth + 1);
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+  return html;
+}
+
+/** Conjunto de rutas expandidas en el árbol del selector (persistente por sesión). */
+let folderPickerOpen = new Set();
+
+/**
+ * Puebla el selector de carpeta (árbol navegable) y fija el valor seleccionado.
+ * Mantiene el nombre histórico porque lo invocan varios flujos del formulario.
+ * @param {string|null} selectedPath
+ * @param {string} workspaceId
+ */
 function populateFolderSelect(selectedPath = null, workspaceId = getActiveWorkspaceId()) {
-  const select = document.getElementById("f-folder-select");
+  const picker = document.getElementById("f-folder-picker");
   const input  = document.getElementById("f-folder-input");
+  if (!picker) return;
   const paths  = getAllFolderPaths(workspaceId);
+  picker.dataset.workspace = workspaceId;
 
-  let opts = `<option value="">Sin carpeta (raíz)</option>`;
-  for (const p of paths) {
-    opts += `<option value="${escHtml(p)}"${p === selectedPath ? " selected" : ""}>${escHtml(p)}</option>`;
-  }
-  opts += `<option value="__new__">+ Nueva carpeta…</option>`;
-  select.innerHTML = opts;
-
-  // Si el path seleccionado no está en la lista, activar el input manual
   const isKnown = !selectedPath || paths.includes(selectedPath);
-  if (!isKnown) {
-    select.value = "__new__";
-    input.value  = selectedPath || "";
-    input.classList.remove("hidden");
-  } else {
+  if (isKnown) {
+    setFolderPickerValue(selectedPath || "", { silent: true });
     input.classList.add("hidden");
+  } else {
+    // Path desconocido (p. ej. carpeta nueva escrita a mano): modo manual.
+    picker.dataset.mode = "new";
+    picker.dataset.value = "";
+    input.value = selectedPath || "";
+    input.classList.remove("hidden");
+    updateFolderTriggerLabel();
   }
+
+  // Por defecto se expanden los ancestros del path seleccionado.
+  if (selectedPath) {
+    const parts = selectedPath.split("/").filter(Boolean);
+    let cur = "";
+    for (const part of parts.slice(0, -1)) {
+      cur = cur ? `${cur}/${part}` : part;
+      folderPickerOpen.add(cur);
+    }
+  }
+  renderFolderTree(workspaceId);
+}
+
+/** Re-renderiza el árbol dentro del popover con el filtro de búsqueda actual. */
+function renderFolderTree(workspaceId = getActiveWorkspaceId()) {
+  const tree = document.getElementById("f-folder-tree");
+  const picker = document.getElementById("f-folder-picker");
+  if (!tree || !picker) return;
+  const selectedPath = picker.dataset.mode === "select" ? (picker.dataset.value || "") : null;
+  const query = (document.getElementById("f-folder-search")?.value || "").trim().toLowerCase();
+  let paths = getAllFolderPaths(workspaceId);
+
+  // Búsqueda: conserva las rutas que coinciden y todos sus ancestros, y expande todo.
+  let openSet = folderPickerOpen;
+  if (query) {
+    const keep = new Set();
+    for (const p of paths) {
+      if (p.toLowerCase().includes(query)) {
+        const parts = p.split("/").filter(Boolean);
+        let cur = "";
+        for (const part of parts) {
+          cur = cur ? `${cur}/${part}` : part;
+          keep.add(cur);
+        }
+      }
+    }
+    paths = paths.filter((p) => keep.has(p));
+    openSet = keep; // con búsqueda activa, todo expandido
+  }
+
+  const nodes = buildFolderPathTree(paths);
+  const rootSel = selectedPath === "";
+  let html = `<div class="ft-row ft-root${rootSel ? " selected" : ""}" role="treeitem"`
+    + ` aria-selected="${rootSel}" data-path="">`
+    + `<span class="ft-arrow ft-arrow-empty"></span>`
+    + `<svg class="ft-icon" aria-hidden="true"><use href="#ci-folder"/></svg>`
+    + `<span class="ft-label" data-i18n="modal_conn.folder_none">${escHtml(t("modal_conn.folder_none"))}</span>`
+    + `</div>`;
+  const body = renderFolderTreeNodes(nodes, selectedPath, openSet);
+  if (!body && query) {
+    html += `<div class="ft-empty">${escHtml(t("modal_conn.folder_no_results"))}</div>`;
+  } else {
+    html += body;
+  }
+  tree.innerHTML = html;
+}
+
+/**
+ * Fija la carpeta seleccionada del picker (modo "select"). `path` vacío = raíz.
+ * @param {string} path
+ * @param {{silent?: boolean}} [opts]
+ */
+function setFolderPickerValue(path, { silent = false } = {}) {
+  const picker = document.getElementById("f-folder-picker");
+  const input  = document.getElementById("f-folder-input");
+  if (!picker) return;
+  picker.dataset.mode = "select";
+  picker.dataset.value = path || "";
+  input.classList.add("hidden");
+  updateFolderTriggerLabel();
+  if (!silent) renderFolderTree(picker.dataset.workspace || getActiveWorkspaceId());
+}
+
+/** Actualiza la etiqueta del botón disparador según el estado del picker. */
+function updateFolderTriggerLabel() {
+  const picker = document.getElementById("f-folder-picker");
+  const label  = document.getElementById("f-folder-label");
+  if (!picker || !label) return;
+  if (picker.dataset.mode === "new") {
+    label.textContent = t("modal_conn.folder_new_short");
+    label.removeAttribute("data-i18n");
+    return;
+  }
+  const value = picker.dataset.value || "";
+  if (value) {
+    label.textContent = value;
+    label.removeAttribute("data-i18n");
+  } else {
+    label.setAttribute("data-i18n", "modal_conn.folder_none");
+    label.textContent = t("modal_conn.folder_none");
+  }
+}
+
+/** Listener global para cerrar el popover de carpetas al pulsar fuera o Escape. */
+let folderPopoverDismiss = null;
+
+function openFolderPopover() {
+  const picker  = document.getElementById("f-folder-picker");
+  const popover = document.getElementById("f-folder-popover");
+  const trigger = document.getElementById("f-folder-trigger");
+  const search  = document.getElementById("f-folder-search");
+  if (!picker || !popover || popover.classList.contains("hidden") === false) return;
+  renderFolderTree(picker.dataset.workspace || getActiveWorkspaceId());
+  popover.classList.remove("hidden");
+  trigger?.setAttribute("aria-expanded", "true");
+  if (search) search.value = "";
+  search?.focus();
+  // Desplaza hasta la fila seleccionada.
+  popover.querySelector(".ft-row.selected")?.scrollIntoView({ block: "nearest" });
+
+  folderPopoverDismiss = (e) => {
+    if (e.type === "keydown") {
+      if (e.key === "Escape") { closeFolderPopover(); trigger?.focus(); }
+      return;
+    }
+    if (!picker.contains(e.target)) closeFolderPopover();
+  };
+  document.addEventListener("mousedown", folderPopoverDismiss, true);
+  document.addEventListener("keydown", folderPopoverDismiss, true);
+}
+
+function closeFolderPopover() {
+  const popover = document.getElementById("f-folder-popover");
+  const trigger = document.getElementById("f-folder-trigger");
+  if (!popover || popover.classList.contains("hidden")) return;
+  popover.classList.add("hidden");
+  trigger?.setAttribute("aria-expanded", "false");
+  if (folderPopoverDismiss) {
+    document.removeEventListener("mousedown", folderPopoverDismiss, true);
+    document.removeEventListener("keydown", folderPopoverDismiss, true);
+    folderPopoverDismiss = null;
+  }
+}
+
+/** Registra los eventos del selector de carpeta en árbol (una sola vez). */
+function setupFolderTreePicker() {
+  const picker  = document.getElementById("f-folder-picker");
+  const trigger = document.getElementById("f-folder-trigger");
+  const tree    = document.getElementById("f-folder-tree");
+  const search  = document.getElementById("f-folder-search");
+  const newBtn  = document.getElementById("f-folder-newbtn");
+  const input   = document.getElementById("f-folder-input");
+  if (!picker || picker.dataset.bound === "1") return;
+  picker.dataset.bound = "1";
+
+  trigger.addEventListener("click", () => {
+    const popover = document.getElementById("f-folder-popover");
+    if (popover.classList.contains("hidden")) openFolderPopover();
+    else closeFolderPopover();
+  });
+
+  tree.addEventListener("click", (e) => {
+    const arrow = e.target.closest(".ft-arrow[data-arrow]");
+    if (arrow) {
+      // Expandir/colapsar sin seleccionar.
+      const node = arrow.closest(".ft-node");
+      const path = node?.dataset.path;
+      if (path) {
+        if (folderPickerOpen.has(path)) folderPickerOpen.delete(path);
+        else folderPickerOpen.add(path);
+        renderFolderTree(picker.dataset.workspace || getActiveWorkspaceId());
+      }
+      e.stopPropagation();
+      return;
+    }
+    const row = e.target.closest(".ft-row");
+    if (!row) return;
+    setFolderPickerValue(row.dataset.path || "");
+    closeFolderPopover();
+    trigger.focus();
+  });
+
+  search.addEventListener("input", () => {
+    renderFolderTree(picker.dataset.workspace || getActiveWorkspaceId());
+  });
+
+  newBtn.addEventListener("click", () => {
+    picker.dataset.mode = "new";
+    picker.dataset.value = "";
+    updateFolderTriggerLabel();
+    input.classList.remove("hidden");
+    closeFolderPopover();
+    input.focus();
+  });
+
+  // Al editar el campo manual, refleja el modo "nueva carpeta" en la etiqueta.
+  input.addEventListener("input", () => {
+    if (picker.dataset.mode === "new") updateFolderTriggerLabel();
+  });
 }
 
 /** Catálogo de credenciales maestras cacheado para el desplegable del form. */
@@ -6372,8 +6630,11 @@ function updateAuthFields(authType) {
  */
 function updateConnTypeFields(type, adjustPort = false) {
   const isRdp = type === "rdp";
+  const isVnc = type === "vnc";
+  const isTelnet = type === "telnet";
+  const isExternal = isRdp || isVnc || isTelnet;
   const isFileTransfer = isFileTransferConnectionType(type);
-  const isPasswordOnly = isRdp || isFileTransfer;
+  const isPasswordOnly = isExternal || isFileTransfer;
   document.getElementById("field-domain").classList.toggle("hidden", !isRdp);
   document.getElementById("field-auth-type").classList.toggle("hidden", isPasswordOnly);
   document.getElementById("field-key-path").classList.add("hidden");
@@ -6395,8 +6656,15 @@ function updateConnTypeFields(type, adjustPort = false) {
     if (adjustPort) {
       const portEl = document.getElementById("f-port");
       const current = parseInt(portEl.value, 10);
-      if (isRdp && (current === 22 || current === 21)) portEl.value = 3389;
-      if (isFileTransfer && (current === 22 || current === 3389)) portEl.value = 21;
+      // Solo se reescribe el puerto si el actual es uno por defecto de otro tipo,
+      // para no pisar un puerto personalizado del usuario.
+      const defaults = [22, 21, 23, 3389, 5900];
+      if (defaults.includes(current)) {
+        if (isRdp) portEl.value = 3389;
+        else if (isVnc) portEl.value = 5900;
+        else if (isTelnet) portEl.value = 23;
+        else if (isFileTransfer) portEl.value = 21;
+      }
     }
     updateKeepassEntryValidation();
   } else {
@@ -6404,7 +6672,7 @@ function updateConnTypeFields(type, adjustPort = false) {
     if (adjustPort) {
       const portEl = document.getElementById("f-port");
       const current = parseInt(portEl.value, 10);
-      if (current === 3389 || current === 21) portEl.value = 22;
+      if ([21, 23, 3389, 5900].includes(current)) portEl.value = 22;
     }
   }
 }
@@ -6814,18 +7082,18 @@ async function loadStoredCredentialsIntoConnectionModal(profile) {
 
 /** Lee el valor de carpeta del selector (select + input manual) */
 function readFolderValue() {
-  const select = document.getElementById("f-folder-select");
+  const picker = document.getElementById("f-folder-picker");
   const input  = document.getElementById("f-folder-input");
-  if (select.value === "__new__") {
+  if (picker?.dataset.mode === "new") {
     const v = input.value.trim();
     return v || null;
   }
-  return select.value || null;
+  return picker?.dataset.value || null;
 }
 
 function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
   const connType = document.getElementById("f-conn-type").value;
-  const authType = (connType === "rdp" || isFileTransferConnectionType(connType))
+  const authType = (isExternalLauncherType(connType) || isFileTransferConnectionType(connType))
     ? "password"
     : document.getElementById("f-auth-type").value;
   const passwordSource = authType === "password" ? getPasswordSource() : "own";
@@ -7033,7 +7301,7 @@ async function runConnectionTestFromModal() {
  */
 async function saveAndClose(shouldConnect) {
   const connType = document.getElementById("f-conn-type").value;
-  const authType       = (connType === "rdp" || isFileTransferConnectionType(connType))
+  const authType       = (isExternalLauncherType(connType) || isFileTransferConnectionType(connType))
     ? "password"
     : document.getElementById("f-auth-type").value;
   const password       = document.getElementById("f-password").value || null;
@@ -7297,6 +7565,14 @@ async function connectProfile(profileId, { force = false, credId = null, restore
 
   if (profile.connection_type === "rdp") {
     return connectRdp(profileId, { credId });
+  }
+
+  if (profile.connection_type === "vnc") {
+    return connectVnc(profileId, { credId });
+  }
+
+  if (profile.connection_type === "telnet") {
+    return connectTelnet(profileId, { credId });
   }
 
   if (isFileTransferConnectionType(profile.connection_type)) {
@@ -7757,14 +8033,113 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
   }
 }
 
-async function closeRdpSession(sessionId) {
+/**
+ * Conecta un protocolo que se lanza en un cliente externo sin autenticación por
+ * parte de Rustty (VNC, Telnet): el visor/cliente pide sus credenciales. Crea la
+ * pestaña-placeholder, invoca el comando del backend y escucha el cierre.
+ * @param {string} profileId
+ * @param {"vnc"|"telnet"} kind
+ */
+async function connectExternalNoAuth(profileId, kind, { credId = null } = {}) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+
+  // Reusar una sesión activa del mismo perfil, tipo e identidad.
+  for (const [sid, s] of sessions) {
+    if (s.profileId === profileId && s.type === kind && s.status !== "closed"
+        && (s.credentialId || null) === (credId || null)) {
+      setActiveTab(sid);
+      return;
+    }
+  }
+
+  const meta = connectionProtocolMeta(kind);
+  const connectCmd = kind === "vnc" ? "vnc_connect" : "telnet_connect";
+  const closedEvent = kind === "vnc" ? "vncClosed" : "telnetClosed";
+
+  const tempId = `${kind}-${profileId}-${Date.now()}`;
+  const sessionObj = {
+    profileId,
+    id: tempId,
+    type: kind,
+    status: "connecting",
+    unlisteners: [],
+    credentialId: credId,
+    terminal: null,
+    fitAddon: null,
+  };
+  sessions.set(tempId, sessionObj);
+  createExternalTab(tempId, profile, "connecting", kind);
+
+  try {
+    const sessionId = await invoke(connectCmd, {
+      profileId,
+      credentialId: credId || null,
+    });
+
+    sessionObj.id = sessionId;
+    sessions.delete(tempId);
+    sessions.set(sessionId, sessionObj);
+    document.querySelectorAll(`[data-session="${tempId}"]`).forEach((el) => {
+      el.dataset.session = sessionId;
+    });
+    const vi = viewSelection.indexOf(tempId);
+    if (vi >= 0) viewSelection[vi] = sessionId;
+    if (activeSessionId === tempId) activeSessionId = sessionId;
+
+    sessionObj.status = "connected";
+    updateTabStatus(sessionId, "connected");
+    if (!sessionObj.private) recordRecentConnection(profileId);
+
+    const unlisten = await listen(eventName(closedEvent, sessionId), () => {
+      sessionObj.status = "closed";
+      updateTabStatus(sessionId, "error");
+      renderConnectionList();
+      const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
+      if (pane) {
+        const label = pane.querySelector(".rdp-status-label");
+        if (label) label.textContent = t("external.session_closed");
+        const btn = pane.querySelector(".rdp-disconnect-btn");
+        if (btn) btn.textContent = t("external.close_tab");
+      }
+      toast(t("external.toast_closed", { proto: meta.label, name: profile.name }), "info");
+    });
+    sessionObj.unlisteners.push(unlisten);
+
+    renderConnectionList();
+    setActiveTab(sessionId);
+    toast(t("external.toast_started", { proto: meta.label, name: profile.name }), "success");
+  } catch (err) {
+    sessions.delete(tempId);
+    removeTab(tempId);
+    toast(t("external.toast_error", { proto: meta.label, err: String(err) }), "error");
+  }
+}
+
+async function connectVnc(profileId, opts = {}) {
+  return connectExternalNoAuth(profileId, "vnc", opts);
+}
+
+async function connectTelnet(profileId, opts = {}) {
+  return connectExternalNoAuth(profileId, "telnet", opts);
+}
+
+async function closeExternalSession(sessionId, kind = "rdp") {
   const s = sessions.get(sessionId);
   if (!s) return;
   for (const ul of s.unlisteners) { try { ul(); } catch {} }
-  await invoke("rdp_disconnect", { sessionId }).catch(() => {});
+  const cmd = kind === "vnc" ? "vnc_disconnect"
+    : kind === "telnet" ? "telnet_disconnect"
+    : "rdp_disconnect";
+  await invoke(cmd, { sessionId }).catch(() => {});
   sessions.delete(sessionId);
   removeTab(sessionId);
   renderConnectionList();
+}
+
+/** Compatibilidad histórica: cierre de sesión RDP. */
+async function closeRdpSession(sessionId) {
+  return closeExternalSession(sessionId, "rdp");
 }
 
 async function connectFileTransferProfile(profileId, { passwordOverride = null, force = false, credId = null } = {}) {
@@ -7844,42 +8219,51 @@ function createFileTransferTab(sessionId, profile, initialStatus) {
  * Crea el tab y el panel de estado para una sesión RDP.
  * En lugar de un terminal, muestra tarjeta informativa con botón de desconexión.
  */
-function createRdpTab(sessionId, profile, initialStatus) {
+function createExternalTab(sessionId, profile, initialStatus, kind = "rdp") {
+  const meta = connectionProtocolMeta(kind);
   const pane = document.createElement("div");
-  pane.className = "terminal-pane rdp-pane";
+  pane.className = `terminal-pane rdp-pane external-pane proto-${meta.className}`;
   pane.dataset.session = sessionId;
 
-  const hostLine = profile.domain
-    ? `${escHtml(profile.username)}@${escHtml(profile.domain)}\\${escHtml(profile.host)}:${profile.port}`
-    : `${escHtml(profile.username)}@${escHtml(profile.host)}:${profile.port}`;
+  const userPart = profile.username
+    ? (profile.domain
+        ? `${escHtml(profile.username)}@${escHtml(profile.domain)}\\`
+        : `${escHtml(profile.username)}@`)
+    : "";
+  const hostLine = `${userPart}${escHtml(profile.host)}:${profile.port}`;
 
   pane.innerHTML = `
     <div class="rdp-status-card">
-      <div class="rdp-status-icon">🖥️</div>
+      <div class="rdp-status-icon external-proto-glyph">${escHtml(meta.icon)}</div>
       <div class="rdp-status-info">
         <div class="rdp-status-name">${escHtml(profile.name)}</div>
         <div class="rdp-status-host">${hostLine}</div>
-        <div class="rdp-status-label">Sesión RDP abierta en ventana externa</div>
+        <div class="rdp-status-label">${escHtml(t("external.session_open", { proto: meta.label }))}</div>
       </div>
       <button class="btn-secondary rdp-disconnect-btn" data-session="${sessionId}">
-        Desconectar
+        ${escHtml(t("external.disconnect"))}
       </button>
     </div>`;
   pane.querySelector(".rdp-disconnect-btn").addEventListener("click", (e) =>
-    closeRdpSession(e.target.dataset.session)
+    closeExternalSession(e.target.dataset.session, kind)
   );
   document.getElementById("terminals-container").appendChild(pane);
 
   const tab = createTab(sessionId, profile, initialStatus, { sftp: false });
-  tab.dataset.type = "rdp";
+  tab.dataset.type = kind;
 
-  // Asociar pane al sessionObj ya creado en connectRdp
+  // Asociar pane al sessionObj ya creado en connect*
   const s = sessions.get(sessionId);
   if (s) s.pane = pane;
   wirePaneFocusOnClick(pane, sessionId);
 
   document.getElementById("welcome-screen").classList.add("hidden");
   selectSession(sessionId, false);
+}
+
+/** Compatibilidad histórica: pestaña de sesión RDP. */
+function createRdpTab(sessionId, profile, initialStatus) {
+  return createExternalTab(sessionId, profile, initialStatus, "rdp");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -8790,7 +9174,7 @@ function renderStatusConnectionLog() {
 
 function toggleActiveConnectionLogPanel() {
   const s = activeSessionId ? sessions.get(activeSessionId) : null;
-  if (!s || s.type === "rdp") return;
+  if (!s || isExternalLauncherType(s.type)) return;
   toggleConnectionLogPanel(activeSessionId);
 }
 
@@ -9069,7 +9453,9 @@ function renderView() {
         if (i > 0) {
           const resizer = document.createElement("div");
           resizer.className = `view-resizer resizer-${axis}`;
+          resizer.title = t("tabs.resizer_reset_hint");
           resizer.addEventListener("mousedown", (e) => startViewResize(e, split, i - 1, axis));
+          resizer.addEventListener("dblclick", () => resetViewRatios(split));
           split.appendChild(resizer);
         }
         const part = document.createElement("div");
@@ -9275,6 +9661,21 @@ function positionTabOverflowPopover() {
   }
   popover.style.top = `${top}px`;
   popover.style.left = `${left}px`;
+}
+
+/**
+ * Doble clic en un resizer de split: reparte el espacio a partes iguales entre
+ * todas las panes y olvida la proporción guardada de esta vista.
+ */
+function resetViewRatios(splitEl) {
+  const parts = [...splitEl.querySelectorAll(".view-part")];
+  if (parts.length < 2) return;
+  parts.forEach((p) => { p.style.flex = "1 1 0"; });
+  viewRatios.delete(viewKey());
+  parts.forEach((p) => {
+    const s = sessions.get(p.querySelector(".terminal-pane")?.dataset.session);
+    if (s?.fitAddon) { try { s.fitAddon.fit(); notifyResize(s.id, s.terminal); } catch {} }
+  });
 }
 
 /**
@@ -10093,9 +10494,9 @@ async function closeSession(sessionId, opts = {}) {
     return;
   }
 
-  // RDP
-  if (s.type === "rdp") {
-    return closeRdpSession(sessionId);
+  // RDP / VNC / Telnet (clientes externos)
+  if (isExternalLauncherType(s.type)) {
+    return closeExternalSession(sessionId, s.type);
   }
 
   if (isFileTransferConnectionType(s.type)) {
@@ -10966,7 +11367,7 @@ async function startGlobalTunnelFromForm() {
 function activeTunnelEntries() {
   const rows = [];
   for (const [sessionId, session] of sessions) {
-    if (!session.profileId || session.type === "rdp") continue;
+    if (!session.profileId || isExternalLauncherType(session.type)) continue;
     const profile = profiles.find((p) => p.id === session.profileId);
     for (const tunnel of session.tunnels?.values?.() || []) {
       rows.push({ sessionId, profile, tunnel });
@@ -16271,12 +16672,8 @@ function bindUIEvents() {
   document.getElementById("btn-add-extra-cred")?.addEventListener("click", () => addExtraCredRow());
   initConnectionModalResizePersistence();
 
-  // Selector de carpeta → mostrar/ocultar input manual
-  document.getElementById("f-folder-select").addEventListener("change", (e) => {
-    const input = document.getElementById("f-folder-input");
-    input.classList.toggle("hidden", e.target.value !== "__new__");
-    if (e.target.value === "__new__") input.focus();
-  });
+  // Selector de carpeta: árbol navegable en un popover.
+  setupFolderTreePicker();
   document.getElementById("f-workspace")?.addEventListener("change", (e) => {
     populateFolderSelect(readFolderValue(), e.target.value || getActiveWorkspaceId());
   });
@@ -17729,7 +18126,7 @@ async function pasteSessionPasswordIntoActiveTerminal() {
   if (!activeSessionId) return;
   const s = sessions.get(activeSessionId);
   if (!s) return;
-  if (s._closeOverride || s.type === "rdp" || !s.profileId) {
+  if (s._closeOverride || isExternalLauncherType(s.type) || !s.profileId) {
     toast(t("toast.paste_password_ssh_only"), "warning");
     return;
   }
@@ -18226,7 +18623,7 @@ function pushCommandHistory(cmd) {
  */
 function captureCommandKeystroke(sessionObj, data) {
   if (!prefs.shareCommandHistory) return;
-  if (!sessionObj || sessionObj.type === "rdp") return;
+  if (!sessionObj || isExternalLauncherType(sessionObj.type)) return;
   if (typeof data !== "string" || data.length === 0) return;
 
   let buf = sessionObj._histBuf || "";
@@ -18277,7 +18674,7 @@ function openCommandEditor() {
     return;
   }
   const session = sessions.get(activeSessionId);
-  if (!session || session.type === "rdp") {
+  if (!session || isExternalLauncherType(session.type)) {
     toast(t("cmd_editor.toast_rdp"), "warning");
     return;
   }
@@ -19138,6 +19535,8 @@ async function handleTabContextAction(action) {
     if (!s) return;
     if (s._closeOverride) { openLocalShell(); return; }
     if (s.type === "rdp") { connectRdp(s.profileId); return; }
+    if (s.type === "vnc") { connectVnc(s.profileId); return; }
+    if (s.type === "telnet") { connectTelnet(s.profileId); return; }
     if (s.profileId) { connectProfile(s.profileId, { force: true }); return; }
     return;
   }

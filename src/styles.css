@@ -117,8 +117,7 @@
 
 /* Temas claros: sombras más sutiles para no oscurecer la UI */
 html.theme-light,
-html.theme-solarized-light,
-html.theme-gruvbox-light {
+html.theme-solarized-light {
   --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.10);
   --shadow-2: 0 4px 12px rgba(15, 23, 42, 0.14);
   --shadow-3: 0 12px 32px rgba(15, 23, 42, 0.18);
@@ -4210,6 +4209,148 @@ input[type="checkbox"] {
   gap: 6px;
 }
 
+/* ─── Selector de carpeta en árbol navegable (combobox + popover) ─── */
+.folder-tree-picker {
+  position: relative;
+  width: 100%;
+}
+
+.folder-tree-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--surface0);
+  border: 1px solid var(--surface1);
+  border-radius: var(--border-radius);
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.folder-tree-trigger:hover { border-color: var(--surface2); }
+.folder-tree-trigger[aria-expanded="true"] { border-color: var(--blue); }
+
+.folder-tree-trigger-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--subtext0);
+}
+
+.folder-tree-trigger-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-tree-trigger-caret {
+  flex-shrink: 0;
+  color: var(--overlay0);
+  font-size: 11px;
+}
+
+.folder-tree-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  background: var(--mantle);
+  border: 1px solid var(--surface1);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  padding: 6px;
+  gap: 6px;
+}
+
+.folder-tree-search {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.folder-tree-list {
+  overflow: auto;
+  max-height: 220px;
+  min-height: 32px;
+}
+
+.ft-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  user-select: none;
+}
+
+.ft-row:hover { background: var(--surface0); }
+.ft-row.selected {
+  background: var(--surface1);
+  font-weight: 500;
+}
+
+.ft-arrow {
+  font-size: 8px;
+  color: var(--overlay0);
+  transition: transform 0.15s ease;
+  width: 12px;
+  flex-shrink: 0;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.ft-arrow.open { transform: rotate(90deg); }
+.ft-arrow-empty { visibility: hidden; }
+
+.ft-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--subtext0);
+}
+
+.ft-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ft-empty {
+  padding: 12px 10px;
+  color: var(--subtext0);
+  font-size: 12px;
+  text-align: center;
+}
+
+.folder-tree-footer {
+  border-top: 1px solid var(--surface1);
+  padding-top: 6px;
+}
+
+.folder-tree-newbtn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--blue);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.folder-tree-newbtn:hover { background: var(--surface0); }
+
 /* ─── Selector avanzado de entradas KeePass (combobox + tabla) ─── */
 .keepass-picker {
   position: relative;
@@ -5600,6 +5741,14 @@ input[type="checkbox"] {
   user-select: none;
 }
 
+/* Glifo monocromo del protocolo (sustituye al emoji en RDP/VNC/Telnet). */
+.rdp-status-icon.external-proto-glyph {
+  font-size: 34px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-weight: 600;
+  color: var(--subtext0);
+}
+
 .rdp-status-info {
   display: flex;
   flex-direction: column;
@@ -5636,10 +5785,10 @@ html.theme-light {
   --surface1: #bcc0cc;
   --surface2: #acb0be;
   --text:     #4c4f69;
-  --subtext0: #6c6f85;
+  --subtext0: #5c5f77;
   --subtext1: #5c5f77;
-  --overlay0: #9ca0b0;
-  --overlay1: #8c8fa1;
+  --overlay0: #7c7f93;
+  --overlay1: #6c6f85;
   --blue:     #1e66f5;
   --lavender: #7287fd;
   --green:    #40a02b;
@@ -5686,8 +5835,8 @@ html.theme-nord {
   --text:     #eceff4;
   --subtext0: #d8dee9;
   --subtext1: #e5e9f0;
-  --overlay0: #4c566a;
-  --overlay1: #616e88;
+  --overlay0: #81a1c1;
+  --overlay1: #88c0d0;
   --blue:     #88c0d0;
   --lavender: #81a1c1;
   --green:    #a3be8c;
@@ -5782,8 +5931,8 @@ html.theme-solarized-dark {
   --text:     #93a1a1;
   --subtext0: #839496;
   --subtext1: #93a1a1;
-  --overlay0: #586e75;
-  --overlay1: #657b83;
+  --overlay0: #657b83;
+  --overlay1: #839496;
   --blue:     #268bd2;
   --lavender: #6c71c4;
   --green:    #859900;
@@ -5803,11 +5952,11 @@ html.theme-solarized-light {
   --surface0: #eee8d5;
   --surface1: #e0dac0;
   --surface2: #c9c2a4;
-  --text:     #657b83;
-  --subtext0: #839496;
+  --text:     #586e75;
+  --subtext0: #586e75;
   --subtext1: #586e75;
-  --overlay0: #93a1a1;
-  --overlay1: #839496;
+  --overlay0: #657b83;
+  --overlay1: #586e75;
   --blue:     #268bd2;
   --lavender: #6c71c4;
   --green:    #859900;
@@ -5854,8 +6003,8 @@ html.theme-tokyo-night {
   --text:     #c0caf5;
   --subtext0: #9aa5ce;
   --subtext1: #a9b1d6;
-  --overlay0: #565f89;
-  --overlay1: #737aa2;
+  --overlay0: #737aa2;
+  --overlay1: #9aa5ce;
   --blue:     #7aa2f7;
   --lavender: #bb9af7;
   --green:    #9ece6a;

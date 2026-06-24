@@ -28,6 +28,136 @@ Desde **Preferencias → Apariencia** puedes exportar e importar temas JSON. Rus
 
 El botón **Exportar plantilla** genera un JSON listo para editar. También puedes importar un tema suelto o un pack con varios temas. Los temas personalizados se guardan en las preferencias y pueden viajar con la sincronización cifrada.
 
+## Crear un tema personalizado
+
+La forma más cómoda de crear un tema es partir de una plantilla generada por la propia aplicación:
+
+1. Abre **Preferencias → Apariencia**.
+2. Pulsa **Exportar plantilla**.
+3. Edita el fichero JSON: cambia `id`, `name` y los colores de `ui` y `terminal`.
+4. Vuelve a **Preferencias → Apariencia** y pulsa **Importar tema…**.
+
+El importador acepta colores CSS válidos (`#rrggbb`, `rgb(...)`, `rgba(...)`, `hsl(...)`, etc.). El campo `id` se normaliza para usarlo como identificador interno; si ya existe otro tema con el mismo identificador, Rustty crea uno único añadiendo un sufijo.
+
+### Formato v2
+
+Un tema suelto tiene esta estructura:
+
+```json
+{
+  "formatVersion": 2,
+  "id": "bosque-nocturno",
+  "name": "Bosque nocturno",
+  "ui": {
+    "base": "#101814",
+    "mantle": "#0b120f",
+    "crust": "#070c0a",
+    "surface0": "#17241f",
+    "surface1": "#20342c",
+    "surface2": "#2b463b",
+    "overlay0": "#49675a",
+    "overlay1": "#668374",
+    "text": "#edf7ef",
+    "subtext0": "#b8cabb",
+    "subtext1": "#d1dfd3",
+    "blue": "#80bfff",
+    "red": "#ff8f8f",
+    "green": "#8de8a1",
+    "yellow": "#f4d06f",
+    "mauve": "#c7a7ff",
+    "peach": "#f3a46f",
+    "teal": "#72d6c9",
+    "sky": "#8bd3ff",
+    "lavender": "#b7c5ff"
+  },
+  "terminal": {
+    "background": "#101814",
+    "foreground": "#edf7ef",
+    "cursor": "#f4d06f",
+    "cursorAccent": "#101814",
+    "selectionBackground": "rgba(128, 191, 255, 0.28)",
+    "black": "#0b120f",
+    "red": "#ff8f8f",
+    "green": "#8de8a1",
+    "yellow": "#f4d06f",
+    "blue": "#80bfff",
+    "magenta": "#c7a7ff",
+    "cyan": "#72d6c9",
+    "white": "#d1dfd3",
+    "brightBlack": "#668374",
+    "brightRed": "#ffb3b3",
+    "brightGreen": "#b3f2c0",
+    "brightYellow": "#ffe49a",
+    "brightBlue": "#add6ff",
+    "brightMagenta": "#dcc8ff",
+    "brightCyan": "#a0eee4",
+    "brightWhite": "#ffffff"
+  }
+}
+```
+
+Los campos obligatorios son `formatVersion`, `name`, `ui.base`, `ui.text`, `terminal.background` y `terminal.foreground`. El resto de tokens son opcionales, pero conviene rellenarlos para que los controles, estados, previews y colores ANSI del terminal no hereden valores del tema por defecto.
+
+### Tokens de interfaz
+
+Los tokens de `ui` controlan las variables CSS de la aplicación:
+
+- Fondos: `base`, `mantle`, `crust`.
+- Superficies: `surface0`, `surface1`, `surface2`.
+- Capas y bordes suaves: `overlay0`, `overlay1`.
+- Texto: `text`, `subtext0`, `subtext1`.
+- Acentos y estados: `blue`, `red`, `green`, `yellow`, `mauve`, `peach`, `teal`, `sky`, `lavender`.
+
+### Tokens del terminal
+
+Los tokens de `terminal` se pasan a xterm.js:
+
+- Base: `background`, `foreground`, `cursor`, `cursorAccent`, `selectionBackground`.
+- ANSI normales: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`.
+- ANSI brillantes: `brightBlack`, `brightRed`, `brightGreen`, `brightYellow`, `brightBlue`, `brightMagenta`, `brightCyan`, `brightWhite`.
+
+### Pack de varios temas
+
+Para distribuir varios temas en un único fichero, usa un objeto con `themes`:
+
+```json
+{
+  "formatVersion": 2,
+  "kind": "rustty-theme-pack",
+  "name": "Mis temas Rustty",
+  "themes": [
+    {
+      "formatVersion": 2,
+      "id": "bosque-nocturno",
+      "name": "Bosque nocturno",
+      "ui": {
+        "base": "#101814",
+        "text": "#edf7ef"
+      },
+      "terminal": {
+        "background": "#101814",
+        "foreground": "#edf7ef"
+      }
+    },
+    {
+      "formatVersion": 2,
+      "id": "papel-claro",
+      "name": "Papel claro",
+      "ui": {
+        "base": "#f8f3e8",
+        "text": "#241f1a"
+      },
+      "terminal": {
+        "background": "#fffaf0",
+        "foreground": "#241f1a"
+      }
+    }
+  ]
+}
+```
+
+Ese ejemplo de pack usa solo los tokens mínimos para abreviar. Para un tema pulido, rellena todos los tokens de interfaz y terminal como en el ejemplo completo.
+
 ## Idioma
 
 Desde **Preferencias → Idioma** puedes dejar la opción **Sistema (automático)**, que detecta el idioma del sistema operativo, o fijar manualmente uno de los disponibles: **español**, **inglés**, **francés**, **portugués** y **alemán**.

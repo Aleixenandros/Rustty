@@ -2,6 +2,35 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.37.0] - 2026-06-24
+
+### Añadido
+
+- **Conexiones VNC**: nuevo tipo de conexión que abre el escritorio remoto en el
+  visor VNC del sistema (TigerVNC/`vncviewer` en Linux, Pantalla compartida en
+  macOS, visor instalado o `vnc://` en Windows). Igual que RDP, Rustty lanza el
+  cliente externo y vigila la sesión, cerrando la pestaña cuando termina.
+- **Conexiones Telnet**: nuevo tipo de conexión que lanza el cliente `telnet` del
+  sistema dentro de un emulador de terminal. Pensado para equipos de red y
+  dispositivos antiguos; se avisa con claridad si falta el cliente o el terminal.
+- **Selector de carpeta como árbol navegable**: al elegir la carpeta de una
+  conexión, en lugar de un desplegable plano interminable ahora hay un árbol que
+  se despliega y se filtra por nombre, mucho más cómodo con muchas carpetas.
+- **Verificación de contraste de temas** (`npm run check:contrast`): herramienta
+  interna que comprueba el contraste WCAG AA de los temas de la interfaz.
+
+### Cambiado
+
+- **Divisores del terminal**: doble clic en el divisor entre paneles divididos
+  reparte el espacio a partes iguales, igual que ya hacían la barra lateral y el
+  panel SFTP.
+
+### Corregido
+
+- **Contraste de los temas empaquetados**: se ajustan los colores de texto de los
+  temas precargados que no alcanzaban el contraste mínimo AA, para que el texto se
+  lea con claridad sobre su fondo.
+
 ## [1.36.0] - 2026-06-23
 
 ### Añadido
@@ -1341,7 +1370,7 @@ Todas las novedades reseñables del proyecto Rustty.
   y autoconexión opcional.
 - **Formato de temas v2**: los temas personalizados usan `formatVersion: 2`
   con tokens separados para UI y terminal. Se añadió exportación de plantilla
-  desde Preferencias → Apariencia y documentación en `docs/themes.md`.
+  desde Preferencias → Apariencia y documentación en `web/docs/Temas.md`.
 - **Botón de ver / ocultar contraseña** en el modal de crear o editar
   conexión.
 - **Portapapeles nativo de Tauri** para copiar/pegar texto del terminal,

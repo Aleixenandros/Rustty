@@ -7,6 +7,7 @@ use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Manager, State};
 
 use crate::credentials::{self, CredentialKind, CredentialMeta, CredentialStore};
+use crate::external_client::{TelnetManager, VncManager};
 use crate::host_keys::fingerprint_sha256;
 use crate::keepass_manager;
 use crate::local_shell_manager::LocalShellManager;
@@ -539,6 +540,89 @@ pub fn rdp_connect(
 #[tauri::command]
 pub fn rdp_disconnect(rdp_state: State<'_, RdpManager>, session_id: String) -> Result<(), String> {
     rdp_state.disconnect(&session_id)
+}
+
+// ─── Comandos VNC ────────────────────────────────────────────────────────────
+
+/// Lanza el visor VNC externo del sistema y devuelve el session_id.
+/// El backend emitirá `vnc-closed-{id}` cuando el proceso externo termine.
+#[tauri::command]
+pub fn vnc_connect(
+    vnc_state: State<'_, VncManager>,
+    profile_state: State<'_, ProfileManager>,
+    cred_state: State<'_, CredentialStore>,
+    app_handle: AppHandle,
+    profile_id: String,
+    credential_id: Option<String>,
+) -> Result<String, String> {
+    let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
+    let mut profile = profiles
+        .into_iter()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
+    if let Some(cid) = credential_id.as_deref() {
+        apply_credential(&mut profile, cid)?;
+    }
+    credentials::substitute_connection_fields(&mut profile, &cred_state);
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    vnc_state.launch(
+        session_id.clone(),
+        profile_id,
+        &profile.host,
+        profile.port,
+        app_handle,
+    )?;
+    Ok(session_id)
+}
+
+/// Termina el proceso VNC asociado a la sesión
+#[tauri::command]
+pub fn vnc_disconnect(vnc_state: State<'_, VncManager>, session_id: String) -> Result<(), String> {
+    vnc_state.disconnect(&session_id)
+}
+
+// ─── Comandos Telnet ─────────────────────────────────────────────────────────
+
+/// Lanza el cliente Telnet externo (en un emulador de terminal) y devuelve el
+/// session_id. El backend emitirá `telnet-closed-{id}` al terminar el proceso.
+#[tauri::command]
+pub fn telnet_connect(
+    telnet_state: State<'_, TelnetManager>,
+    profile_state: State<'_, ProfileManager>,
+    cred_state: State<'_, CredentialStore>,
+    app_handle: AppHandle,
+    profile_id: String,
+    credential_id: Option<String>,
+) -> Result<String, String> {
+    let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
+    let mut profile = profiles
+        .into_iter()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
+    if let Some(cid) = credential_id.as_deref() {
+        apply_credential(&mut profile, cid)?;
+    }
+    credentials::substitute_connection_fields(&mut profile, &cred_state);
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    telnet_state.launch(
+        session_id.clone(),
+        profile_id,
+        &profile.host,
+        profile.port,
+        app_handle,
+    )?;
+    Ok(session_id)
+}
+
+/// Termina el proceso Telnet asociado a la sesión
+#[tauri::command]
+pub fn telnet_disconnect(
+    telnet_state: State<'_, TelnetManager>,
+    session_id: String,
+) -> Result<(), String> {
+    telnet_state.disconnect(&session_id)
 }
 
 // ─── Comandos de shell local ──────────────────────────────────────────────────

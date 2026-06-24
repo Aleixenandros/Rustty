@@ -25,6 +25,8 @@ describe("contrato de prefijos", () => {
     expect(Object.keys(EVENT_PREFIX).sort()).toEqual(
       [
         "rdpClosed",
+        "vncClosed",
+        "telnetClosed",
         "sftpLog",
         "sftpProgress",
         "shellClosed",
