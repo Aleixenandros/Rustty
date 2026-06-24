@@ -6,7 +6,7 @@ Los scripts reproducibles completos siguen en diseño, pero estas herramientas c
 
 ## Snippets remotos
 
-Un snippet es un texto de comando guardado con nombre, grupo y descripción opcional. Al ejecutarlo, Rustty lo inserta en la sesión de terminal activa: SSH o consola local. No se inserta en sesiones RDP.
+Un snippet es un texto de comando guardado con nombre, grupo y descripción opcional. Al ejecutarlo, Rustty lo inserta en la sesión de terminal activa: SSH o consola local. No se inserta en sesiones RDP, VNC ni Telnet porque se abren en clientes externos.
 
 Cada snippet puede configurarse con:
 

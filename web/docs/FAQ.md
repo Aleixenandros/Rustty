@@ -44,6 +44,10 @@ En el resto de formatos de Linux (`.deb`, `.rpm`, Flatpak, Arch) la actualizaci�
 
 Sí. Haz clic derecho sobre una conexión → **Añadir nota** y escribe en Markdown, con previsualización en vivo. Cada nota se guarda como un archivo `.md`, se sincroniza y puede mostrarse como **panel runbook** junto a la sesión con casillas de tarea. Más detalles en la [guía de notas](?page=Notas).
 
+## ¿Rustty trae cliente RDP, VNC o Telnet integrado?
+
+No. Esos perfiles viven dentro de Rustty, pero se abren en clientes externos del sistema. RDP usa `xfreerdp`/`rdesktop`, `mstsc` o el cliente registrado; VNC usa un visor VNC como TigerVNC o el manejador `vnc://`; Telnet abre el comando `telnet` en una terminal externa. Más detalles en [Clientes externos](?page=ClientesExternos).
+
 ## ¿Los snippets y comandos locales se sincronizan?
 
 Los **snippets remotos** sí: viajan dentro del backup cifrado como `snippet:<id>` y aparecen también en la paleta de comandos. Los **comandos locales** no se sincronizan porque pueden depender de rutas, binarios o asociaciones propias de este equipo.

@@ -20,7 +20,7 @@ El estado visual del árbol (workspaces y carpetas abiertos) se recuerda localme
 
 ## Probar sin guardar
 
-El formulario de crear/editar conexión incluye el botón **Probar**. En perfiles SSH valida la resolución/conexión, la host key, la autenticación y la disponibilidad del subsistema SFTP reutilizando el mismo visor de diagnóstico que una sesión real. En perfiles RDP comprueba que el puerto configurado responde y muestra la latencia aproximada.
+El formulario de crear/editar conexión incluye el botón **Probar**. En perfiles SSH valida la resolución/conexión, la host key, la autenticación y la disponibilidad del subsistema SFTP reutilizando el mismo visor de diagnóstico que una sesión real. En perfiles RDP, FTP y FTPS comprueba que el puerto configurado responde y muestra la latencia aproximada. VNC y Telnet se lanzan con clientes externos y no tienen todavía una prueba dedicada.
 
 La prueba no guarda el perfil ni escribe secretos nuevos en el keyring. Si la conexión usa KeePass, Rustty resuelve la contraseña desde la base desbloqueada igual que haría al conectar.
 
@@ -56,6 +56,8 @@ Cada conexión incluye un botón **estrella** (☆/★) en la sidebar, también 
 - **FTP**: panel de ficheros para servidores FTP heredados.
 - **FTPS**: FTP explícito sobre TLS para servidores que no ofrecen SFTP.
 
+RDP, VNC y Telnet no se embeben dentro de Rustty: se abren como [clientes externos](?page=ClientesExternos), con una pestaña de estado en la app.
+
 ## Credenciales
 
 Según el tipo de perfil, puedes elegir:
@@ -79,6 +81,8 @@ Desde el menú contextual de un perfil con contraseña propia, **Promover a cred
 El check de guardar contraseña/passphrase aparece marcado por defecto para favorecer flujos multi-equipo; desmárcalo si no quieres guardar ese secreto en el keyring local. Si activas la sincronización de contraseñas guardadas en **Copias de seguridad**, esos secretos viajan cifrados E2E y se restauran en el keyring de los demás equipos.
 
 En perfiles RDP, **Guardar y conectar** usa la contraseña escrita en el formulario para esa conexión aunque no marques guardarla en el keyring. Si no hay contraseña disponible, Rustty la pedirá con el mismo modal integrado con el tema.
+
+En perfiles VNC y Telnet, el cliente externo pide sus propias credenciales cuando las necesita. Rustty guarda host, puerto y metadatos del perfil, pero no inyecta contraseñas en esos clientes.
 
 ### Varios usuarios por conexión
 
@@ -125,7 +129,7 @@ Los túneles guardados forman parte del perfil y se incluyen en backups y sincro
 
 Desde el menú contextual de un perfil de la sidebar puedes **Duplicar conexión**: crea una copia con nuevo UUID, mismo grupo y nombre sufijado con " (copia)" lista para editar antes de guardar. Si el perfil original tenía contraseña o passphrase guardadas en el keyring, también se copian a la nueva entrada, así que la copia queda lista para conectar sin reintroducir credenciales.
 
-Sobre la pestaña de una sesión activa, el menú contextual permite **Duplicar sesión**: abre una nueva sesión con el mismo perfil. Para shell local replica con un nuevo PTY; para RDP relanza el cliente externo.
+Sobre la pestaña de una sesión activa, el menú contextual permite **Duplicar sesión**: abre una nueva sesión con el mismo perfil. Para shell local replica con un nuevo PTY; para RDP, VNC y Telnet relanza el cliente externo.
 
 ### Conectar / duplicar con cambios
 

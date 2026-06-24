@@ -49,6 +49,14 @@ Las variables de texto (`${var:nombre}`) y de entorno (`${env:VAR}`) se resuelve
 
 Los valores de credenciales maestras y secretos se resuelven en el backend en el momento de conectar; nunca se escriben en `profiles.json`, en exports sin cifrar ni en los logs de sesión. Solo viajan en la copia cifrada E2E si activas la opción de incluir secretos.
 
+## Clientes externos
+
+RDP, VNC y Telnet se lanzan fuera del WebView mediante clientes del sistema. Rustty conserva el perfil, las notas, los favoritos y el estado de la pestaña, pero el contenido de esas sesiones no pasa por el terminal embebido.
+
+RDP usa el flujo normal de secretos de Rustty cuando el cliente/plataforma permite pasar credenciales. En VNC y Telnet, el visor o cliente externo pide sus propias credenciales; Rustty no inyecta contraseñas VNC/Telnet en procesos externos.
+
+Telnet no cifra el tráfico. Úsalo solo cuando el dispositivo o la red lo exijan y asumiendo que las credenciales y comandos pueden verse en tránsito.
+
 ## Sincronización cifrada
 
 Cuando activas sincronización o exportas un backup cifrado, Rustty genera `rustty-sync.bin` con `age` y tu passphrase maestra. El backend remoto recibe ese fichero ya cifrado.
@@ -101,7 +109,7 @@ Por diseño quedan fuera de la sincronización:
 - Bases KeePass desbloqueadas en memoria.
 - Rutas locales como `keepassPath` y `keepassKeyfile`.
 - Ficheros transferidos por SFTP/FTP/FTPS.
-- Contenido de sesiones SSH/RDP.
+- Contenido de sesiones SSH/RDP/VNC/Telnet.
 - Snapshots de pantalla para restaurar sesiones (`session_snapshots/`).
 - Comandos locales de Preferencias → Comandos.
 

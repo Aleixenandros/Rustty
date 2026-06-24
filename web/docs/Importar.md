@@ -21,7 +21,7 @@ En ambos casos las conexiones se crean en un **perfil-contenedor (workspace) nue
 
 Elige el origen y selecciona el fichero. Rustty lo analiza y muestra un resumen: cuántas conexiones contiene, cuántas son importables, cuántas carpetas y qué protocolos aparecen.
 
-Se importan los protocolos **SSH** y **RDP**. Otros protocolos (VNC, Telnet, shells locales, etc.) se omiten y se indican en el resumen, ya que Rustty no los gestiona como perfil propio todavía.
+El asistente importa actualmente los protocolos **SSH** y **RDP** desde esos formatos. Otros protocolos (VNC, Telnet, shells locales, etc.) se omiten y se indican en el resumen. Aunque Rustty permite crear perfiles VNC y Telnet manualmente, el mapeo de importación desde mRemoteNG/Ásbrú para esos tipos todavía no está implementado.
 
 ### Paso 2 · Selección
 

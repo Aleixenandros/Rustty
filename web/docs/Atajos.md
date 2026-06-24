@@ -16,7 +16,7 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl+Shift+P` | Abrir la paleta de comandos                         |
 | `Ctrl+,`       | Abrir preferencias                                  |
 | `F11`          | Activar / desactivar modo zen                       |
-| _(sin asignar)_ | Desconectar todo: cierra sesiones, túneles y cancela transferencias |
+| _(sin asignar)_ | Desconectar todo: cierra sesiones, clientes externos, túneles y cancela transferencias |
 
 «Desconectar todo» también está disponible como botón de emergencia en el rail lateral. No trae combinación por defecto para no pisar otros atajos; asígnale una desde **Preferencias → Atajos** si quieres lanzarla con el teclado.
 
@@ -65,7 +65,7 @@ La cabecera de la barra lateral tiene dos iconos junto al logo:
 - **🔍 Lupa** — abre un popover compacto con solo el cuadro de búsqueda; filtra los perfiles por nombre, host, usuario, grupo y también por el título, las etiquetas o el contenido de su nota, y oculta las carpetas vacías mientras escribes.
 - **≡ Filtros** — abre el popover completo con switcher de workspace, modos de vista (workspace actual / todos / favoritos), toggles de vista compacta y carpetas primero, y el mismo buscador.
 
-`Ctrl+K` enfoca la búsqueda de forma global y se comporta exactamente como pulsar el icono 🔍: funciona desde inicio, desde una sesión SSH/RDP o desde un split activo. Si estás dentro de una sesión, Rustty abre la barra lateral si hace falta y te deja buscar por nombre, IP/host, usuario o grupo sin volver al dashboard.
+`Ctrl+K` enfoca la búsqueda de forma global y se comporta exactamente como pulsar el icono 🔍: funciona desde inicio, desde una sesión o desde un split activo. Si estás dentro de una sesión, Rustty abre la barra lateral si hace falta y te deja buscar por nombre, IP/host, usuario o grupo sin volver al dashboard.
 
 Con una conexión seleccionada, **F2** la renombra al vuelo (lo mismo está disponible desde su menú contextual con **Renombrar conexión**). En el panel SFTP, **F2** renombra el archivo o carpeta seleccionados. F2 es contextual y no aparece en la lista de atajos configurables.
 

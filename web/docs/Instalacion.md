@@ -114,6 +114,34 @@ sha256sum Rustty_*_amd64.deb
 
 Para el detalle de cómo se firman los binarios y cómo verificarlos, consulta la [política de firma de código](?page=Firma).
 
+## Clientes externos opcionales
+
+SSH, SFTP, FTP y FTPS funcionan dentro de Rustty. Para **RDP**, **VNC** y **Telnet**, Rustty lanza clientes externos del sistema; instala solo los que vayas a usar.
+
+En Linux:
+
+```bash
+# RDP
+sudo dnf install freerdp          # Fedora
+sudo apt install freerdp2-x11     # Debian/Ubuntu
+
+# VNC
+sudo dnf install tigervnc         # Fedora
+sudo apt install tigervnc-viewer  # Debian/Ubuntu
+
+# Telnet
+sudo dnf install telnet           # Fedora
+sudo apt install telnet           # Debian/Ubuntu
+```
+
+Telnet en Linux necesita además un emulador de terminal (`x-terminal-emulator`, GNOME Terminal, Konsole, Xfce Terminal, Alacritty, Kitty o xterm).
+
+En Windows, RDP usa `mstsc.exe` incluido en el sistema. VNC requiere un visor instalado o un manejador `vnc://`. Telnet puede requerir activar el **Cliente Telnet** desde las características opcionales.
+
+En macOS, VNC usa Pantalla compartida (`vnc://`) y RDP necesita un cliente que registre `rdp://`. Telnet se abre en Terminal.app, pero puede que tengas que instalar el binario `telnet` aparte.
+
+Más detalle en [Clientes externos](?page=ClientesExternos).
+
 ## CLI SSH
 
 Una vez instalado, el binario también permite listar perfiles SSH, abrir sesiones interactivas y ejecutar comandos remotos desde terminal. Consulta la [guía del CLI SSH](?page=CLI) para ejemplos y limitaciones.
