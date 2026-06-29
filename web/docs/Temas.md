@@ -8,6 +8,21 @@ Rustty incluye una biblioteca amplia de temas listos para usar. Además de los t
 
 En **Preferencias → Apariencia** puedes buscar por nombre, filtrar por **Todos / Oscuros / Claros / Alto contraste** y restablecer el tema al sistema. El tema activo aparece marcado con un check.
 
+## Accesibilidad
+
+En **Preferencias → Apariencia** hay un bloque **Accesibilidad** que ajusta la legibilidad y el movimiento de la interfaz sin obligarte a cambiar de tema:
+
+- **Contraste de la interfaz** (Normal / Alto / Máximo): refuerza el contraste del texto, los bordes, el foco y la selección en toda la aplicación. Acerca los colores de texto más tenues al color principal sin cambiar el tema activo.
+- **Modo daltónico**: diferencia los indicadores de estado también por forma, no solo por color. Los puntos de estado usan círculo / cuadrado / diamante; los avisos emergentes añaden un icono por severidad (éxito, error, información, aviso); y las barras de transferencia SFTP marcan el estado final (correcto / error / omitido) con una trama distinta.
+- **Reducir movimiento**: desactiva animaciones, transiciones largas y efectos decorativos. Se respeta también la preferencia equivalente del sistema operativo. La campana visual del terminal pasa entonces a un realce estable, sin parpadeo.
+- **Foco visible reforzado**: aumenta el grosor y el contraste del anillo de foco en la navegación por teclado.
+- **Contraste mínimo del terminal** (Sin ajuste / AA 4.5:1 / AAA 7:1): adapta los colores ANSI poco legibles para que el texto alcance un contraste mínimo con su fondo. Útil con temas de bajo contraste.
+- **Cursor del terminal más visible**: pinta el cursor con una tinta de alto contraste (blanco o negro según el fondo) en cualquier estilo y engrosa el caret cuando el estilo es «barra».
+
+### Navegación por teclado
+
+Toda la interfaz es operable con teclado. Los menús contextuales (clic derecho o **Shift+F10** sobre una conexión, pestaña o panel SFTP) enfocan su primer ítem al abrirse y se recorren con las flechas **↑/↓** e **Inicio/Fin**; **Enter/Espacio** activan la opción y **Tab/Escape** cierran devolviendo el foco al punto de partida. En la barra lateral, **Enter/Espacio** sobre una conexión la abre; en las pestañas, la seleccionan (**Ctrl/Cmd+Enter** la añade a la vista múltiple).
+
 ## Terminal
 
 En **Preferencias → Terminal** puedes ajustar:

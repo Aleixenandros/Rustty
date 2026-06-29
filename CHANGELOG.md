@@ -2,6 +2,36 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.38.0] - 2026-06-29
+
+### Añadido
+
+- **Bloque de accesibilidad** en Preferencias → Apariencia que agrupa los ajustes
+  de legibilidad y movimiento.
+- **Contraste de la interfaz** (Normal / Alto / Máximo): refuerza el contraste del
+  texto, los bordes, el foco y la selección en toda la aplicación sin obligar a
+  cambiar de tema.
+- **Reducir movimiento**: desactiva animaciones, transiciones largas y efectos
+  decorativos aunque el sistema operativo no lo anuncie. La campana visual del
+  terminal pasa a un realce estable, sin parpadeo.
+- **Foco visible reforzado**: aumenta el grosor y el contraste del anillo de foco
+  en la navegación por teclado.
+- **Contraste mínimo del terminal** (Sin ajuste / AA / AAA): adapta los colores
+  ANSI poco legibles para que el texto alcance un contraste mínimo con su fondo.
+- **Cursor del terminal más visible**: tinta de alto contraste en cualquier estilo
+  de cursor y caret más grueso en el estilo «barra».
+- **Navegación por teclado** completa en menús contextuales, barra lateral y
+  pestañas: foco al abrir un menú, recorrido con flechas/Inicio/Fin, cierre con
+  Tab/Escape y apertura del menú contextual con Shift+F10.
+
+### Cambiado
+
+- **Modo daltónico ampliado** más allá de los puntos de estado: los avisos
+  emergentes añaden un icono por severidad y las barras de transferencia SFTP
+  marcan el estado final con una trama distinta, además del color.
+- **Foco no oculto tras scroll**: al tabular, el elemento enfocado se desplaza a la
+  vista con un margen para no quedar pegado al borde ni medio oculto.
+
 ## [1.37.0] - 2026-06-24
 
 ### Añadido

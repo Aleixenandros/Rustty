@@ -180,6 +180,10 @@ input, select, textarea {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
   border-radius: var(--radius-sm);
+  /* Al tabular, el navegador desplaza el elemento enfocado a la vista; este
+     margen evita que el foco quede pegado al borde de un contenedor con scroll
+     o medio oculto bajo cabeceras/pies. Solo afecta al scroll-into-view. */
+  scroll-margin: 14px;
 }
 
 /* Algunos contenedores cortan el anillo si va por fuera; cuando
@@ -1842,6 +1846,27 @@ body.terminal-bell-visual::after {
   100% {
     opacity: 0;
   }
+}
+
+/* Campana visual no parpadeante: con movimiento reducido (toggle o ajuste del
+   sistema) la animación de destello se desactivaría a ~0 ms y el aviso pasaría
+   inadvertido. En su lugar mostramos un realce estable y opaco que el
+   `setTimeout` de `flashBellTarget` (260 ms) retira, conservando el feedback
+   sin parpadeo. */
+@media (prefers-reduced-motion: reduce) {
+  .terminal-pane.terminal-bell-visual::after,
+  #modal-prefs.terminal-bell-visual::after,
+  body.terminal-bell-visual::after {
+    animation: none !important;
+    opacity: 1;
+  }
+}
+
+body.reduce-motion .terminal-pane.terminal-bell-visual::after,
+body.reduce-motion #modal-prefs.terminal-bell-visual::after,
+body.reduce-motion.terminal-bell-visual::after {
+  animation: none !important;
+  opacity: 1;
 }
 
 /* Indicador visual en pestañas seleccionadas en la vista múltiple */
@@ -4746,6 +4771,19 @@ input[type="checkbox"] {
   line-height: 1.5;
 }
 
+/* Subtítulo dentro de un panel de Preferencias (p. ej. «Accesibilidad»
+   dentro de Apariencia). Agrupa ajustes relacionados con un separador
+   sutil sin abrir un panel nuevo. */
+.prefs-subhead {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 22px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--surface1);
+  letter-spacing: 0.01em;
+}
+
 .sync-backend-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -7391,6 +7429,46 @@ body.sftp-log-resizing {
   }
 }
 
+/* ─── Reducir movimiento (toggle explícito) ─────────────────────
+   Equivalente a `prefers-reduced-motion` pero activado por el usuario
+   desde Preferencias → Apariencia → Accesibilidad, independientemente
+   de lo que anuncie el sistema operativo. */
+body.reduce-motion *,
+body.reduce-motion *::before,
+body.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* ─── Foco visible reforzado (toggle explícito) ─────────────────
+   Engrosa el anillo de foco y lo lleva a un color sólido de alto
+   contraste. Reutiliza los tokens `--focus-ring-*` que ya consume
+   `:focus-visible`. El contraste alto/máximo también lo refuerza. */
+body.strong-focus {
+  --focus-ring-color: var(--blue);
+  --focus-ring-width: 3px;
+  --focus-ring-offset: 3px;
+}
+
+html[data-contrast="high"],
+html[data-contrast="max"] {
+  --focus-ring-color: var(--blue);
+}
+
+html[data-contrast="max"] {
+  --focus-ring-width: 3px;
+}
+
+/* Selección de texto con mayor contraste en los niveles alto/máximo
+   (no afecta al lienzo del terminal, que gestiona su propia selección). */
+html[data-contrast="high"] ::selection,
+html[data-contrast="max"] ::selection {
+  background: var(--blue);
+  color: var(--base);
+}
+
 /* ─── Skeleton loaders ─────────────────────────────────────────
    Marcador visual para datos en carga. Uso:
      <div class="skeleton" style="width:140px;height:14px"></div>
@@ -8220,6 +8298,67 @@ body.color-blind-safe #status-bar .status-dot.reconnecting,
 body.color-blind-safe .sync-dot.busy {
   border-radius: 1px;
   transform: rotate(45deg);
+}
+
+/* ─── Modo daltónico ampliado — toasts ─────────────────────────
+   Los toasts se distinguen solo por el color de fondo (verde éxito /
+   rojo error / azul info / amarillo aviso), justo la confusión más
+   habitual (deuteranopia/protanopia). Con el modo daltónico se antepone
+   un icono SVG monocromo distinto por severidad: se pinta con `mask` +
+   `background-color: currentColor`, que en el toast es `--crust` (su color
+   de texto), de modo que el significado deja de depender solo del color.
+   No usa emoji: son trazos SVG (solo cuenta su canal alfa para la máscara). */
+body.color-blind-safe .toast.success {
+  --cb-toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 12.5l5 5 11-12' fill='none' stroke='%23000' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+body.color-blind-safe .toast.error {
+  --cb-toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 6l12 12M18 6L6 18' fill='none' stroke='%23000' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+body.color-blind-safe .toast.info {
+  --cb-toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='none' stroke='%23000' stroke-width='2'/%3E%3Cpath d='M12 11v5.5' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='7.6' r='1.5' fill='%23000'/%3E%3C/svg%3E");
+}
+body.color-blind-safe .toast.warning {
+  --cb-toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3.5l9.5 16.5H2.5z' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M12 9.5v5' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='17.4' r='1.4' fill='%23000'/%3E%3C/svg%3E");
+}
+body.color-blind-safe .toast.success::before,
+body.color-blind-safe .toast.error::before,
+body.color-blind-safe .toast.info::before,
+body.color-blind-safe .toast.warning::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  background-color: currentColor;
+  -webkit-mask: var(--cb-toast-icon) center / contain no-repeat;
+  mask: var(--cb-toast-icon) center / contain no-repeat;
+}
+
+/* ─── Modo daltónico ampliado — transferencias SFTP ────────────
+   El estado final de una transferencia se transmite por el color de la
+   barra (verde ok / rojo error / amarillo omitido-cancelado). Con el modo
+   daltónico se superpone además una trama distinta por estado: «ok» queda
+   sólido, «error» con trama gruesa a 45° y «omitido/cancelado» con trama
+   fina a −45°, de modo que no dependa solo del color. */
+body.color-blind-safe .sftp-transfer.done.error .sftp-transfer-fill {
+  background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(0, 0, 0, 0.38) 4px 8px);
+}
+body.color-blind-safe .sftp-transfer.done.skipped .sftp-transfer-fill,
+body.color-blind-safe .sftp-transfer.done.canceled .sftp-transfer-fill {
+  background-image: repeating-linear-gradient(-45deg, transparent 0 3px, rgba(0, 0, 0, 0.32) 3px 6px);
+}
+
+/* ─── Modo daltónico ampliado — badge de aviso ─────────────────
+   El badge de resumen «aviso» (peach) se distingue del informativo (azul)
+   solo por color; con el modo daltónico se le antepone un triángulo SVG. */
+body.color-blind-safe .modal-summary-badge.warn::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin-right: 2px;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3.5l9.5 16.5H2.5z' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M12 9.5v5' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='17.4' r='1.4' fill='%23000'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3.5l9.5 16.5H2.5z' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M12 9.5v5' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='17.4' r='1.4' fill='%23000'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 /* ═══════════════════════════════════════════════════════════════

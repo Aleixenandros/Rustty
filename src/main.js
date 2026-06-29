@@ -385,6 +385,14 @@ const DEFAULT_PREFS = {
   // existe, el backend cae a $HOME.
   localShellCwd:   "",
   bell:            "none",    // "none" | "visual" | "sound"
+  // Contraste mínimo del texto del terminal (xterm `minimumContrastRatio`).
+  // Adapta dinámicamente los colores ANSI poco legibles contra el fondo de su
+  // celda. "off" = sin ajuste (1:1); "aa" = 4.5:1; "aaa" = 7:1.
+  terminalMinContrast: "off", // "off" | "aa" | "aaa"
+  // Cursor del terminal más visible: tinta de alto contraste (blanco/negro
+  // según el fondo) en cualquier estilo de cursor + caret más grueso cuando el
+  // estilo es «bar». No cambia el estilo elegido en `cursorStyle`.
+  terminalCursorHighVis: false,
   // KeePass: rutas persistentes (sin contraseña maestra)
   keepassPath:     "",
   keepassKeyfile:  "",
@@ -450,6 +458,17 @@ const DEFAULT_PREFS = {
   // Modo daltónico: dots de estado se diferencian también por forma
   // (círculo / cuadrado / diamante) además de por color.
   colorBlindSafe:  false,
+  // ─── Accesibilidad ───────────────────────────────────────────
+  // Nivel de contraste de la interfaz, independiente del tema. En "high"/"max"
+  // los tokens de texto/overlay más tenues se acercan a --text (reforzando con
+  // ellos bordes, foco y selección) sin obligar a cambiar de tema. "normal" no
+  // toca nada.
+  uiContrast:      "normal", // "normal" | "high" | "max"
+  // Reduce o elimina animaciones y transiciones de la interfaz aunque el sistema
+  // operativo no anuncie `prefers-reduced-motion`.
+  reduceMotion:    false,
+  // Refuerza el anillo de foco (grosor y contraste) en la navegación por teclado.
+  strongFocus:     false,
   // UUIDs de las últimas entradas KeePass seleccionadas (más reciente primero,
   // máx 8). Usado por el selector avanzado para sugerir entradas habituales.
   recentKeepassEntries: [],
@@ -586,6 +605,9 @@ function loadPrefs() {
   applyUiDensity(prefs.uiDensity);
   applyUiZoom(prefs.uiZoom);
   applyColorBlindSafe(prefs.colorBlindSafe);
+  applyUiContrast(prefs.uiContrast);
+  applyReduceMotion(prefs.reduceMotion);
+  applyStrongFocus(prefs.strongFocus);
   if (loadZenMode()) applyZenMode(true);
 }
 
@@ -701,6 +723,9 @@ function applyTheme(theme) {
   if (effective !== "dark") {
     root.classList.add(`theme-${effective}`);
   }
+  // El nivel de contraste reasigna tokens a valores de la paleta del tema; al
+  // cambiar de tema hay que recalcularlos sobre la paleta nueva.
+  applyUiContrast(prefs.uiContrast);
   applyPrefsToAllTerminals();
 }
 
@@ -763,6 +788,45 @@ function initUiZoomControl() {
  */
 function applyColorBlindSafe(enabled) {
   document.body.classList.toggle("color-blind-safe", !!enabled);
+}
+
+/**
+ * Aplica el nivel de contraste de la interfaz (independiente del tema). En
+ * "high"/"max" los tokens de texto/overlay más tenues se "suben" hacia --text:
+ * cada uno se reasigna al valor original de un token más contrastado, lo que
+ * preserva una jerarquía comprimida en lugar de aplanarla. Se relee la paleta
+ * del tema activo tras limpiar los overrides previos, para no encadenar
+ * desplazamientos al cambiar de tema o de nivel. Refuerza así, de forma
+ * transitiva, texto, bordes, foco y selección que consumen esos tokens.
+ */
+function applyUiContrast(level) {
+  // De más tenue a más contrastado. El último (--text) es el techo.
+  const ladder = ["--overlay0", "--overlay1", "--subtext0", "--subtext1", "--text"];
+  const root = document.documentElement;
+  for (const tok of ladder) root.style.removeProperty(tok);
+  const l = level === "high" || level === "max" ? level : "normal";
+  root.setAttribute("data-contrast", l);
+  if (l === "normal") return;
+  const cs = getComputedStyle(root);
+  const orig = ladder.map((t) => cs.getPropertyValue(t).trim());
+  const shift = l === "max" ? 2 : 1;
+  ladder.forEach((tok, i) => {
+    const src = orig[Math.min(i + shift, ladder.length - 1)];
+    if (src) root.style.setProperty(tok, src);
+  });
+}
+
+/**
+ * Reduce el movimiento de la interfaz bajo demanda (toggle explícito), además
+ * del respeto automático a `prefers-reduced-motion` del sistema operativo.
+ */
+function applyReduceMotion(enabled) {
+  document.body.classList.toggle("reduce-motion", !!enabled);
+}
+
+/** Refuerza el anillo de foco (grosor y contraste) para navegación por teclado. */
+function applyStrongFocus(enabled) {
+  document.body.classList.toggle("strong-focus", !!enabled);
 }
 
 // ─── Export / Import de temas ─────────────────────────────────
@@ -1374,6 +1438,56 @@ function resolveFontFamily() {
   return f ? `"${f.replace(/"/g, "\\\"")}", ${DEFAULT_FONT_STACK}` : DEFAULT_FONT_STACK;
 }
 
+/**
+ * Traduce el nivel de contraste mínimo del terminal a la ratio que espera
+ * xterm en `minimumContrastRatio` (1 = desactivado, 4.5 = AA, 7 = AAA).
+ */
+function terminalMinContrastRatio(level = prefs.terminalMinContrast) {
+  if (level === "aa") return 4.5;
+  if (level === "aaa") return 7;
+  return 1;
+}
+
+/** Luminancia relativa WCAG [0..1] de un color hex (#rgb / #rrggbb), o NaN. */
+function hexLuminance(hex) {
+  if (typeof hex !== "string") return NaN;
+  let h = hex.trim().replace(/^#/, "");
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return NaN;
+  const toLin = (c) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const r = toLin(parseInt(h.slice(0, 2), 16));
+  const g = toLin(parseInt(h.slice(2, 4), 16));
+  const b = toLin(parseInt(h.slice(4, 6), 16));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Tinta de máximo contraste (blanco o negro) frente a un fondo hex. */
+function highContrastInk(hexBg) {
+  const lum = hexLuminance(hexBg);
+  return Number.isFinite(lum) && lum > 0.4 ? "#000000" : "#ffffff";
+}
+
+/**
+ * Tema xterm a aplicar teniendo en cuenta el cursor de alta visibilidad. Si la
+ * preferencia está activa, clona el tema (sin mutar el compartido) y fija el
+ * cursor a una tinta de alto contraste con `cursorAccent` igual al fondo, para
+ * que destaque en cualquier estilo (block / bar / underline).
+ */
+function terminalThemeForCursor() {
+  const theme = getTerminalTheme();
+  if (!prefs.terminalCursorHighVis) return theme;
+  const ink = highContrastInk(theme?.background);
+  return { ...theme, cursor: ink, cursorAccent: theme?.background };
+}
+
+/** Grosor del caret cuando el cursor es de alta visibilidad (solo estilo «bar»). */
+function terminalCursorWidth() {
+  return prefs.terminalCursorHighVis ? 3 : 1;
+}
+
 function applyPrefsToTerminal(terminal) {
   terminal.options.fontFamily    = resolveFontFamily();
   terminal.options.fontSize      = prefs.fontSize;
@@ -1381,9 +1495,11 @@ function applyPrefsToTerminal(terminal) {
   terminal.options.letterSpacing = prefs.letterSpacing;
   terminal.options.cursorStyle   = prefs.cursorStyle;
   terminal.options.cursorBlink   = prefs.cursorBlink;
+  terminal.options.cursorWidth   = terminalCursorWidth();
   terminal.options.scrollback    = prefs.scrollback;
   terminal.options.bellStyle     = prefs.bell;
-  terminal.options.theme         = getTerminalTheme();
+  terminal.options.minimumContrastRatio = terminalMinContrastRatio();
+  terminal.options.theme         = terminalThemeForCursor();
 }
 
 function applyPrefsToAllTerminals() {
@@ -1509,6 +1625,12 @@ function openSettingsModal() {
   syncUiZoomControl();
   const _cbSafe = document.getElementById("pref-color-blind-safe");
   if (_cbSafe) _cbSafe.checked = !!prefs.colorBlindSafe;
+  const _uiContrast = document.getElementById("pref-ui-contrast");
+  if (_uiContrast) _uiContrast.value = ["high", "max"].includes(prefs.uiContrast) ? prefs.uiContrast : "normal";
+  const _reduceMotion = document.getElementById("pref-reduce-motion");
+  if (_reduceMotion) _reduceMotion.checked = !!prefs.reduceMotion;
+  const _strongFocus = document.getElementById("pref-strong-focus");
+  if (_strongFocus) _strongFocus.checked = !!prefs.strongFocus;
   const _searchAllWorkspaces = document.getElementById("pref-search-all-workspaces");
   if (_searchAllWorkspaces) _searchAllWorkspaces.checked = prefs.searchAllWorkspaces !== false;
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
@@ -1516,6 +1638,10 @@ function openSettingsModal() {
   if (_ligEl) _ligEl.checked = !!prefs.terminalLigatures;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
   document.getElementById("pref-bell").value                = prefs.bell;
+  const _termContrast = document.getElementById("pref-terminal-min-contrast");
+  if (_termContrast) _termContrast.value = ["aa", "aaa"].includes(prefs.terminalMinContrast) ? prefs.terminalMinContrast : "off";
+  const _termCursorHv = document.getElementById("pref-terminal-cursor-highvis");
+  if (_termCursorHv) _termCursorHv.checked = !!prefs.terminalCursorHighVis;
   const _localCwdEl = document.getElementById("pref-local-cwd");
   if (_localCwdEl) _localCwdEl.value = prefs.localShellCwd || "";
   renderHighlightRulesEditor();
@@ -2757,10 +2883,21 @@ function savePrefsFromModal() {
     terminalLigatures: !!document.getElementById("pref-terminal-ligatures")?.checked,
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     bell:            document.getElementById("pref-bell").value,
+    terminalMinContrast: (() => {
+      const v = document.getElementById("pref-terminal-min-contrast")?.value;
+      return v === "aa" || v === "aaa" ? v : "off";
+    })(),
+    terminalCursorHighVis: !!document.getElementById("pref-terminal-cursor-highvis")?.checked,
     localShellCwd:   (document.getElementById("pref-local-cwd")?.value || "").trim(),
     uiDensity:       (document.getElementById("pref-ui-density")?.value === "compact" ? "compact" : "comfortable"),
     uiZoom:          clampUiZoom(Number(previousPrefs.uiZoom ?? 1)),
     colorBlindSafe:  !!document.getElementById("pref-color-blind-safe")?.checked,
+    uiContrast:      (() => {
+      const v = document.getElementById("pref-ui-contrast")?.value;
+      return v === "high" || v === "max" ? v : "normal";
+    })(),
+    reduceMotion:    !!document.getElementById("pref-reduce-motion")?.checked,
+    strongFocus:     !!document.getElementById("pref-strong-focus")?.checked,
     searchAllWorkspaces: document.getElementById("pref-search-all-workspaces")?.checked ?? true,
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
@@ -2831,6 +2968,9 @@ function savePrefsFromModal() {
   applyUiDensity(prefs.uiDensity);
   applyUiZoom(prefs.uiZoom);
   applyColorBlindSafe(prefs.colorBlindSafe);
+  applyUiContrast(prefs.uiContrast);
+  applyReduceMotion(prefs.reduceMotion);
+  applyStrongFocus(prefs.strongFocus);
   applyPrefsToAllTerminals();
   renderConnectionList();
   closeSettingsModal();
@@ -4447,6 +4587,9 @@ function renderConnectionItem(p, depth) {
     <div class="${cls}"
          data-id="${p.id}"
          draggable="true"
+         tabindex="0"
+         role="treeitem"
+         aria-label="${escHtml(`${p.name} — ${p.username}@${p.host}:${p.port}`)}"
          style="padding-left:${indent}px">
       <div class="conn-item-icon ${escHtml(proto.className)}${isOpen ? " connected" : ""}" title="${escHtml(proto.label)}">
         ${escHtml(proto.icon)}
@@ -4574,6 +4717,17 @@ function bindTreeEvents(container) {
       // El doble clic siempre abre una sesión nueva, aunque ya haya una pestaña
       // abierta de este perfil (force evita reutilizar la pestaña existente).
       connectProfile(el.dataset.id, { force: true });
+    });
+    // Teclado: Enter/Espacio conectan (reutilizan pestaña si ya está abierta).
+    // El foco sobre la fila ya hace de «selección», así que aquí el activador
+    // abre la conexión, como el clic. Las acciones internas (favorito/editar/
+    // eliminar) son <button> propios y se gestionan aparte.
+    el.addEventListener("keydown", (e) => {
+      if (e.target.closest("[data-action]")) return;
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        connectProfile(el.dataset.id);
+      }
     });
   });
 
@@ -5019,11 +5173,78 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   if (submenu) {
     submenu.classList.toggle("open-left", finalX + width + 190 > window.innerWidth);
   }
+
+  onFloatingMenuOpened(menu);
 }
 
 function hideContextMenu() {
   document.getElementById("context-menu").classList.add("hidden");
   ctxTarget = { type: null, id: null, folderPath: null, workspaceId: null };
+}
+
+// ─── Navegación por teclado de los menús flotantes ──────────────
+// Los menús contextuales (sidebar, pestañas, SFTP) se construyen con <button>
+// nativos: ya son enfocables y se activan con Enter/Espacio. Esta capa añade el
+// resto del patrón de menú accesible: al abrirse se enfoca el primer ítem (el
+// anillo de foco solo se ve si la apertura fue por teclado, por la heurística de
+// `:focus-visible`); las flechas / Inicio / Fin recorren los ítems visibles; y
+// Tab o Escape cierran devolviendo el foco al elemento que abrió el menú.
+const FLOATING_MENU_IDS = ["context-menu", "tab-context-menu", "sftp-context-menu"];
+let menuReturnFocus = null;
+
+function openFloatingMenuEl() {
+  for (const id of FLOATING_MENU_IDS) {
+    const el = document.getElementById(id);
+    if (el && !el.classList.contains("hidden")) return el;
+  }
+  return null;
+}
+
+function floatingMenuItems(menu) {
+  return [...menu.querySelectorAll("button")].filter(
+    (b) => !b.disabled && !b.classList.contains("hidden") && b.offsetParent !== null
+  );
+}
+
+/** Tras abrir un menú flotante: recuerda el disparador y enfoca el primer ítem. */
+function onFloatingMenuOpened(menu) {
+  menuReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  floatingMenuItems(menu)[0]?.focus();
+}
+
+/** Cierra todos los menús flotantes; opcionalmente devuelve el foco al disparador. */
+function closeFloatingMenus({ restoreFocus = false } = {}) {
+  const wasOpen = !!openFloatingMenuEl();
+  hideContextMenu();
+  hideTabContextMenu();
+  hideSftpContextMenu();
+  if (restoreFocus && wasOpen && menuReturnFocus && document.contains(menuReturnFocus)) {
+    menuReturnFocus.focus();
+  }
+  menuReturnFocus = null;
+}
+
+function handleFloatingMenuKeydown(e) {
+  const menu = openFloatingMenuEl();
+  if (!menu) return;
+  if (e.key === "Tab") {
+    e.preventDefault();
+    closeFloatingMenus({ restoreFocus: true });
+    return;
+  }
+  const step = { ArrowDown: 1, ArrowUp: -1, Home: "first", End: "last" };
+  if (!(e.key in step)) return;
+  const items = floatingMenuItems(menu);
+  if (items.length === 0) return;
+  e.preventDefault();
+  const cur = items.indexOf(document.activeElement);
+  const move = step[e.key];
+  let next;
+  if (move === "first") next = 0;
+  else if (move === "last") next = items.length - 1;
+  else if (cur < 0) next = move === 1 ? 0 : items.length - 1;
+  else next = (cur + move + items.length) % items.length;
+  items[next].focus();
 }
 
 function handleContextMenuAction(action) {
@@ -8289,6 +8510,8 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
   if (sessionAlias) tab.classList.add("has-alias");
   if (isPrivate) tab.classList.add("is-private");
   tab.draggable = true;
+  tab.tabIndex = 0;
+  tab.setAttribute("aria-label", tabLabel);
   const sftpBtn = sftp ? `<button class="tab-sftp" title="Panel SFTP">⇅</button>` : "";
   const tunnelBtn = sftp ? `<button class="tab-tunnels" title="Túneles SSH">⇄</button>` : "";
   // Botón de nota/runbook solo para sesiones de un perfil guardado real
@@ -8317,6 +8540,16 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
     if (e.target.classList.contains("tab-tunnels")) return;
     if (e.target.classList.contains("tab-notes")) return;
     selectSession(tab.dataset.session, e.ctrlKey || e.metaKey);
+  });
+  // Teclado: Enter/Espacio sobre la propia pestaña la selecciona (Ctrl/Cmd la
+  // añade a la vista múltiple). No interceptamos las teclas de los botones
+  // internos (cerrar/SFTP/túneles/notas), que se activan de forma nativa.
+  tab.addEventListener("keydown", (e) => {
+    if (e.target !== tab) return;
+    if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+      e.preventDefault();
+      selectSession(tab.dataset.session, e.ctrlKey || e.metaKey);
+    }
   });
   tab.querySelector(".tab-close").addEventListener("click", () => closeSession(tab.dataset.session));
   tab.querySelector(".tab-sftp")?.addEventListener("click", (e) => {
@@ -9900,7 +10133,9 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     letterSpacing: prefs.letterSpacing,
     scrollback: prefs.scrollback,
     bellStyle: prefs.bell,
-    theme: getTerminalTheme(),
+    minimumContrastRatio: terminalMinContrastRatio(),
+    cursorWidth: terminalCursorWidth(),
+    theme: terminalThemeForCursor(),
     allowProposedApi: true,
     // Desplazamiento con la rueda: el default de xterm (1) avanza muy pocas
     // líneas por muesca y se siente "atrancado". Subimos la sensibilidad para
@@ -13405,6 +13640,7 @@ function showSftpContextMenu(x, y, sessionId, side) {
   });
 
   positionFloatingMenu(menu, x, y);
+  onFloatingMenuOpened(menu);
 }
 
 function hideSftpContextMenu() {
@@ -16824,11 +17060,12 @@ function bindUIEvents() {
       }
       closeModal();
       closeSettingsModal();
-      hideContextMenu();
-      hideTabContextMenu();
-      hideSftpContextMenu();
+      closeFloatingMenus({ restoreFocus: true });
     }
   });
+
+  // Navegación por teclado de los menús flotantes (flechas / Inicio / Fin / Tab).
+  document.addEventListener("keydown", handleFloatingMenuKeydown);
 
   // Atajos de teclado globales (capture phase para preempt a xterm)
   document.addEventListener("keydown", handleGlobalShortcut, { capture: true });
@@ -19433,6 +19670,7 @@ function showTabContextMenu(x, y, sessionId) {
   const { width, height } = menu.getBoundingClientRect();
   menu.style.left = Math.min(x, window.innerWidth  - width  - 6) + "px";
   menu.style.top  = Math.min(y, window.innerHeight - height - 6) + "px";
+  onFloatingMenuOpened(menu);
 }
 
 function hideTabContextMenu() {

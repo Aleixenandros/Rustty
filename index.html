@@ -1864,12 +1864,58 @@
                 <p class="settings-hint" data-i18n="prefs_appearance.ui_zoom_hint">Escala el rail, la barra lateral, las pestañas y los modales sin afectar al terminal. También con Ctrl+Alt y +/−/0.</p>
               </div>
 
+              <h4 class="prefs-subhead" data-i18n="prefs_appearance.a11y_title">Accesibilidad</h4>
+
+              <div class="settings-row">
+                <label for="pref-ui-contrast" data-i18n="prefs_appearance.contrast">Contraste de la interfaz</label>
+                <select id="pref-ui-contrast">
+                  <option value="normal" data-i18n="prefs_appearance.contrast_normal">Normal</option>
+                  <option value="high" data-i18n="prefs_appearance.contrast_high">Alto</option>
+                  <option value="max" data-i18n="prefs_appearance.contrast_max">Máximo</option>
+                </select>
+                <p class="settings-hint" data-i18n="prefs_appearance.contrast_hint">Refuerza el contraste del texto, los bordes, el foco y la selección sin obligar a cambiar de tema. Afecta a toda la interfaz.</p>
+              </div>
+
               <div class="settings-row">
                 <label class="checkbox-label">
                   <input type="checkbox" id="pref-color-blind-safe" />
                   <span data-i18n="prefs_appearance.color_blind_safe">Modo daltónico</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_appearance.color_blind_safe_hint">Diferencia los indicadores de estado (pestañas, sync, barra inferior) también por forma además de por color.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-reduce-motion" />
+                  <span data-i18n="prefs_appearance.reduce_motion">Reducir movimiento</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_appearance.reduce_motion_hint">Desactiva animaciones, transiciones largas y spinners decorativos. Se respeta también la preferencia del sistema operativo.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-strong-focus" />
+                  <span data-i18n="prefs_appearance.strong_focus">Foco visible reforzado</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_appearance.strong_focus_hint">Aumenta el grosor y el contraste del anillo de foco en la navegación por teclado.</p>
+              </div>
+
+              <div class="settings-row">
+                <label for="pref-terminal-min-contrast" data-i18n="prefs_appearance.term_contrast">Contraste mínimo del terminal</label>
+                <select id="pref-terminal-min-contrast">
+                  <option value="off" data-i18n="prefs_appearance.term_contrast_off">Sin ajuste</option>
+                  <option value="aa" data-i18n="prefs_appearance.term_contrast_aa">AA (4.5:1)</option>
+                  <option value="aaa" data-i18n="prefs_appearance.term_contrast_aaa">AAA (7:1)</option>
+                </select>
+                <p class="settings-hint" data-i18n="prefs_appearance.term_contrast_hint">Adapta los colores ANSI poco legibles del terminal para que el texto alcance un contraste mínimo con su fondo. Útil con temas de bajo contraste.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-terminal-cursor-highvis" />
+                  <span data-i18n="prefs_appearance.term_cursor_highvis">Cursor del terminal más visible</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_appearance.term_cursor_highvis_hint">Pinta el cursor con una tinta de alto contraste (blanco o negro según el fondo) en cualquier estilo y engrosa el caret cuando el estilo es «barra».</p>
               </div>
 
               <div class="settings-row">
