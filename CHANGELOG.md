@@ -2,6 +2,22 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.39.0] - 2026-06-29
+
+### Añadido
+
+- **Arrastrar ficheros a la consola local**: al soltar uno o varios ficheros o
+  carpetas del sistema sobre una consola local, sus rutas se insertan en el
+  prompt entrecomilladas correctamente (espacios y caracteres especiales
+  incluidos) y separadas por espacios, listas para completar el comando. No se
+  ejecuta nada: solo se escribe la línea para que la revises y pulses Intro.
+
+### Corregido
+
+- **Foco al pegar en el terminal**: tras confirmar el pegado de un texto largo,
+  el foco vuelve automáticamente al terminal, así se puede pulsar Intro sin
+  tener que volver a hacer clic en él.
+
 ## [1.38.0] - 2026-06-29
 
 ### Añadido

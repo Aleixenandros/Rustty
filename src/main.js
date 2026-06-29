@@ -31,6 +31,7 @@ import {
 import { renderMarkdownMinimal, toggleTaskInBody } from "./modules/markdown.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
+import { buildDropInsertText } from "./modules/shell-quote.js";
 /** @typedef {import("./modules/ipc/events.js").SshLogEvent} SshLogEvent */
 /** @typedef {import("./modules/ipc/events.js").SftpLogEvent} SftpLogEvent */
 /** @typedef {import("./modules/ipc/events.js").SftpProgressEvent} SftpProgressEvent */
@@ -8871,6 +8872,10 @@ async function pasteClipboardIntoSession(sessionObj) {
   }
 
   sendTerminalInput(sessionObj, text);
+  // Tras pegar devolvemos el foco al terminal. Si se mostró el diálogo de
+  // confirmación, el foco quedó en su botón (ya oculto) y el usuario tendría
+  // que volver a hacer clic en el terminal antes de poder pulsar Intro.
+  sessionObj.terminal?.focus();
 }
 
 function queueTerminalEchoSuppression(sessionObj, needle) {
@@ -13526,19 +13531,56 @@ function setupSftpDropTargets(panel, sessionId) {
   });
 }
 
-// ── Arrastrar ficheros del SO hacia el panel SFTP remoto ──────────────────
+// ── Arrastrar ficheros del SO hacia la app ────────────────────────────────
 //
 // Con `dragDropEnabled` (por defecto) Tauri intercepta los drops de ficheros
 // del sistema operativo, así que NO llegan por los eventos `drop` de HTML5
 // (esos solo sirven para el arrastre interno local↔remoto). En su lugar el
 // webview emite `onDragDropEvent` con las rutas y la posición física del
-// cursor. Mapeamos esa posición al panel SFTP remoto que haya debajo y, si su
-// sesión SFTP está conectada, subimos las rutas soltadas a su directorio
-// remoto actual.
+// cursor. Según lo que haya bajo esa posición hacemos una de dos cosas:
+//   - panel SFTP remoto conectado → subir las rutas a su directorio remoto;
+//   - consola local → insertar las rutas (quoteadas) en el prompt, sin ejecutar.
+// Las sesiones SSH no se tocan aquí: su flujo (subir + pegar ruta remota) queda
+// como tarea aparte.
 
 function osDropClearHighlight() {
   document.querySelectorAll(".sftp-files.os-dragover")
     .forEach((el) => el.classList.remove("os-dragover"));
+  document.querySelectorAll(".terminal-pane.term-os-dragover")
+    .forEach((el) => el.classList.remove("term-os-dragover"));
+}
+
+/** Plataforma del SO local, para elegir el estilo de quoting de rutas. */
+function osPlatformKind() {
+  const platform = navigator.userAgentData?.platform ?? navigator.userAgent ?? "";
+  return /win/i.test(platform) ? "windows" : "posix";
+}
+
+/** Devuelve la consola local (no SSH/RDP) bajo una posición física, o null. */
+function localTerminalAtPosition(position) {
+  if (!position) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const el = document.elementFromPoint(position.x / dpr, position.y / dpr);
+  if (!el) return null;
+  const pane = el.closest(".terminal-pane");
+  if (!pane) return null;
+  const sessionId = pane.dataset.session;
+  if (!sessionId) return null;
+  const s = sessions.get(sessionId);
+  if (!s || s.status === "closed" || s.type !== "local" || !s.terminal) return null;
+  return { pane, sessionId, session: s };
+}
+
+/** Inserta rutas locales (de un drop del SO) en el prompt de una consola local. */
+function insertOsPathsIntoLocalTerminal(session, paths) {
+  if (!session || session.type !== "local" || !session.terminal) return;
+  // Solo usamos los marcadores de bracketed paste si el shell tiene el modo
+  // activo; si no, las secuencias `ESC [200~` aparecerían literales en el prompt.
+  const bracketed = !!session.terminal.modes?.bracketedPasteMode;
+  const text = buildDropInsertText(paths, { platform: osPlatformKind(), bracketed });
+  if (!text) return;
+  sendTerminalInput(session, text);
+  session.terminal.focus();
 }
 
 /** Devuelve el panel SFTP remoto (conectado) bajo una posición física, o null. */
@@ -13588,17 +13630,21 @@ async function initOsFileDrop() {
   await webview.onDragDropEvent((event) => {
     const p = event.payload;
     if (p.type === "enter" || p.type === "over") {
-      const target = remoteSftpFilesAtPosition(p.position);
       osDropClearHighlight();
-      if (target) target.files.classList.add("os-dragover");
+      const sftpTarget = remoteSftpFilesAtPosition(p.position);
+      if (sftpTarget) { sftpTarget.files.classList.add("os-dragover"); return; }
+      const termTarget = localTerminalAtPosition(p.position);
+      if (termTarget) termTarget.pane.classList.add("term-os-dragover");
     } else if (p.type === "leave") {
       osDropClearHighlight();
     } else if (p.type === "drop") {
       osDropClearHighlight();
-      const target = remoteSftpFilesAtPosition(p.position);
-      if (!target) return; // soltado fuera de un panel remoto conectado
       const paths = Array.isArray(p.paths) ? p.paths : [];
-      if (paths.length) uploadOsPathsToRemote(target.sessionId, paths);
+      if (!paths.length) return;
+      const sftpTarget = remoteSftpFilesAtPosition(p.position);
+      if (sftpTarget) { uploadOsPathsToRemote(sftpTarget.sessionId, paths); return; }
+      const termTarget = localTerminalAtPosition(p.position);
+      if (termTarget) insertOsPathsIntoLocalTerminal(termTarget.session, paths);
     }
   });
 }

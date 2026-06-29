@@ -6522,6 +6522,20 @@ body.sftp-panel-resizing {
   50%      { background: color-mix(in srgb, var(--drag-color) 22%, transparent); }
 }
 
+/* Soltar ficheros del SO sobre una consola local: overlay por encima del xterm
+   (que pinta su propio fondo opaco), estático para no estorbar la lectura. */
+.terminal-pane.term-os-dragover::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--drag-bg-soft);
+  outline: var(--drag-outline-width) dashed var(--drag-color);
+  outline-offset: calc(-1 * var(--drag-outline-width));
+  z-index: 50;
+}
+
 .sftp-empty {
   padding: 24px;
   text-align: center;

@@ -3,7 +3,7 @@
 // Alcance actual: los módulos ya extraídos en `src/modules/` y `src/sync.js`,
 // más los ficheros de tooling (config + scripts). Los god-files heredados
 // (`src/main.js`, `src/i18n.js`) quedan IGNORADOS hasta que el refactor por
-// dominios (ver `tareas.md` § «Refactor arquitectónico») los trocee en módulos;
+// dominios (ver `memoria/tareas.md` § «Refactor arquitectónico») los trocee en módulos;
 // el alcance del lint crecerá con cada extracción.
 //
 // Reglas mínimas (error): no-unused-vars, no-implicit-globals, prefer-const.

@@ -1,6 +1,6 @@
 //! Motor de sustitución: parser de `${...}` y aplicación de un `Resolver`.
 //!
-//! Implementa la gramática del contrato (ver `arquitectura.md`): escape
+//! Implementa la gramática del contrato (ver `memoria/arquitectura.md`): escape
 //! `$${...}` → literal `${...}`, marcador desconocido/mal formado/sin cierre →
 //! literal, cuerpo leído hasta el primer `}` sin anidamiento, y sustitución de
 //! **una sola pasada** (el resultado no se reescanea, por seguridad).
