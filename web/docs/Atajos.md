@@ -39,6 +39,9 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl+Alt+-`   | Disminuir tamaño de la UI                           |
 | `Ctrl+Alt+0`   | Restablecer tamaño de la UI                         |
 | `Ctrl+Shift+R` | Reconectar la sesión activa                         |
+| _(sin asignar)_ | Limpiar la línea del prompt en SSH y consola local |
+
+«Limpiar la línea del prompt» vacía de un tirón lo que tengas escrito en la línea de edición del shell (envía `Ctrl+A` + `Ctrl+K`, así borra toda la línea sin importar dónde esté el cursor). No trae combinación por defecto a propósito: `Ctrl+U` —el atajo nativo del shell para borrar hasta el inicio— lo usan también programas de pantalla completa como `vim` o `less`, así que Rustty te deja elegir tú la tecla desde **Preferencias → Atajos**. Recuerda que `Ctrl+U`, `Ctrl+K` y `Ctrl+W` siguen funcionando de forma nativa dentro del shell.
 
 La búsqueda en el buffer abre una barra flotante con next/prev y un toggle de **case-sensitive**. Resalta todas las coincidencias sobre `@xterm/addon-search`.
 

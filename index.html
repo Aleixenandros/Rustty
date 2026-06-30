@@ -209,10 +209,39 @@
               <span class="status-rec-dot"></span>
               <span>REC</span>
             </span>
+            <button type="button" class="status-overflow-btn" id="status-overflow-btn"
+                    data-i18n-title="status.overflow_more" title="Más detalles"
+                    data-i18n-aria-label="status.overflow_more" aria-label="Más detalles"
+                    aria-haspopup="dialog" aria-expanded="false">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <circle cx="3" cy="8" r="1.4" fill="currentColor"/>
+                <circle cx="8" cy="8" r="1.4" fill="currentColor"/>
+                <circle cx="13" cy="8" r="1.4" fill="currentColor"/>
+              </svg>
+            </button>
             <button type="button" class="status-log-trigger hidden" id="status-log-trigger">
               <span class="status-log-dot"></span>
               <span id="status-log-text">—</span>
             </button>
+            <div class="status-overflow-popover hidden" id="status-overflow-popover" role="dialog"
+                 data-i18n-aria-label="status.overflow_title" aria-label="Detalles de la conexión">
+              <div class="status-pop-row" id="status-pop-cwd-row">
+                <span class="status-pop-label" data-i18n="status.cwd_label">Directorio</span>
+                <span class="status-pop-value mono" id="status-pop-cwd">—</span>
+              </div>
+              <div class="status-pop-row" id="status-pop-dims-row">
+                <span class="status-pop-label" data-i18n="status.dims_label">Tamaño</span>
+                <span class="status-pop-value mono" id="status-pop-dims">—</span>
+              </div>
+              <div class="status-pop-row" id="status-pop-latency-row">
+                <span class="status-pop-label" data-i18n="status.latency">Latencia</span>
+                <span class="status-pop-value mono" id="status-pop-latency">—</span>
+              </div>
+              <div class="status-pop-row" id="status-pop-rec-row">
+                <span class="status-pop-label" data-i18n="status.rec_label">Grabación</span>
+                <span class="status-pop-value" id="status-pop-rec" data-i18n="status.rec_active">Grabando en disco</span>
+              </div>
+            </div>
           </div>
           <div id="view-layout-bar" class="hidden">
             <button data-layout="columns" data-i18n-title="view_layout.columns" title="Dividir en columnas">⫴</button>
@@ -2621,7 +2650,7 @@
     </div>
 
     <!-- ── Toast de notificaciones ── -->
-    <div id="toast-container"></div>
+    <div id="toast-container" role="region" aria-live="polite" aria-atomic="false" data-i18n-aria-label="toast.region_label" aria-label="Notificaciones"></div>
 
     <!-- ── Botón flotante para salir del modo zen ── -->
     <button id="zen-exit-btn" type="button" aria-label="Salir del modo zen" data-tooltip="Salir del modo sin distracciones (F11)" data-tooltip-pos="bottom">

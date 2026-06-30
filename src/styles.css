@@ -377,11 +377,19 @@ body.window-maximized .window-resize-handle {
 }
 
 #sidebar-resize-handle {
-  width: 4px;
+  width: 6px;
   cursor: ew-resize;
   background: transparent;
   flex-shrink: 0;
   transition: background 0.15s;
+}
+
+/* Foco de teclado unificado para todos los tiradores de redimensionado
+   (sidebar, panel SFTP, logs SFTP y splits de la vista). */
+.resize-handle:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--blue) 30%, transparent);
 }
 
 #sidebar-resize-handle:hover,
@@ -2119,6 +2127,85 @@ body.reduce-motion.terminal-bell-visual::after {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ─── Barra de estado compacta por prioridad ───────────────────
+   En ventanas estrechas plegamos los bloques secundarios (cwd,
+   tamaño, latencia, REC) tras un botón que abre un popover, y
+   conservamos siempre el estado de conexión y el host. */
+#status-bar .status-overflow-btn {
+  display: none;
+  margin-left: auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--subtext0);
+  cursor: pointer;
+  padding: 0;
+}
+#status-bar .status-overflow-btn:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+#status-bar.status-bar--compact .status-overflow-btn { display: inline-flex; }
+
+#status-bar.status-bar--compact .status-cwd,
+#status-bar.status-bar--compact .status-dims,
+#status-bar.status-bar--compact .status-latency,
+#status-bar.status-bar--compact .status-rec,
+#status-bar.status-bar--compact > .status-sep {
+  display: none !important;
+}
+
+/* Estado transitorio de medición: los bloques truncables ocupan su ancho
+   natural para poder decidir si la barra desborda. Se aplica y retira en el
+   mismo frame, sin repaint intermedio. */
+#status-bar.status-bar--measuring .status-cwd,
+#status-bar.status-bar--measuring .status-dims,
+#status-bar.status-bar--measuring #status-cwd,
+#status-bar.status-bar--measuring .cwd-seg {
+  max-width: none !important;
+  overflow: visible !important;
+}
+
+.status-overflow-popover {
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 6px);
+  z-index: 60;
+  min-width: 200px;
+  max-width: min(80vw, 360px);
+  background: var(--surface0);
+  border: 1px solid var(--surface1);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+}
+.status-overflow-popover.hidden { display: none; }
+.status-pop-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.status-pop-label { color: var(--overlay1); }
+.status-pop-value {
+  color: var(--text);
+  min-width: 0;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
 }
 
 /* ─── Selector de layout de la vista múltiple ──────────────── */

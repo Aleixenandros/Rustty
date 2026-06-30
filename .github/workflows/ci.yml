@@ -71,6 +71,11 @@ jobs:
       - name: Typecheck (tsc)
         run: npm run typecheck
 
+      # Bloquea regresiones de contraste: los 12 temas base y la biblioteca
+      # precargada deben mantenerse en AA (sale con código ≠0 si algo baja).
+      - name: Contraste WCAG de temas (estricto)
+        run: npm run check:contrast:ci
+
       - name: Build frontend
         run: npm run build
 

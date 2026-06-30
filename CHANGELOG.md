@@ -2,6 +2,41 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.40.0] - 2026-06-30
+
+### Añadido
+
+- **Barra de estado compacta por prioridad**: en ventanas estrechas, la barra
+  inferior pliega el directorio remoto, el tamaño del terminal, la latencia y el
+  indicador `REC` tras un botón que abre un pequeño panel con esos datos,
+  conservando siempre el estado de conexión y el host. Vuelve a expandirse sola
+  al recuperar ancho.
+- **Tiradores de redimensionado accesibles por teclado**: la barra lateral, el
+  divisor del panel SFTP, el de sus registros y los separadores de los paneles
+  divididos se pueden enfocar con el tabulador y ajustar con las flechas
+  (mantén `Shift` para pasos grandes); la tecla `Inicio` restablece el tamaño,
+  igual que el doble clic. Incluyen etiquetas para lectores de pantalla.
+- **Atajo «Limpiar línea del prompt»**: nueva acción configurable en
+  Preferencias → Atajos que vacía de un tirón la línea de edición del shell
+  (SSH o consola local). Sin combinación por defecto para no pisar `Ctrl+U`, que
+  usan programas como `vim` o `less`.
+- **Avisos para lectores de pantalla**: las notificaciones (conexiones,
+  transferencias y sincronización) se anuncian mediante una región `aria-live`,
+  y los errores se comunican de inmediato.
+
+### Corregido
+
+- **Textos sin traducir en Preferencias → Atajos**: las acciones «Paleta de
+  comandos» y «Modo zen / pantalla completa» mostraban su clave interna en lugar
+  del nombre traducido. Añadidas en los cinco idiomas.
+
+### Interno
+
+- **Contraste de temas en integración continua**: el verificador de contraste
+  WCAG AA de los temas se ejecuta ahora en CI en modo estricto, bloqueando
+  cualquier regresión de legibilidad en los 12 temas base y la biblioteca
+  precargada.
+
 ## [1.39.0] - 2026-06-29
 
 ### Añadido

@@ -9376,6 +9376,10 @@ function setStatusBarVisible(visible) {
   bar.setAttribute("aria-hidden", visible ? "false" : "true");
   container.classList.toggle("status-bar-visible", visible);
   if (changed) refitVisibleTerminals();
+  if (visible) {
+    ensureStatusOverflowObserver();
+    updateStatusBarOverflow();
+  }
 }
 
 function clearStatusBar() {
@@ -9394,6 +9398,98 @@ function clearStatusBar() {
     clearInterval(_statusLatencyTimer);
     _statusLatencyTimer = null;
   }
+  closeStatusOverflowPopover();
+}
+
+let _statusOverflowObserver = null;
+
+/**
+ * Arranca (una sola vez) el observador que decide si la barra de estado debe
+ * plegar sus bloques secundarios. Se observa el ancho real de la barra, que
+ * cambia con la ventana y con el sidebar.
+ */
+function ensureStatusOverflowObserver() {
+  if (_statusOverflowObserver) return;
+  const bar = document.getElementById("status-bar");
+  if (!bar || typeof ResizeObserver === "undefined") return;
+  _statusOverflowObserver = new ResizeObserver(() => updateStatusBarOverflow());
+  _statusOverflowObserver.observe(bar);
+
+  const btn = document.getElementById("status-overflow-btn");
+  btn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleStatusOverflowPopover();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeStatusOverflowPopover();
+  });
+}
+
+/**
+ * Plega/expande los bloques secundarios de la barra según quepan. Se mide el
+ * ancho "natural" (sin truncados) en el mismo frame para no auto-confirmar el
+ * estado compacto; togglear las clases no cambia el tamaño de la barra, así
+ * que el ResizeObserver no entra en bucle.
+ */
+function updateStatusBarOverflow() {
+  const bar = document.getElementById("status-bar");
+  if (!bar || bar.classList.contains("hidden")) return;
+  bar.classList.remove("status-bar--compact");
+  bar.classList.add("status-bar--measuring");
+  const natural = bar.scrollWidth;
+  const avail = bar.clientWidth;
+  bar.classList.remove("status-bar--measuring");
+  const overflowing = natural > avail + 2;
+  bar.classList.toggle("status-bar--compact", overflowing);
+  if (!overflowing) closeStatusOverflowPopover();
+}
+
+function toggleStatusOverflowPopover(force) {
+  const pop = document.getElementById("status-overflow-popover");
+  const btn = document.getElementById("status-overflow-btn");
+  if (!pop || !btn) return;
+  const show = force === undefined ? pop.classList.contains("hidden") : force;
+  if (show) {
+    fillStatusOverflowPopover();
+    pop.classList.remove("hidden");
+    btn.setAttribute("aria-expanded", "true");
+    setTimeout(() => document.addEventListener("click", onStatusOverflowDocClick), 0);
+  } else {
+    pop.classList.add("hidden");
+    btn.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", onStatusOverflowDocClick);
+  }
+}
+
+function closeStatusOverflowPopover() {
+  toggleStatusOverflowPopover(false);
+}
+
+function onStatusOverflowDocClick(e) {
+  const pop = document.getElementById("status-overflow-popover");
+  const btn = document.getElementById("status-overflow-btn");
+  if (!pop) return;
+  if (pop.contains(e.target) || btn?.contains(e.target)) return;
+  closeStatusOverflowPopover();
+}
+
+/** Vuelca los valores actuales de la barra en las filas del popover. */
+function fillStatusOverflowPopover() {
+  const setRow = (rowId, valId, visible, value) => {
+    const row = document.getElementById(rowId);
+    const val = document.getElementById(valId);
+    if (row) row.classList.toggle("hidden", !visible);
+    if (val && visible && value != null) val.textContent = value;
+  };
+  const cwdWrap = document.getElementById("status-cwd-wrap");
+  const cwdSrc = document.getElementById("status-cwd");
+  const hasCwd = Boolean(cwdWrap) && !cwdWrap.classList.contains("hidden");
+  setRow("status-pop-cwd-row", "status-pop-cwd", hasCwd, cwdSrc?.title || cwdSrc?.textContent || "—");
+  setRow("status-pop-dims-row", "status-pop-dims", true, document.getElementById("status-dims")?.textContent || "—");
+  setRow("status-pop-latency-row", "status-pop-latency", true, document.getElementById("status-latency")?.textContent || "—");
+  const recWrap = document.getElementById("status-rec-wrap");
+  const recActive = Boolean(recWrap) && !recWrap.classList.contains("hidden");
+  setRow("status-pop-rec-row", "status-pop-rec", recActive, null);
 }
 
 function renderStatusConnectionLog() {
@@ -9641,6 +9737,9 @@ function updateStatusBar() {
   s.sessionId = activeSessionId;
   probe();
   _statusLatencyTimer = setInterval(probe, 10000);
+
+  // El user-host, cwd o REC pueden haber cambiado el ancho necesario.
+  updateStatusBarOverflow();
 }
 
 function renderView() {
@@ -9694,6 +9793,13 @@ function renderView() {
           resizer.title = t("tabs.resizer_reset_hint");
           resizer.addEventListener("mousedown", (e) => startViewResize(e, split, i - 1, axis));
           resizer.addEventListener("dblclick", () => resetViewRatios(split));
+          // Foco y restablecimiento por teclado (Inicio); el ajuste fino se
+          // hace arrastrando, como en el resto de tiradores.
+          makeAccessibleResizer(resizer, {
+            orientation: axis === "horizontal" ? "vertical" : "horizontal",
+            label: t("resizer.split"),
+            reset: () => resetViewRatios(split),
+          });
           split.appendChild(resizer);
         }
         const part = document.createElement("div");
@@ -12530,12 +12636,35 @@ function setupSftpPanelResize(panel, sessionId) {
   if (!handle) return;
   applySftpPanelHeight(panel);
 
-  handle.addEventListener("dblclick", () => {
-    localStorage.removeItem(SFTP_PANEL_HEIGHT_STORAGE_KEY);
-    applySftpPanelHeight(panel, SFTP_PANEL_DEFAULT_HEIGHT_PERCENT);
+  const refitSftpTerminal = () => {
     const s = sessions.get(sessionId);
     s?.fitAddon?.fit();
     notifyResize(sessionId, s?.terminal);
+  };
+  const resetSftpPanelHeight = () => {
+    localStorage.removeItem(SFTP_PANEL_HEIGHT_STORAGE_KEY);
+    applySftpPanelHeight(panel, SFTP_PANEL_DEFAULT_HEIGHT_PERCENT);
+    refitSftpTerminal();
+  };
+
+  handle.addEventListener("dblclick", resetSftpPanelHeight);
+
+  // Teclado accesible: flechas arriba/abajo ajustan la altura del panel.
+  makeAccessibleResizer(handle, {
+    orientation: "horizontal",
+    label: t("resizer.sftp_panel"),
+    reset: resetSftpPanelHeight,
+    nudge: (steps) => {
+      const pane = panel.closest(".terminal-pane");
+      if (!pane) return;
+      const paneH = pane.getBoundingClientRect().height || 1;
+      const curPct = (panel.getBoundingClientRect().height / paneH) * 100;
+      // ArrowDown (steps>0) baja el separador y encoge el panel SFTP.
+      const next = Math.min(85, Math.max(20, curPct - steps * 3));
+      applySftpPanelHeight(panel, next);
+      localStorage.setItem(SFTP_PANEL_HEIGHT_STORAGE_KEY, String(Math.round(next)));
+      refitSftpTerminal();
+    },
   });
 
   handle.addEventListener("pointerdown", (e) => {
@@ -12626,9 +12755,26 @@ function setupSftpLogResize(panel) {
   if (!wrap || !handle) return;
   applySftpLogHeight(panel);
 
-  handle.addEventListener("dblclick", () => {
+  const resetSftpLogHeight = () => {
     localStorage.removeItem(SFTP_LOG_HEIGHT_STORAGE_KEY);
     applySftpLogHeight(panel, SFTP_LOG_DEFAULT_HEIGHT);
+  };
+
+  handle.addEventListener("dblclick", resetSftpLogHeight);
+
+  // Teclado accesible: flechas arriba/abajo ajustan la altura de los logs.
+  makeAccessibleResizer(handle, {
+    orientation: "horizontal",
+    label: t("resizer.sftp_log"),
+    reset: resetSftpLogHeight,
+    nudge: (steps) => {
+      const maxH = getSftpLogMaxHeight(panel);
+      const curH = wrap.getBoundingClientRect().height;
+      // ArrowDown (steps>0) baja el separador y encoge la zona de logs.
+      const next = Math.min(maxH, Math.max(SFTP_LOG_MIN_HEIGHT, curH - steps * 16));
+      applySftpLogHeight(panel, next);
+      localStorage.setItem(SFTP_LOG_HEIGHT_STORAGE_KEY, String(Math.round(next)));
+    },
   });
 
   handle.addEventListener("pointerdown", (e) => {
@@ -17858,6 +18004,9 @@ const SHORTCUT_ACTIONS = {
   open_command_editor: { default: "Ctrl+Shift+E", run: () => openCommandEditor() },
   open_note_editor:    { default: "Ctrl+Shift+M", run: () => openActiveSessionNote() },
   command_palette:     { default: "Ctrl+Shift+P", run: () => openCommandPalette() },
+  // Sin atajo por defecto: Ctrl+U lo usan TUIs (vim/less), así que dejamos que
+  // el usuario elija la combinación en Preferencias → Atajos.
+  clear_prompt_line:   { default: "",            run: () => clearActivePromptLine() },
 };
 
 /** Abre el editor de notas del perfil de la sesión activa (atajo). */
@@ -18398,6 +18547,19 @@ async function pasteIntoActiveTerminal() {
   if (!activeSessionId) return;
   const s = sessions.get(activeSessionId);
   await pasteClipboardIntoSession(s);
+}
+
+/**
+ * Limpia de un tirón la línea actual del prompt en el terminal activo enviando
+ * Ctrl+A (inicio de línea) + Ctrl+K (borrar hasta el final): vacía toda la
+ * edición en curso sin depender de la posición del cursor, en SSH y consola
+ * local. No aplica a sesiones externas (RDP/VNC/Telnet) ni cerradas.
+ */
+function clearActivePromptLine() {
+  if (!activeSessionId) return;
+  const s = sessions.get(activeSessionId);
+  if (!s || s.status === "closed" || !s.terminal || isExternalLauncherType(s.type)) return;
+  sendTerminalInput(s, "\x01\x0b");
 }
 
 /**
@@ -19227,6 +19389,38 @@ function initSidebarScrollSpeed() {
   }, { passive: false });
 }
 
+/**
+ * Dota a un tirador de redimensionado de semántica y manejo por teclado
+ * accesibles, unificando el comportamiento de los tiradores de sidebar, panel
+ * SFTP, logs SFTP y splits de la vista: `role="separator"`, foco, flechas para
+ * ajustar (Shift = paso grande) y la tecla Inicio para restablecer.
+ *
+ * @param {HTMLElement|null} handle
+ * @param {{ orientation: "vertical"|"horizontal", label?: string,
+ *           nudge?: ((steps: number) => void)|null, reset?: () => void }} opts
+ */
+function makeAccessibleResizer(handle, { orientation, label, nudge, reset }) {
+  if (!handle || handle.dataset.a11yResizer) return;
+  handle.dataset.a11yResizer = "1";
+  handle.classList.add("resize-handle");
+  handle.setAttribute("role", "separator");
+  handle.setAttribute("aria-orientation", orientation);
+  handle.setAttribute("tabindex", "0");
+  handle.removeAttribute("aria-hidden");
+  if (label) {
+    handle.setAttribute("aria-label", label);
+    handle.title = handle.title || `${label} — ${t("resizer.hint")}`;
+  }
+  const [incKey, decKey] =
+    orientation === "vertical" ? ["ArrowRight", "ArrowLeft"] : ["ArrowDown", "ArrowUp"];
+  handle.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 4 : 1;
+    if (nudge && e.key === incKey) { nudge(step); e.preventDefault(); }
+    else if (nudge && e.key === decKey) { nudge(-step); e.preventDefault(); }
+    else if (reset && e.key === "Home") { reset(); e.preventDefault(); }
+  });
+}
+
 function initSidebarResize() {
   const handle = document.getElementById("sidebar-resize-handle");
   if (!handle) return;
@@ -19275,10 +19469,26 @@ function initSidebarResize() {
     e.preventDefault();
   });
 
-  // Doble clic en el handle: restablecer al ancho por defecto.
-  handle.addEventListener("dblclick", () => {
+  const resetSidebarWidth = () => {
     document.documentElement.style.setProperty("--sidebar-width", "240px");
     localStorage.removeItem(SIDEBAR_WIDTH_KEY);
+  };
+
+  // Doble clic en el handle: restablecer al ancho por defecto.
+  handle.addEventListener("dblclick", resetSidebarWidth);
+
+  // Teclado accesible: flechas izquierda/derecha ajustan el ancho.
+  makeAccessibleResizer(handle, {
+    orientation: "vertical",
+    label: t("resizer.sidebar"),
+    reset: resetSidebarWidth,
+    nudge: (steps) => {
+      if (document.body.classList.contains("sidebar-collapsed")) return;
+      const cur = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--sidebar-width"), 10) || 240;
+      const w = Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, cur + steps * 16));
+      document.documentElement.style.setProperty("--sidebar-width", `${w}px`);
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(w));
+    },
   });
 }
 
@@ -20000,6 +20210,9 @@ function toast(message, type = "info", ms = 3500, options = {}) {
  */
 function updateToastContent(el, message, type, options, extra) {
   el.className = `toast ${type}`;
+  // Lectores de pantalla: los errores se anuncian de inmediato (assertive);
+  // el resto, de forma cortés a través del contenedor `aria-live="polite"`.
+  el.setAttribute("role", type === "error" ? "alert" : "status");
   if (el.dataset.category) el.classList.add(`toast-cat-${el.dataset.category}`);
   el.replaceChildren();
 
