@@ -32,7 +32,7 @@ serde_json = "1"
 # feature "des": habilita 3des-cbc para servidores legacy muy antiguos.
 russh = { version = "0.61", features = ["des"] }
 russh-sftp = "2.3"
-suppaftp = { version = "9.0.0", features = ["rustls-ring"] }
+suppaftp = { version = "10.0.0", features = ["rustls-ring"] }
 webpki-roots = "1"
 tokio = { version = "1", features = ["rt", "net", "io-util", "io-std", "sync", "fs", "macros", "time"] }
 # Configuración fina de sockets TCP (SO_KEEPALIVE + TCP_KEEPIDLE/INTVL) para
