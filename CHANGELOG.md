@@ -2,6 +2,35 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.41.0] - 2026-07-01
+
+### Añadido
+
+- **Autocompletado por historial en el editor de comandos**: al escribir en el
+  editor multilínea (`Ctrl+Shift+E`), se abre un desplegable con los comandos
+  anteriores que encajan con lo tecleado —primero los que empiezan igual y
+  luego los que lo contienen—. Se navega con las flechas y se acepta con `Tab`
+  o `Intro`; `Ctrl+Espacio` lo abre a demanda y `Esc` lo cierra.
+- **Densidad de interfaz «Espaciosa»**: nuevo nivel en Preferencias →
+  Apariencia que aumenta el interlineado y el espaciado de la barra lateral,
+  las pestañas y los diálogos para facilitar la lectura, sin cambiar el tamaño
+  del terminal.
+- **Pestañas de sesión accesibles**: las pestañas anuncian su rol y su estado
+  de selección a los lectores de pantalla, y sus botones (SFTP, túneles y
+  cerrar) llevan etiquetas descriptivas.
+
+### Cambiado
+
+- **Iconos vectoriales en el chrome**: los botones de las pestañas (SFTP,
+  túneles y cerrar) y las tarjetas de servicio de copia de seguridad pasan de
+  glifos y emojis a iconos SVG monocromo, coherentes en trazo y tamaño con el
+  resto de la interfaz.
+
+### Interno
+
+- **Traducciones de densidad completadas** en francés y portugués, que hasta
+  ahora recurrían al idioma de reserva en ese ajuste.
+
 ## [1.40.0] - 2026-06-30
 
 ### Añadido

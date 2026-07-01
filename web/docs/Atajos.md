@@ -43,6 +43,10 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 
 «Limpiar la línea del prompt» vacía de un tirón lo que tengas escrito en la línea de edición del shell (envía `Ctrl+A` + `Ctrl+K`, así borra toda la línea sin importar dónde esté el cursor). No trae combinación por defecto a propósito: `Ctrl+U` —el atajo nativo del shell para borrar hasta el inicio— lo usan también programas de pantalla completa como `vim` o `less`, así que Rustty te deja elegir tú la tecla desde **Preferencias → Atajos**. Recuerda que `Ctrl+U`, `Ctrl+K` y `Ctrl+W` siguen funcionando de forma nativa dentro del shell.
 
+### Autocompletado en el editor de comandos
+
+Dentro del editor multilínea (`Ctrl+Shift+E`), al escribir aparece un desplegable con los comandos previos del historial que coinciden con la línea actual (primero los que empiezan igual, luego los que la contienen). Navega con **↑/↓**, acepta con **Tab** o **Intro** —sustituye solo la línea actual— y ciérralo con **Escape**; **Ctrl+Espacio** lo abre a demanda. Requiere tener activado el historial de comandos compartido entre pestañas.
+
 La búsqueda en el buffer abre una barra flotante con next/prev y un toggle de **case-sensitive**. Resalta todas las coincidencias sobre `@xterm/addon-search`.
 
 El pegado en el terminal (`Ctrl+Alt+V`) pide confirmación con una previsualización cuando el texto es **multilínea**, **muy largo** o trae **caracteres de control**. Se configura en **Preferencias → Terminal** y puede desactivarse por perfil desde sus opciones avanzadas.

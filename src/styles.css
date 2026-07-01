@@ -4907,7 +4907,12 @@ input[type="checkbox"] {
 .sync-backend-card-icon {
   font-size: 18px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--blue);
 }
+.sync-backend-card-icon svg { display: block; }
 
 .sync-backend-card-name {
   font-weight: 600;
@@ -7062,6 +7067,9 @@ body.sftp-log-resizing {
   color: var(--blue);
   background: var(--surface0);
 }
+.tab-sftp svg,
+.tab-tunnels svg,
+.tab-close svg,
 .tab-notes svg { pointer-events: none; }
 
 /* ─── Panel de túneles SSH ─────────────────────────────────── */
@@ -7827,6 +7835,47 @@ body.density-compact .toast { padding: 8px 12px; font-size: 12px; }
 
 body.density-compact .theme-option { min-height: 84px; padding: 6px 6px 8px; }
 body.density-compact .theme-preview { height: 56px; }
+
+/* body.density-spacious aumenta espaciado e interlineado del chrome para
+   facilitar la lectura, sin tocar el terminal ni los ajustes de xterm.
+   Simétrico al bloque compacto: solo redefine cuando la clase está presente. */
+body.density-spacious {
+  --tab-height: 44px;
+  --space-2: 10px;
+  --space-3: 15px;
+  --space-4: 20px;
+  --space-5: 26px;
+  --space-6: 32px;
+  --space-7: 40px;
+  line-height: 1.65;
+}
+
+body.density-spacious #rail { padding: 10px 0; }
+body.density-spacious .rail-section { gap: 6px; }
+
+body.density-spacious .tab {
+  padding: 0 16px;
+  font-size: 13px;
+}
+
+body.density-spacious .conn-item,
+body.density-spacious .folder-header {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  min-height: 34px;
+}
+
+body.density-spacious .modal-header { padding: 20px 24px 16px; }
+body.density-spacious #form-connection { padding: 22px 24px; gap: 18px; }
+body.density-spacious .modal-actions { padding-top: 10px; gap: 12px; }
+
+body.density-spacious .settings-row { gap: 12px; }
+body.density-spacious .settings-row + .settings-row { margin-top: 22px; }
+body.density-spacious .settings-hint { line-height: 1.6; }
+
+body.density-spacious .toast { padding: 14px 18px; }
+
+body.density-spacious .theme-option { min-height: 104px; padding: 12px 12px 14px; }
 
 /* ─── Botón destructivo + confirmación por nombre — slice #9 ────
    Estilo para confirmar acciones destructivas (borrar workspace,

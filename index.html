@@ -166,7 +166,7 @@
               <span class="tab-home-icon" aria-hidden="true">⌂</span>
               <span class="tab-name">Inicio</span>
             </button>
-            <div id="tabs-container"></div>
+            <div id="tabs-container" role="tablist" aria-label="Sesiones abiertas"></div>
           </div>
           <div id="tab-bar-drag" data-tauri-drag-region></div>
           <button id="btn-tab-overflow" class="hidden" type="button" data-i18n-title="tab_overflow.button_title" title="Pestañas abiertas" aria-label="Pestañas abiertas" aria-haspopup="true" aria-expanded="false">
@@ -1876,10 +1876,11 @@
               <div class="settings-row">
                 <label for="pref-ui-density" data-i18n="prefs_appearance.density">Densidad de la interfaz</label>
                 <select id="pref-ui-density">
+                  <option value="spacious" data-i18n="prefs_appearance.density_spacious">Espaciosa (más legible)</option>
                   <option value="comfortable" data-i18n="prefs_appearance.density_comfortable">Cómoda</option>
                   <option value="compact" data-i18n="prefs_appearance.density_compact">Compacta</option>
                 </select>
-                <p class="settings-hint" data-i18n="prefs_appearance.density_hint">Reduce padding y altura de filas en la barra lateral, pestañas y modales sin tocar el tamaño del terminal.</p>
+                <p class="settings-hint" data-i18n="prefs_appearance.density_hint">Ajusta el espaciado y la altura de filas en la barra lateral, pestañas y modales sin tocar el tamaño del terminal. «Espaciosa» aumenta el interlineado para facilitar la lectura.</p>
               </div>
 
               <div class="settings-row">

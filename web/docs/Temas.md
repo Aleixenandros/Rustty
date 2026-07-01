@@ -18,10 +18,13 @@ En **Preferencias → Apariencia** hay un bloque **Accesibilidad** que ajusta la
 - **Foco visible reforzado**: aumenta el grosor y el contraste del anillo de foco en la navegación por teclado.
 - **Contraste mínimo del terminal** (Sin ajuste / AA 4.5:1 / AAA 7:1): adapta los colores ANSI poco legibles para que el texto alcance un contraste mínimo con su fondo. Útil con temas de bajo contraste.
 - **Cursor del terminal más visible**: pinta el cursor con una tinta de alto contraste (blanco o negro según el fondo) en cualquier estilo y engrosa el caret cuando el estilo es «barra».
+- **Densidad de la interfaz** (Espaciosa / Cómoda / Compacta): «Espaciosa» aumenta el interlineado y el espaciado de la barra lateral, las pestañas y los diálogos para facilitar la lectura; «Compacta» los reduce para mostrar más contenido. No afecta al tamaño del terminal ni a los ajustes de fuente de xterm.
 
 ### Navegación por teclado
 
 Toda la interfaz es operable con teclado. Los menús contextuales (clic derecho o **Shift+F10** sobre una conexión, pestaña o panel SFTP) enfocan su primer ítem al abrirse y se recorren con las flechas **↑/↓** e **Inicio/Fin**; **Enter/Espacio** activan la opción y **Tab/Escape** cierran devolviendo el foco al punto de partida. En la barra lateral, **Enter/Espacio** sobre una conexión la abre; en las pestañas, la seleccionan (**Ctrl/Cmd+Enter** la añade a la vista múltiple).
+
+La barra de pestañas de sesión se expone a los lectores de pantalla como una lista de pestañas (`tablist`), con el estado de selección de cada una y una etiqueta descriptiva en sus botones (SFTP, túneles y cerrar).
 
 ## Terminal
 

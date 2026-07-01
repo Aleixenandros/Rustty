@@ -32,6 +32,7 @@ import { renderMarkdownMinimal, toggleTaskInBody } from "./modules/markdown.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
+import { rankCommandSuggestions } from "./modules/command-suggest.js";
 /** @typedef {import("./modules/ipc/events.js").SshLogEvent} SshLogEvent */
 /** @typedef {import("./modules/ipc/events.js").SftpLogEvent} SftpLogEvent */
 /** @typedef {import("./modules/ipc/events.js").SftpProgressEvent} SftpProgressEvent */
@@ -735,9 +736,10 @@ function applyTheme(theme) {
  * Solo afecta al chrome: sidebar, tabs y modales. No toca el terminal.
  */
 function applyUiDensity(density) {
-  const d = density === "compact" ? "compact" : "comfortable";
+  const d = density === "compact" ? "compact" : density === "spacious" ? "spacious" : "comfortable";
   document.body.classList.toggle("density-compact", d === "compact");
   document.body.classList.toggle("density-comfortable", d === "comfortable");
+  document.body.classList.toggle("density-spacious", d === "spacious");
 }
 
 /**
@@ -1622,7 +1624,7 @@ function openSettingsModal() {
   document.getElementById("pref-letter-spacing").value      = prefs.letterSpacing;
   document.getElementById("pref-cursor-style").value        = prefs.cursorStyle;
   const _densitySel = document.getElementById("pref-ui-density");
-  if (_densitySel) _densitySel.value = prefs.uiDensity === "compact" ? "compact" : "comfortable";
+  if (_densitySel) _densitySel.value = ["compact", "spacious"].includes(prefs.uiDensity) ? prefs.uiDensity : "comfortable";
   syncUiZoomControl();
   const _cbSafe = document.getElementById("pref-color-blind-safe");
   if (_cbSafe) _cbSafe.checked = !!prefs.colorBlindSafe;
@@ -1868,10 +1870,10 @@ function renderSyncBackendCards() {
   const grid = document.getElementById("sync-backend-cards");
   if (!grid) return;
   const backends = [
-    { id: "local",        icon: "📁", labelKey: "prefs_sync.backend_local" },
-    { id: "icloud",       icon: "☁",  labelKey: "prefs_sync.backend_icloud" },
-    { id: "webdav",       icon: "🌐", labelKey: "prefs_sync.backend_webdav" },
-    { id: "google_drive", icon: "🅖", labelKey: "prefs_sync.backend_google_drive" },
+    { id: "local",        icon: SYNC_ICON_LOCAL,  labelKey: "prefs_sync.backend_local" },
+    { id: "icloud",       icon: SYNC_ICON_ICLOUD, labelKey: "prefs_sync.backend_icloud" },
+    { id: "webdav",       icon: SYNC_ICON_WEBDAV, labelKey: "prefs_sync.backend_webdav" },
+    { id: "google_drive", icon: SYNC_ICON_DRIVE,  labelKey: "prefs_sync.backend_google_drive" },
   ];
   const activeBackend = _syncConfigCache?.backend || "none";
   const enabled = !!_syncConfigCache?.enabled;
@@ -2890,7 +2892,7 @@ function savePrefsFromModal() {
     })(),
     terminalCursorHighVis: !!document.getElementById("pref-terminal-cursor-highvis")?.checked,
     localShellCwd:   (document.getElementById("pref-local-cwd")?.value || "").trim(),
-    uiDensity:       (document.getElementById("pref-ui-density")?.value === "compact" ? "compact" : "comfortable"),
+    uiDensity:       (() => { const v = document.getElementById("pref-ui-density")?.value; return v === "compact" || v === "spacious" ? v : "comfortable"; })(),
     uiZoom:          clampUiZoom(Number(previousPrefs.uiZoom ?? 1)),
     colorBlindSafe:  !!document.getElementById("pref-color-blind-safe")?.checked,
     uiContrast:      (() => {
@@ -8513,8 +8515,10 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
   tab.draggable = true;
   tab.tabIndex = 0;
   tab.setAttribute("aria-label", tabLabel);
-  const sftpBtn = sftp ? `<button class="tab-sftp" title="Panel SFTP">⇅</button>` : "";
-  const tunnelBtn = sftp ? `<button class="tab-tunnels" title="Túneles SSH">⇄</button>` : "";
+  tab.setAttribute("role", "tab");
+  tab.setAttribute("aria-selected", sessionId === activeSessionId ? "true" : "false");
+  const sftpBtn = sftp ? `<button class="tab-sftp" title="Panel SFTP" aria-label="Panel SFTP">${TAB_SFTP_ICON_SVG}</button>` : "";
+  const tunnelBtn = sftp ? `<button class="tab-tunnels" title="Túneles SSH" aria-label="Túneles SSH">${TAB_TUNNELS_ICON_SVG}</button>` : "";
   // Botón de nota/runbook solo para sesiones de un perfil guardado real
   // (excluye consolas locales, cuyo perfil es sintético `local-…`).
   const isSavedProfile = !!profile?.id && profiles.some((p) => p.id === profile.id);
@@ -8534,7 +8538,7 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
     ${sftpBtn}
     ${tunnelBtn}
     ${runbookBtn}
-    <button class="tab-close" title="Cerrar">✕</button>`;
+    <button class="tab-close" title="Cerrar" aria-label="Cerrar">${TAB_CLOSE_ICON_SVG}</button>`;
   tab.addEventListener("click", (e) => {
     if (e.target.classList.contains("tab-close")) return;
     if (e.target.classList.contains("tab-sftp")) return;
@@ -9845,7 +9849,9 @@ function updateTabSelectionClasses() {
   document.querySelectorAll(".tab").forEach((t) => {
     const sid = t.dataset.session;
     t.classList.toggle("in-view",  viewSelection.includes(sid));
-    t.classList.toggle("active",   sid === activeSessionId);
+    const active = sid === activeSessionId;
+    t.classList.toggle("active",   active);
+    t.setAttribute("aria-selected", active ? "true" : "false");
   });
   document.getElementById("home-tab")
     ?.classList.toggle("active", viewSelection.length === 0);
@@ -18643,6 +18649,19 @@ function clearActiveTerminal() {
 /** Icono SVG de nota (documento con líneas), monocromo con currentColor. */
 const NOTE_ICON_SVG = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5h4.5L12 6v7.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M8.4 2.5V6H12"/><path d="M5.5 8.7h5M5.5 11h3.2"/></svg>`;
 
+// Iconos monocromo (currentColor) de los botones de la pestaña. Sustituyen a los
+// glifos ⇅ / ⇄ / ✕ para mantener grosor y tamaño coherentes con el resto del chrome.
+const TAB_SFTP_ICON_SVG = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13V3M5 3L3 5M5 3l2 2"/><path d="M11 3v10M11 13l2-2M11 13l-2-2"/></svg>`;
+const TAB_TUNNELS_ICON_SVG = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5H3M3 5l2-2M3 5l2 2"/><path d="M3 11h10M13 11l-2-2M13 11l-2 2"/></svg>`;
+const TAB_CLOSE_ICON_SVG = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
+
+// Iconos monocromo de los backends de sincronización (tarjetas de Preferencias
+// → Copias de seguridad). Sustituyen a los emojis 📁 ☁ 🌐 🅖.
+const SYNC_ICON_LOCAL = `<svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M2 4.5a1 1 0 0 1 1-1h2.6a1 1 0 0 1 .7.3l.9.9H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/></svg>`;
+const SYNC_ICON_ICLOUD = `<svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M4.8 12h6.4a2.6 2.6 0 0 0 .3-5.18A3.4 3.4 0 0 0 5 5.9 2.8 2.8 0 0 0 4.8 12z"/></svg>`;
+const SYNC_ICON_WEBDAV = `<svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2.2 2 9.8 0 12M8 2c-2 2.2-2 9.8 0 12"/></svg>`;
+const SYNC_ICON_DRIVE = `<svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M6.1 2.5h3.8l4 7h-3.8zM6.1 2.5 2.1 9.5 4 12.9l4-7zM4 12.9h7.9l1.9-3.4H5.9z"/></svg>`;
+
 /** Índice en memoria de notas: profileId → NoteSummary. */
 const notesIndex = new Map();
 
@@ -19095,6 +19114,10 @@ function captureCommandKeystroke(sessionObj, data) {
 // ── Editor multilínea (Ctrl+Shift+E) ──────────────────────────────────────
 
 let _cmdEditorDraftTimer = null;
+// Autocompletado por historial dentro del editor: fila resaltada y si el
+// usuario cerró la lista con Escape (para no reabrirla en cada tecla).
+let _cmdHistActiveIndex = -1;
+let _cmdHistDismissed = false;
 
 /** Devuelve la clave de borrador para la sesión: profileId o "local". */
 function _cmdEditorDraftKey(session) {
@@ -19136,6 +19159,7 @@ function openCommandEditor() {
     textarea.value = saved || "";
   }
 
+  _cmdHistDismissed = false;
   hideCommandHistoryList();
   overlay.classList.remove("hidden");
   textarea?.focus();
@@ -19202,6 +19226,28 @@ function initCommandEditor() {
 
   // Ctrl+Enter = insertar
   textarea.addEventListener("keydown", (e) => {
+    // Con el desplegable de autocompletado abierto, el teclado lo controla:
+    // ↑/↓ navegan, Tab/Enter aceptan la sugerencia, Escape solo cierra la lista.
+    if (_cmdHistVisible()) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setCmdHistActive(_cmdHistActiveIndex + 1); return; }
+      if (e.key === "ArrowUp")   { e.preventDefault(); setCmdHistActive(_cmdHistActiveIndex - 1); return; }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey)) {
+        const rows = document.querySelectorAll("#cmd-editor-history-list .cmd-editor-history-row");
+        if (rows.length) {
+          const idx = _cmdHistActiveIndex >= 0 ? _cmdHistActiveIndex : 0;
+          const cmd = rows[idx]?.textContent;
+          if (cmd != null) { e.preventDefault(); applyCommandSuggestion(cmd); return; }
+        }
+      }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); _cmdHistDismissed = true; hideCommandHistoryList(); return; }
+    }
+    // Ctrl/Cmd+Espacio: abre o refresca el autocompletado por historial.
+    if (e.code === "Space" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      _cmdHistDismissed = false;
+      renderCommandHistoryList();
+      return;
+    }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       insertCommandEditor();
@@ -19213,6 +19259,19 @@ function initCommandEditor() {
 
   // Debounce al escribir: guarda borrador 800 ms tras parar
   textarea.addEventListener("input", () => {
+    // Autocompletado en vivo: refresca si está abierto y auto-abre al teclear
+    // (salvo que el usuario lo haya descartado con Escape en esta línea).
+    const line = _cmdEditorCurrentLine(textarea).text.trim();
+    if (line === "") {
+      _cmdHistDismissed = false;
+      hideCommandHistoryList();
+    } else if (_cmdHistVisible()) {
+      renderCommandHistoryList();
+    } else if (!_cmdHistDismissed && prefs.shareCommandHistory) {
+      if (rankCommandSuggestions(sharedCommandHistory, line, { limit: 1 }).length) {
+        renderCommandHistoryList();
+      }
+    }
     clearTimeout(_cmdEditorDraftTimer);
     _cmdEditorDraftTimer = setTimeout(() => {
       const session = activeSessionId ? sessions.get(activeSessionId) : null;
@@ -19247,46 +19306,115 @@ function initCommandEditor() {
 function toggleCommandHistoryList() {
   const list = document.getElementById("cmd-editor-history-list");
   if (!list) return;
-  if (list.classList.contains("hidden")) renderCommandHistoryList();
-  else hideCommandHistoryList();
+  if (list.classList.contains("hidden")) {
+    _cmdHistDismissed = false;
+    renderCommandHistoryList();
+  } else {
+    hideCommandHistoryList();
+  }
 }
 
 function hideCommandHistoryList() {
   document.getElementById("cmd-editor-history-list")?.classList.add("hidden");
+  _cmdHistActiveIndex = -1;
 }
 
-/** Rellena el desplegable con los comandos recientes (más reciente arriba). */
+/** ¿Está visible el desplegable de historial/autocompletado? */
+function _cmdHistVisible() {
+  const list = document.getElementById("cmd-editor-history-list");
+  return !!list && !list.classList.contains("hidden");
+}
+
+/**
+ * Rango y texto de la línea del textarea donde está el cursor; es la "consulta"
+ * que alimenta el autocompletado.
+ * @param {HTMLTextAreaElement} textarea
+ */
+function _cmdEditorCurrentLine(textarea) {
+  const value = textarea.value;
+  const caret = textarea.selectionStart ?? value.length;
+  const start = value.lastIndexOf("\n", caret - 1) + 1;
+  let end = value.indexOf("\n", caret);
+  if (end === -1) end = value.length;
+  return { start, end, text: value.slice(start, end) };
+}
+
+/** Sustituye la línea actual del editor por el comando elegido. */
+function applyCommandSuggestion(cmd) {
+  const textarea = /** @type {HTMLTextAreaElement|null} */ (
+    document.getElementById("cmd-editor-textarea")
+  );
+  if (!textarea) return;
+  const { start, end } = _cmdEditorCurrentLine(textarea);
+  textarea.value = textarea.value.slice(0, start) + cmd + textarea.value.slice(end);
+  const pos = start + cmd.length;
+  textarea.setSelectionRange(pos, pos);
+  hideCommandHistoryList();
+  textarea.focus();
+}
+
+/** Resalta la fila `index` (con envolvente cíclica) y la desplaza a la vista. */
+function setCmdHistActive(index) {
+  const rows = document.querySelectorAll("#cmd-editor-history-list .cmd-editor-history-row");
+  const n = rows.length;
+  if (n === 0) { _cmdHistActiveIndex = -1; return; }
+  _cmdHistActiveIndex = ((index % n) + n) % n;
+  rows.forEach((r, i) => {
+    const on = i === _cmdHistActiveIndex;
+    r.classList.toggle("active", on);
+    r.setAttribute("aria-selected", on ? "true" : "false");
+    if (on) r.scrollIntoView({ block: "nearest" });
+  });
+}
+
+/**
+ * Rellena el desplegable con los comandos del historial filtrados por lo que
+ * hay tecleado en la línea actual (autocompletado). Sin texto, muestra los más
+ * recientes. Si no hay coincidencias, se oculta.
+ */
 function renderCommandHistoryList() {
   const list = document.getElementById("cmd-editor-history-list");
-  const textarea = document.getElementById("cmd-editor-textarea");
+  const textarea = /** @type {HTMLTextAreaElement|null} */ (
+    document.getElementById("cmd-editor-textarea")
+  );
   if (!list || !textarea) return;
   list.innerHTML = "";
+  _cmdHistActiveIndex = -1;
 
-  const items = sharedCommandHistory.slice(-40).reverse();
-  if (items.length === 0) {
+  // Historial desactivado o vacío: mensaje informativo (solo al abrirlo).
+  if (!prefs.shareCommandHistory || sharedCommandHistory.length === 0) {
     const empty = document.createElement("div");
     empty.className = "cmd-editor-history-empty";
     empty.textContent = prefs.shareCommandHistory
       ? t("cmd_editor.history_empty")
       : t("cmd_editor.history_disabled");
     list.appendChild(empty);
-  } else {
-    for (const cmd of items) {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "cmd-editor-history-row";
-      row.setAttribute("role", "option");
-      row.textContent = cmd;
-      row.title = cmd;
-      row.addEventListener("click", (e) => {
-        e.stopPropagation();
-        textarea.value = cmd;
-        hideCommandHistoryList();
-        textarea.focus();
-      });
-      list.appendChild(row);
-    }
+    list.classList.remove("hidden");
+    return;
   }
+
+  const query = _cmdEditorCurrentLine(textarea).text;
+  const items = rankCommandSuggestions(sharedCommandHistory, query, { limit: 40 });
+  if (items.length === 0) {
+    hideCommandHistoryList();
+    return;
+  }
+  items.forEach((cmd, i) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "cmd-editor-history-row";
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", "false");
+    row.dataset.index = String(i);
+    row.textContent = cmd;
+    row.title = cmd;
+    row.addEventListener("click", (e) => {
+      e.stopPropagation();
+      applyCommandSuggestion(cmd);
+    });
+    row.addEventListener("mousemove", () => setCmdHistActive(i));
+    list.appendChild(row);
+  });
   list.classList.remove("hidden");
 }
 
