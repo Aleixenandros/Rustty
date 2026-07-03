@@ -142,14 +142,19 @@ fn spawn_rdp_client(
             "Cliente RDP no encontrado. Instala xfreerdp:\n  sudo dnf install freerdp  # Fedora\n  sudo apt install freerdp2-x11  # Debian/Ubuntu".to_string()
         })?;
 
+    // La contraseña se entrega por stdin, nunca por argv: un `/p:<pass>` o
+    // `-p <pass>` queda visible en `ps` / `/proc/<pid>/cmdline` mientras dura
+    // la sesión (el propio `man rdesktop` lo advierte).
+    let secret = password.filter(|p| !p.is_empty());
+
     let mut cmd = std::process::Command::new(binary);
     if binary == "rdesktop" {
         cmd.arg("-u").arg(username);
         if let Some(d) = domain.filter(|d| !d.is_empty()) {
             cmd.arg("-d").arg(d);
         }
-        if let Some(p) = password.filter(|p| !p.is_empty()) {
-            cmd.arg("-p").arg(p);
+        if secret.is_some() {
+            cmd.arg("-p").arg("-"); // lee la contraseña de stdin
         }
         cmd.arg("-g").arg("1280x800");
         cmd.arg("-r").arg("clipboard:CLIPBOARD");
@@ -160,19 +165,37 @@ fn spawn_rdp_client(
         if let Some(d) = domain.filter(|d| !d.is_empty()) {
             cmd.arg(format!("/d:{d}"));
         }
-        if let Some(p) = password.filter(|p| !p.is_empty()) {
-            cmd.arg(format!("/p:{p}"));
+        if secret.is_some() {
+            cmd.arg("/from-stdin"); // lee la contraseña de stdin
         }
         cmd.arg("+clipboard");
-        cmd.arg("/cert:ignore");
+        // TOFU en vez de `/cert:ignore`: xfreerdp recuerda el certificado del
+        // host y avisa si cambia (coherente con el TOFU de host keys de SSH),
+        // en vez de aceptar cualquier certificado en silencio.
+        cmd.arg("/cert:tofu");
         // Arrancar en ventana normal (sin fullscreen forzado)
         cmd.arg("/w:1280");
         cmd.arg("/h:800");
     }
 
-    let child = cmd
+    if secret.is_some() {
+        cmd.stdin(std::process::Stdio::piped());
+    }
+
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("Error al lanzar {binary}: {e}"))?;
+
+    if let Some(pass) = secret {
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            // Best-effort: si la escritura falla, el cliente pedirá la
+            // contraseña por su cuenta. El `drop` de `stdin` cierra la tubería
+            // (EOF) para que el cliente no quede esperando más entrada.
+            let _ = writeln!(stdin, "{pass}");
+        }
+    }
+
     Ok(SpawnedRdpClient {
         child,
         cleanup_path: None,

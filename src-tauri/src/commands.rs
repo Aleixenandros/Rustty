@@ -77,10 +77,40 @@ pub fn save_profile(
     state.save(profile).map_err(|e| e.to_string())
 }
 
-/// Elimina un perfil por su ID
+/// Elimina un perfil por su ID y limpia sus secretos del keyring del SO.
+///
+/// Único punto de borrado para todos los flujos del frontend (individual y en
+/// lote): antes se quedaban entradas `password:<id>` / `passphrase:<id>`
+/// huérfanas para siempre (los ids son UUID irrepetibles). Solo se borran las
+/// claves derivadas del propio `id` del perfil; las credenciales maestras
+/// (`master:*`) y secretos sueltos (`secret:*`), que se comparten entre
+/// perfiles, no se tocan.
 #[tauri::command]
 pub fn delete_profile(state: State<ProfileManager>, id: String) -> Result<(), String> {
-    state.delete(&id).map_err(|e| e.to_string())
+    // Recogemos las claves de keyring del perfil antes de borrarlo del disco.
+    let mut keyring_keys = vec![format!("password:{id}"), format!("passphrase:{id}")];
+    if let Ok(profiles) = state.load_all() {
+        if let Some(profile) = profiles.iter().find(|p| p.id == id) {
+            for cred in &profile.extra_credentials {
+                keyring_keys.push(format!("password:{id}:{}", cred.id));
+                keyring_keys.push(format!("passphrase:{id}:{}", cred.id));
+            }
+        }
+    }
+
+    state.delete(&id).map_err(|e| e.to_string())?;
+
+    // Borrado best-effort: una entrada inexistente no es un error real.
+    for key in keyring_keys {
+        if let Ok(entry) = keyring::Entry::new("rustty", &key) {
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Err(e) => log::warn!("keyring: no se pudo borrar {key}: {e}"),
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1230,36 +1260,11 @@ fn sanitize_file_name(name: &str) -> Result<String, String> {
     }
 }
 
-/// Escritura atómica: vuelca a un temporal hermano y renombra sobre el destino.
-/// El `rename` reemplaza de golpe el fichero (o un symlink existente) por uno
-/// regular con el contenido nuevo, así que **no escribe a través de un enlace
-/// simbólico** preparado y no deja un fichero a medias si el proceso muere.
+/// Escritura atómica de exports (JSON de backup, temporales de subida): vuelca a
+/// un temporal hermano y renombra sobre el destino, sin restringir permisos.
+/// Delega en [`crate::atomic_file::write`]; ver allí el detalle de garantías.
 fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let dir = match path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
-        _ => std::path::PathBuf::from("."),
-    };
-    let stem = path
-        .file_name()
-        .ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "ruta sin nombre de fichero")
-        })?
-        .to_string_lossy()
-        .into_owned();
-    let tmp = dir.join(format!(".{}.rustty-{}.tmp", stem, uuid::Uuid::new_v4()));
-    {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(data)?;
-        f.flush()?;
-    }
-    match std::fs::rename(&tmp, path) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            Err(e)
-        }
-    }
+    crate::atomic_file::write(path, data, false)
 }
 
 /// Escribe un fichero binario en disco.

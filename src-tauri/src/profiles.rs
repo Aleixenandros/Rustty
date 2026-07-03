@@ -297,34 +297,11 @@ impl ProfileManager {
             fs::create_dir_all(parent)?;
         }
         let data = serde_json::to_string_pretty(profiles)?;
-        write_private_file(&self.profiles_path, data.as_bytes())?;
+        // Escritura atómica + 0600: el almacén de conexiones nunca queda a
+        // medias ante un crash ni legible por otros usuarios.
+        crate::atomic_file::write(&self.profiles_path, data.as_bytes(), true)?;
         Ok(())
     }
-}
-
-#[cfg(unix)]
-fn write_private_file(path: &PathBuf, data: &[u8]) -> Result<(), AppError> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(data)?;
-    file.sync_all()?;
-    let mut permissions = file.metadata()?.permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o600);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn write_private_file(path: &PathBuf, data: &[u8]) -> Result<(), AppError> {
-    fs::write(path, data)?;
-    Ok(())
 }
 
 #[cfg(test)]

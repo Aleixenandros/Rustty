@@ -230,7 +230,8 @@ impl NotesManager {
             serde_yaml_ng::to_string(&fm).map_err(|e| AppError::Serialization(e.to_string()))?;
         let body = doc.body.trim_end_matches('\n');
         let content = format!("---\n{yaml}---\n\n{body}\n");
-        write_private_file(&self.path_for(&doc.profile_id), content.as_bytes())?;
+        // Atómica + 0600: una nota puede referenciar rutas/hosts sensibles.
+        crate::atomic_file::write(&self.path_for(&doc.profile_id), content.as_bytes(), true)?;
         Ok(())
     }
 
@@ -388,31 +389,6 @@ fn summary_of(doc: NoteDoc) -> NoteSummary {
         updated_at: doc.updated_at,
         byte_len,
     }
-}
-
-#[cfg(unix)]
-fn write_private_file(path: &PathBuf, data: &[u8]) -> Result<(), AppError> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(data)?;
-    file.sync_all()?;
-    let mut permissions = file.metadata()?.permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o600);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn write_private_file(path: &PathBuf, data: &[u8]) -> Result<(), AppError> {
-    fs::write(path, data)?;
-    Ok(())
 }
 
 #[cfg(test)]

@@ -2,6 +2,30 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.42.0] - 2026-07-03
+
+### Seguridad
+
+- **La contraseña de RDP ya no viaja por la línea de comandos** en Linux: se
+  entrega al cliente (`xfreerdp`/`rdesktop`) a través de la entrada estándar, de
+  modo que deja de ser visible para otros usuarios del equipo con herramientas
+  como `ps`.
+- **Verificación del certificado del servidor RDP**: el cliente pasa a
+  confiar-en-el-primer-uso (recuerda el certificado y avisa si cambia) en lugar
+  de aceptar cualquier certificado sin comprobarlo, igual que ya hacía Rustty
+  con las claves de host SSH.
+- **Limpieza de credenciales al eliminar una conexión**: al borrar un perfil
+  (también en los borrados en lote de carpetas o workspaces) se eliminan sus
+  contraseñas y frases de paso del almacén de credenciales del sistema, que
+  antes quedaban huérfanas.
+
+### Cambiado
+
+- **Guardado a prueba de cortes** de las conexiones, las credenciales y las
+  notas: los ficheros se escriben de forma atómica y con permisos restringidos,
+  así que un cierre inesperado a mitad de guardado ya no puede dejar el fichero
+  vacío o corrupto.
+
 ## [1.41.0] - 2026-07-01
 
 ### Añadido

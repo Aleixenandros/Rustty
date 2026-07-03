@@ -1,5 +1,6 @@
 mod app_tray;
 mod asbru;
+mod atomic_file;
 pub mod cli;
 mod commands;
 mod credentials;
