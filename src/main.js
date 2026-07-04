@@ -49,11 +49,18 @@ let profiles = [];
 
 /**
  * Carpetas creadas manualmente por el usuario (vacías o no).
- * Se persisten en localStorage para sobrevivir reinicios de la app.
+ * Se persisten en localStorage para sobrevivir reinicios de la app. El parseo va
+ * protegido: si la clave queda corrupta, una excepción aquí (en top-level del
+ * módulo) impediría arrancar la app para siempre; caemos a lista vacía.
  */
-let userFolders = new Set(
-  JSON.parse(localStorage.getItem("rustty-folders") || "[]")
-);
+let userFolders = new Set((() => {
+  try {
+    const stored = JSON.parse(localStorage.getItem("rustty-folders") || "[]");
+    return Array.isArray(stored) ? stored.filter((item) => typeof item === "string" && item) : [];
+  } catch {
+    return [];
+  }
+})());
 
 /** Qué carpetas están expandidas en el árbol (en memoria) */
 const SIDEBAR_OPEN_FOLDERS_STORAGE_KEY = "rustty-sidebar-open-folders";

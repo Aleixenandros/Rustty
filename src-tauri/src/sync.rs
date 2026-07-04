@@ -1586,7 +1586,8 @@ impl SyncManager {
     pub fn save_config(&self, config: &SyncConfig) -> Result<(), AppError> {
         let s = serde_json::to_string_pretty(config)
             .map_err(|e| AppError::Sync(format!("serialize config: {e}")))?;
-        std::fs::write(self.config_path(), s)
+        // Escritura atómica: un corte a mitad no puede dejar el fichero vacío.
+        crate::atomic_file::write(&self.config_path(), s.as_bytes(), false)
             .map_err(|e| AppError::Sync(format!("write config: {e}")))?;
         Ok(())
     }
@@ -1603,7 +1604,10 @@ impl SyncManager {
     pub fn save_local_state(&self, state: &SyncState) -> Result<(), AppError> {
         let s = serde_json::to_string(state)
             .map_err(|e| AppError::Sync(format!("serialize state: {e}")))?;
-        std::fs::write(self.local_state_path(), s)
+        // Caché del merge con todos los perfiles sincronizados (hosts, usuarios,
+        // bastiones): escritura atómica y privada (0600 en Unix), igual que
+        // `profiles.json`, para no dejarla truncada ni legible por otros usuarios.
+        crate::atomic_file::write(&self.local_state_path(), s.as_bytes(), true)
             .map_err(|e| AppError::Sync(format!("write state: {e}")))?;
         Ok(())
     }

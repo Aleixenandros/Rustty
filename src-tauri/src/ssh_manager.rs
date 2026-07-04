@@ -1881,23 +1881,34 @@ pub(crate) fn legacy_preferred(selected: Option<&[String]>) -> Preferred {
     }
 }
 
-/// Parsea un spec de jump host con formato `[user@]host[:port]`.
-/// Si el `user` no se especifica, hereda el del perfil destino. Puerto por
-/// defecto: 22.
+/// Parsea un spec de jump host con formato `[user@]host[:port]`. Soporta IPv6
+/// entre corchetes (`[::1]:2222`, `[fe80::1]`) y IPv6 desnuda sin puerto
+/// (`fe80::1`). Si el `user` no se especifica, hereda el del perfil destino.
+/// Puerto por defecto: 22.
 pub(crate) fn parse_jump_spec(spec: &str, default_user: &str) -> (String, String, u16) {
     let s = spec.trim();
     let (user, rest) = match s.split_once('@') {
         Some((u, r)) => (u.to_string(), r),
         None => (default_user.to_string(), s),
     };
-    let (host, port) = match rest.rsplit_once(':') {
-        Some((h, p)) => {
-            let port: u16 = p.parse().unwrap_or(22);
-            (h.to_string(), port)
+
+    // IPv6 entre corchetes: `[::1]` o `[::1]:2222`.
+    if let Some(inner) = rest.strip_prefix('[') {
+        if let Some((host, after)) = inner.split_once(']') {
+            let port = after.strip_prefix(':').map_or(22, |p| p.parse().unwrap_or(22));
+            return (user, host.to_string(), port);
         }
-        None => (rest.to_string(), 22u16),
-    };
-    (user, host, port)
+        // Corchete sin cerrar: lo tratamos como host literal.
+        return (user, rest.to_string(), 22);
+    }
+
+    // Sin corchetes solo separamos host:puerto cuando hay un único `:`. Si la
+    // parte de host aún contiene `:`, es una IPv6 desnuda (`fe80::1`), que no
+    // lleva puerto y no debe partirse.
+    match rest.rsplit_once(':') {
+        Some((h, p)) if !h.contains(':') => (user, h.to_string(), p.parse().unwrap_or(22)),
+        _ => (user, rest.to_string(), 22u16),
+    }
 }
 
 /// Autentica un `client::Handle` aplicando el `auth_type` con las credenciales
@@ -1955,6 +1966,36 @@ fn generate_x11_cookie() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_jump_spec_basico_y_puerto() {
+        assert_eq!(
+            parse_jump_spec("host", "yo"),
+            ("yo".into(), "host".into(), 22)
+        );
+        assert_eq!(
+            parse_jump_spec("admin@host:2222", "yo"),
+            ("admin".into(), "host".into(), 2222)
+        );
+    }
+
+    #[test]
+    fn parse_jump_spec_ipv6() {
+        // IPv6 desnuda sin puerto: no debe partirse por el último `:`.
+        assert_eq!(
+            parse_jump_spec("fe80::1", "yo"),
+            ("yo".into(), "fe80::1".into(), 22)
+        );
+        // IPv6 entre corchetes con y sin puerto.
+        assert_eq!(
+            parse_jump_spec("[::1]:2222", "yo"),
+            ("yo".into(), "::1".into(), 2222)
+        );
+        assert_eq!(
+            parse_jump_spec("user@[fe80::1]", "yo"),
+            ("user".into(), "fe80::1".into(), 22)
+        );
+    }
 
     fn has_cipher(p: &Preferred, name: &str) -> bool {
         p.cipher.iter().any(|c| c.as_ref() == name)

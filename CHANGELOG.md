@@ -2,6 +2,36 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.43.0] - 2026-07-04
+
+### Seguridad
+
+- **Descarga de carpetas a prueba de servidores maliciosos**: al descargar una
+  carpeta por SFTP/FTP, los nombres de fichero que envía el servidor se validan
+  antes de escribir en disco, de modo que un servidor comprometido ya no puede
+  colocar ficheros fuera de la carpeta de destino elegida.
+- **Escrituras atómicas del fichero de claves de host conocidas** y de los datos
+  de sincronización, copias de seguridad y capturas de pantalla de sesión: un
+  cierre inesperado a mitad de guardado ya no puede truncarlos ni corromperlos.
+- **La contraseña de conexión RDP en macOS** se codifica correctamente al abrir
+  el cliente, evitando URLs rotas con usuarios que contienen barra, espacios u
+  otros caracteres especiales.
+
+### Corregido
+
+- **Cancelar o pausar la transferencia de una carpeta** ahora surte efecto de
+  verdad: antes la interfaz mostraba «Cancelando…» pero la transferencia seguía
+  hasta el final.
+- **Conexiones a través de saltos (jump host) con direcciones IPv6**: se admiten
+  las formas `[dirección]:puerto` y la dirección IPv6 sin puerto, que antes se
+  interpretaban mal.
+- **Al salir por la bandeja del sistema** se cierran también los visores VNC y
+  los clientes Telnet externos, que antes podían quedar abiertos.
+- **La aplicación arranca aunque el archivo de carpetas guardadas esté dañado**:
+  se recupera con una lista vacía en lugar de quedar bloqueada al inicio.
+- **La línea de comandos (`rustty -c`)** resuelve las contraseñas que usan
+  variables o credenciales maestras, igual que ya hacía la interfaz gráfica.
+
 ## [1.42.0] - 2026-07-03
 
 ### Seguridad

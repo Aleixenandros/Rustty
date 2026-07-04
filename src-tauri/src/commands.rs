@@ -32,11 +32,17 @@ pub fn close_app(
     sftp_state: State<SftpManager>,
     shell_state: State<LocalShellManager>,
     rdp_state: State<RdpManager>,
+    vnc_state: State<VncManager>,
+    telnet_state: State<TelnetManager>,
 ) {
     ssh_state.disconnect_all();
     sftp_state.disconnect_all();
     shell_state.close_all();
     rdp_state.disconnect_all();
+    // VNC/Telnet también, para no dejar visores/clientes externos huérfanos
+    // (coherente con el manejador de `CloseRequested` en `lib.rs`).
+    vnc_state.disconnect_all();
+    telnet_state.disconnect_all();
     app.exit(0);
 }
 
@@ -1504,7 +1510,10 @@ pub fn list_known_hosts() -> Result<Vec<KnownHostEntry>, String> {
 }
 
 /// Elimina una línea concreta (1-indexed, coherente con `list_known_hosts`) de
-/// `~/.ssh/known_hosts` y reescribe el fichero preservando permisos 0600.
+/// `~/.ssh/known_hosts` y reescribe el fichero de forma atómica con permisos
+/// 0600. La escritura atómica es crítica aquí: un corte a mitad de un
+/// `fs::write` directo truncaría `known_hosts` y se perderían todos los pins
+/// TOFU, reabriendo una ventana de MITM en las siguientes conexiones.
 #[tauri::command]
 pub fn remove_known_host_line(line: usize) -> Result<(), String> {
     let path = known_hosts_path()?;
@@ -1528,14 +1537,9 @@ pub fn remove_known_host_line(line: usize) -> Result<(), String> {
         output.push('\n');
     }
 
-    std::fs::write(&path, output).map_err(|e| e.to_string())?;
-
-    // Mantenemos los permisos restrictivos típicos de known_hosts en Unix.
-    #[cfg(unix)]
-    {
-        let perms = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(&path, perms).map_err(|e| e.to_string())?;
-    }
+    // `private = true` fija 0600 en Unix desde la creación del temporal, así que
+    // ya no hace falta el `set_permissions` posterior.
+    crate::atomic_file::write(&path, output.as_bytes(), true).map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -1687,7 +1691,9 @@ pub async fn sync_run(
 #[tauri::command]
 pub fn sync_export_file(path: String, passphrase: String, state: SyncState) -> Result<(), String> {
     let bytes = pack_state(&passphrase, &state).map_err(|e| e.to_string())?;
-    std::fs::write(&path, bytes).map_err(|e| e.to_string())
+    // Escritura atómica: un backup interrumpido a medias quedaría corrupto y no
+    // descifraría al importarlo.
+    write_atomic(std::path::Path::new(&path), &bytes).map_err(|e| e.to_string())
 }
 
 /// Importa un fichero cifrado y devuelve el estado descifrado. El frontend
@@ -1906,23 +1912,10 @@ fn valid_snapshot_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-#[cfg(unix)]
+/// Escribe el snapshot de forma atómica y privada (0600 en Unix): el contenido
+/// del terminal es sensible y un corte a mitad no debe dejar el fichero truncado.
 fn write_snapshot_file(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(data)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn write_snapshot_file(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, data)
+    crate::atomic_file::write(path, data, true)
 }
 
 /// Guarda (o reemplaza) el snapshot de pantalla del perfil.

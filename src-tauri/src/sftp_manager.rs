@@ -2327,6 +2327,85 @@ async fn count_remote_tree(backend: &mut dyn FileTransfer, root: &str) -> (u32, 
     (files, bytes)
 }
 
+/// Valida que el nombre de una entrada remota (el que devuelve el servidor en el
+/// listado SFTP/FTP) sea un único componente de ruta seguro antes de usarlo para
+/// construir un destino local. Un servidor malicioso o comprometido podría
+/// devolver `../../.bashrc`, un nombre con separadores (`a/b`) o incluso una ruta
+/// absoluta; como `Path::join` con una ruta absoluta *reemplaza* la base, eso
+/// permitiría escribir ficheros fuera del directorio de descarga elegido (clase
+/// CVE de rsync/scp). Se rechazan además `.`, `..` y el nombre vacío.
+fn safe_entry_name(name: &str) -> Result<(), String> {
+    use std::path::Component;
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+    {
+        return Err(format!("el servidor devolvió un nombre de entrada no seguro: {name:?}"));
+    }
+    // Defensa en profundidad: cualquier cosa que no sea un único componente
+    // «normal» (prefijos de unidad/raíz en Windows, etc.) también se rechaza.
+    let mut comps = Path::new(name).components();
+    if !matches!((comps.next(), comps.next()), (Some(Component::Normal(_)), None)) {
+        return Err(format!("el servidor devolvió un nombre de entrada no seguro: {name:?}"));
+    }
+    Ok(())
+}
+
+/// Puerta de cancelación/pausa entre ficheros de una transferencia de carpeta.
+/// El frontend cancela/pausa siempre con el `transfer_id` **padre**, pero los
+/// ficheros individuales corren bajo sub-ids `{transfer_id}-{idx}` que nunca
+/// reciben esas señales; sin esta comprobación, «Cancelar»/«Pausar» sobre una
+/// carpeta no tenían ningún efecto. Se consulta el id padre antes de cada
+/// fichero: cancela abortando el trabajo y pausa bloqueando hasta reanudar.
+async fn gate_dir_transfer(
+    transfer_id: &str,
+    summary_event: &str,
+    bytes_done: u64,
+    bytes_total: u64,
+    app: &AppHandle,
+    controls: &Arc<TransferControls>,
+) -> Result<(), String> {
+    let mut emitted_pause = false;
+    loop {
+        if controls.take_cancel(transfer_id) {
+            let _ = app.emit(
+                summary_event,
+                serde_json::json!({
+                    "transferred": bytes_done, "total": bytes_total, "done": true,
+                    "canceled": true, "kind": "dir",
+                }),
+            );
+            return Err("transferencia cancelada".to_string());
+        }
+        if controls.is_paused(transfer_id) {
+            if !emitted_pause {
+                let _ = app.emit(
+                    summary_event,
+                    serde_json::json!({
+                        "transferred": bytes_done, "total": bytes_total, "done": false,
+                        "paused": true, "kind": "dir",
+                    }),
+                );
+                emitted_pause = true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            continue;
+        }
+        if emitted_pause {
+            let _ = app.emit(
+                summary_event,
+                serde_json::json!({
+                    "transferred": bytes_done, "total": bytes_total, "done": false,
+                    "paused": false, "kind": "dir",
+                }),
+            );
+        }
+        return Ok(());
+    }
+}
+
 async fn do_download_dir(
     backend: &mut dyn FileTransfer,
     remote: &str,
@@ -2353,6 +2432,9 @@ async fn do_download_dir(
     while let Some((rdir, ldir)) = stack.pop() {
         let entries = backend.list_dir(&rdir).await?;
         for e in entries {
+            safe_entry_name(&e.name)?;
+            gate_dir_transfer(transfer_id, &summary_event, bytes_done, bytes_total, app, controls)
+                .await?;
             let mut local_target = ldir.join(&e.name);
             if e.is_dir {
                 tokio::fs::create_dir_all(&local_target)
@@ -2442,6 +2524,8 @@ async fn do_upload_dir(
             .map_err(|e| e.to_string())?;
         while let Some(entry) = read.next_entry().await.map_err(|e| e.to_string())? {
             let name = entry.file_name().to_string_lossy().into_owned();
+            gate_dir_transfer(transfer_id, &summary_event, bytes_done, bytes_total, app, controls)
+                .await?;
             let path = entry.path();
             let mut remote_target = join_remote(&rdir, &name);
             let ft = entry.file_type().await.map_err(|e| e.to_string())?;
@@ -2513,6 +2597,26 @@ mod tests {
     // según el tamaño total de la transferencia. Verificamos sus ramas:
     // - total <= SFTP_CHUNK  → 1 (no merece la pena paralelizar)
     // - total mayor          → nº de chunks (div_ceil) acotado a SFTP_PIPELINE
+    #[test]
+    fn safe_entry_name_acepta_nombres_simples() {
+        assert!(safe_entry_name("documento.txt").is_ok());
+        assert!(safe_entry_name(".bashrc").is_ok());
+        assert!(safe_entry_name("con espacios y ñ.log").is_ok());
+    }
+
+    #[test]
+    fn safe_entry_name_rechaza_travesias_y_separadores() {
+        // Nombres que un servidor malicioso podría devolver para escapar del
+        // directorio de descarga elegido.
+        assert!(safe_entry_name("..").is_err());
+        assert!(safe_entry_name(".").is_err());
+        assert!(safe_entry_name("").is_err());
+        assert!(safe_entry_name("../../../.ssh/authorized_keys").is_err());
+        assert!(safe_entry_name("sub/dir").is_err());
+        assert!(safe_entry_name("sub\\dir").is_err());
+        assert!(safe_entry_name("/etc/passwd").is_err());
+    }
+
     #[test]
     fn paralelismo_es_uno_para_transferencias_pequenas() {
         assert_eq!(effective_parallelism(0, SFTP_PIPELINE), 1);

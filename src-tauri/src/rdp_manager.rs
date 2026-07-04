@@ -402,7 +402,10 @@ fn spawn_rdp_client(
     _domain: Option<&str>,
     _password: Option<&str>,
 ) -> Result<SpawnedRdpClient, String> {
-    let url = format!("rdp://full%20address=s:{host}:{port}&username=s:{username}");
+    // Codificamos el usuario (igual que la variante Windows): un `DOMINIO\usuario`,
+    // espacios o `&` romperían la URL o inyectarían parámetros sin escapar.
+    let enc_user = urlencoding::encode(username);
+    let url = format!("rdp://full%20address=s:{host}:{port}&username=s:{enc_user}");
     let child = std::process::Command::new("open")
         .arg(&url)
         .spawn()

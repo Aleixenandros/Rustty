@@ -219,6 +219,10 @@ fn shutdown_sessions(app: &AppHandle) {
     app.state::<SftpManager>().disconnect_all();
     app.state::<LocalShellManager>().close_all();
     app.state::<RdpManager>().disconnect_all();
+    // VNC/Telnet también: salir por la bandeja no debe dejar visores/clientes
+    // externos huérfanos (coherente con `close_app` y `CloseRequested`).
+    app.state::<crate::external_client::VncManager>().disconnect_all();
+    app.state::<crate::external_client::TelnetManager>().disconnect_all();
 }
 
 impl TrayState {

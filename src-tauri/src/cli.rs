@@ -400,13 +400,16 @@ fn resolve_secrets(profile: &ConnectionProfile) -> Result<CliSecrets, String> {
             } else {
                 let stored = read_keyring_secret(&format!("password:{}", profile.id));
                 let prompt = format!("Contrasena para {}@{}: ", profile.username, profile.host);
-                Some(
-                    stored
-                        .unwrap_or_else(|| prompt_secret(&prompt))
-                        .map_err(|e| {
-                            format!("No se pudo obtener la contrasena de {}: {e}", profile.name)
-                        })?,
-                )
+                let value = stored
+                    .unwrap_or_else(|| prompt_secret(&prompt))
+                    .map_err(|e| {
+                        format!("No se pudo obtener la contrasena de {}: {e}", profile.name)
+                    })?;
+                // La contraseña propia pasa por el motor de sustitución, igual que
+                // en la GUI: soporta `${var:}`/`${secret:}`/`${master:}`. Sin este
+                // paso, un perfil cuya contraseña es un marcador conecta en la app
+                // pero envía el marcador literal desde `rustty -c`.
+                Some(resolve_password_markers(profile, value)?)
             }
         }
         AuthType::PublicKey | AuthType::Agent => None,
@@ -421,6 +424,27 @@ fn resolve_secrets(profile: &ConnectionProfile) -> Result<CliSecrets, String> {
         password,
         passphrase,
     })
+}
+
+/// Aplica el motor de sustitución a una contraseña «propia» leída del keyring:
+/// resuelve `${var:}`/`${secret:}`/`${master:}` construyendo el catálogo de
+/// credenciales sobre el directorio de datos. Sin marcadores devuelve el texto
+/// tal cual (el motor es de una sola pasada). `${ask:}` no se puede resolver sin
+/// diálogo, así que en CLI queda sin respuestas (mapa vacío).
+fn resolve_password_markers(profile: &ConnectionProfile, raw: String) -> Result<String, String> {
+    if !raw.contains("${") {
+        return Ok(raw);
+    }
+    let data_dir = crate::resolve_data_dir();
+    let store = CredentialStore::new(data_dir);
+    let catalog = store.load_all().map_err(|e| e.to_string())?;
+    let ctx = crate::subst::SubstContext::from_profile(profile);
+    let resolver = credentials::CredentialResolver::with_ask_answers(
+        ctx,
+        catalog,
+        std::collections::HashMap::new(),
+    );
+    Ok(crate::subst::substitute(&raw, &resolver))
 }
 
 /// Resuelve el valor de la credencial maestra referenciada por el perfil
