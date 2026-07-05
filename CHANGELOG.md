@@ -2,6 +2,22 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.45.0] - 2026-07-06
+
+### Añadido
+
+- **Grabar scripts desde la sesión**: en la sección «Scripts», el botón «Grabar
+  desde la sesión…» captura lo que tecleas en una conexión SSH y lo convierte
+  en un script listo para editar. Cada comando se guarda como un paso y entre
+  comandos se inserta automáticamente la espera del prompt.
+  - **Las contraseñas nunca se graban**: cuando el servidor pide una contraseña
+    (por ejemplo `sudo` o un `ssh` anidado), la grabadora detecta que el eco
+    está apagado y, en lugar del texto tecleado, deja un paso «enviar
+    contraseña» en blanco para que elijas keyring o KeePass al editar.
+  - Al detener la grabación se abre el editor con los pasos capturados y la
+    conexión de origen ya seleccionada como objetivo, para que revises y
+    ajustes antes de guardar.
+
 ## [1.44.0] - 2026-07-05
 
 ### Añadido

@@ -1147,6 +1147,7 @@
             </p>
             <div class="scripts-toolbar">
               <button type="button" class="btn-primary" id="btn-script-new" data-i18n="scripts.new">Nuevo script</button>
+              <button type="button" class="btn-secondary" id="btn-script-record" data-i18n="scripts.record">Grabar desde la sesión…</button>
               <button type="button" class="btn-secondary" id="btn-script-import" data-i18n="scripts.import_md">Importar Markdown…</button>
             </div>
             <div id="scripts-list" class="global-tunnel-list"></div>
@@ -1316,6 +1317,17 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Indicador flotante de grabación de script (Fase 3) -->
+    <div id="script-rec-bar" class="hidden" role="status" aria-live="polite">
+      <span class="script-rec-dot" aria-hidden="true"></span>
+      <span class="script-rec-text">
+        <span class="script-rec-title" data-i18n="scripts.rec_recording">Grabando script</span>
+        <span id="script-rec-count" class="script-rec-count"></span>
+      </span>
+      <button type="button" class="btn-primary" id="btn-script-rec-stop" data-i18n="scripts.rec_stop">Detener y editar</button>
+      <button type="button" class="btn-secondary" id="btn-script-rec-cancel" data-i18n="scripts.rec_cancel">Descartar</button>
     </div>
 
     <!-- ══════════════════════════════════════════════════════

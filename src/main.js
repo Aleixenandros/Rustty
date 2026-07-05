@@ -36,6 +36,13 @@ import { rankCommandSuggestions } from "./modules/command-suggest.js";
 import { STEP_TYPES, makeStep, emptyScript, validateScript } from "./modules/scripts/model.js";
 import { resolveTarget } from "./modules/scripts/targets.js";
 import { toMarkdown as scriptToMarkdown, fromMarkdown as scriptFromMarkdown } from "./modules/scripts/runbook.js";
+import {
+  createRecorder,
+  feedInput as recorderFeedInput,
+  feedOutput as recorderFeedOutput,
+  finish as recorderFinish,
+  stepCount as recorderStepCount,
+} from "./modules/scripts/recorder.js";
 /** @typedef {import("./modules/ipc/events.js").SshLogEvent} SshLogEvent */
 /** @typedef {import("./modules/ipc/events.js").SftpLogEvent} SftpLogEvent */
 /** @typedef {import("./modules/ipc/events.js").SftpProgressEvent} SftpProgressEvent */
@@ -9126,6 +9133,7 @@ function flushTerminalOutput(sessionObj) {
 
 function enqueueTerminalOutput(sessionObj, text) {
   if (!sessionObj?.terminal || !text) return;
+  feedScriptRecorderOutput(sessionObj, text);
   if (!sessionObj._outputQueue) sessionObj._outputQueue = [];
   const str = String(text);
   sessionObj._outputQueue.push(str);
@@ -9323,6 +9331,7 @@ async function reconnectSshInPlace(s) {
 function handleTerminalInput(sessionObj, data) {
   if (!sessionObj) return;
   captureCommandKeystroke(sessionObj, data);
+  feedScriptRecorderInput(sessionObj, data);
   if (isBroadcastOn() && viewSelection.includes(sessionObj.id) && viewSelection.length > 1) {
     viewSelection.forEach((sid) => {
       sendTerminalInput(sessions.get(sid), data);
@@ -10841,6 +10850,10 @@ async function closeSession(sessionId, opts = {}) {
 
   if (!skipConfirm && !(await confirmCloseSession(sessionId))) return;
 
+  // Si se estaba grabando un script sobre esta sesión, materializar lo captado
+  // antes de que el terminal desaparezca.
+  abortScriptRecordingIfSession(sessionId);
+
   // Si hay un panel SFTP abierto, desconectarlo primero
   if (s.sftp?.sftpSessionId) {
     invoke("sftp_disconnect", { sessionId: s.sftp.sftpSessionId }).catch(() => {});
@@ -11476,10 +11489,97 @@ let scriptRunSetup = null;
 let scriptRunState = null;
 /** TargetSpec preseleccionado al abrir el selector desde el menú contextual. */
 let scriptPickTarget = null;
+/** Grabación activa: { sessionId, profileId, state } o null. */
+let scriptRecorder = null;
 
 /** Clon profundo de un valor JSON-seguro (los scripts siempre lo son). */
 function cloneScriptValue(v) {
   return JSON.parse(JSON.stringify(v));
+}
+
+// ── Grabadora de scripts (Fase 3) ─────────────────────────────────
+// Captura la sesión SSH activa y la materializa como pasos. Los hooks de
+// `handleTerminalInput` y `enqueueTerminalOutput` alimentan el módulo puro.
+
+/** Alimenta la grabadora con las pulsaciones del usuario (si graba esta sesión). */
+function feedScriptRecorderInput(sessionObj, data) {
+  if (!scriptRecorder || scriptRecorder.sessionId !== sessionObj?.id) return;
+  recorderFeedInput(scriptRecorder.state, data);
+  updateScriptRecorderIndicator();
+}
+
+/** Alimenta la grabadora con la salida del servidor (heurística de prompt). */
+function feedScriptRecorderOutput(sessionObj, text) {
+  if (!scriptRecorder || scriptRecorder.sessionId !== sessionObj?.id) return;
+  recorderFeedOutput(scriptRecorder.state, text);
+}
+
+/**
+ * Inicia la grabación sobre la sesión SSH activa. Cierra el modal de scripts
+ * (hay que poder teclear en el terminal) y muestra el indicador flotante.
+ */
+function startScriptRecording() {
+  if (scriptRecorder) return;
+  const s = activeSessionId ? sessions.get(activeSessionId) : null;
+  if (!s || s.type !== "ssh" || s.status !== "connected") {
+    toast(t("scripts.rec_need_ssh"), "warning");
+    return;
+  }
+  scriptRecorder = {
+    sessionId: s.id,
+    profileId: s.profileId || null,
+    state: createRecorder(),
+  };
+  closeScriptsModal();
+  const bar = document.getElementById("script-rec-bar");
+  bar?.classList.remove("hidden");
+  updateScriptRecorderIndicator();
+  toast(t("scripts.rec_started"), "info");
+}
+
+/** Refresca el contador de pasos del indicador de grabación. */
+function updateScriptRecorderIndicator() {
+  if (!scriptRecorder) return;
+  const el = document.getElementById("script-rec-count");
+  if (el) el.textContent = t("scripts.rec_steps", { n: recorderStepCount(scriptRecorder.state) });
+}
+
+/**
+ * Detiene la grabación. Si `keep`, materializa los pasos y abre el editor con
+ * un script nuevo (objetivo = la conexión grabada). Si no, descarta.
+ */
+async function stopScriptRecording(keep = true) {
+  if (!scriptRecorder) return;
+  const rec = scriptRecorder;
+  scriptRecorder = null;
+  document.getElementById("script-rec-bar")?.classList.add("hidden");
+  if (!keep) {
+    toast(t("scripts.rec_discarded"), "info");
+    return;
+  }
+  const steps = recorderFinish(rec.state);
+  if (!steps.length) {
+    toast(t("scripts.rec_empty"), "warning");
+    return;
+  }
+  const presetTarget = rec.profileId
+    ? { kind: "profile", profileId: rec.profileId }
+    : undefined;
+  await openScriptsModal();
+  openScriptEditor(null, presetTarget);
+  if (scriptEditorState) {
+    scriptEditorState.steps = steps;
+    renderScriptSteps();
+  }
+  if (rec.state.truncated) toast(t("scripts.rec_truncated", { n: steps.length }), "warning");
+  else toast(t("scripts.rec_stopped", { n: steps.length }), "success");
+}
+
+/** Corta la grabación si la sesión grabada se cierra o desaparece. */
+function abortScriptRecordingIfSession(sessionId) {
+  if (scriptRecorder && scriptRecorder.sessionId === sessionId) {
+    stopScriptRecording(true);
+  }
 }
 
 /** Perfiles sobre los que puede correr un script (solo SSH). */
@@ -12416,6 +12516,9 @@ function initScriptsUi() {
     if (e.target.id === "scripts-overlay") closeScriptsModal();
   });
   document.getElementById("btn-script-new")?.addEventListener("click", () => openScriptEditor(null));
+  document.getElementById("btn-script-record")?.addEventListener("click", startScriptRecording);
+  document.getElementById("btn-script-rec-stop")?.addEventListener("click", () => stopScriptRecording(true));
+  document.getElementById("btn-script-rec-cancel")?.addEventListener("click", () => stopScriptRecording(false));
   document.getElementById("btn-script-import")?.addEventListener("click", importScriptFromMarkdown);
   document.getElementById("btn-script-ed-back")?.addEventListener("click", () => {
     showScriptsListView();

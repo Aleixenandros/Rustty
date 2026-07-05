@@ -8785,6 +8785,45 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   margin: 10px 0 12px;
 }
 
+/* Indicador flotante de grabación de script (Fase 3) */
+#script-rec-bar {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--mantle, #1e1e2e);
+  color: var(--text, #cdd6f4);
+  border: 1px solid var(--surface1, #45475a);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+#script-rec-bar.hidden { display: none; }
+.script-rec-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--red, #f38ba8);
+  box-shadow: 0 0 0 0 rgba(243, 139, 168, 0.6);
+  animation: script-rec-pulse 1.4s ease-out infinite;
+  flex: 0 0 auto;
+}
+@keyframes script-rec-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(243, 139, 168, 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(243, 139, 168, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(243, 139, 168, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .script-rec-dot { animation: none; }
+}
+.script-rec-text { display: flex; flex-direction: column; line-height: 1.2; }
+.script-rec-title { font-weight: 600; font-size: 0.9em; }
+.script-rec-count { font-size: 0.8em; color: var(--subtext0, #a6adc8); }
+
 /* Fila de la lista de scripts: nombre | objetivo | meta | acciones */
 .script-row {
   display: grid;
