@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.43.0"
+version = "1.44.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -88,3 +88,6 @@ hex = "0.4"
 auto-launch = "0.6"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
+# Coincidencia de patrones para el paso `waitRegex` del motor de scripts. Ya
+# presente en el árbol de dependencias; se declara directo para poder usarlo.
+regex = "1.12.4"

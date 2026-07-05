@@ -90,6 +90,18 @@ function formatTime(d) {
 }
 
 /**
+ * Nombre válido de variable/secreto/maestra: letra ASCII o `_` inicial, luego
+ * alfanuméricos ASCII, `_`, `-` o `.`. Espejo exacto de `is_valid_name` en
+ * `src-tauri/src/subst/engine.rs`: si divergen, la preview redacta (`••••`)
+ * marcadores que el backend dejaría literales y viajarían tal cual al servidor.
+ * @param {string} name
+ * @returns {boolean}
+ */
+function isValidName(name) {
+  return /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(name);
+}
+
+/**
  * Interpreta el cuerpo de un marcador `${cuerpo}` (sin llaves).
  * @param {string} body cuerpo del marcador, sin las llaves.
  * @param {SubstContext} ctx contexto de cliente.
@@ -107,10 +119,11 @@ function resolveBody(body, ctx) {
   const prefix = body.slice(0, idx);
   const rest = body.slice(idx + 1);
   switch (prefix) {
-    // Secretos y credenciales maestras: redacción, nunca el valor real.
+    // Secretos y credenciales maestras: redacción, nunca el valor real. Solo
+    // con nombre válido: el backend deja literal el marcador si no lo es.
     case "secret":
     case "master":
-      return rest.length > 0 ? REDACTED : null;
+      return isValidName(rest) ? REDACTED : null;
     // var (Fase 2) y ask (Fase 5): literales por ahora.
     case "var":
     case "ask":

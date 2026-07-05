@@ -74,4 +74,4 @@ Por defecto, los comandos remotos se ejecutan sin PTY para que sean más predeci
 - Solo funciona con perfiles SSH guardados.
 - KeePass desbloqueado en la interfaz gráfica no está disponible desde el CLI.
 - X11 forwarding queda fuera del CLI inicial.
-- Las credenciales sí se resuelven desde el keyring del sistema cuando existen.
+- Las credenciales sí se resuelven desde el keyring del sistema cuando existen, incluidas las **credenciales maestras** y los marcadores `${var:...}` / `${master:...}` / `${secret:...}` en la contraseña del perfil, igual que en la interfaz gráfica. Los marcadores `${ask:...}` no se preguntan desde el CLI.

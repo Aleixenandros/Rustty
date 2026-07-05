@@ -387,8 +387,11 @@ impl SftpManager {
     }
 
     pub async fn create_file(&self, session_id: &str, path: String) -> Result<(), String> {
-        self.send(session_id, move |reply| SftpCommand::CreateFile { path, reply })
-            .await
+        self.send(session_id, move |reply| SftpCommand::CreateFile {
+            path,
+            reply,
+        })
+        .await
     }
 
     pub async fn remove(&self, session_id: &str, path: String, is_dir: bool) -> Result<(), String> {
@@ -806,17 +809,16 @@ async fn connect_and_open_sftp(
     );
     let (client_handler, host_key_failure) =
         host_keys::client(profile.host.clone(), profile.port, false, false);
-    let mut handle = match crate::ssh_manager::russh_connect_addr(config, &addr, client_handler)
-        .await
-    {
-        Ok(handle) => handle,
-        Err(err) => {
-            let reason = host_keys::take_failure(&host_key_failure)
-                .unwrap_or_else(|| format!("No se puede conectar a {addr}: {err}"));
-            emit_sftp_log(app_handle, session_id, "connect", "error", reason.clone());
-            return Err(reason);
-        }
-    };
+    let mut handle =
+        match crate::ssh_manager::russh_connect_addr(config, &addr, client_handler).await {
+            Ok(handle) => handle,
+            Err(err) => {
+                let reason = host_keys::take_failure(&host_key_failure)
+                    .unwrap_or_else(|| format!("No se puede conectar a {addr}: {err}"));
+                emit_sftp_log(app_handle, session_id, "connect", "error", reason.clone());
+                return Err(reason);
+            }
+        };
     emit_sftp_log(
         app_handle,
         session_id,
@@ -898,7 +900,9 @@ async fn connect_and_open_sftp(
         AuthResult::Success => {
             emit_sftp_log(app_handle, session_id, "auth", "ok", "Autenticado");
         }
-        AuthResult::Failure { remaining_methods, .. } => {
+        AuthResult::Failure {
+            remaining_methods, ..
+        } => {
             let msg = format!(
                 "Autenticación fallida. Métodos restantes: {:?}",
                 remaining_methods
@@ -949,21 +953,24 @@ async fn connect_and_open_sftp(
 
     let sftp = SftpSession::new_with_config(
         channel.into_stream(),
-        SftpConfig { request_timeout_secs: SFTP_REQUEST_TIMEOUT_SECS, ..SftpConfig::default() },
+        SftpConfig {
+            request_timeout_secs: SFTP_REQUEST_TIMEOUT_SECS,
+            ..SftpConfig::default()
+        },
     )
     .await
-        .map_err(|e| {
-            let msg = if elevated {
-                format!(
-                    "No se pudo iniciar SFTP elevado ({e}). \
+    .map_err(|e| {
+        let msg = if elevated {
+            format!(
+                "No se pudo iniciar SFTP elevado ({e}). \
                      Comprueba que /etc/sudoers permita NOPASSWD sobre sftp-server."
-                )
-            } else {
-                format!("No se pudo iniciar sesión SFTP: {e}")
-            };
-            emit_sftp_log(app_handle, session_id, "subsystem", "error", msg.clone());
-            msg
-        })?;
+            )
+        } else {
+            format!("No se pudo iniciar sesión SFTP: {e}")
+        };
+        emit_sftp_log(app_handle, session_id, "subsystem", "error", msg.clone());
+        msg
+    })?;
     emit_sftp_log(
         app_handle,
         session_id,
@@ -1626,6 +1633,13 @@ const SFTP_PIPELINE: usize = 32;
 // Durante esa ventana alguna petición SFTP puede tardar bastante más que los
 // 10s por defecto de russh-sftp, especialmente con pipeline y servidores lentos.
 const SFTP_REQUEST_TIMEOUT_SECS: u64 = 120;
+// Tope del read-ahead en la descarga pipelined, en múltiplos de la ventana del
+// pipeline (parallelism × SFTP_CHUNK). Si el chunk que toca escribir se atasca
+// (rekey, servidor que completa fuera de orden), el resto de handles seguiría
+// leyendo y el buffer de reordenado crecería sin límite (OOM con ficheros
+// grandes en LAN rápida). ×2 mantiene el pipeline lleno y absorbe el desorden
+// acotando el buffer a ~16 MiB con la ventana máxima.
+const SFTP_READAHEAD_FACTOR: u64 = 2;
 
 async fn do_download(
     sftp: &SftpSession,
@@ -1797,7 +1811,12 @@ async fn pipelined_download(
         was_paused = paused;
 
         if !paused {
-            while !idle_files.is_empty() && next_read < total {
+            // No leer más allá de `max_ahead` por delante de lo ya escrito:
+            // el chunk pendiente en `next_write` siempre está en vuelo o en
+            // `completed`, así que frenar aquí no puede interbloquear el bucle.
+            let max_ahead = SFTP_CHUNK * SFTP_READAHEAD_FACTOR * parallelism as u64;
+            while !idle_files.is_empty() && next_read < total && next_read - next_write < max_ahead
+            {
                 let mut f = idle_files.pop().unwrap();
                 let len = (total - next_read).min(SFTP_CHUNK);
                 let off = next_read;
@@ -2336,19 +2355,21 @@ async fn count_remote_tree(backend: &mut dyn FileTransfer, root: &str) -> (u32, 
 /// CVE de rsync/scp). Se rechazan además `.`, `..` y el nombre vacío.
 fn safe_entry_name(name: &str) -> Result<(), String> {
     use std::path::Component;
-    if name.is_empty()
-        || name == "."
-        || name == ".."
-        || name.contains('/')
-        || name.contains('\\')
-    {
-        return Err(format!("el servidor devolvió un nombre de entrada no seguro: {name:?}"));
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err(format!(
+            "el servidor devolvió un nombre de entrada no seguro: {name:?}"
+        ));
     }
     // Defensa en profundidad: cualquier cosa que no sea un único componente
     // «normal» (prefijos de unidad/raíz en Windows, etc.) también se rechaza.
     let mut comps = Path::new(name).components();
-    if !matches!((comps.next(), comps.next()), (Some(Component::Normal(_)), None)) {
-        return Err(format!("el servidor devolvió un nombre de entrada no seguro: {name:?}"));
+    if !matches!(
+        (comps.next(), comps.next()),
+        (Some(Component::Normal(_)), None)
+    ) {
+        return Err(format!(
+            "el servidor devolvió un nombre de entrada no seguro: {name:?}"
+        ));
     }
     Ok(())
 }
@@ -2433,8 +2454,15 @@ async fn do_download_dir(
         let entries = backend.list_dir(&rdir).await?;
         for e in entries {
             safe_entry_name(&e.name)?;
-            gate_dir_transfer(transfer_id, &summary_event, bytes_done, bytes_total, app, controls)
-                .await?;
+            gate_dir_transfer(
+                transfer_id,
+                &summary_event,
+                bytes_done,
+                bytes_total,
+                app,
+                controls,
+            )
+            .await?;
             let mut local_target = ldir.join(&e.name);
             if e.is_dir {
                 tokio::fs::create_dir_all(&local_target)
@@ -2456,8 +2484,16 @@ async fn do_download_dir(
                     }
                 }
                 let rel = {
-                    let r = e.path.strip_prefix(remote).unwrap_or(&e.path).trim_start_matches('/');
-                    if r.is_empty() { e.name.clone() } else { r.to_string() }
+                    let r = e
+                        .path
+                        .strip_prefix(remote)
+                        .unwrap_or(&e.path)
+                        .trim_start_matches('/');
+                    if r.is_empty() {
+                        e.name.clone()
+                    } else {
+                        r.to_string()
+                    }
                 };
                 emit_dir_progress(
                     app,
@@ -2471,14 +2507,7 @@ async fn do_download_dir(
                 idx += 1;
                 let sub_id = format!("{transfer_id}-{idx}");
                 backend
-                    .download(
-                        &e.path,
-                        &local_target,
-                        &sub_id,
-                        verify_size,
-                        app,
-                        controls,
-                    )
+                    .download(&e.path, &local_target, &sub_id, verify_size, app, controls)
                     .await?;
                 bytes_done += e.size;
                 files_done += 1;
@@ -2524,8 +2553,15 @@ async fn do_upload_dir(
             .map_err(|e| e.to_string())?;
         while let Some(entry) = read.next_entry().await.map_err(|e| e.to_string())? {
             let name = entry.file_name().to_string_lossy().into_owned();
-            gate_dir_transfer(transfer_id, &summary_event, bytes_done, bytes_total, app, controls)
-                .await?;
+            gate_dir_transfer(
+                transfer_id,
+                &summary_event,
+                bytes_done,
+                bytes_total,
+                app,
+                controls,
+            )
+            .await?;
             let path = entry.path();
             let mut remote_target = join_remote(&rdir, &name);
             let ft = entry.file_type().await.map_err(|e| e.to_string())?;
@@ -2565,14 +2601,7 @@ async fn do_upload_dir(
                 idx += 1;
                 let sub_id = format!("{transfer_id}-{idx}");
                 backend
-                    .upload(
-                        &path,
-                        &remote_target,
-                        &sub_id,
-                        verify_size,
-                        app,
-                        controls,
-                    )
+                    .upload(&path, &remote_target, &sub_id, verify_size, app, controls)
                     .await?;
                 bytes_done += fsize;
                 files_done += 1;

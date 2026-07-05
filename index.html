@@ -45,6 +45,13 @@
               <path d="M2.5 6.5h11l-2 -2M15.5 11.5h-11l2 2"/>
             </svg>
           </button>
+          <button class="rail-btn" data-rail-action="scripts" data-i18n-title="scripts.rail_title" data-tooltip="Scripts" data-tooltip-pos="right" aria-label="Scripts">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 2.6h6.2l3 3v8.6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3.6a1 1 0 0 1 1-1z"/>
+              <path d="M10.8 2.7v3.2h3.2"/>
+              <path d="M7.3 9l3.4 2.2-3.4 2.2z"/>
+            </svg>
+          </button>
           <button class="rail-btn rail-btn-logs" data-rail-action="activity" data-tooltip="Historial y logs" data-tooltip-pos="right" aria-label="Historial y logs">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
               <path d="M3 4.5h12M3 9h12M3 13.5h8"/>
@@ -368,6 +375,7 @@
         <symbol id="ci-view-solo" viewBox="0 0 16 16"><path d="M3.5 3.8h9v8.4h-9z"/><path d="M8 3.8v4.4H3.5"/></symbol>
         <symbol id="ci-arrow-right" viewBox="0 0 16 16"><path d="M3 8h9.5M9.3 4.8 12.5 8l-3.2 3.2"/></symbol>
         <symbol id="ci-ban" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.2"/><path d="M4.3 4.3l7.4 7.4"/></symbol>
+        <symbol id="ci-script" viewBox="0 0 16 16"><path d="M4.2 2.6h5.2l2.8 2.8v7.2a.8.8 0 0 1-.8.8H4.2a.8.8 0 0 1-.8-.8V3.4a.8.8 0 0 1 .8-.8z"/><path d="M9.1 2.7v3h3"/><path d="M6.6 8l2.9 1.9-2.9 1.9z"/></symbol>
       </defs>
     </svg>
 
@@ -404,6 +412,9 @@
       </button>
       <button class="ctx-item ctx-folder-only hidden" data-ctx="export-folder">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-export"/></svg></span><span data-i18n="ctx.export_folder">Exportar conexiones de la carpeta…</span>
+      </button>
+      <button class="ctx-item ctx-folder-only hidden" data-ctx="run-script-folder">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-script"/></svg></span><span data-i18n="scripts.ctx_run">Ejecutar script…</span>
       </button>
       <div class="ctx-colorable ctx-folder-color hidden">
         <span class="ctx-folder-color-label" data-i18n="ctx.folder_color">Color</span>
@@ -490,6 +501,9 @@
       <div class="ctx-sep ctx-conn-only hidden"></div>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="new-tunnel">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span><span data-i18n="ctx.new_tunnel">Nuevo túnel…</span>
+      </button>
+      <button class="ctx-item ctx-conn-only ctx-script-only hidden" data-ctx="run-script-conn">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-script"/></svg></span><span data-i18n="scripts.ctx_run">Ejecutar script…</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="wake-on-lan">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-power"/></svg></span><span data-i18n="ctx.wake_on_lan">Despertar equipo</span>
@@ -1111,6 +1125,194 @@
           </p>
           <div class="global-tunnels-section">
             <div id="known-hosts-list" class="global-tunnel-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Scripts (recetas interactivas por host)
+    ══════════════════════════════════════════════════════ -->
+    <div id="scripts-overlay" class="hidden">
+      <div id="scripts-modal" role="dialog" aria-modal="true" aria-labelledby="scripts-title">
+        <div class="modal-header">
+          <h2 id="scripts-title" data-i18n="scripts.title">Scripts</h2>
+          <button class="btn-icon" id="btn-scripts-close" data-i18n-aria-label="scripts.close" aria-label="Cerrar">✕</button>
+        </div>
+        <div class="global-tunnels-body">
+          <!-- Vista 1: lista de scripts guardados -->
+          <div id="scripts-list-view">
+            <p class="prefs-panel-hint" data-i18n="scripts.hint">
+              Recetas de pasos estructurados que se ejecutan sobre una o varias conexiones SSH. Las contraseñas nunca se guardan: los pasos solo referencian el keyring o KeePass.
+            </p>
+            <div class="scripts-toolbar">
+              <button type="button" class="btn-primary" id="btn-script-new" data-i18n="scripts.new">Nuevo script</button>
+              <button type="button" class="btn-secondary" id="btn-script-import" data-i18n="scripts.import_md">Importar Markdown…</button>
+            </div>
+            <div id="scripts-list" class="global-tunnel-list"></div>
+          </div>
+
+          <!-- Vista 2: editor paso a paso -->
+          <div id="scripts-editor-view" class="hidden">
+            <form id="script-editor-form" autocomplete="off">
+              <div class="script-editor-head">
+                <div class="form-row">
+                  <label for="script-ed-name" data-i18n="scripts.name_label">Nombre</label>
+                  <input id="script-ed-name" type="text" data-i18n-placeholder="scripts.name_placeholder" placeholder="p. ej. Reiniciar nginx" />
+                </div>
+                <div class="form-row">
+                  <label for="script-ed-desc" data-i18n="scripts.description_label">Descripción (Markdown, opcional)</label>
+                  <textarea id="script-ed-desc" rows="2"></textarea>
+                </div>
+              </div>
+
+              <div class="global-tunnels-section-title" data-i18n="scripts.target_label">Objetivo</div>
+              <div class="script-target-editor">
+                <div class="form-row">
+                  <label for="script-ed-target-kind" data-i18n="scripts.target_kind_label">Tipo de objetivo</label>
+                  <select id="script-ed-target-kind">
+                    <option value="profile" data-i18n="scripts.kind_profile">Una conexión</option>
+                    <option value="folder" data-i18n="scripts.kind_folder">Una carpeta</option>
+                    <option value="adhoc" data-i18n="scripts.kind_adhoc">Selección de conexiones</option>
+                  </select>
+                </div>
+                <div class="form-row script-target-profile-only">
+                  <label for="script-ed-target-profile" data-i18n="scripts.target_profile_label">Conexión</label>
+                  <select id="script-ed-target-profile"></select>
+                </div>
+                <div class="form-row script-target-folder-only hidden">
+                  <label for="script-ed-target-ws" data-i18n="scripts.target_ws_label">Perfil</label>
+                  <select id="script-ed-target-ws"></select>
+                </div>
+                <div class="form-row script-target-folder-only hidden">
+                  <label for="script-ed-target-folder" data-i18n="scripts.target_folder_label">Carpeta</label>
+                  <select id="script-ed-target-folder"></select>
+                </div>
+                <label class="checkbox-label script-target-folder-only hidden">
+                  <input id="script-ed-target-recursive" type="checkbox" checked />
+                  <span data-i18n="scripts.target_recursive">Incluir subcarpetas</span>
+                </label>
+              </div>
+              <div class="script-target-adhoc-only hidden">
+                <div id="script-ed-target-adhoc" class="script-adhoc-list"></div>
+              </div>
+
+              <div class="global-tunnels-section-title" data-i18n="scripts.steps_label">Pasos</div>
+              <div id="script-ed-steps" class="script-steps"></div>
+              <div class="scripts-toolbar">
+                <button type="button" class="btn-secondary" id="btn-script-step-add" data-i18n="scripts.step_add">Añadir paso</button>
+              </div>
+
+              <div id="script-ed-errors" class="script-editor-errors hidden"></div>
+
+              <div class="modal-actions">
+                <button type="button" class="btn-secondary" id="btn-script-ed-back" data-i18n="scripts.back">Volver</button>
+                <button type="submit" class="btn-primary" data-i18n="scripts.save">Guardar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Ejecutar script (opciones + preview + estado por host)
+    ══════════════════════════════════════════════════════ -->
+    <div id="script-run-overlay" class="hidden">
+      <div id="script-run-modal" role="dialog" aria-modal="true" aria-labelledby="script-run-title">
+        <div class="modal-header">
+          <h2 id="script-run-title" data-i18n="scripts.run_title">Ejecutar script</h2>
+          <button class="btn-icon" id="btn-script-run-close" data-i18n-aria-label="scripts.close" aria-label="Cerrar">✕</button>
+        </div>
+        <div class="global-tunnels-body">
+          <!-- Fase 1: opciones + previsualización -->
+          <div id="script-run-setup">
+            <p class="prefs-panel-hint" id="script-run-target-label"></p>
+            <div class="script-run-options">
+              <div class="form-row">
+                <label for="script-run-mode" data-i18n="scripts.mode_label">Modo</label>
+                <select id="script-run-mode">
+                  <option value="parallel" data-i18n="scripts.mode_parallel">Paralelo</option>
+                  <option value="canary" data-i18n="scripts.mode_canary">Canario (primero un host)</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <label for="script-run-concurrency" data-i18n="scripts.concurrency_label">Concurrencia</label>
+                <input id="script-run-concurrency" type="number" min="1" max="16" value="4" />
+              </div>
+              <label class="checkbox-label">
+                <input id="script-run-stop-on-error" type="checkbox" />
+                <span data-i18n="scripts.stop_on_error">Detener al primer error</span>
+              </label>
+            </div>
+            <!-- Credenciales del run (opción efímera, no se persiste con el script) -->
+            <div class="script-run-creds">
+              <div class="form-row">
+                <label for="script-run-cred-kind" data-i18n="scripts.cred_label">Credenciales</label>
+                <select id="script-run-cred-kind">
+                  <option value="profile" data-i18n="scripts.cred_profile">Las de cada perfil (por defecto)</option>
+                  <option value="master" data-i18n="scripts.cred_master">Credencial maestra</option>
+                  <option value="keepass" data-i18n="scripts.cred_keepass">Entrada KeePass</option>
+                  <option value="manual" data-i18n="scripts.cred_manual">Usuario y contraseña manuales</option>
+                </select>
+              </div>
+              <div class="form-row script-cred-master-only hidden">
+                <label for="script-run-cred-master" data-i18n="scripts.cred_master_label">Credencial</label>
+                <select id="script-run-cred-master"></select>
+              </div>
+              <div class="form-row script-cred-keepass-only hidden">
+                <label for="script-run-cred-keepass" data-i18n="scripts.cred_keepass_label">Entrada</label>
+                <select id="script-run-cred-keepass"></select>
+              </div>
+              <div class="form-row script-cred-user-only hidden">
+                <label for="script-run-cred-user" data-i18n="scripts.cred_user_label">Usuario</label>
+                <input id="script-run-cred-user" type="text" autocomplete="off" spellcheck="false" />
+              </div>
+              <div class="form-row script-cred-manual-only hidden">
+                <label for="script-run-cred-password" data-i18n="scripts.cred_password_label">Contraseña</label>
+                <input id="script-run-cred-password" type="password" autocomplete="new-password" />
+              </div>
+              <p class="script-cred-hint hidden" id="script-run-cred-keepass-hint" data-i18n="scripts.cred_keepass_locked">La base KeePass está bloqueada; desbloquéala para elegir una entrada.</p>
+            </div>
+            <div class="global-tunnels-section">
+              <div class="global-tunnels-section-title" data-i18n="scripts.preview_title">Previsualización por host</div>
+              <div id="script-run-preview" class="script-run-preview"></div>
+            </div>
+            <div class="modal-actions">
+              <button type="button" class="btn-secondary" id="btn-script-run-cancel" data-i18n="scripts.cancel">Cancelar</button>
+              <button type="button" class="btn-primary" id="btn-script-run-launch" data-i18n="scripts.launch">Ejecutar</button>
+            </div>
+          </div>
+
+          <!-- Fase 2: estado por host -->
+          <div id="script-run-status" class="hidden">
+            <div id="script-run-hosts" class="global-tunnel-list"></div>
+            <div class="script-run-footer">
+              <span id="script-run-summary-line"></span>
+              <span class="script-run-footer-actions">
+                <button type="button" class="global-tunnel-action danger" id="btn-script-abort-all" data-i18n="scripts.abort_all">Abortar todo</button>
+                <button type="button" class="btn-secondary" id="btn-script-run-done" data-i18n="scripts.close_btn">Cerrar</button>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Elegir script (desde el menú contextual)
+    ══════════════════════════════════════════════════════ -->
+    <div id="script-pick-overlay" class="hidden">
+      <div id="script-pick-modal" role="dialog" aria-modal="true" aria-labelledby="script-pick-title">
+        <div class="modal-header">
+          <h2 id="script-pick-title" data-i18n="scripts.pick_title">Ejecutar script</h2>
+          <button class="btn-icon" id="btn-script-pick-close" data-i18n-aria-label="scripts.close" aria-label="Cerrar">✕</button>
+        </div>
+        <div class="global-tunnels-body">
+          <p class="prefs-panel-hint" id="script-pick-target"></p>
+          <div id="script-pick-list" class="global-tunnel-list"></div>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="btn-script-pick-new" data-i18n="scripts.pick_new">Nuevo script…</button>
           </div>
         </div>
       </div>

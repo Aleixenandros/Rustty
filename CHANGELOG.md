@@ -2,6 +2,57 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.44.0] - 2026-07-05
+
+### Añadido
+
+- **Scripts reproducibles**: nueva sección «Scripts» (botón en la barra lateral)
+  para crear recetas de pasos que se ejecutan contra tus conexiones SSH.
+  - **Editor paso a paso**: enviar un comando, esperar el prompt o un patrón
+    (con tiempo límite), comprobar el código de salida, enviar la contraseña
+    guardada (keyring o KeePass, siempre por referencia), pausar y desconectar.
+    Hasta 50 pasos por script.
+  - **Ejecución sobre varios equipos a la vez**: el objetivo puede ser una
+    conexión, una carpeta entera (con o sin subcarpetas) o una selección de
+    conexiones; en paralelo con concurrencia configurable o en modo «canario»
+    (primero un equipo y, si acaba bien, el resto), con parada opcional al
+    primer error.
+  - **Previsualización antes de lanzar**: se muestran los comandos que se
+    enviarán a cada equipo, con los secretos ocultos, junto a un panel de
+    estado por equipo (paso en curso, salida, resultado) y cancelación
+    individual o total.
+  - **Credenciales de la tirada a elegir**: por defecto las de cada conexión,
+    o bien una credencial maestra, una entrada de KeePass o un usuario y
+    contraseña introducidos al momento (que no se guardan en ningún sitio).
+  - **Parámetros `${ask:…}`** en los comandos: al ejecutar se piden los valores
+    en un diálogo, para reutilizar la misma receta con distintos servicios.
+  - **Exportar e importar como Markdown**: cada script se puede guardar como un
+    documento legible que sirve a la vez de runbook y de script ejecutable.
+  - El fichero de scripts nunca guarda contraseñas, y la salida mostrada
+    oculta cualquier secreto enviado.
+- **Eliminar varias conexiones a la vez**: con una selección múltiple en la
+  barra lateral, «Eliminar» borra ahora todas las seleccionadas bajo una única
+  confirmación (antes solo borraba una).
+
+### Corregido
+
+- **Probar una conexión ya no congela la ventana** mientras dura la prueba;
+  desbloquear KeePass y exportar o importar copias cifradas tampoco.
+- **La conexión con Google Drive** (copias de seguridad) ya no falla de forma
+  intermitente: la autorización sobrevive a las conexiones automáticas que
+  abren los navegadores modernos.
+- **Las descargas SFTP grandes limitan la memoria** que pueden llegar a usar
+  cuando el servidor responde fuera de orden.
+- **Un programa que conecta al proxy SOCKS de un túnel dinámico y no envía
+  nada** ya no bloquea el terminal de esa sesión: el saludo se atiende aparte
+  y con tiempo límite.
+- **Notas de conexión**: los enlaces con parámetros (`?a=1&b=2`) ya no se
+  rompen al mostrarse, y marcar casillas de tareas funciona bien aunque la
+  nota contenga listas de ejemplo dentro de bloques de código.
+- **La previsualización de variables** marca como ocultos (`••••`) únicamente
+  los secretos con nombre válido, igual que hace la sustitución real al
+  conectar.
+
 ## [1.43.0] - 2026-07-04
 
 ### Seguridad

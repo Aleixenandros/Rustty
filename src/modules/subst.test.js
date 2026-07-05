@@ -51,6 +51,25 @@ describe("substitutePreview (espejo cliente, sin exponer secretos)", () => {
     expect(substitutePreview("${secret:}", {})).toBe("${secret:}");
   });
 
+  it("secret/master con nombre inválido quedan literales, como en el backend", () => {
+    // Espejo de `is_valid_name` (engine.rs): si la preview redactara estos, el
+    // marcador viajaría literal al servidor mientras la UI muestra `••••`.
+    expect(substitutePreview("${secret:1a}", {})).toBe("${secret:1a}");
+    expect(substitutePreview("${secret:a b}", {})).toBe("${secret:a b}");
+    expect(substitutePreview("${master:-x}", {})).toBe("${master:-x}");
+    // Los válidos con `_`, `-`, `.` intercalados sí se redactan.
+    expect(substitutePreview("${secret:_tok-2.prod}", {})).toBe("••••");
+  });
+
+  it("doble dólar sin llave es literal (espejo del motor Rust)", () => {
+    expect(substitutePreview("precio 5$$ total", {})).toBe("precio 5$$ total");
+    expect(substitutePreview("$${host}", { host: "h" })).toBe("${host}");
+  });
+
+  it("lee hasta el primer cierre: sin anidamiento (espejo del motor Rust)", () => {
+    expect(substitutePreview("${secret:a}b}", {})).toBe("••••b}");
+  });
+
   it("var/ask/env/cmd se dejan literales (resolución en backend)", () => {
     expect(substitutePreview("${var:region}", {})).toBe("${var:region}");
     expect(substitutePreview("${ask:Etiqueta}", {})).toBe("${ask:Etiqueta}");

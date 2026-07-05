@@ -38,6 +38,21 @@ pub enum EventKind {
     VncClosed,
     /// `telnet-closed-{sessionId}` — cliente Telnet externo terminado.
     TelnetClosed,
+    /// `script-progress-{runId}` — avance de un host durante la ejecución de un
+    /// script (fase + índice de paso). Sufijo: `runId`.
+    ScriptProgress,
+    /// `script-output-{runId}` — líneas de salida capturadas de un host (sin
+    /// secretos). Sufijo: `runId`.
+    ScriptOutput,
+    /// `script-host-done-{runId}` — un host terminó el script correctamente.
+    /// Sufijo: `runId`.
+    ScriptHostDone,
+    /// `script-host-error-{runId}` — un host abortó el script con error.
+    /// Sufijo: `runId`.
+    ScriptHostError,
+    /// `script-done-{runId}` — el run completo terminó (agregado ok/error/total).
+    /// Sufijo: `runId`.
+    ScriptDone,
 }
 
 impl EventKind {
@@ -58,6 +73,11 @@ impl EventKind {
             EventKind::RdpClosed => "rdp-closed-",
             EventKind::VncClosed => "vnc-closed-",
             EventKind::TelnetClosed => "telnet-closed-",
+            EventKind::ScriptProgress => "script-progress-",
+            EventKind::ScriptOutput => "script-output-",
+            EventKind::ScriptHostDone => "script-host-done-",
+            EventKind::ScriptHostError => "script-host-error-",
+            EventKind::ScriptDone => "script-done-",
         }
     }
 }
@@ -83,7 +103,10 @@ mod tests {
 
     #[test]
     fn event_name_concatena_prefijo_y_sufijo() {
-        assert_eq!(event_name(EventKind::SshConnected, "abc"), "ssh-connected-abc");
+        assert_eq!(
+            event_name(EventKind::SshConnected, "abc"),
+            "ssh-connected-abc"
+        );
         assert_eq!(
             event_name(EventKind::SftpProgress, "t-1"),
             "sftp-progress-t-1"
@@ -91,6 +114,14 @@ mod tests {
         assert_eq!(
             event_name(EventKind::SshTunnelTraffic, "s9"),
             "ssh-tunnel-traffic-s9"
+        );
+        assert_eq!(
+            event_name(EventKind::ScriptProgress, "run-1"),
+            "script-progress-run-1"
+        );
+        assert_eq!(
+            event_name(EventKind::ScriptHostError, "run-1"),
+            "script-host-error-run-1"
         );
     }
 
@@ -109,6 +140,11 @@ mod tests {
             EventKind::RdpClosed,
             EventKind::VncClosed,
             EventKind::TelnetClosed,
+            EventKind::ScriptProgress,
+            EventKind::ScriptOutput,
+            EventKind::ScriptHostDone,
+            EventKind::ScriptHostError,
+            EventKind::ScriptDone,
         ] {
             assert!(kind.prefix().ends_with('-'), "{kind:?} sin guion final");
         }

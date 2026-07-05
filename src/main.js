@@ -33,6 +33,9 @@ import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
 import { rankCommandSuggestions } from "./modules/command-suggest.js";
+import { STEP_TYPES, makeStep, emptyScript, validateScript } from "./modules/scripts/model.js";
+import { resolveTarget } from "./modules/scripts/targets.js";
+import { toMarkdown as scriptToMarkdown, fromMarkdown as scriptFromMarkdown } from "./modules/scripts/runbook.js";
 /** @typedef {import("./modules/ipc/events.js").SshLogEvent} SshLogEvent */
 /** @typedef {import("./modules/ipc/events.js").SftpLogEvent} SftpLogEvent */
 /** @typedef {import("./modules/ipc/events.js").SftpProgressEvent} SftpProgressEvent */
@@ -4751,7 +4754,7 @@ function bindTreeEvents(container) {
   container.querySelectorAll("[data-action='delete']").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      deleteProfile(btn.dataset.id);
+      deleteSelectedProfiles(btn.dataset.id);
     });
   });
   container.querySelectorAll("[data-action='toggle-favorite']").forEach((btn) => {
@@ -5117,6 +5120,11 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   menu.querySelectorAll(".ctx-promote-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "connection" || !canPromote)
   );
+  // «Ejecutar script…» solo tiene sentido sobre conexiones SSH.
+  const canScript = !!ctxProfile && (ctxProfile.connection_type || "ssh") === "ssh";
+  menu.querySelectorAll(".ctx-script-only").forEach((el) =>
+    el.classList.toggle("hidden", type !== "connection" || !canScript)
+  );
   // Nota: etiqueta dinámica (Añadir/Editar) y visibilidad de "Eliminar nota".
   const hasNote = type === "connection" && id ? profileHasNote(id) : false;
   const noteLabel = document.getElementById("ctx-note-label");
@@ -5297,6 +5305,14 @@ function handleContextMenuAction(action) {
     case "new-tunnel":
       openTunnelForProfile(id);
       break;
+    case "run-script-conn":
+      if (id) openScriptPicker({ kind: "profile", profileId: id });
+      break;
+    case "run-script-folder":
+      if (typeof folderPath === "string" && !folderPath.startsWith("__ws__/")) {
+        openScriptPicker({ kind: "folder", workspaceId: targetWs, folderPath, recursive: true });
+      }
+      break;
     case "rename-conn":
       if (id) renameProfileById(id);
       break;
@@ -5334,7 +5350,7 @@ function handleContextMenuAction(action) {
       if (id) moveConnectionInOrder(id, +1);
       break;
     case "delete-conn":
-      deleteProfile(id);
+      deleteSelectedProfiles(id);
       break;
     case "rename-ws":
       renameWorkspaceById(ctxTarget.workspaceId);
@@ -11018,6 +11034,27 @@ function notifyResize(sessionId, _terminal, { force = false } = {}) {
 // PERFILES
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * Borra un perfil por id en backend y limpia su rastro local (credenciales
+ * extra en keyring, snapshot de pantalla, lista en memoria y tombstone de sync).
+ * No confirma, no re-renderiza ni avisa: eso lo hacen los invocadores para poder
+ * agrupar varias bajas bajo un único diálogo/aviso. Devuelve `true` si se borró.
+ */
+async function deleteProfileData(profileId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return false;
+  await invoke("delete_profile", { id: profileId });
+  for (const c of profile.extra_credentials || []) {
+    await deleteStoredSecret(credPasswordKey(profileId, c.id));
+    await deleteStoredSecret(credPassphraseKey(profileId, c.id));
+  }
+  invoke("session_snapshot_delete", { profileId }).catch(() => {});
+  snapshotIndex.delete(profileId);
+  profiles = profiles.filter((p) => p.id !== profileId);
+  sync.recordTombstone(prefs, "profiles", profileId);
+  return true;
+}
+
 async function deleteProfile(profileId) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
@@ -11029,16 +11066,8 @@ async function deleteProfile(profileId) {
   });
   if (!confirmed) return;
   try {
-    await invoke("delete_profile", { id: profileId });
-    // Limpiar contraseñas de identidades adicionales y el snapshot de pantalla.
-    for (const c of profile.extra_credentials || []) {
-      await deleteStoredSecret(credPasswordKey(profileId, c.id));
-      await deleteStoredSecret(credPassphraseKey(profileId, c.id));
-    }
-    invoke("session_snapshot_delete", { profileId }).catch(() => {});
-    snapshotIndex.delete(profileId);
-    profiles = profiles.filter((p) => p.id !== profileId);
-    sync.recordTombstone(prefs, "profiles", profileId);
+    await deleteProfileData(profileId);
+    sidebarSelectedConnectionIds.delete(profileId);
     savePrefs();
     renderConnectionList();
     scheduleProfileAutoSync();
@@ -11046,6 +11075,56 @@ async function deleteProfile(profileId) {
   } catch (err) {
     toast(`Error al eliminar: ${err}`, "error");
   }
+}
+
+/**
+ * Borra la selección de la sidebar. Espeja la lógica del drag & drop: si el
+ * `targetId` clicado forma parte de una selección múltiple, se borran todas las
+ * conexiones seleccionadas bajo una única confirmación; si no, cae al borrado
+ * individual. Corrige el fallo por el que «eliminar» con varias seleccionadas
+ * solo borraba una.
+ */
+async function deleteSelectedProfiles(targetId) {
+  const inMulti =
+    targetId
+    && sidebarSelectedConnectionIds.has(targetId)
+    && sidebarSelectedConnectionIds.size > 1;
+  let ids;
+  if (inMulti) {
+    ids = [...sidebarSelectedConnectionIds].filter((id) => profiles.some((p) => p.id === id));
+  } else if (targetId) {
+    ids = [targetId];
+  } else {
+    ids = [...sidebarSelectedConnectionIds].filter((id) => profiles.some((p) => p.id === id));
+  }
+  if (!ids.length) return;
+  if (ids.length === 1) {
+    await deleteProfile(ids[0]);
+    return;
+  }
+
+  const confirmed = await confirmThemed({
+    title: "Eliminar conexiones",
+    message: `¿Eliminar ${ids.length} conexiones? Esta acción no se puede deshacer.`,
+    submitLabel: "Eliminar",
+    danger: true,
+  });
+  if (!confirmed) return;
+
+  let ok = 0;
+  for (const id of ids) {
+    const profile = profiles.find((p) => p.id === id);
+    try {
+      if (await deleteProfileData(id)) ok++;
+    } catch (err) {
+      toast(`Error al eliminar "${profile?.name || id}": ${err}`, "error");
+    }
+  }
+  sidebarSelectedConnectionIds.clear();
+  savePrefs();
+  renderConnectionList();
+  scheduleProfileAutoSync();
+  if (ok) toast(`${ok} ${ok === 1 ? "conexión eliminada" : "conexiones eliminadas"}`, "success");
 }
 
 /**
@@ -11376,6 +11455,1080 @@ async function removeKnownHostLine(line) {
   } catch (err) {
     toast(`${err}`, "error", 8000);
   }
+}
+
+// ─── Scripts (recetas interactivas por host) ─────────────────────
+// CRUD + editor paso a paso + ejecución con fan-out y estado por host.
+// Contrato: comandos `scripts_*` y eventos `script-*-{runId}` (ipc/events.js).
+// Los pasos de contraseña solo llevan REFERENCIAS (keyring/KeePass), nunca
+// valores; la redacción de secretos en la preview la hace el backend.
+
+/** Tope de salida retenida por host en el panel de estado (256 KiB). */
+const SCRIPT_OUTPUT_CAP = 256 * 1024;
+
+/** Catálogo de scripts en memoria (último `scripts_get_all`). */
+let scriptsCache = [];
+/** Script en edición (clon profundo) o null si el editor está cerrado. */
+let scriptEditorState = null;
+/** Fase de opciones del run: { script, target, profileIds, params } o null. */
+let scriptRunSetup = null;
+/** Run en curso: { runId, script, hosts, unlisteners, finished, … } o null. */
+let scriptRunState = null;
+/** TargetSpec preseleccionado al abrir el selector desde el menú contextual. */
+let scriptPickTarget = null;
+
+/** Clon profundo de un valor JSON-seguro (los scripts siempre lo son). */
+function cloneScriptValue(v) {
+  return JSON.parse(JSON.stringify(v));
+}
+
+/** Perfiles sobre los que puede correr un script (solo SSH). */
+function scriptEligibleProfiles() {
+  return profiles.filter((p) => (p.connection_type || "ssh") === "ssh");
+}
+
+/** Carga el catálogo del backend y lo deja ordenado por nombre. */
+async function loadScripts() {
+  try {
+    const list = await invoke("scripts_get_all");
+    scriptsCache = Array.isArray(list) ? list : [];
+  } catch (err) {
+    scriptsCache = [];
+    toast(`${err}`, "error");
+  }
+  scriptsCache.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+}
+
+/**
+ * Etiqueta i18n del objetivo de un script + nº de conexiones que abarca.
+ * (El `describeTarget` del módulo puro produce texto solo en castellano, así
+ * que la UI construye la suya con `t()` sobre el mismo `resolveTarget`.)
+ */
+function scriptTargetLabel(target) {
+  const count = resolveTarget(target, scriptEligibleProfiles()).length;
+  const countLabel = count === 1 ? t("scripts.count_one") : t("scripts.count_many", { n: count });
+  let base = t("scripts.target_adhoc");
+  if (target && typeof target === "object") {
+    if (target.kind === "profile") {
+      const p = profiles.find((x) => x.id === target.profileId);
+      base = t("scripts.target_profile", { name: p ? (p.name || p.host || p.id) : "?" });
+    } else if (target.kind === "folder") {
+      const path = String(target.folderPath || "").trim().replace(/\/+$/, "");
+      base = path ? t("scripts.target_folder", { path }) : t("scripts.target_root");
+    }
+  }
+  return `${base} · ${countLabel}`;
+}
+
+/** Fecha corta local para la lista (cadena vacía si el ISO es inválido). */
+function scriptDateLabel(iso) {
+  const d = new Date(iso || "");
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString();
+}
+
+async function openScriptsModal() {
+  const overlay = document.getElementById("scripts-overlay");
+  if (!overlay) return;
+  overlay.classList.remove("hidden");
+  document.querySelector('[data-rail-action="scripts"]')?.classList.add("active");
+  showScriptsListView();
+  await loadScripts();
+  renderScriptsList();
+}
+
+function closeScriptsModal() {
+  document.getElementById("scripts-overlay")?.classList.add("hidden");
+  document.querySelector('[data-rail-action="scripts"]')?.classList.remove("active");
+  scriptEditorState = null;
+}
+
+function isScriptsModalOpen() {
+  const overlay = document.getElementById("scripts-overlay");
+  return !!overlay && !overlay.classList.contains("hidden");
+}
+
+/** Abre el modal de scripts directamente en el editor (alta con objetivo). */
+async function openScriptsModalWithNew(presetTarget = null) {
+  await openScriptsModal();
+  openScriptEditor(null, presetTarget);
+}
+
+function showScriptsListView() {
+  document.getElementById("scripts-editor-view")?.classList.add("hidden");
+  document.getElementById("scripts-list-view")?.classList.remove("hidden");
+  scriptEditorState = null;
+}
+
+function renderScriptsList() {
+  const list = document.getElementById("scripts-list");
+  if (!list) return;
+  if (!scriptsCache.length) {
+    list.innerHTML = `<div class="tunnel-empty">${escHtml(t("scripts.empty"))}</div>`;
+    return;
+  }
+  list.innerHTML = scriptsCache
+    .map((s) => {
+      const n = s.steps?.length || 0;
+      const steps = n === 1 ? t("scripts.list_steps_one") : t("scripts.list_steps", { n });
+      const date = scriptDateLabel(s.updatedAt);
+      const meta = date ? `${steps} · ${t("scripts.list_updated", { date })}` : steps;
+      return `
+        <div class="script-row" data-script-id="${escHtml(s.id)}">
+          <span class="script-row-name" title="${escHtml(s.name)}">${escHtml(s.name)}</span>
+          <span class="script-row-target" title="${escHtml(scriptTargetLabel(s.target))}">${escHtml(scriptTargetLabel(s.target))}</span>
+          <span class="script-row-meta">${escHtml(meta)}</span>
+          <span class="script-row-actions">
+            <button type="button" class="global-tunnel-action" data-script-action="run">${escHtml(t("scripts.run"))}</button>
+            <button type="button" class="global-tunnel-action" data-script-action="edit">${escHtml(t("scripts.edit"))}</button>
+            <button type="button" class="global-tunnel-action" data-script-action="duplicate">${escHtml(t("scripts.duplicate"))}</button>
+            <button type="button" class="global-tunnel-action" data-script-action="export">${escHtml(t("scripts.export_md"))}</button>
+            <button type="button" class="global-tunnel-action danger" data-script-action="delete">${escHtml(t("scripts.delete"))}</button>
+          </span>
+        </div>`;
+    })
+    .join("");
+}
+
+// ── Editor paso a paso ───────────────────────────────────────────
+
+function openScriptEditor(script = null, presetTarget = null) {
+  scriptEditorState = script
+    ? cloneScriptValue(script)
+    : emptyScript(presetTarget ? cloneScriptValue(presetTarget) : undefined);
+  document.getElementById("scripts-list-view")?.classList.add("hidden");
+  document.getElementById("scripts-editor-view")?.classList.remove("hidden");
+  document.getElementById("script-ed-errors")?.classList.add("hidden");
+  document.getElementById("script-ed-name").value = scriptEditorState.name || "";
+  document.getElementById("script-ed-desc").value = scriptEditorState.description || "";
+  renderScriptTargetEditor();
+  renderScriptSteps();
+  setTimeout(() => document.getElementById("script-ed-name")?.focus(), 0);
+}
+
+/** Etiqueta de un perfil en selects/listas: nombre — workspace. */
+function scriptProfileOptionLabel(p) {
+  const wsId = p.workspace_id || "default";
+  const ws = (prefs.workspaces || []).find((w) => w.id === wsId);
+  return `${p.name || p.host || p.id} — ${ws ? ws.name || ws.id : wsId}`;
+}
+
+/** Rutas de carpeta disponibles en un workspace (de perfiles + manuales). */
+function scriptFolderOptions(wsId) {
+  const set = new Set();
+  const addWithAncestors = (raw) => {
+    const g = String(raw || "").trim().replace(/\/+$/, "");
+    if (!g) return;
+    let acc = "";
+    for (const part of g.split("/")) {
+      acc = acc ? `${acc}/${part}` : part;
+      set.add(acc);
+    }
+  };
+  for (const p of profiles) {
+    if ((p.workspace_id || "default") !== wsId) continue;
+    addWithAncestors(p.group);
+  }
+  for (const f of prefs.userFoldersByWorkspace?.[wsId] || []) addWithAncestors(f);
+  return [...set].sort();
+}
+
+function renderScriptTargetEditor() {
+  if (!scriptEditorState) return;
+  const target = scriptEditorState.target || { kind: "adhoc", profileIds: [] };
+  const kindSel = document.getElementById("script-ed-target-kind");
+  kindSel.value = ["profile", "folder", "adhoc"].includes(target.kind) ? target.kind : "adhoc";
+  const kind = kindSel.value;
+
+  const editorRoot = document.getElementById("scripts-editor-view");
+  editorRoot.querySelectorAll(".script-target-profile-only").forEach((el) =>
+    el.classList.toggle("hidden", kind !== "profile")
+  );
+  editorRoot.querySelectorAll(".script-target-folder-only").forEach((el) =>
+    el.classList.toggle("hidden", kind !== "folder")
+  );
+  editorRoot.querySelectorAll(".script-target-adhoc-only").forEach((el) =>
+    el.classList.toggle("hidden", kind !== "adhoc")
+  );
+
+  // Conexión única (solo perfiles SSH)
+  const profSel = document.getElementById("script-ed-target-profile");
+  profSel.innerHTML = scriptEligibleProfiles()
+    .map((p) => `<option value="${escHtml(p.id)}">${escHtml(scriptProfileOptionLabel(p))}</option>`)
+    .join("");
+  if (kind === "profile" && target.profileId) profSel.value = target.profileId;
+
+  // Carpeta: workspace + ruta + recursivo
+  const wsSel = document.getElementById("script-ed-target-ws");
+  wsSel.innerHTML = (prefs.workspaces || [])
+    .map((w) => `<option value="${escHtml(w.id)}">${escHtml(w.name || w.id)}</option>`)
+    .join("");
+  const wsId = (kind === "folder" && target.workspaceId) || getActiveWorkspaceId();
+  if ([...wsSel.options].some((o) => o.value === wsId)) wsSel.value = wsId;
+  renderScriptFolderSelect(kind === "folder" ? target.folderPath : "");
+  document.getElementById("script-ed-target-recursive").checked =
+    kind === "folder" ? target.recursive !== false : true;
+
+  // Selección adhoc
+  renderScriptAdhocList(kind === "adhoc" && Array.isArray(target.profileIds) ? target.profileIds : []);
+}
+
+function renderScriptFolderSelect(selectedPath = "") {
+  const wsSel = document.getElementById("script-ed-target-ws");
+  const folderSel = document.getElementById("script-ed-target-folder");
+  if (!wsSel || !folderSel) return;
+  const paths = scriptFolderOptions(wsSel.value || "default");
+  folderSel.innerHTML = [`<option value="">${escHtml(t("scripts.target_folder_root"))}</option>`]
+    .concat(paths.map((p) => `<option value="${escHtml(p)}">${escHtml(p)}</option>`))
+    .join("");
+  const sel = String(selectedPath || "").trim().replace(/\/+$/, "");
+  if (sel && [...folderSel.options].some((o) => o.value === sel)) folderSel.value = sel;
+}
+
+function renderScriptAdhocList(selectedIds = []) {
+  const box = document.getElementById("script-ed-target-adhoc");
+  if (!box) return;
+  const eligible = scriptEligibleProfiles();
+  if (!eligible.length) {
+    box.innerHTML = `<div class="tunnel-empty">${escHtml(t("scripts.adhoc_empty"))}</div>`;
+    return;
+  }
+  const chosen = new Set(selectedIds);
+  box.innerHTML = eligible
+    .map(
+      (p) => `
+      <label class="checkbox-label">
+        <input type="checkbox" data-script-adhoc-id="${escHtml(p.id)}" ${chosen.has(p.id) ? "checked" : ""} />
+        ${escHtml(scriptProfileOptionLabel(p))}
+      </label>`
+    )
+    .join("");
+}
+
+/** Lee el TargetSpec actual de los controles del editor. */
+function readScriptTargetFromEditor() {
+  const kind = document.getElementById("script-ed-target-kind")?.value;
+  if (kind === "profile") {
+    return { kind: "profile", profileId: document.getElementById("script-ed-target-profile").value || "" };
+  }
+  if (kind === "folder") {
+    return {
+      kind: "folder",
+      workspaceId: document.getElementById("script-ed-target-ws").value || "default",
+      folderPath: document.getElementById("script-ed-target-folder").value || "",
+      recursive: !!document.getElementById("script-ed-target-recursive").checked,
+    };
+  }
+  const ids = [...document.querySelectorAll("#script-ed-target-adhoc [data-script-adhoc-id]")]
+    .filter((el) => el.checked)
+    .map((el) => el.dataset.scriptAdhocId);
+  return { kind: "adhoc", profileIds: ids };
+}
+
+/** Opciones del select de tipo de paso (los 8 tipos de STEP_TYPES). */
+function scriptStepTypeOptions(selected) {
+  return Object.keys(STEP_TYPES)
+    .map((k) => `<option value="${k}" ${k === selected ? "selected" : ""}>${escHtml(t("scripts.type_" + k))}</option>`)
+    .join("");
+}
+
+/** Campos específicos de un paso según su tipo (espejo de STEP_TYPES). */
+function scriptStepFieldsHtml(step, i) {
+  switch (step.type) {
+    case "send":
+      return `<input type="text" data-script-step-field="text" data-step-idx="${i}" value="${escHtml(step.text || "")}" placeholder="${escHtml(t("scripts.send_placeholder"))}" spellcheck="false" autocomplete="off" />`;
+    case "waitRegex":
+      return `
+        <input type="text" data-script-step-field="pattern" data-step-idx="${i}" value="${escHtml(step.pattern || "")}" placeholder="${escHtml(t("scripts.pattern_placeholder"))}" spellcheck="false" autocomplete="off" />
+        <span class="script-step-field-label">${escHtml(t("scripts.timeout_label"))}</span>
+        <input type="number" min="1" data-script-step-field="timeoutMs" data-step-idx="${i}" value="${Number(step.timeoutMs) || 30000}" />`;
+    case "expectExit":
+      return `
+        <span class="script-step-field-label">${escHtml(t("scripts.code_label"))}</span>
+        <input type="number" data-script-step-field="code" data-step-idx="${i}" value="${Number.isFinite(Number(step.code)) ? Number(step.code) : 0}" />`;
+    case "sendPasswordFromKeyring": {
+      const opts = [`<option value="">${escHtml(t("scripts.keyring_own"))}</option>`].concat(
+        scriptEligibleProfiles().map(
+          (p) =>
+            `<option value="${escHtml(p.id)}" ${step.profileId === p.id ? "selected" : ""}>${escHtml(scriptProfileOptionLabel(p))}</option>`
+        )
+      );
+      return `<select data-script-step-field="profileId" data-step-idx="${i}">${opts.join("")}</select>`;
+    }
+    case "sendPasswordFromKeepass":
+      return `<input type="text" data-script-step-field="uuid" data-step-idx="${i}" value="${escHtml(step.uuid || "")}" placeholder="${escHtml(t("scripts.keepass_placeholder"))}" spellcheck="false" autocomplete="off" />`;
+    case "sleep":
+      return `
+        <input type="number" min="0" data-script-step-field="ms" data-step-idx="${i}" value="${Number(step.ms) || 0}" />
+        <span class="script-step-field-label">${escHtml(t("scripts.ms_label"))}</span>`;
+    default: // waitPrompt / disconnect: sin parámetros
+      return `<span class="script-step-hint">${escHtml(t("scripts.step_no_fields"))}</span>`;
+  }
+}
+
+function renderScriptSteps() {
+  const box = document.getElementById("script-ed-steps");
+  if (!box || !scriptEditorState) return;
+  const steps = scriptEditorState.steps || [];
+  box.innerHTML = steps
+    .map(
+      (step, i) => `
+      <div class="script-step-row" data-step-idx="${i}">
+        <span class="script-step-index">${i + 1}</span>
+        <select data-script-step-type data-step-idx="${i}">${scriptStepTypeOptions(step.type)}</select>
+        <span class="script-step-fields">${scriptStepFieldsHtml(step, i)}</span>
+        <span class="script-step-actions">
+          <button type="button" class="script-step-btn" data-script-step-action="up" ${i === 0 ? "disabled" : ""} title="${escHtml(t("scripts.step_up"))}" aria-label="${escHtml(t("scripts.step_up"))}"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
+          <button type="button" class="script-step-btn" data-script-step-action="down" ${i === steps.length - 1 ? "disabled" : ""} title="${escHtml(t("scripts.step_down"))}" aria-label="${escHtml(t("scripts.step_down"))}"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-down"/></svg></button>
+          <button type="button" class="script-step-btn danger" data-script-step-action="remove" title="${escHtml(t("scripts.step_remove"))}" aria-label="${escHtml(t("scripts.step_remove"))}"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+        </span>
+      </div>`
+    )
+    .join("");
+}
+
+/** Actualiza el campo de un paso desde un evento input/change del editor. */
+function handleScriptStepFieldEvent(e) {
+  if (!scriptEditorState) return;
+  const field = e.target.dataset?.scriptStepField;
+  if (!field) return;
+  const idx = parseInt(e.target.dataset.stepIdx ?? "", 10);
+  const step = scriptEditorState.steps?.[idx];
+  if (!step) return;
+  if (e.target.type === "number") {
+    const n = Number(e.target.value);
+    // Un valor no numérico se deja tal cual para que validateScript lo señale.
+    step[field] = Number.isFinite(n) && e.target.value !== "" ? n : e.target.value;
+  } else if (field === "profileId") {
+    step[field] = e.target.value || null;
+  } else {
+    step[field] = e.target.value;
+  }
+}
+
+async function saveScriptFromEditor() {
+  if (!scriptEditorState) return;
+  const s = scriptEditorState;
+  s.name = document.getElementById("script-ed-name").value.trim();
+  s.description = document.getElementById("script-ed-desc").value;
+  s.target = readScriptTargetFromEditor();
+  s.steps = (s.steps || []).map((st) => makeStep(st.type, st));
+
+  const { ok, errors } = validateScript(s);
+  const errBox = document.getElementById("script-ed-errors");
+  if (!ok) {
+    errBox.innerHTML = `${escHtml(t("scripts.validation_title"))}<ul>${errors
+      .map((e) => `<li>${escHtml(e)}</li>`)
+      .join("")}</ul>`;
+    errBox.classList.remove("hidden");
+    return;
+  }
+  errBox.classList.add("hidden");
+  try {
+    await invoke("scripts_save", { script: s });
+  } catch (err) {
+    toast(`${err}`, "error");
+    return;
+  }
+  toast(t("scripts.saved"), "success");
+  await loadScripts();
+  showScriptsListView();
+  renderScriptsList();
+}
+
+async function duplicateScriptById(id) {
+  const src = scriptsCache.find((s) => s.id === id);
+  if (!src) return;
+  const copy = cloneScriptValue(src);
+  copy.id = crypto.randomUUID?.() || `script-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  copy.name = `${src.name}${t("scripts.copy_suffix")}`;
+  try {
+    await invoke("scripts_save", { script: copy });
+  } catch (err) {
+    toast(`${err}`, "error");
+    return;
+  }
+  await loadScripts();
+  renderScriptsList();
+}
+
+async function deleteScriptById(id) {
+  const s = scriptsCache.find((x) => x.id === id);
+  if (!s) return;
+  const ok = await confirmThemed({
+    title: t("scripts.delete_title"),
+    message: t("scripts.delete_confirm", { name: s.name }),
+    submitLabel: t("scripts.delete"),
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await invoke("scripts_delete", { id });
+  } catch (err) {
+    toast(`${err}`, "error");
+    return;
+  }
+  toast(t("scripts.deleted"), "success");
+  await loadScripts();
+  renderScriptsList();
+}
+
+// ── Runbook Markdown (exportar / importar) ───────────────────────
+
+async function exportScriptToMarkdown(id) {
+  const s = scriptsCache.find((x) => x.id === id);
+  if (!s) return;
+  const base = (s.name || "script").replace(/[^\p{L}\p{N}._-]+/gu, "-").toLowerCase() || "script";
+  let path;
+  try {
+    path = await saveDialog({
+      title: t("scripts.export_title"),
+      defaultPath: `${base}.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+  } catch (err) {
+    toast(`${err}`, "error");
+    return;
+  }
+  if (!path) return;
+  try {
+    await invoke("write_text_file", { path, contents: scriptToMarkdown(s) });
+    toast(t("scripts.exported"), "success");
+  } catch (err) {
+    toast(`${err}`, "error");
+  }
+}
+
+async function importScriptFromMarkdown() {
+  let path;
+  try {
+    path = await openDialog({
+      title: t("scripts.import_title"),
+      multiple: false,
+      filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
+    });
+  } catch (err) {
+    toast(`${err}`, "error");
+    return;
+  }
+  if (!path) return;
+  let script = null;
+  try {
+    script = scriptFromMarkdown(await invoke("read_text_file", { path }));
+  } catch {
+    script = null;
+  }
+  if (!script) {
+    toast(t("scripts.import_invalid"), "error");
+    return;
+  }
+  try {
+    await invoke("scripts_save", { script });
+  } catch (err) {
+    toast(`${err}`, "error");
+    return;
+  }
+  toast(t("scripts.imported", { name: script.name }), "success");
+  await loadScripts();
+  renderScriptsList();
+}
+
+// ── Flujo de ejecución ───────────────────────────────────────────
+
+/**
+ * Extrae los `${ask:Etiqueta|op1|op2}` de los pasos `send` con la MISMA
+ * gramática del motor (via substituteWith). Devuelve specs para promptAsks.
+ */
+function extractScriptAsks(script) {
+  const specs = [];
+  const seen = new Set();
+  for (const step of script.steps || []) {
+    if (step.type !== "send" || typeof step.text !== "string") continue;
+    substituteWith(step.text, (body) => {
+      if (body.startsWith("ask:")) {
+        const [label, ...options] = body.slice(4).split("|");
+        if (label && !seen.has(label)) {
+          seen.add(label);
+          specs.push({ label, options: options.filter(Boolean) });
+        }
+      }
+      return null; // solo escaneo: no sustituir nada
+    });
+  }
+  return specs;
+}
+
+/**
+ * Prepara la ejecución de un script: resuelve el objetivo, pide los `${ask:}`
+ * si los hay y abre el modal de opciones + preview. `targetOverride` permite
+ * lanzar sobre un objetivo distinto del guardado (menú contextual).
+ */
+async function beginScriptRun(script, targetOverride = null) {
+  const target = targetOverride || script.target;
+  const profileIds = resolveTarget(target, scriptEligibleProfiles());
+  if (!profileIds.length) {
+    toast(t("scripts.no_targets"), "warning");
+    return;
+  }
+
+  const asks = extractScriptAsks(script);
+  let params = {};
+  if (asks.length) {
+    const answers = await promptAsks(asks);
+    if (!answers) return; // cancelado
+    params = answers;
+  }
+
+  scriptRunSetup = { script, target, profileIds, params };
+  scriptRunState = null;
+
+  document.getElementById("script-run-title").textContent = `${t("scripts.run_title")} — ${script.name}`;
+  document.getElementById("script-run-target-label").textContent = scriptTargetLabel(target);
+  const conc = document.getElementById("script-run-concurrency");
+  conc.max = String(Math.max(1, Math.min(16, profileIds.length)));
+  conc.value = String(Math.min(4, profileIds.length));
+  document.getElementById("script-run-mode").value = "parallel";
+  document.getElementById("script-run-stop-on-error").checked = false;
+  // Credenciales del run: opción efímera, siempre vuelve al default al abrir.
+  document.getElementById("script-run-cred-kind").value = "profile";
+  document.getElementById("script-run-cred-user").value = "";
+  document.getElementById("script-run-cred-password").value = "";
+  document.getElementById("script-run-setup")?.classList.remove("hidden");
+  document.getElementById("script-run-status")?.classList.add("hidden");
+  document.getElementById("script-run-overlay")?.classList.remove("hidden");
+  renderScriptRunPreview();
+  await renderScriptRunCredControls();
+}
+
+/**
+ * Puebla los controles de credenciales del run: catálogo de credenciales
+ * maestras y entradas KeePass (si la DB está desbloqueada). Deshabilita las
+ * opciones sin datos disponibles.
+ */
+async function renderScriptRunCredControls() {
+  let masters = [];
+  try {
+    masters = ((await invoke("master_cred_list")) || []).filter((c) => c.kind === "master");
+  } catch {
+    masters = [];
+  }
+  const mSel = document.getElementById("script-run-cred-master");
+  if (mSel) {
+    mSel.innerHTML = masters
+      .map((c) => `<option value="${escHtml(c.id)}">${escHtml(c.name)}</option>`)
+      .join("");
+  }
+
+  await refreshKeepassStatus();
+  const kSel = document.getElementById("script-run-cred-keepass");
+  if (kSel) {
+    kSel.innerHTML = (keepassEntries || [])
+      .filter((e) => e.has_password)
+      .map((e) => {
+        const label = e.username ? `${e.title} — ${e.username}` : e.title;
+        return `<option value="${escHtml(e.uuid)}">${escHtml(label)}</option>`;
+      })
+      .join("");
+  }
+
+  const kindSel = document.getElementById("script-run-cred-kind");
+  const masterOpt = kindSel?.querySelector('option[value="master"]');
+  if (masterOpt) masterOpt.disabled = !masters.length;
+  const keepassOpt = kindSel?.querySelector('option[value="keepass"]');
+  if (keepassOpt) keepassOpt.disabled = !keepassUnlocked;
+  updateScriptRunCredVisibility();
+}
+
+/** Muestra los subcontroles de credenciales según la opción elegida. */
+function updateScriptRunCredVisibility() {
+  const kind = document.getElementById("script-run-cred-kind")?.value || "profile";
+  const root = document.getElementById("script-run-setup");
+  if (!root) return;
+  root.querySelectorAll(".script-cred-master-only").forEach((el) =>
+    el.classList.toggle("hidden", kind !== "master")
+  );
+  root.querySelectorAll(".script-cred-keepass-only").forEach((el) =>
+    el.classList.toggle("hidden", kind !== "keepass")
+  );
+  root.querySelectorAll(".script-cred-user-only").forEach((el) =>
+    el.classList.toggle("hidden", kind === "profile")
+  );
+  root.querySelectorAll(".script-cred-manual-only").forEach((el) =>
+    el.classList.toggle("hidden", kind !== "manual")
+  );
+  // El aviso de DB bloqueada explica por qué la opción KeePass está deshabilitada.
+  document.getElementById("script-run-cred-keepass-hint")?.classList.toggle("hidden", keepassUnlocked);
+  const userInput = document.getElementById("script-run-cred-user");
+  if (userInput) {
+    userInput.placeholder =
+      kind === "keepass" ? t("scripts.cred_user_entry_placeholder") : t("scripts.cred_user_placeholder");
+  }
+  updateScriptRunLaunchEnabled();
+}
+
+/** Deshabilita «Ejecutar» mientras falten datos de credenciales (p. ej. manual sin contraseña). */
+function updateScriptRunLaunchEnabled() {
+  const btn = document.getElementById("btn-script-run-launch");
+  if (!btn) return;
+  const kind = document.getElementById("script-run-cred-kind")?.value || "profile";
+  let ok = true;
+  if (kind === "manual") ok = !!document.getElementById("script-run-cred-password")?.value;
+  else if (kind === "master") ok = !!document.getElementById("script-run-cred-master")?.value;
+  else if (kind === "keepass") ok = keepassUnlocked && !!document.getElementById("script-run-cred-keepass")?.value;
+  btn.disabled = !ok;
+}
+
+/**
+ * Lee las credenciales del run según el selector: `null` = las de cada perfil.
+ * La contraseña manual solo vive en memoria y jamás se registra ni se muestra.
+ */
+function readScriptRunCredentials() {
+  const kind = document.getElementById("script-run-cred-kind")?.value || "profile";
+  if (kind === "profile") return null;
+  const username = document.getElementById("script-run-cred-user")?.value.trim() || null;
+  if (kind === "master") {
+    const id = document.getElementById("script-run-cred-master")?.value;
+    return id ? { kind: "master", id, username } : undefined;
+  }
+  if (kind === "keepass") {
+    const uuid = document.getElementById("script-run-cred-keepass")?.value;
+    return uuid ? { kind: "keepass", uuid, username } : undefined;
+  }
+  const password = document.getElementById("script-run-cred-password")?.value || "";
+  return password ? { kind: "manual", username, password } : undefined;
+}
+
+async function renderScriptRunPreview() {
+  const box = document.getElementById("script-run-preview");
+  const setup = scriptRunSetup;
+  if (!box || !setup) return;
+  box.innerHTML = `<div class="tunnel-empty">${escHtml(t("scripts.preview_loading"))}</div>`;
+  let previews;
+  try {
+    previews = await invoke("scripts_preview", {
+      scriptId: setup.script.id,
+      profileIds: setup.profileIds,
+      params: setup.params,
+    });
+  } catch (err) {
+    if (scriptRunSetup !== setup) return;
+    box.innerHTML = `<div class="tunnel-empty">${escHtml(t("scripts.preview_error", { err: String(err) }))}</div>`;
+    return;
+  }
+  if (scriptRunSetup !== setup) return; // el modal cambió mientras cargaba
+  if (!previews?.length || previews.every((p) => !p.commands?.length)) {
+    box.innerHTML = `<div class="tunnel-empty">${escHtml(t("scripts.preview_empty"))}</div>`;
+    return;
+  }
+  box.innerHTML = previews
+    .map(
+      (p, i) => `
+      <details ${i === 0 ? "open" : ""}>
+        <summary>${escHtml(p.name || p.host || p.profileId)}</summary>
+        <pre>${escHtml((p.commands || []).join("\n"))}</pre>
+      </details>`
+    )
+    .join("");
+}
+
+async function launchScriptRun() {
+  const setup = scriptRunSetup;
+  if (!setup || scriptRunState) return;
+  const { script, profileIds, params } = setup;
+  const mode = document.getElementById("script-run-mode").value === "canary" ? "canary" : "parallel";
+  const rawConc = parseInt(document.getElementById("script-run-concurrency").value, 10);
+  const concurrency = Math.max(1, Math.min(16, Number.isFinite(rawConc) ? rawConc : 4));
+  const stopOnError = !!document.getElementById("script-run-stop-on-error").checked;
+  // Credenciales del run: null = las de cada perfil; undefined = incompletas.
+  const credentials = readScriptRunCredentials();
+  if (credentials === undefined) {
+    toast(t("scripts.cred_missing"), "warning");
+    return;
+  }
+  const runId = crypto.randomUUID?.() || `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+  const hosts = new Map();
+  for (const pid of profileIds) {
+    const p = profiles.find((x) => x.id === pid);
+    hosts.set(pid, {
+      name: p ? p.name || p.host || pid : pid,
+      status: "pending",
+      stepIndex: 0,
+      totalSteps: script.steps?.length || 0,
+      output: "",
+      exitCode: null,
+      error: "",
+    });
+  }
+  const run = {
+    runId,
+    script,
+    hosts,
+    unlisteners: [],
+    finished: false,
+    total: profileIds.length,
+    okCount: 0,
+  };
+  scriptRunState = run;
+
+  // Registrar los listeners ANTES del invoke (mismo patrón que el sessionId
+  // preasignado de SFTP) para no perder eventos tempranos del runner.
+  try {
+    run.unlisteners.push(
+      await listen(eventName("scriptProgress", runId), (e) => {
+        if (scriptRunState !== run) return;
+        const { profileId, stepIndex, totalSteps } = e.payload || {};
+        const h = run.hosts.get(profileId);
+        if (!h) return;
+        h.status = "running";
+        h.stepIndex = Number(stepIndex) || 0;
+        h.totalSteps = Number(totalSteps) || h.totalSteps;
+        updateScriptHostRow(run, profileId);
+      })
+    );
+    run.unlisteners.push(
+      await listen(eventName("scriptOutput", runId), (e) => {
+        if (scriptRunState !== run) return;
+        const { profileId, chunk } = e.payload || {};
+        const h = run.hosts.get(profileId);
+        if (!h || typeof chunk !== "string") return;
+        h.output = (h.output + chunk).slice(-SCRIPT_OUTPUT_CAP);
+        updateScriptHostRow(run, profileId);
+      })
+    );
+    run.unlisteners.push(
+      await listen(eventName("scriptHostDone", runId), (e) => {
+        if (scriptRunState !== run) return;
+        const { profileId, exitCode } = e.payload || {};
+        const h = run.hosts.get(profileId);
+        if (!h) return;
+        h.status = "ok";
+        h.exitCode = typeof exitCode === "number" ? exitCode : null;
+        run.okCount += 1;
+        updateScriptHostRow(run, profileId);
+      })
+    );
+    run.unlisteners.push(
+      await listen(eventName("scriptHostError", runId), (e) => {
+        if (scriptRunState !== run) return;
+        const { profileId, message } = e.payload || {};
+        const h = run.hosts.get(profileId);
+        if (!h) return;
+        h.status = "error";
+        h.error = String(message || "");
+        updateScriptHostRow(run, profileId);
+      })
+    );
+    run.unlisteners.push(
+      await listen(eventName("scriptDone", runId), (e) => {
+        if (scriptRunState !== run) return;
+        run.finished = true;
+        unlistenScriptRun(run);
+        const total = Number(e.payload?.total) || run.total;
+        const ok = Number(e.payload?.okCount) || 0;
+        document.getElementById("script-run-summary-line").textContent = t("scripts.done_summary", { ok, total });
+        const abortAll = document.getElementById("btn-script-abort-all");
+        if (abortAll) abortAll.disabled = true;
+        document
+          .querySelectorAll("#script-run-hosts [data-script-run-abort]")
+          .forEach((b) => { b.disabled = true; });
+        if (ok === total) toast(t("scripts.done_toast_ok", { n: total }), "success");
+        else toast(t("scripts.done_toast_err", { ok, total }), "warning", 6000);
+      })
+    );
+  } catch (err) {
+    unlistenScriptRun(run);
+    scriptRunState = null;
+    toast(`${err}`, "error");
+    return;
+  }
+
+  document.getElementById("script-run-setup")?.classList.add("hidden");
+  document.getElementById("script-run-status")?.classList.remove("hidden");
+  const abortAll = document.getElementById("btn-script-abort-all");
+  if (abortAll) abortAll.disabled = false;
+  document.getElementById("script-run-summary-line").textContent = "";
+  renderScriptRunHosts();
+
+  try {
+    await invoke("scripts_run", {
+      scriptId: script.id,
+      runId,
+      profileIds,
+      options: { concurrency, mode, stopOnError, params, credentials },
+    });
+  } catch (err) {
+    unlistenScriptRun(run);
+    scriptRunState = null;
+    toast(`${err}`, "error");
+    // volver a la fase de opciones para poder reintentar
+    document.getElementById("script-run-setup")?.classList.remove("hidden");
+    document.getElementById("script-run-status")?.classList.add("hidden");
+  }
+}
+
+function unlistenScriptRun(run) {
+  for (const u of run.unlisteners.splice(0)) {
+    try {
+      u();
+    } catch {
+      // listener ya liberado
+    }
+  }
+}
+
+function renderScriptRunHosts() {
+  const box = document.getElementById("script-run-hosts");
+  const run = scriptRunState;
+  if (!box || !run) return;
+  box.innerHTML = [...run.hosts.entries()]
+    .map(
+      ([pid, h]) => `
+      <div class="script-run-host" data-profile-id="${escHtml(pid)}">
+        <div class="script-run-host-top">
+          <span class="script-run-host-name" title="${escHtml(h.name)}">${escHtml(h.name)}</span>
+          <span class="script-status-badge" data-role="badge">${escHtml(t("scripts.status_pending"))}</span>
+          <button type="button" class="global-tunnel-action danger" data-script-run-abort="${escHtml(pid)}">${escHtml(t("scripts.abort_host"))}</button>
+        </div>
+        <div class="script-run-host-error hidden" data-role="error"></div>
+        <details>
+          <summary>${escHtml(t("scripts.output_label"))}</summary>
+          <pre data-role="output"></pre>
+        </details>
+      </div>`
+    )
+    .join("");
+}
+
+function scriptHostBadge(h) {
+  switch (h.status) {
+    case "running":
+      return {
+        cls: "running",
+        text: t("scripts.status_running", {
+          step: Math.min(h.stepIndex + 1, Math.max(h.totalSteps, 1)),
+          total: Math.max(h.totalSteps, 1),
+        }),
+      };
+    case "ok":
+      return {
+        cls: "ok",
+        text: h.exitCode == null ? t("scripts.status_ok") : t("scripts.status_ok_code", { code: h.exitCode }),
+      };
+    case "error":
+      return { cls: "error", text: t("scripts.status_error") };
+    default:
+      return { cls: "", text: t("scripts.status_pending") };
+  }
+}
+
+/** Refresco puntual de la fila de un host (sin re-render completo). */
+function updateScriptHostRow(run, profileId) {
+  if (scriptRunState !== run) return;
+  const row = document.querySelector(
+    `#script-run-hosts .script-run-host[data-profile-id="${cssAttrEscape(profileId)}"]`
+  );
+  const h = run.hosts.get(profileId);
+  if (!row || !h) return;
+  const badge = row.querySelector('[data-role="badge"]');
+  const { cls, text } = scriptHostBadge(h);
+  badge.className = `script-status-badge${cls ? ` ${cls}` : ""}`;
+  badge.textContent = text;
+  const errEl = row.querySelector('[data-role="error"]');
+  errEl.textContent = h.error || "";
+  errEl.classList.toggle("hidden", !h.error);
+  const out = row.querySelector('[data-role="output"]');
+  if (out.textContent !== h.output) out.textContent = h.output;
+  const abortBtn = row.querySelector("[data-script-run-abort]");
+  if (abortBtn) abortBtn.disabled = run.finished || h.status === "ok" || h.status === "error";
+}
+
+/** Aborta todo el run (`profileId` null) o un host concreto. */
+async function abortScriptRun(profileId = null) {
+  const run = scriptRunState;
+  if (!run || run.finished) return;
+  try {
+    await invoke("scripts_abort", { runId: run.runId, profileId });
+  } catch (err) {
+    toast(`${err}`, "error");
+  }
+}
+
+async function closeScriptRunModal() {
+  const run = scriptRunState;
+  if (run && !run.finished) {
+    const ok = await confirmThemed({
+      title: t("scripts.abort_close_title"),
+      message: t("scripts.abort_close_msg"),
+      submitLabel: t("scripts.abort_all"),
+      danger: true,
+    });
+    if (!ok) return;
+    await abortScriptRun(null);
+    run.finished = true;
+    unlistenScriptRun(run);
+  }
+  scriptRunState = null;
+  scriptRunSetup = null;
+  document.getElementById("script-run-overlay")?.classList.add("hidden");
+}
+
+// ── Selector de script (desde el menú contextual) ────────────────
+
+async function openScriptPicker(presetTarget) {
+  scriptPickTarget = presetTarget;
+  await loadScripts();
+  const overlay = document.getElementById("script-pick-overlay");
+  if (!overlay) return;
+  document.getElementById("script-pick-target").textContent = scriptTargetLabel(presetTarget);
+  const list = document.getElementById("script-pick-list");
+  if (!scriptsCache.length) {
+    list.innerHTML = `<div class="tunnel-empty">${escHtml(t("scripts.no_scripts_yet"))}</div>`;
+  } else {
+    list.innerHTML = scriptsCache
+      .map((s) => {
+        const n = s.steps?.length || 0;
+        const steps = n === 1 ? t("scripts.list_steps_one") : t("scripts.list_steps", { n });
+        return `
+          <div class="script-row" data-script-id="${escHtml(s.id)}">
+            <span class="script-row-name" title="${escHtml(s.name)}">${escHtml(s.name)}</span>
+            <span class="script-row-target"></span>
+            <span class="script-row-meta">${escHtml(steps)}</span>
+            <span class="script-row-actions">
+              <button type="button" class="global-tunnel-action" data-script-pick-run="${escHtml(s.id)}">${escHtml(t("scripts.run"))}</button>
+            </span>
+          </div>`;
+      })
+      .join("");
+  }
+  overlay.classList.remove("hidden");
+}
+
+function closeScriptPicker() {
+  document.getElementById("script-pick-overlay")?.classList.add("hidden");
+  scriptPickTarget = null;
+}
+
+/** Cableado estático de la UI de scripts (una sola vez, en el arranque). */
+function initScriptsUi() {
+  // Modal principal
+  document.getElementById("btn-scripts-close")?.addEventListener("click", closeScriptsModal);
+  document.getElementById("scripts-overlay")?.addEventListener("mousedown", (e) => {
+    if (e.target.id === "scripts-overlay") closeScriptsModal();
+  });
+  document.getElementById("btn-script-new")?.addEventListener("click", () => openScriptEditor(null));
+  document.getElementById("btn-script-import")?.addEventListener("click", importScriptFromMarkdown);
+  document.getElementById("btn-script-ed-back")?.addEventListener("click", () => {
+    showScriptsListView();
+    renderScriptsList();
+  });
+  document.getElementById("script-editor-form")?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    saveScriptFromEditor();
+  });
+  document.getElementById("btn-script-step-add")?.addEventListener("click", () => {
+    if (!scriptEditorState) return;
+    scriptEditorState.steps.push(makeStep("send"));
+    renderScriptSteps();
+    document
+      .querySelector("#script-ed-steps .script-step-row:last-child input, #script-ed-steps .script-step-row:last-child select")
+      ?.focus();
+  });
+
+  // Lista: acciones por fila (delegación)
+  document.getElementById("scripts-list")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-script-action]");
+    if (!btn) return;
+    const id = btn.closest(".script-row")?.dataset.scriptId;
+    if (!id) return;
+    const s = scriptsCache.find((x) => x.id === id);
+    const action = btn.dataset.scriptAction;
+    if (action === "run" && s) beginScriptRun(s);
+    else if (action === "edit" && s) openScriptEditor(s);
+    else if (action === "duplicate") duplicateScriptById(id);
+    else if (action === "export") exportScriptToMarkdown(id);
+    else if (action === "delete") deleteScriptById(id);
+  });
+
+  // Editor: objetivo
+  document.getElementById("script-ed-target-kind")?.addEventListener("change", () => {
+    if (!scriptEditorState) return;
+    scriptEditorState.target = readScriptTargetFromEditor();
+    renderScriptTargetEditor();
+  });
+  document.getElementById("script-ed-target-ws")?.addEventListener("change", () => renderScriptFolderSelect(""));
+
+  // Editor: pasos (delegación)
+  const stepsBox = document.getElementById("script-ed-steps");
+  stepsBox?.addEventListener("change", (e) => {
+    if (!scriptEditorState) return;
+    if (e.target.matches?.("[data-script-step-type]")) {
+      const idx = parseInt(e.target.dataset.stepIdx ?? "", 10);
+      if (!Number.isInteger(idx) || !scriptEditorState.steps[idx]) return;
+      scriptEditorState.steps[idx] = makeStep(e.target.value, scriptEditorState.steps[idx]);
+      renderScriptSteps();
+      return;
+    }
+    handleScriptStepFieldEvent(e); // selects de campo (profileId)
+  });
+  stepsBox?.addEventListener("input", handleScriptStepFieldEvent);
+  stepsBox?.addEventListener("click", (e) => {
+    if (!scriptEditorState) return;
+    const btn = e.target.closest("[data-script-step-action]");
+    if (!btn) return;
+    const idx = parseInt(btn.closest(".script-step-row")?.dataset.stepIdx ?? "", 10);
+    const steps = scriptEditorState.steps;
+    if (!Number.isInteger(idx) || !steps[idx]) return;
+    const action = btn.dataset.scriptStepAction;
+    if (action === "up" && idx > 0) {
+      [steps[idx - 1], steps[idx]] = [steps[idx], steps[idx - 1]];
+      renderScriptSteps();
+    } else if (action === "down" && idx < steps.length - 1) {
+      [steps[idx + 1], steps[idx]] = [steps[idx], steps[idx + 1]];
+      renderScriptSteps();
+    } else if (action === "remove") {
+      steps.splice(idx, 1);
+      renderScriptSteps();
+    }
+  });
+
+  // Modal de ejecución
+  document.getElementById("btn-script-run-close")?.addEventListener("click", () => closeScriptRunModal());
+  document.getElementById("btn-script-run-cancel")?.addEventListener("click", () => closeScriptRunModal());
+  document.getElementById("btn-script-run-done")?.addEventListener("click", () => closeScriptRunModal());
+  document.getElementById("script-run-overlay")?.addEventListener("mousedown", (e) => {
+    if (e.target.id === "script-run-overlay") closeScriptRunModal();
+  });
+  document.getElementById("btn-script-run-launch")?.addEventListener("click", launchScriptRun);
+  document.getElementById("script-run-cred-kind")?.addEventListener("change", updateScriptRunCredVisibility);
+  document.getElementById("script-run-cred-password")?.addEventListener("input", updateScriptRunLaunchEnabled);
+  document.getElementById("script-run-cred-master")?.addEventListener("change", updateScriptRunLaunchEnabled);
+  document.getElementById("script-run-cred-keepass")?.addEventListener("change", updateScriptRunLaunchEnabled);
+  document.getElementById("btn-script-abort-all")?.addEventListener("click", () => abortScriptRun(null));
+  document.getElementById("script-run-hosts")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-script-run-abort]");
+    if (!btn) return;
+    btn.disabled = true;
+    abortScriptRun(btn.dataset.scriptRunAbort);
+  });
+
+  // Selector de script del menú contextual
+  document.getElementById("btn-script-pick-close")?.addEventListener("click", closeScriptPicker);
+  document.getElementById("script-pick-overlay")?.addEventListener("mousedown", (e) => {
+    if (e.target.id === "script-pick-overlay") closeScriptPicker();
+  });
+  document.getElementById("script-pick-list")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-script-pick-run]");
+    if (!btn) return;
+    const s = scriptsCache.find((x) => x.id === btn.dataset.scriptPickRun);
+    const target = scriptPickTarget;
+    closeScriptPicker();
+    if (s) beginScriptRun(s, target);
+  });
+  document.getElementById("btn-script-pick-new")?.addEventListener("click", () => {
+    const target = scriptPickTarget;
+    closeScriptPicker();
+    openScriptsModalWithNew(target);
+  });
 }
 
 // ─── Credenciales: maestras, variables y secretos (Preferencias) ─────────
@@ -16643,6 +17796,7 @@ function bindUIEvents() {
       if (action === "new-connection") openNewConnectionModal();
       else if (action === "local-shell") openLocalShell();
       else if (action === "tunnels") openGlobalTunnelsModal();
+      else if (action === "scripts") openScriptsModal();
       else if (action === "activity") openActivityCenter();
       else if (action === "disconnect-all") disconnectAll();
       else if (action === "settings") openSettingsModal();
@@ -16994,6 +18148,9 @@ function bindUIEvents() {
       }
     });
 
+  // Panel de scripts (recetas por host)
+  initScriptsUi();
+
   // Selector de tema de UI: sincronizar .selected con el radio + preview en vivo
   document.querySelectorAll('input[name="pref-theme"]').forEach((radio) => {
     radio.addEventListener("change", () => {
@@ -17260,6 +18417,23 @@ function bindUIEvents() {
       }
       if (isGlobalTunnelsModalOpen()) {
         closeGlobalTunnelsModal();
+        e.preventDefault();
+        return;
+      }
+      const scriptPickOverlay = document.getElementById("script-pick-overlay");
+      if (scriptPickOverlay && !scriptPickOverlay.classList.contains("hidden")) {
+        closeScriptPicker();
+        e.preventDefault();
+        return;
+      }
+      const scriptRunOverlay = document.getElementById("script-run-overlay");
+      if (scriptRunOverlay && !scriptRunOverlay.classList.contains("hidden")) {
+        closeScriptRunModal();
+        e.preventDefault();
+        return;
+      }
+      if (isScriptsModalOpen()) {
+        closeScriptsModal();
         e.preventDefault();
         return;
       }

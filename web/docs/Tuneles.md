@@ -67,6 +67,8 @@ Equivale a:
 ssh -D 1080 usuario@servidor
 ```
 
+Cada cliente que se conecta al proxy negocia su handshake SOCKS5 en su propia tarea, con un límite de 10 segundos: un cliente lento, roto o malicioso se descarta sin bloquear al resto de conexiones del túnel.
+
 ## Guardar y autoconectar
 
 Al crear un túnel puedes marcar:

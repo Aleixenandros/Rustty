@@ -13,6 +13,7 @@ mod local_shell_manager;
 mod notes;
 mod profiles;
 mod rdp_manager;
+mod scripts;
 mod sftp_manager;
 mod ssh_manager;
 mod subst;
@@ -26,6 +27,7 @@ use local_shell_manager::LocalShellManager;
 use notes::NotesManager;
 use profiles::ProfileManager;
 use rdp_manager::RdpManager;
+use scripts::ScriptManager;
 use sftp_manager::SftpManager;
 use ssh_manager::SshManager;
 use sync::SyncManager;
@@ -148,6 +150,7 @@ pub fn run() {
             app.manage(profile_manager);
             app.manage(notes_manager);
             app.manage(CredentialStore::new(data_dir.clone()));
+            app.manage(ScriptManager::new(data_dir.clone()));
             app.manage(SyncManager::new(data_dir.clone()));
             app.manage(DataDir(data_dir));
             // Señal de arranque minimizado: el frontend la consulta al inicio
@@ -188,6 +191,13 @@ pub fn run() {
             commands::master_cred_rename,
             commands::master_cred_delete,
             commands::template_asks,
+            // ── Motor de scripts (recetas interactivas por host)
+            commands::scripts_get_all,
+            commands::scripts_save,
+            commands::scripts_delete,
+            commands::scripts_preview,
+            commands::scripts_run,
+            commands::scripts_abort,
             // ── Notas Markdown por conexión (runbooks)
             commands::note_get,
             commands::note_set,

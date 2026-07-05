@@ -247,7 +247,10 @@ impl Resolver for ConnFieldResolver<'_> {
 pub fn substitute_connection_fields(profile: &mut ConnectionProfile, store: &CredentialStore) {
     let needs = profile.host.contains("${")
         || profile.username.contains("${")
-        || profile.proxy_jump.as_deref().is_some_and(|s| s.contains("${"));
+        || profile
+            .proxy_jump
+            .as_deref()
+            .is_some_and(|s| s.contains("${"));
     if !needs {
         return;
     }
@@ -765,15 +768,17 @@ mod tests {
         answers.insert("Entorno".to_string(), "prod".to_string());
         answers.insert("PIN".to_string(), "1234".to_string());
 
-        let resolver =
-            CredentialResolver::with_ask_answers(ctx(), vec![], answers);
+        let resolver = CredentialResolver::with_ask_answers(ctx(), vec![], answers);
 
         // Respuesta provista → se sustituye.
         assert_eq!(
             crate::subst::substitute("${ask:Entorno|prod|staging}", &resolver),
             "prod"
         );
-        assert_eq!(crate::subst::substitute("pwd-${ask:PIN}", &resolver), "pwd-1234");
+        assert_eq!(
+            crate::subst::substitute("pwd-${ask:PIN}", &resolver),
+            "pwd-1234"
+        );
         // Sin respuesta para esa etiqueta → queda literal.
         assert_eq!(
             crate::subst::substitute("${ask:NoRespondida}", &resolver),

@@ -1,10 +1,18 @@
 import { defineConfig } from "vite";
+import { configDefaults } from "vitest/config";
 
 // Configuración de Vite optimizada para Tauri 2
 // https://tauri.app/start/frontend/vite/
 export default defineConfig({
   // Evita que Vite limpie el terminal en dev (mejor legibilidad de logs de Rust)
   clearScreen: false,
+
+  test: {
+    // Los worktrees de agentes bajo .claude/ contienen copias congeladas del
+    // código con sus propias suites: duplican el recuento y pueden dar falsos
+    // rojos/verdes contra código desfasado.
+    exclude: [...configDefaults.exclude, "**/.claude/**"],
+  },
 
   server: {
     port: 1420,

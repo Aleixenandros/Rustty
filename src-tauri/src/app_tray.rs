@@ -221,8 +221,10 @@ fn shutdown_sessions(app: &AppHandle) {
     app.state::<RdpManager>().disconnect_all();
     // VNC/Telnet también: salir por la bandeja no debe dejar visores/clientes
     // externos huérfanos (coherente con `close_app` y `CloseRequested`).
-    app.state::<crate::external_client::VncManager>().disconnect_all();
-    app.state::<crate::external_client::TelnetManager>().disconnect_all();
+    app.state::<crate::external_client::VncManager>()
+        .disconnect_all();
+    app.state::<crate::external_client::TelnetManager>()
+        .disconnect_all();
 }
 
 impl TrayState {
@@ -251,13 +253,7 @@ impl TrayState {
             "Sin recientes",
         )?;
         replace_workspace_submenu(app, &parts.workspaces, &payload.workspaces)?;
-        replace_profile_submenu(
-            app,
-            &parts.wake,
-            &payload.wake,
-            PREFIX_WAKE,
-            "Sin equipos",
-        )?;
+        replace_profile_submenu(app, &parts.wake, &payload.wake, PREFIX_WAKE, "Sin equipos")?;
 
         parts
             .favorites

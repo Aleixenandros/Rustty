@@ -31,7 +31,12 @@ pub fn parse(template: &str) -> Vec<Marker> {
 
     while i < len {
         // Escape `$${...}` → literal `${...}`.
-        if bytes[i] == b'$' && i + 1 < len && bytes[i + 1] == b'$' && i + 2 < len && bytes[i + 2] == b'{' {
+        if bytes[i] == b'$'
+            && i + 1 < len
+            && bytes[i + 1] == b'$'
+            && i + 2 < len
+            && bytes[i + 2] == b'{'
+        {
             // Buscamos el `}` de cierre a partir del `{`.
             if let Some(close) = find_close(bytes, i + 3) {
                 // El literal producido es `${` + cuerpo + `}` (se elimina un `$`).
@@ -256,14 +261,20 @@ mod tests {
 
     #[test]
     fn literal_puro() {
-        assert_eq!(parse("hola mundo"), vec![Marker::Literal("hola mundo".into())]);
+        assert_eq!(
+            parse("hola mundo"),
+            vec![Marker::Literal("hola mundo".into())]
+        );
         assert_eq!(substitute("hola mundo", &resolver()), "hola mundo");
     }
 
     #[test]
     fn un_interno() {
         assert_eq!(parse("${host}"), vec![Marker::Internal(InternalVar::Host)]);
-        assert_eq!(substitute("ssh ${user}@${host}", &resolver()), "ssh ada@192.168.1.10");
+        assert_eq!(
+            substitute("ssh ${user}@${host}", &resolver()),
+            "ssh ada@192.168.1.10"
+        );
         assert_eq!(substitute("puerto ${port}", &resolver()), "puerto 2222");
         assert_eq!(
             substitute("${profileName} en ${workspace}", &resolver()),
@@ -321,7 +332,10 @@ mod tests {
     #[test]
     fn doble_dolar_sin_llave_es_literal() {
         // `$$` que no precede a `{` es literal normal.
-        assert_eq!(substitute("precio 5$$ total", &resolver()), "precio 5$$ total");
+        assert_eq!(
+            substitute("precio 5$$ total", &resolver()),
+            "precio 5$$ total"
+        );
     }
 
     #[test]
@@ -337,7 +351,10 @@ mod tests {
     #[test]
     fn sin_cierre_es_literal() {
         assert_eq!(parse("${host"), vec![Marker::Literal("${host".into())]);
-        assert_eq!(substitute("antes ${host sin cierre", &resolver()), "antes ${host sin cierre");
+        assert_eq!(
+            substitute("antes ${host sin cierre", &resolver()),
+            "antes ${host sin cierre"
+        );
     }
 
     #[test]
@@ -350,21 +367,36 @@ mod tests {
     fn var_secret_master_ask_quedan_literales_en_fase1() {
         // El resolver por defecto devuelve None para estos namespaces.
         assert_eq!(substitute("${var:dominio}", &resolver()), "${var:dominio}");
-        assert_eq!(substitute("${secret:token}", &resolver()), "${secret:token}");
-        assert_eq!(substitute("${master:bastion}", &resolver()), "${master:bastion}");
+        assert_eq!(
+            substitute("${secret:token}", &resolver()),
+            "${secret:token}"
+        );
+        assert_eq!(
+            substitute("${master:bastion}", &resolver()),
+            "${master:bastion}"
+        );
         assert_eq!(
             substitute("${ask:Entorno|prod|staging}", &resolver()),
             "${ask:Entorno|prod|staging}"
         );
-        assert_eq!(substitute("${cmd:hostname}", &resolver()), "${cmd:hostname}");
+        assert_eq!(
+            substitute("${cmd:hostname}", &resolver()),
+            "${cmd:hostname}"
+        );
     }
 
     #[test]
     fn parse_reconoce_namespaces_sin_resolver() {
         // La gramática reconoce los namespaces aunque la Fase 1 no los resuelva.
         assert_eq!(parse("${var:dominio}"), vec![Marker::Var("dominio".into())]);
-        assert_eq!(parse("${secret:token}"), vec![Marker::Secret("token".into())]);
-        assert_eq!(parse("${master:bastion}"), vec![Marker::Master("bastion".into())]);
+        assert_eq!(
+            parse("${secret:token}"),
+            vec![Marker::Secret("token".into())]
+        );
+        assert_eq!(
+            parse("${master:bastion}"),
+            vec![Marker::Master("bastion".into())]
+        );
         assert_eq!(parse("${env:HOME}"), vec![Marker::Env("HOME".into())]);
         assert_eq!(
             parse("${ask:Entorno|prod|staging}"),
@@ -373,23 +405,35 @@ mod tests {
                 options: vec!["prod".into(), "staging".into()],
             }]
         );
-        assert_eq!(parse("${ask:Token libre}"), vec![Marker::Ask {
-            label: "Token libre".into(),
-            options: vec![],
-        }]);
-        assert_eq!(parse("${cmd:hostname}"), vec![Marker::Cmd("hostname".into())]);
+        assert_eq!(
+            parse("${ask:Token libre}"),
+            vec![Marker::Ask {
+                label: "Token libre".into(),
+                options: vec![],
+            }]
+        );
+        assert_eq!(
+            parse("${cmd:hostname}"),
+            vec![Marker::Cmd("hostname".into())]
+        );
     }
 
     #[test]
     fn nombres_invalidos_son_literales() {
         // Nombre que empieza por dígito o con espacio no es válido.
         assert_eq!(substitute("${var:1mal}", &resolver()), "${var:1mal}");
-        assert_eq!(substitute("${var:con espacio}", &resolver()), "${var:con espacio}");
+        assert_eq!(
+            substitute("${var:con espacio}", &resolver()),
+            "${var:con espacio}"
+        );
         assert_eq!(substitute("${env:1MAL}", &resolver()), "${env:1MAL}");
         // env no admite `-` ni `.` (convención del SO).
         assert_eq!(substitute("${env:MI-VAR}", &resolver()), "${env:MI-VAR}");
         // var sí admite `-` y `.`.
-        assert_eq!(parse("${var:mi-var.sub}"), vec![Marker::Var("mi-var.sub".into())]);
+        assert_eq!(
+            parse("${var:mi-var.sub}"),
+            vec![Marker::Var("mi-var.sub".into())]
+        );
     }
 
     #[test]

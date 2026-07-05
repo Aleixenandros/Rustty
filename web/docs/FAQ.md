@@ -52,13 +52,17 @@ No. Esos perfiles viven dentro de Rustty, pero se abren en clientes externos del
 
 Los **snippets remotos** sí: viajan dentro del backup cifrado como `snippet:<id>` y aparecen también en la paleta de comandos. Los **comandos locales** no se sincronizan porque pueden depender de rutas, binarios o asociaciones propias de este equipo.
 
+## ¿Los scripts guardan contraseñas o se sincronizan?
+
+Ninguna de las dos cosas. Los scripts se guardan en un `scripts.json` local que **nunca contiene contraseñas**: los pasos de contraseña solo referencian el keyring o una entrada KeePass, y la salida que muestra el panel redacta los secretos enviados. Para llevar un script a otro equipo, expórtalo como Markdown desde el panel de Scripts e impórtalo allí. Más detalle en la [guía de scripts](?page=Scripts).
+
 ## ¿iCloud necesita Client ID o secret?
 
 No. iCloud Drive se usa como carpeta local de macOS; Rustty escribe el blob cifrado y el sistema se encarga de subirlo.
 
 ## ¿Qué son los perfiles-contenedor (workspaces)?
 
-Son árboles independientes de carpetas y conexiones que conviven en la misma instalación. Te permiten separar, por ejemplo, **Trabajo** y **Personal**, o un cliente de otro. La sidebar incluye un switcher **📁 ▾** desde el que crear, renombrar, eliminar y conmutar perfiles. Cada conexión guarda el `workspace_id` al que pertenece y la lista, el dashboard y la búsqueda se filtran por el workspace activo. Los workspaces viajan con la sincronización en la nube.
+Son árboles independientes de carpetas y conexiones que conviven en la misma instalación. Te permiten separar, por ejemplo, **Trabajo** y **Personal**, o un cliente de otro. Se crean, renombran, eliminan y conmutan desde el popover del botón **≡** de la cabecera de la sidebar. Cada conexión guarda el `workspace_id` al que pertenece y la lista, el dashboard y la búsqueda se filtran por el workspace activo. Los workspaces viajan con la sincronización en la nube.
 
 ## ¿Dónde están mis datos locales?
 

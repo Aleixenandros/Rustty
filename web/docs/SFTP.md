@@ -70,6 +70,8 @@ Las descargas y subidas mantienen varias peticiones SFTP simultáneamente en vue
 
 Si el servidor limita el ancho de banda por sesión (por ejemplo a 100 Mbps), verás velocidades estables cerca de ese tope, sin importar la latencia.
 
+En las descargas, la lectura adelantada está acotada: Rustty no lee más allá de un margen fijo por delante de lo ya escrito en disco, así que descargar ficheros o carpetas enormes no dispara el consumo de memoria aunque el disco local vaya más lento que la red.
+
 ### Peticiones simultáneas configurables
 
 El número de peticiones SFTP en paralelo por transferencia se ajusta en **Preferencias → FTP/SFTP → Transferencias simultáneas (SFTP)** (por defecto **4**, rango 1–64, acotado internamente por el límite de pipelining). Súbelo para exprimir más velocidad en redes con latencia alta; **bájalo** si el servidor devuelve `Limit exceeded: Handle limit reached`.

@@ -341,8 +341,7 @@ mod tests {
             serde_json::from_str(JSON_SIN_WORKSPACE).expect("JSON válido");
 
         let serializado = serde_json::to_string(&perfil).expect("serializa");
-        let de_vuelta: ConnectionProfile =
-            serde_json::from_str(&serializado).expect("deserializa");
+        let de_vuelta: ConnectionProfile = serde_json::from_str(&serializado).expect("deserializa");
 
         assert_eq!(de_vuelta.id, perfil.id);
         assert_eq!(de_vuelta.name, perfil.name);

@@ -14,6 +14,7 @@ use crate::local_shell_manager::LocalShellManager;
 use crate::notes::{NoteDoc, NoteSummary, NotesManager};
 use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
 use crate::rdp_manager::RdpManager;
+use crate::scripts::{HostPreview, RunOptions, Script, ScriptManager};
 use crate::sftp_manager::{FileEntry, SftpManager, TransferConflictPolicy};
 use crate::ssh_manager::{legacy_catalog_info, SshManager, SshTunnelConfig, SshTunnelInfo};
 use crate::sync::{
@@ -188,7 +189,11 @@ fn apply_connect_overrides(profile: &mut ConnectionProfile, ov: &ConnectOverride
     }
     if let Some(j) = ov.proxy_jump.as_deref() {
         let j = j.trim();
-        profile.proxy_jump = if j.is_empty() { None } else { Some(j.to_string()) };
+        profile.proxy_jump = if j.is_empty() {
+            None
+        } else {
+            Some(j.to_string())
+        };
     }
     if let Some(at) = ov.auth_type.clone() {
         profile.auth_type = at;
@@ -271,8 +276,12 @@ pub fn ssh_connect(
     Ok(session_id)
 }
 
+/// Comando **async**: la prueba corre en su hilo con runtime propio y aquí solo
+/// se espera el resultado por un oneshot. La versión síncrona original hacía
+/// `rx.recv()` bloqueante en el hilo principal de Tauri y congelaba toda la
+/// ventana hasta ~30 s contra un host filtrado.
 #[tauri::command]
-pub fn ssh_test_connection(
+pub async fn ssh_test_connection(
     cred_state: State<'_, CredentialStore>,
     app_handle: AppHandle,
     mut profile: ConnectionProfile,
@@ -283,7 +292,7 @@ pub fn ssh_test_connection(
 ) -> Result<(), String> {
     credentials::substitute_connection_fields(&mut profile, &cred_state);
     let resolved_password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         let result = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -300,7 +309,7 @@ pub fn ssh_test_connection(
         };
         let _ = tx.send(result);
     });
-    rx.recv()
+    rx.await
         .map_err(|e| format!("La prueba de conexión no respondió: {e}"))?
 }
 
@@ -375,9 +384,7 @@ fn resolve_profile_password(
 
 /// Resuelve la contraseña desde la entrada KeePass referenciada por el perfil.
 /// Requiere `keepass_entry_uuid` no vacío y la DB desbloqueada.
-fn resolve_password_from_keepass(
-    profile: &ConnectionProfile,
-) -> Result<Option<String>, String> {
+fn resolve_password_from_keepass(profile: &ConnectionProfile) -> Result<Option<String>, String> {
     let entry_uuid = profile
         .keepass_entry_uuid
         .as_deref()
@@ -459,15 +466,16 @@ pub fn get_profile_password(
         .is_some_and(|s| !s.is_empty());
 
     // 1) KeePass o credencial maestra → reutilizamos la resolución unificada.
-    if matches!(profile.password_source, PasswordSource::Keepass | PasswordSource::Master)
-        || has_keepass
+    if matches!(
+        profile.password_source,
+        PasswordSource::Keepass | PasswordSource::Master
+    ) || has_keepass
     {
         return resolve_profile_password(&profile, &cred_state, None, None);
     }
 
     // 2) keyring (si el usuario guardó la contraseña al crear el perfil)
-    let entry = keyring::Entry::new("rustty", &keyring_key)
-        .map_err(|e| e.to_string())?;
+    let entry = keyring::Entry::new("rustty", &keyring_key).map_err(|e| e.to_string())?;
     match entry.get_password() {
         Ok(p) => Ok(Some(p)),
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -714,10 +722,7 @@ pub fn local_shell_close(
 /// Devuelve `true` si hay al menos un hijo vivo; `false` si la consola está
 /// idle o si no se puede determinar (Windows o `pgrep` no disponible).
 #[tauri::command]
-pub fn local_shell_has_job(
-    shell_state: State<'_, LocalShellManager>,
-    session_id: String,
-) -> bool {
+pub fn local_shell_has_job(shell_state: State<'_, LocalShellManager>, session_id: String) -> bool {
     shell_state.has_running_job(&session_id)
 }
 
@@ -1176,14 +1181,20 @@ pub fn keyring_delete(service: String, key: String) -> Result<(), String> {
 
 /// Abre una base KeePass (.kdbx). La DB queda cacheada en memoria hasta `keepass_lock`
 /// o hasta que se cierre la app. El `password` puede ser vacío si se usa solo keyfile.
+/// Comando **async**: el KDF (Argon2/AES-KDF) tarda cientos de ms y correría en
+/// el hilo principal de Tauri si el comando fuera síncrono.
 #[tauri::command]
-pub fn keepass_unlock(
+pub async fn keepass_unlock(
     path: String,
     password: Option<String>,
     keyfile_path: Option<String>,
 ) -> Result<(), String> {
-    keepass_manager::unlock(&path, password.as_deref(), keyfile_path.as_deref())
-        .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        keepass_manager::unlock(&path, password.as_deref(), keyfile_path.as_deref())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("El desbloqueo de KeePass no respondió: {e}"))?
 }
 
 /// Cierra la base KeePass (borra la copia descifrada en memoria).
@@ -1688,20 +1699,35 @@ pub async fn sync_run(
 /// Exporta el estado a un fichero cifrado (`.rustty-sync.bin`) con la
 /// passphrase indicada. No requiere backend ni configuración previa: sirve
 /// de backup portable, transferible por USB/email.
+/// Comando **async**: el scrypt de `age` tarda cientos de ms; fuera del hilo
+/// principal para no congelar la UI al exportar.
 #[tauri::command]
-pub fn sync_export_file(path: String, passphrase: String, state: SyncState) -> Result<(), String> {
-    let bytes = pack_state(&passphrase, &state).map_err(|e| e.to_string())?;
-    // Escritura atómica: un backup interrumpido a medias quedaría corrupto y no
-    // descifraría al importarlo.
-    write_atomic(std::path::Path::new(&path), &bytes).map_err(|e| e.to_string())
+pub async fn sync_export_file(
+    path: String,
+    passphrase: String,
+    state: SyncState,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = pack_state(&passphrase, &state).map_err(|e| e.to_string())?;
+        // Escritura atómica: un backup interrumpido a medias quedaría corrupto
+        // y no descifraría al importarlo.
+        write_atomic(std::path::Path::new(&path), &bytes).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("La exportación no respondió: {e}"))?
 }
 
 /// Importa un fichero cifrado y devuelve el estado descifrado. El frontend
 /// luego decide si reemplaza, fusiona o solo previsualiza.
+/// Comando **async**: simétrico a `sync_export_file` (scrypt en descifrado).
 #[tauri::command]
-pub fn sync_import_file(path: String, passphrase: String) -> Result<SyncState, String> {
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-    unpack_state(&passphrase, &bytes).map_err(|e| e.to_string())
+pub async fn sync_import_file(path: String, passphrase: String) -> Result<SyncState, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        unpack_state(&passphrase, &bytes).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("La importación no respondió: {e}"))?
 }
 
 /// Lista los snapshots históricos disponibles en el backend remoto.
@@ -1818,14 +1844,20 @@ pub fn session_logs_prune(
     let mut freed_bytes = 0u64;
 
     if max_age_days.is_none() && max_total_mb.is_none() {
-        return Ok(SessionLogsPruneResult { removed, freed_bytes });
+        return Ok(SessionLogsPruneResult {
+            removed,
+            freed_bytes,
+        });
     }
 
     let dir = session_logs_path(&data_dir);
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
         Err(ref err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(SessionLogsPruneResult { removed, freed_bytes });
+            return Ok(SessionLogsPruneResult {
+                removed,
+                freed_bytes,
+            });
         }
         Err(err) => return Err(err.to_string()),
     };
@@ -1888,7 +1920,10 @@ pub fn session_logs_prune(
         }
     }
 
-    Ok(SessionLogsPruneResult { removed, freed_bytes })
+    Ok(SessionLogsPruneResult {
+        removed,
+        freed_bytes,
+    })
 }
 
 // ─── Snapshots de pantalla por sesión (restaurar sesión anterior) ────────────
@@ -2102,6 +2137,234 @@ pub fn master_cred_delete(
     credentials::cred_delete(&store, &data_dir.0, id, force).map_err(|e| e.to_string())
 }
 
+// ─── Motor de scripts (recetas interactivas por host) ────────────────────────
+
+/// Devuelve todos los scripts guardados.
+#[tauri::command]
+pub fn scripts_get_all(state: State<ScriptManager>) -> Result<Vec<Script>, String> {
+    state.get_all()
+}
+
+/// Crea o actualiza un script (upsert por id). Refresca `updatedAt` y guarda de
+/// forma atómica. `scripts.json` nunca contiene secretos.
+#[tauri::command]
+pub fn scripts_save(state: State<ScriptManager>, script: Script) -> Result<(), String> {
+    state.upsert(script)
+}
+
+/// Elimina un script por id.
+#[tauri::command]
+pub fn scripts_delete(state: State<ScriptManager>, id: String) -> Result<(), String> {
+    state.delete(&id)
+}
+
+/// Previsualiza, por host, los comandos (`send`) que se ejecutarían con la
+/// sustitución de params/`${}` aplicada, REDACTANDO los marcadores de secreto
+/// (`${secret:}`/`${master:}` → `••••`). No envía nada.
+#[tauri::command]
+pub fn scripts_preview(
+    state: State<'_, ScriptManager>,
+    profiles_state: State<'_, ProfileManager>,
+    cred_state: State<'_, CredentialStore>,
+    script_id: String,
+    profile_ids: Vec<String>,
+    params: std::collections::HashMap<String, String>,
+) -> Result<Vec<HostPreview>, String> {
+    let script = state
+        .get(&script_id)?
+        .ok_or_else(|| format!("Script {script_id} no encontrado"))?;
+    let profiles = profiles_state.load_all().map_err(|e| e.to_string())?;
+    let catalog = cred_state.load_all().map_err(|e| e.to_string())?;
+
+    let mut previews = Vec::new();
+    for pid in &profile_ids {
+        let Some(mut profile) = profiles.iter().find(|p| &p.id == pid).cloned() else {
+            continue;
+        };
+        credentials::substitute_connection_fields(&mut profile, &cred_state);
+        let commands = crate::scripts::runner::preview_commands(
+            &profile,
+            &script.steps,
+            catalog.clone(),
+            params.clone(),
+        );
+        previews.push(HostPreview {
+            profile_id: pid.clone(),
+            host: profile.host.clone(),
+            name: profile.name.clone(),
+            commands,
+        });
+    }
+    Ok(previews)
+}
+
+/// Lanza el fan-out de un script sobre los `profile_ids` (ya resueltos por el
+/// frontend). Spawnea las tareas y devuelve enseguida: el progreso llega por los
+/// eventos `script-*-{run_id}`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn scripts_run(
+    app: AppHandle,
+    state: State<'_, ScriptManager>,
+    profiles_state: State<'_, ProfileManager>,
+    cred_state: State<'_, CredentialStore>,
+    script_id: String,
+    run_id: String,
+    profile_ids: Vec<String>,
+    options: RunOptions,
+) -> Result<(), String> {
+    let script = state
+        .get(&script_id)?
+        .ok_or_else(|| format!("Script {script_id} no encontrado"))?;
+    let profiles = profiles_state.load_all().map_err(|e| e.to_string())?;
+    let catalog = cred_state.load_all().map_err(|e| e.to_string())?;
+
+    // Credenciales alternativas del run (si las hay): se resuelven una sola
+    // vez y se aplican a todos los hosts del fan-out.
+    let run_creds = options
+        .credentials
+        .as_ref()
+        .map(|c| resolve_run_credentials(c, &cred_state))
+        .transpose()?;
+
+    let mut hosts = Vec::new();
+    for pid in &profile_ids {
+        let mut profile = profiles
+            .iter()
+            .find(|p| &p.id == pid)
+            .cloned()
+            .ok_or_else(|| format!("Perfil {pid} no encontrado"))?;
+        credentials::substitute_connection_fields(&mut profile, &cred_state);
+        let (password, passphrase) = match &run_creds {
+            Some((user, pw)) => {
+                if let Some(u) = user {
+                    profile.username = u.clone();
+                }
+                // Credenciales explícitas ⇒ autenticación por contraseña.
+                profile.auth_type = crate::profiles::AuthType::Password;
+                (Some(pw.clone()), None)
+            }
+            None => resolve_connection_credentials(&profile, &cred_state, &options.params)?,
+        };
+        hosts.push(crate::scripts::runner::ResolvedHost {
+            profile,
+            password,
+            passphrase,
+        });
+    }
+    if hosts.is_empty() {
+        return Err("No hay hosts objetivo para el script".into());
+    }
+
+    let handle = state.register_run(&run_id, &profile_ids);
+    let registry = state.runs();
+    crate::scripts::runner::spawn_run(
+        app,
+        run_id,
+        hosts,
+        script.steps,
+        options,
+        catalog,
+        handle,
+        registry,
+    );
+    Ok(())
+}
+
+/// Aborta un run completo (`profile_id == None`) o un host concreto.
+#[tauri::command]
+pub fn scripts_abort(
+    state: State<'_, ScriptManager>,
+    run_id: String,
+    profile_id: Option<String>,
+) -> Result<(), String> {
+    state.abort(&run_id, profile_id.as_deref());
+    Ok(())
+}
+
+/// Resuelve las credenciales de CONEXIÓN de un perfil para el motor de scripts:
+/// contraseña (keyring/KeePass/maestra, con sustitución de `${}`) y passphrase de
+/// clave privada (keyring). No expone nada; se pasa directamente al runner.
+fn resolve_connection_credentials(
+    profile: &ConnectionProfile,
+    store: &CredentialStore,
+    params: &std::collections::HashMap<String, String>,
+) -> Result<(Option<String>, Option<String>), String> {
+    let has_keepass = profile
+        .keepass_entry_uuid
+        .as_deref()
+        .is_some_and(|s| !s.is_empty());
+    // Contraseña propia guardada en el keyring (solo origen Own sin KeePass);
+    // los orígenes Master/KeePass los resuelve `resolve_profile_password`.
+    let stored_pw = if matches!(profile.password_source, PasswordSource::Own) && !has_keepass {
+        keyring::Entry::new("rustty", &format!("password:{}", profile.id))
+            .ok()
+            .and_then(|e| e.get_password().ok())
+    } else {
+        None
+    };
+    let password = resolve_profile_password(profile, store, stored_pw, Some(params.clone()))?;
+
+    let passphrase = if profile.auth_type == AuthType::PublicKey {
+        keyring::Entry::new("rustty", &format!("passphrase:{}", profile.id))
+            .ok()
+            .and_then(|e| e.get_password().ok())
+    } else {
+        None
+    };
+    Ok((password, passphrase))
+}
+
+/// Resuelve las credenciales alternativas de un run de scripts a
+/// `(usuario, contraseña)`. Un usuario `None` conserva el de cada perfil.
+fn resolve_run_credentials(
+    over: &crate::scripts::RunCredentials,
+    store: &CredentialStore,
+) -> Result<(Option<String>, String), String> {
+    use crate::scripts::RunCredentials;
+    let clean = |u: &Option<String>| u.clone().filter(|s| !s.trim().is_empty());
+    match over {
+        RunCredentials::Master { id, username } => {
+            let catalog = store.load_all().map_err(|e| e.to_string())?;
+            let Some(cred) = catalog
+                .iter()
+                .find(|c| c.id == *id && c.kind == CredentialKind::Master)
+            else {
+                return Err("Credencial maestra no encontrada".to_string());
+            };
+            let value = credentials::resolve_master(&catalog, &cred.name)
+                .ok_or_else(|| "Credencial maestra sin valor en el keyring".to_string())?;
+            Ok((clean(username), value))
+        }
+        RunCredentials::Keepass { uuid, username } => {
+            if !keepass_manager::status().unlocked {
+                return Err("KeePass está bloqueada; desbloquéala en Preferencias".to_string());
+            }
+            let password =
+                keepass_manager::get_property(uuid, keepass_manager::EntryProperty::Password)
+                    .map_err(|e| e.to_string())?
+                    .filter(|p| !p.is_empty())
+                    .ok_or_else(|| format!("Entrada KeePass {uuid} sin contraseña"))?;
+            // Sin usuario explícito se usa el de la propia entrada KeePass.
+            let user = match clean(username) {
+                Some(u) => Some(u),
+                None => {
+                    keepass_manager::get_property(uuid, keepass_manager::EntryProperty::Username)
+                        .map_err(|e| e.to_string())?
+                        .filter(|u| !u.is_empty())
+                }
+            };
+            Ok((user, password))
+        }
+        RunCredentials::Manual { username, password } => {
+            if password.is_empty() {
+                return Err("La contraseña del run no puede estar vacía".to_string());
+            }
+            Ok((clean(username), password.clone()))
+        }
+    }
+}
+
 // ─── Autostart ────────────────────────────────────────────────────────────────
 
 /// Activa o desactiva el arranque automático con el sistema.
@@ -2138,7 +2401,8 @@ fn autostart_handle(minimized: bool) -> Result<auto_launch::AutoLaunch, String> 
         // macOS: usar Launch Agent (plist en ~/Library/LaunchAgents/)
         builder.set_use_launch_agent(true);
         // Si el exe está dentro de un .app, registrar el bundle
-        let path_str = exe.canonicalize()
+        let path_str = exe
+            .canonicalize()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| exe.display().to_string());
         let parts: Vec<&str> = path_str.split(".app/").collect();
@@ -2170,7 +2434,9 @@ pub fn autostart_apply(enable: bool, minimized: bool) -> Result<(), String> {
 #[tauri::command]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn autostart_is_enabled() -> Result<bool, String> {
-    autostart_handle(false)?.is_enabled().map_err(|e| e.to_string())
+    autostart_handle(false)?
+        .is_enabled()
+        .map_err(|e| e.to_string())
 }
 
 /// Versión no-op para plataformas móviles (Android/iOS): el autostart no aplica.

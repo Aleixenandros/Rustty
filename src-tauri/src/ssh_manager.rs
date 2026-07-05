@@ -63,6 +63,16 @@ const SSH_DATA_FLUSH_THRESHOLD: usize = 32 * 1024;
 /// ráfaga continua el temporizador se reinicia y domina el corte por tamaño.
 const SSH_DATA_FLUSH_QUIET: Duration = Duration::from_millis(4);
 
+/// Tiempo máximo para que un cliente SOCKS complete el handshake. El handshake
+/// corre en su propia tarea, pero sin techo un cliente que conecta y calla
+/// (preconexión de navegador, escáner de puertos) acumularía tareas y sockets
+/// abiertos indefinidamente.
+const SOCKS5_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Tiempo máximo de espera del open de canal direct-tcpip. Se espera dentro del
+/// bucle de sesión (el `Handle` russh no es clonable), así que debe estar
+/// acotado para que un servidor que no responde al open no congele el terminal.
+const TUNNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Abre un `TcpStream` al destino con SO_KEEPALIVE activo y timeout. La
 /// detección de microcortes a nivel SO (TCP_KEEPIDLE/INTVL) complementa al
 /// keepalive de SSH cuando el peer no responde a paquetes de aplicación.
@@ -208,6 +218,16 @@ pub enum SessionCommand {
     TunnelAccepted {
         tunnel_id: String,
         stream: TcpStream,
+        peer_host: String,
+        peer_port: u32,
+    },
+    /// Conexión SOCKS con el handshake ya resuelto en su propia tarea (fuera
+    /// del bucle de sesión). Uso interno; nunca llega del frontend.
+    TunnelHandshaken {
+        tunnel_id: String,
+        stream: TcpStream,
+        target_host: String,
+        target_port: u16,
         peer_host: String,
         peer_port: u32,
     },
@@ -666,7 +686,9 @@ async fn run_connection_test(
         .await?
         {
             AuthResult::Success => {}
-            AuthResult::Failure { remaining_methods, .. } => {
+            AuthResult::Failure {
+                remaining_methods, ..
+            } => {
                 return Err(AppError::Auth(format!(
                     "Autenticación contra bastion fallida. Métodos restantes: {:?}",
                     remaining_methods
@@ -783,7 +805,9 @@ async fn run_connection_test(
     .await?
     {
         AuthResult::Success => {}
-        AuthResult::Failure { remaining_methods, .. } => {
+        AuthResult::Failure {
+            remaining_methods, ..
+        } => {
             return Err(AppError::Auth(format!(
                 "Autenticación fallida. Métodos restantes: {:?}",
                 remaining_methods
@@ -985,7 +1009,9 @@ async fn run_session(
         .await
         {
             Ok(AuthResult::Success) => {}
-            Ok(AuthResult::Failure { remaining_methods, .. }) => {
+            Ok(AuthResult::Failure {
+                remaining_methods, ..
+            }) => {
                 return SessionExit::Fatal(AppError::Auth(format!(
                     "Autenticación contra bastion fallida. Métodos restantes: {:?}",
                     remaining_methods
@@ -1190,7 +1216,9 @@ async fn run_session(
                 "Autenticación completada",
             );
         }
-        AuthResult::Failure { remaining_methods, .. } => {
+        AuthResult::Failure {
+            remaining_methods, ..
+        } => {
             return SessionExit::Fatal(AppError::Auth(format!(
                 "Autenticación fallida. Métodos restantes: {:?}",
                 remaining_methods
@@ -1250,7 +1278,10 @@ async fn run_session(
         "ok",
         format!("Conectado a {}", profile.name),
     );
-    let _ = app_handle.emit(&event_name(EventKind::SshConnected, &session_id), &profile.name);
+    let _ = app_handle.emit(
+        &event_name(EventKind::SshConnected, &session_id),
+        &profile.name,
+    );
 
     // 4. Bucle de E/S: multiplexa datos del servidor y comandos del frontend
     let mut exit_kind = SessionExit::ServerClosed;
@@ -1334,41 +1365,78 @@ async fn run_session(
                     Some(SessionCommand::TunnelAccepted { tunnel_id, stream, peer_host, peer_port }) => {
                         if let Some(tunnel) = tunnels.get(&tunnel_id) {
                             let info = tunnel.info.clone();
-                            if matches!(info.tunnel_type, SshTunnelType::Local | SshTunnelType::Dynamic) {
-                                let target = if info.tunnel_type == SshTunnelType::Dynamic {
-                                    match read_socks5_target(stream).await {
-                                        Ok((stream, host, port)) => Some((stream, host, port)),
-                                        Err(_) => None,
-                                    }
-                                } else {
-                                    info.remote_host
-                                        .clone()
-                                        .zip(info.remote_port)
-                                        .map(|(host, port)| (stream, host, port))
-                                };
-                                if let Some((stream, host, port)) = target {
-                                    match handle
-                                        .channel_open_direct_tcpip(host, port as u32, peer_host, peer_port)
-                                        .await
+                            if info.tunnel_type == SshTunnelType::Dynamic {
+                                // El handshake SOCKS se resuelve en su propia
+                                // tarea: un cliente que conecta y no envía el
+                                // greeting (preconexión de navegador, escáner)
+                                // no debe congelar la E/S de la sesión. El
+                                // resultado vuelve como `TunnelHandshaken`.
+                                let task_tx = cmd_tx.clone();
+                                tokio::spawn(async move {
+                                    match tokio::time::timeout(
+                                        SOCKS5_HANDSHAKE_TIMEOUT,
+                                        read_socks5_target(stream),
+                                    )
+                                    .await
                                     {
-                                        Ok(channel) => {
-                                            tokio::spawn(pump_tunnel(
-                                                channel,
+                                        Ok(Ok((stream, host, port))) => {
+                                            let _ = task_tx.send(SessionCommand::TunnelHandshaken {
+                                                tunnel_id,
                                                 stream,
-                                                session_id.clone(),
-                                                tunnel_id.clone(),
-                                                app_handle.clone(),
-                                            ));
+                                                target_host: host,
+                                                target_port: port,
+                                                peer_host,
+                                                peer_port,
+                                            });
                                         }
-                                        Err(err) => {
-                                            let _ = app_handle.emit(
-                                                &event_name(EventKind::SshError, &session_id),
-                                                format!("No se pudo abrir canal de túnel: {err}"),
-                                            );
-                                        }
+                                        // Handshake inválido o timeout: se
+                                        // descarta la conexión, como antes.
+                                        _ => {}
                                     }
+                                });
+                            } else if info.tunnel_type == SshTunnelType::Local {
+                                if let Some((host, port)) =
+                                    info.remote_host.clone().zip(info.remote_port)
+                                {
+                                    open_tunnel_channel(
+                                        &mut handle,
+                                        &session_id,
+                                        &tunnel_id,
+                                        stream,
+                                        host,
+                                        port,
+                                        peer_host,
+                                        peer_port,
+                                        &app_handle,
+                                    )
+                                    .await;
                                 }
                             }
+                        }
+                    }
+                    Some(SessionCommand::TunnelHandshaken {
+                        tunnel_id,
+                        stream,
+                        target_host,
+                        target_port,
+                        peer_host,
+                        peer_port,
+                    }) => {
+                        // El túnel puede haberse cerrado mientras se negociaba
+                        // el handshake; en ese caso se descarta la conexión.
+                        if tunnels.contains_key(&tunnel_id) {
+                            open_tunnel_channel(
+                                &mut handle,
+                                &session_id,
+                                &tunnel_id,
+                                stream,
+                                target_host,
+                                target_port,
+                                peer_host,
+                                peer_port,
+                                &app_handle,
+                            )
+                            .await;
                         }
                     }
                     Some(SessionCommand::Disconnect) | None => {
@@ -1579,6 +1647,51 @@ async fn stop_tunnel_runtime(
     Ok(())
 }
 
+/// Abre el canal direct-tcpip de una conexión de túnel ya resuelta y arranca el
+/// bombeo de bytes. La espera del open corre dentro del bucle de sesión (el
+/// `Handle` russh no es clonable), por eso se acota con `TUNNEL_OPEN_TIMEOUT`.
+#[allow(clippy::too_many_arguments)]
+async fn open_tunnel_channel(
+    handle: &mut client::Handle<host_keys::KnownHostsClient>,
+    session_id: &str,
+    tunnel_id: &str,
+    stream: TcpStream,
+    target_host: String,
+    target_port: u16,
+    peer_host: String,
+    peer_port: u32,
+    app_handle: &AppHandle,
+) {
+    match tokio::time::timeout(
+        TUNNEL_OPEN_TIMEOUT,
+        handle.channel_open_direct_tcpip(target_host, target_port as u32, peer_host, peer_port),
+    )
+    .await
+    {
+        Ok(Ok(channel)) => {
+            tokio::spawn(pump_tunnel(
+                channel,
+                stream,
+                session_id.to_string(),
+                tunnel_id.to_string(),
+                app_handle.clone(),
+            ));
+        }
+        Ok(Err(err)) => {
+            let _ = app_handle.emit(
+                &event_name(EventKind::SshError, session_id),
+                format!("No se pudo abrir canal de túnel: {err}"),
+            );
+        }
+        Err(_) => {
+            let _ = app_handle.emit(
+                &event_name(EventKind::SshError, session_id),
+                "Timeout abriendo el canal de túnel".to_string(),
+            );
+        }
+    }
+}
+
 async fn read_socks5_target(mut stream: TcpStream) -> std::io::Result<(TcpStream, String, u16)> {
     let mut head = [0u8; 2];
     stream.read_exact(&mut head).await?;
@@ -1776,16 +1889,56 @@ struct LegacyEntry {
 /// El default de russh ya no incluye hmac-sha1, por eso debe ofrecerse aquí.
 fn legacy_catalog() -> Vec<LegacyEntry> {
     vec![
-        LegacyEntry { id: "aes256-cbc", category: "cipher", kind: LegacyKind::Cipher(cipher::AES_256_CBC) },
-        LegacyEntry { id: "aes192-cbc", category: "cipher", kind: LegacyKind::Cipher(cipher::AES_192_CBC) },
-        LegacyEntry { id: "aes128-cbc", category: "cipher", kind: LegacyKind::Cipher(cipher::AES_128_CBC) },
-        LegacyEntry { id: "3des-cbc", category: "cipher", kind: LegacyKind::Cipher(cipher::TRIPLE_DES_CBC) },
-        LegacyEntry { id: "diffie-hellman-group-exchange-sha1", category: "kex", kind: LegacyKind::Kex(kex::DH_GEX_SHA1) },
-        LegacyEntry { id: "diffie-hellman-group14-sha1", category: "kex", kind: LegacyKind::Kex(kex::DH_G14_SHA1) },
-        LegacyEntry { id: "diffie-hellman-group1-sha1", category: "kex", kind: LegacyKind::Kex(kex::DH_G1_SHA1) },
-        LegacyEntry { id: "hmac-sha1", category: "mac", kind: LegacyKind::Mac(mac::HMAC_SHA1) },
-        LegacyEntry { id: "hmac-sha1-etm@openssh.com", category: "mac", kind: LegacyKind::Mac(mac::HMAC_SHA1_ETM) },
-        LegacyEntry { id: "ssh-rsa", category: "hostkey", kind: LegacyKind::HostKey(Algorithm::Rsa { hash: None }) },
+        LegacyEntry {
+            id: "aes256-cbc",
+            category: "cipher",
+            kind: LegacyKind::Cipher(cipher::AES_256_CBC),
+        },
+        LegacyEntry {
+            id: "aes192-cbc",
+            category: "cipher",
+            kind: LegacyKind::Cipher(cipher::AES_192_CBC),
+        },
+        LegacyEntry {
+            id: "aes128-cbc",
+            category: "cipher",
+            kind: LegacyKind::Cipher(cipher::AES_128_CBC),
+        },
+        LegacyEntry {
+            id: "3des-cbc",
+            category: "cipher",
+            kind: LegacyKind::Cipher(cipher::TRIPLE_DES_CBC),
+        },
+        LegacyEntry {
+            id: "diffie-hellman-group-exchange-sha1",
+            category: "kex",
+            kind: LegacyKind::Kex(kex::DH_GEX_SHA1),
+        },
+        LegacyEntry {
+            id: "diffie-hellman-group14-sha1",
+            category: "kex",
+            kind: LegacyKind::Kex(kex::DH_G14_SHA1),
+        },
+        LegacyEntry {
+            id: "diffie-hellman-group1-sha1",
+            category: "kex",
+            kind: LegacyKind::Kex(kex::DH_G1_SHA1),
+        },
+        LegacyEntry {
+            id: "hmac-sha1",
+            category: "mac",
+            kind: LegacyKind::Mac(mac::HMAC_SHA1),
+        },
+        LegacyEntry {
+            id: "hmac-sha1-etm@openssh.com",
+            category: "mac",
+            kind: LegacyKind::Mac(mac::HMAC_SHA1_ETM),
+        },
+        LegacyEntry {
+            id: "ssh-rsa",
+            category: "hostkey",
+            kind: LegacyKind::HostKey(Algorithm::Rsa { hash: None }),
+        },
     ]
 }
 
@@ -1895,7 +2048,9 @@ pub(crate) fn parse_jump_spec(spec: &str, default_user: &str) -> (String, String
     // IPv6 entre corchetes: `[::1]` o `[::1]:2222`.
     if let Some(inner) = rest.strip_prefix('[') {
         if let Some((host, after)) = inner.split_once(']') {
-            let port = after.strip_prefix(':').map_or(22, |p| p.parse().unwrap_or(22));
+            let port = after
+                .strip_prefix(':')
+                .map_or(22, |p| p.parse().unwrap_or(22));
             return (user, host.to_string(), port);
         }
         // Corchete sin cerrar: lo tratamos como host literal.
@@ -1966,6 +2121,71 @@ fn generate_x11_cookie() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Parser de entrada de red NO confiable: CONNECT válido con destino por
+    /// nombre de dominio. El cliente recibe el `[5,0]` del método y el reply
+    /// de éxito antes de que el server devuelva el objetivo parseado.
+    #[tokio::test]
+    async fn read_socks5_target_parsea_connect_valido() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = tokio::spawn(async move {
+            let mut c = TcpStream::connect(addr).await.unwrap();
+            // Greeting: VER=5, NMETHODS=1, métodos=[no-auth]
+            c.write_all(&[5, 1, 0]).await.unwrap();
+            let mut resp = [0u8; 2];
+            c.read_exact(&mut resp).await.unwrap();
+            assert_eq!(resp, [5, 0]);
+            // Request: VER=5, CMD=CONNECT, RSV, ATYP=dominio, len, host, puerto
+            let mut req = vec![5u8, 1, 0, 3, 11];
+            req.extend_from_slice(b"example.com");
+            req.extend_from_slice(&443u16.to_be_bytes());
+            c.write_all(&req).await.unwrap();
+            let mut ok = [0u8; 10];
+            c.read_exact(&mut ok).await.unwrap();
+            assert_eq!(&ok[..2], &[5, 0]);
+        });
+        let (stream, _) = listener.accept().await.unwrap();
+        let (_stream, host, port) = read_socks5_target(stream).await.unwrap();
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 443);
+        client.await.unwrap();
+    }
+
+    /// Versión distinta de SOCKS5 y comandos que no son CONNECT deben
+    /// rechazarse (el segundo con reply 0x07 «command not supported»).
+    #[tokio::test]
+    async fn read_socks5_target_rechaza_version_y_comando_invalidos() {
+        // Versión 4: error inmediato, sin respuesta.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = tokio::spawn(async move {
+            let mut c = TcpStream::connect(addr).await.unwrap();
+            c.write_all(&[4, 1, 0]).await.unwrap();
+        });
+        let (stream, _) = listener.accept().await.unwrap();
+        assert!(read_socks5_target(stream).await.is_err());
+        client.await.unwrap();
+
+        // Comando BIND (2): reply 0x07 y error.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = tokio::spawn(async move {
+            let mut c = TcpStream::connect(addr).await.unwrap();
+            c.write_all(&[5, 1, 0]).await.unwrap();
+            let mut resp = [0u8; 2];
+            c.read_exact(&mut resp).await.unwrap();
+            c.write_all(&[5, 2, 0, 1, 127, 0, 0, 1, 0, 80])
+                .await
+                .unwrap();
+            let mut reply = [0u8; 10];
+            c.read_exact(&mut reply).await.unwrap();
+            assert_eq!(reply[1], 0x07);
+        });
+        let (stream, _) = listener.accept().await.unwrap();
+        assert!(read_socks5_target(stream).await.is_err());
+        client.await.unwrap();
+    }
 
     #[test]
     fn parse_jump_spec_basico_y_puerto() {
@@ -2062,6 +2282,19 @@ mod tests {
 
     #[test]
     fn legacy_catalog_info_matches_catalog() {
-        assert_eq!(legacy_catalog_info().len(), legacy_catalog().len());
+        let info = legacy_catalog_info();
+        let catalog = legacy_catalog();
+        assert_eq!(info.len(), catalog.len());
+        // El contenido (id, categoría) debe corresponderse uno a uno con el
+        // catálogo real: es lo que la UI muestra como negociable.
+        for (pair, entry) in info.iter().zip(catalog.iter()) {
+            assert_eq!(pair.0, entry.id);
+            assert_eq!(pair.1, entry.category);
+        }
+        // Ids únicos: un duplicado rompería el filtrado por nombre wire.
+        let mut ids: Vec<_> = info.iter().map(|(id, _)| id.clone()).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), info.len());
     }
 }

@@ -135,8 +135,13 @@ impl VncManager {
         app_handle: AppHandle,
     ) -> Result<(), String> {
         let spawned = spawn_vnc_client(host, port)?;
-        self.0
-            .launch(session_id, profile_id, EventKind::VncClosed, spawned, app_handle)
+        self.0.launch(
+            session_id,
+            profile_id,
+            EventKind::VncClosed,
+            spawned,
+            app_handle,
+        )
     }
 
     pub fn disconnect(&self, session_id: &str) -> Result<(), String> {
@@ -168,8 +173,13 @@ impl TelnetManager {
         app_handle: AppHandle,
     ) -> Result<(), String> {
         let spawned = spawn_telnet_client(host, port)?;
-        self.0
-            .launch(session_id, profile_id, EventKind::TelnetClosed, spawned, app_handle)
+        self.0.launch(
+            session_id,
+            profile_id,
+            EventKind::TelnetClosed,
+            spawned,
+            app_handle,
+        )
     }
 
     pub fn disconnect(&self, session_id: &str) -> Result<(), String> {

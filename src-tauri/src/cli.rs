@@ -515,9 +515,7 @@ async fn run_ssh_session(profile: ConnectionProfile, secrets: CliSecrets) -> Res
         .keep_alive_secs
         .filter(|secs| *secs > 0)
         .map(|secs| Duration::from_secs(secs as u64))
-        .unwrap_or_else(|| {
-            Duration::from_secs(crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_SECS)
-        });
+        .unwrap_or_else(|| Duration::from_secs(crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_SECS));
     let preferred = if profile.allow_legacy_algorithms {
         legacy_preferred(profile.legacy_algorithms.as_deref())
     } else {
@@ -608,9 +606,7 @@ async fn run_remote_command(
         .keep_alive_secs
         .filter(|secs| *secs > 0)
         .map(|secs| Duration::from_secs(secs as u64))
-        .unwrap_or_else(|| {
-            Duration::from_secs(crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_SECS)
-        });
+        .unwrap_or_else(|| Duration::from_secs(crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_SECS));
     let preferred = if profile.allow_legacy_algorithms {
         legacy_preferred(profile.legacy_algorithms.as_deref())
     } else {
@@ -851,7 +847,9 @@ async fn connect_handle(
         .map_err(|e| format!("Bastion: {e}"))?
         {
             AuthResult::Success => {}
-            AuthResult::Failure { remaining_methods, .. } => {
+            AuthResult::Failure {
+                remaining_methods, ..
+            } => {
                 return Err(format!(
                     "Autenticacion contra bastion fallida. Metodos restantes: {:?}",
                     remaining_methods
@@ -917,7 +915,9 @@ async fn authenticate_target(
     .map_err(|e| e.to_string())?
     {
         AuthResult::Success => Ok(()),
-        AuthResult::Failure { remaining_methods, .. } => Err(format!(
+        AuthResult::Failure {
+            remaining_methods, ..
+        } => Err(format!(
             "Autenticacion fallida. Metodos restantes: {:?}",
             remaining_methods
         )),

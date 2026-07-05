@@ -5485,7 +5485,7 @@ dependencies = [
 
 [[package]]
 name = "rustty"
-version = "1.43.0"
+version = "1.44.0"
 dependencies = [
  "age",
  "async-trait",
@@ -5503,6 +5503,7 @@ dependencies = [
  "log",
  "md-5",
  "portable-pty",
+ "regex",
  "reqwest",
  "rpassword",
  "russh",

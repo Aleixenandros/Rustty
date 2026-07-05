@@ -6,6 +6,8 @@ describe("eventName", () => {
     expect(eventName("sshConnected", "abc")).toBe("ssh-connected-abc");
     expect(eventName("sftpProgress", "t-1")).toBe("sftp-progress-t-1");
     expect(eventName("sshTunnelTraffic", "s9")).toBe("ssh-tunnel-traffic-s9");
+    expect(eventName("scriptProgress", "run-7")).toBe("script-progress-run-7");
+    expect(eventName("scriptDone", "run-7")).toBe("script-done-run-7");
   });
 
   it("lanza ante una familia desconocida", () => {
@@ -36,6 +38,11 @@ describe("contrato de prefijos", () => {
         "sshLog",
         "sshReconnecting",
         "sshTunnelTraffic",
+        "scriptProgress",
+        "scriptOutput",
+        "scriptHostDone",
+        "scriptHostError",
+        "scriptDone",
       ].sort()
     );
   });

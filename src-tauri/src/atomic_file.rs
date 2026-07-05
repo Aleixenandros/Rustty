@@ -28,9 +28,7 @@ pub fn write(path: &Path, data: &[u8], private: bool) -> io::Result<()> {
     };
     let stem = path
         .file_name()
-        .ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "ruta sin nombre de fichero")
-        })?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "ruta sin nombre de fichero"))?
         .to_string_lossy()
         .into_owned();
     let tmp = dir.join(format!(".{}.rustty-{}.tmp", stem, uuid::Uuid::new_v4()));
@@ -83,7 +81,8 @@ mod tests {
     use super::*;
 
     fn unique_test_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("rustty-atomic-{tag}-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("rustty-atomic-{tag}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("crea dir temporal de test");
         dir
     }

@@ -19,6 +19,18 @@ describe("renderMarkdownMinimal", () => {
   it("tolera entradas no-string", () => {
     expect(renderMarkdownMinimal(null)).toBe("");
   });
+
+  it("no doble-escapa `&` en los href con query string", () => {
+    expect(renderMarkdownMinimal("[a](https://x.es/p?a=1&b=2)")).toBe(
+      '<p><a href="https://x.es/p?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">a</a></p>'
+    );
+  });
+
+  it("el texto literal ' CODE0 ' no colisiona con el placeholder de código", () => {
+    expect(renderMarkdownMinimal("hay `x` y CODE0 literal")).toBe(
+      "<p>hay <code>x</code> y CODE0 literal</p>"
+    );
+  });
 });
 
 describe("toggleTaskInBody", () => {
@@ -34,5 +46,18 @@ describe("toggleTaskInBody", () => {
 
   it("ignora índices fuera de rango y conserva el resto", () => {
     expect(toggleTaskInBody("- [ ] uno", 5, true)).toBe("- [ ] uno");
+  });
+
+  it("salta las tareas dentro de bloques cercados, como el render", () => {
+    const body = "- [ ] real\n```\n- [ ] en código\n```\n- [ ] otra";
+    // El índice 1 es «otra»: la casilla dentro del fence no se pinta ni cuenta.
+    expect(toggleTaskInBody(body, 1, true)).toBe(
+      "- [ ] real\n```\n- [ ] en código\n```\n- [x] otra"
+    );
+  });
+
+  it("no cuenta tareas indentadas que el render no pinta como casilla", () => {
+    const body = "  - [ ] indentada\n- [ ] real";
+    expect(toggleTaskInBody(body, 0, true)).toBe("  - [ ] indentada\n- [x] real");
   });
 });

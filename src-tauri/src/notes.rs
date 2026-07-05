@@ -469,10 +469,22 @@ mod tests {
     #[test]
     fn search_encuentra_por_cuerpo_y_tags() {
         let (mgr, dir) = temp_mgr();
-        mgr.set("n1", "reiniciar el servicio api".into(), "Runbook API".into(), "api".into(), vec!["prod".into()])
-            .unwrap();
-        mgr.set("n2", "notas varias".into(), "Otra".into(), "otra".into(), vec!["dev".into()])
-            .unwrap();
+        mgr.set(
+            "n1",
+            "reiniciar el servicio api".into(),
+            "Runbook API".into(),
+            "api".into(),
+            vec!["prod".into()],
+        )
+        .unwrap();
+        mgr.set(
+            "n2",
+            "notas varias".into(),
+            "Otra".into(),
+            "otra".into(),
+            vec!["dev".into()],
+        )
+        .unwrap();
         let hits = mgr.search("api").unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].profile_id, "n1");

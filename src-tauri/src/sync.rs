@@ -285,10 +285,16 @@ impl SyncState {
     pub fn content_eq(&self, other: &SyncState) -> bool {
         self.version == other.version
             && self.tombstones.len() == other.tombstones.len()
-            && self.tombstones.keys().all(|k| other.tombstones.contains_key(k))
+            && self
+                .tombstones
+                .keys()
+                .all(|k| other.tombstones.contains_key(k))
             && self.items.len() == other.items.len()
             && self.items.iter().all(|(key, item)| {
-                other.items.get(key).is_some_and(|other_item| item.data == other_item.data)
+                other
+                    .items
+                    .get(key)
+                    .is_some_and(|other_item| item.data == other_item.data)
             })
     }
 
@@ -330,6 +336,56 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// El callback OAuth debe sobrevivir a conexiones que no son el callback:
+    /// preconexión especulativa del navegador (conecta y calla), favicon y un
+    /// callback con `state` ajeno. Con un único `accept()` cualquiera de ellas
+    /// consumía la conexión y el flujo fallaba de forma intermitente.
+    #[tokio::test]
+    async fn oauth_callback_sobrevive_preconexiones_y_state_ajeno() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let pending = OAuthPending {
+            provider: OAuthProvider::GoogleDrive,
+            verifier: "v".into(),
+            state: "estado-bueno".into(),
+            redirect_uri: format!("http://{addr}{OAUTH_CALLBACK_PATH}"),
+            listener,
+        };
+        let reader = tokio::spawn(read_oauth_code(pending));
+
+        // 1. Preconexión especulativa: conecta y cierra sin enviar nada.
+        drop(tokio::net::TcpStream::connect(addr).await.unwrap());
+
+        let mut buf = [0u8; 512];
+
+        // 2. Petición a otra ruta (favicon): 404 y se sigue esperando.
+        let mut fav = tokio::net::TcpStream::connect(addr).await.unwrap();
+        fav.write_all(b"GET /favicon.ico HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
+        let n = fav.read(&mut buf).await.unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 404"));
+
+        // 3. Callback con state ajeno: 400 y se sigue esperando.
+        let mut bad = tokio::net::TcpStream::connect(addr).await.unwrap();
+        bad.write_all(b"GET /oauth/callback?state=otro&code=nope HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
+        let n = bad.read(&mut buf).await.unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 400"));
+
+        // 4. Callback legítimo: 200 y devuelve el code.
+        let mut ok = tokio::net::TcpStream::connect(addr).await.unwrap();
+        ok.write_all(b"GET /oauth/callback?state=estado-bueno&code=el-code HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
+        let n = ok.read(&mut buf).await.unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"));
+
+        let code = reader.await.unwrap().unwrap();
+        assert_eq!(code, "el-code");
+    }
+
     fn sync_item(data: serde_json::Value, device_id: &str) -> SyncItem {
         SyncItem {
             data,
@@ -338,6 +394,26 @@ mod tests {
                 .with_timezone(&Utc),
             device_id: device_id.to_string(),
         }
+    }
+
+    /// El backup portable cifrado (`age` + scrypt) debe hacer round-trip
+    /// exacto y rechazar una passphrase incorrecta. Una regresión aquí
+    /// corrompe backups en silencio.
+    #[test]
+    fn backup_cifrado_round_trip_y_passphrase_incorrecta() {
+        let mut st = SyncState::default();
+        st.items.insert(
+            "prefs:bundle".into(),
+            sync_item(json!({"theme": "dark"}), "dev-a"),
+        );
+
+        let bytes = pack_state("clave-123", &st).expect("cifra");
+        let back = unpack_state("clave-123", &bytes).expect("descifra");
+        assert!(st.content_eq(&back));
+
+        assert!(unpack_state("clave-mala", &bytes).is_err());
+        // Ciphertext truncado: error, nunca pánico.
+        assert!(unpack_state("clave-123", &bytes[..bytes.len() / 2]).is_err());
     }
 
     #[test]
@@ -365,8 +441,10 @@ mod tests {
         a.items
             .insert("prefs:bundle".into(), item_en(0, json!({"theme": "dark"})));
         let mut b = SyncState::default();
-        b.items
-            .insert("prefs:bundle".into(), item_en(999, json!({"theme": "dark"})));
+        b.items.insert(
+            "prefs:bundle".into(),
+            item_en(999, json!({"theme": "dark"})),
+        );
 
         assert!(a.content_eq(&b));
         assert_ne!(a, b); // la igualdad estricta sí distingue el timestamp
@@ -673,27 +751,68 @@ fn query_param(query: &str, name: &str) -> Option<String> {
     None
 }
 
+/// Espera el callback OAuth aceptando conexiones **en bucle** hasta recibir
+/// `/oauth/callback` con el `state` correcto o agotar el plazo. Un único
+/// `accept()` no basta: la preconexión especulativa del navegador (o la
+/// petición del favicon) consumía la conexión y el callback real nunca se
+/// atendía, con fallos intermitentes al conectar el backend.
 async fn read_oauth_code(pending: OAuthPending) -> Result<String, AppError> {
-    let accept = tokio::time::timeout(Duration::from_secs(180), pending.listener.accept())
-        .await
-        .map_err(|_| AppError::Sync("OAuth cancelado: tiempo de espera agotado".into()))?;
-    let (mut stream, _) = accept.map_err(|e| AppError::Sync(format!("oauth accept: {e}")))?;
-    let mut buf = vec![0u8; 8192];
-    let n = stream
-        .read(&mut buf)
-        .await
-        .map_err(|e| AppError::Sync(format!("oauth read: {e}")))?;
-    let req = String::from_utf8_lossy(&buf[..n]);
-    let first_line = req.lines().next().unwrap_or_default();
-    let target = first_line.split_whitespace().nth(1).unwrap_or_default();
-    let query = target
-        .strip_prefix(OAUTH_CALLBACK_PATH)
-        .and_then(|rest| rest.strip_prefix('?'))
-        .unwrap_or_default();
-    let state = query_param(query, "state").unwrap_or_default();
-    let code = query_param(query, "code");
-    let error = query_param(query, "error");
-    let ok = state == pending.state && code.is_some() && error.is_none();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+    loop {
+        let accept = tokio::time::timeout_at(deadline, pending.listener.accept())
+            .await
+            .map_err(|_| AppError::Sync("OAuth cancelado: tiempo de espera agotado".into()))?;
+        let (mut stream, _) = accept.map_err(|e| AppError::Sync(format!("oauth accept: {e}")))?;
+
+        // Lectura acotada por conexión: una preconexión que nunca envía datos
+        // no debe consumir el plazo global del callback.
+        let mut buf = vec![0u8; 8192];
+        let n = match tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            // Conexión muda o rota: se descarta y se sigue esperando.
+            Ok(Err(_)) | Err(_) => continue,
+        };
+        if n == 0 {
+            continue;
+        }
+        let req = String::from_utf8_lossy(&buf[..n]);
+        let first_line = req.lines().next().unwrap_or_default();
+        let target = first_line.split_whitespace().nth(1).unwrap_or_default();
+        let Some(rest) = target.strip_prefix(OAUTH_CALLBACK_PATH) else {
+            // Otra petición del navegador (favicon, sondas): responder y seguir.
+            let _ = stream
+                .write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await;
+            continue;
+        };
+        let query = rest.strip_prefix('?').unwrap_or_default();
+        let state = query_param(query, "state").unwrap_or_default();
+        let code = query_param(query, "code");
+        let error = query_param(query, "error");
+
+        if state != pending.state {
+            // `state` ajeno o reutilizado: no es nuestro flujo. Se responde con
+            // error y se sigue esperando el callback legítimo hasta el plazo.
+            respond_oauth(&mut stream, false).await;
+            continue;
+        }
+        respond_oauth(&mut stream, code.is_some() && error.is_none()).await;
+        if let Some(error) = error {
+            return Err(AppError::Sync(format!("OAuth error: {error}")));
+        }
+        match code {
+            Some(code) => return Ok(code),
+            // Callback con state correcto pero sin `code`: malformado; se
+            // sigue esperando por si llega el bueno dentro del plazo.
+            None => continue,
+        }
+    }
+}
+
+/// Respuesta mínima en texto plano al navegador que llamó al callback.
+async fn respond_oauth(stream: &mut tokio::net::TcpStream, ok: bool) {
     let body = if ok {
         "Rustty ya está conectado. Puedes cerrar esta pestaña."
     } else {
@@ -702,16 +821,9 @@ async fn read_oauth_code(pending: OAuthPending) -> Result<String, AppError> {
     let status = if ok { "200 OK" } else { "400 Bad Request" };
     let response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.as_bytes().len()
+        body.len()
     );
     let _ = stream.write_all(response.as_bytes()).await;
-    if state != pending.state {
-        return Err(AppError::Sync("OAuth state inválido".into()));
-    }
-    if let Some(error) = error {
-        return Err(AppError::Sync(format!("OAuth error: {error}")));
-    }
-    code.ok_or_else(|| AppError::Sync("OAuth sin code".into()))
 }
 
 #[derive(Deserialize)]

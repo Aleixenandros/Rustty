@@ -14,7 +14,7 @@ Rustty agrupa las copias en **Preferencias → Copias de seguridad**. Desde ahí
 - El catálogo de **credenciales maestras y variables** (metadatos: nombre y tipo). Las variables de texto incluyen su valor; las maestras no.
 - Contraseñas y passphrases guardadas y los **valores de las credenciales maestras**, solo si activas el check **Contraseñas guardadas (cifradas E2E)**.
 
-Las bases KeePass desbloqueadas, rutas locales como `keepassPath` o `keepassKeyfile` y los **comandos locales** de Preferencias → Comandos no se sincronizan. Los comandos locales pueden depender de rutas, programas o URLs propias de un equipo.
+Las bases KeePass desbloqueadas, rutas locales como `keepassPath` o `keepassKeyfile` y los **comandos locales** de Preferencias → Comandos no se sincronizan. Los comandos locales pueden depender de rutas, programas o URLs propias de un equipo. Los **scripts** tampoco se sincronizan: viven en `scripts.json` local y se mueven entre equipos exportándolos e importándolos como Markdown desde el propio panel de Scripts.
 
 ## Cifrado
 
@@ -50,7 +50,7 @@ La acción pide confirmación porque sustituye perfiles, preferencias, temas, no
 
 ### Google Drive
 
-Rustty abre el navegador para autorizar el acceso con Google. Usa el espacio privado `appDataFolder`, así que no necesita leer ni escribir tus ficheros visibles de Drive. El token de refresco se guarda en el keyring del sistema.
+Rustty abre el navegador para autorizar el acceso con Google. Usa el espacio privado `appDataFolder`, así que no necesita leer ni escribir tus ficheros visibles de Drive. El token de refresco se guarda en el keyring del sistema. Durante la autorización, Rustty espera la respuesta legítima de Google e ignora las conexiones de sondeo que abren algunos navegadores, así que el flujo no se corta a medias.
 
 La app no pide Client ID ni Client secret al usuario. Esas credenciales vienen integradas en las builds oficiales.
 

@@ -27,6 +27,18 @@ Los snippets se insertan en la terminal activa y pueden sincronizarse dentro del
 
 Los comandos locales se guardan solo en este equipo (`localStorage`) y **no se sincronizan**. Los de tipo shell se ejecutan con el shell del sistema (`sh -c` o `cmd /C`), así que la confirmación viene activada por defecto y el modal los trata como acciones sensibles. En snippets y comandos locales se resuelven variables internas, `${var:...}` y `${ask:...}`; los marcadores de secretos (`${master:...}` / `${secret:...}`) quedan literales para no exponer valores sensibles en el frontend.
 
+## Scripts
+
+Los scripts (recetas de pasos sobre conexiones SSH) siguen las mismas reglas que el resto de secretos de Rustty:
+
+- `scripts.json` **nunca guarda contraseñas**: los pasos «Enviar contraseña» almacenan solo la referencia al keyring o el UUID de la entrada KeePass, y las contraseñas se resuelven en el backend al ejecutar.
+- Las **credenciales alternativas de una tirada** (credencial maestra, entrada KeePass o usuario/contraseña manuales) no se guardan con el script; las manuales viven solo en memoria durante la ejecución.
+- La salida que se emite al panel pasa por **redacción de secretos**: cualquier valor enviado como secreto (incluida la contraseña de conexión) se sustituye por `••••`, también en los mensajes de error y en la previsualización por host.
+- Los scripts **no se sincronizan**; el export es un runbook Markdown sin ids ni secretos.
+- Cada host de una tirada abre su propia conexión SSH con la verificación de host key (TOFU) y las opciones del perfil de siempre.
+
+Un script ejecuta comandos reales en tus servidores: revisa la previsualización antes de lanzar y usa el modo canario con objetivos amplios. Ver la [guía de scripts](?page=Scripts).
+
 ## Credenciales maestras y variables
 
 En **Preferencias → Credenciales** puedes definir dos tipos reutilizables entre perfiles: **credenciales maestras** y **variables de texto**. Una credencial maestra (contraseña o token) se guarda una sola vez en el keyring del sistema y se referencia con `${master:nombre}`; el perfil guarda únicamente la referencia, nunca el valor, así que **rotar** la credencial actualiza a la vez todos los perfiles que la usan. Las variables (`${var:nombre}`) son texto plano y sirven para reutilizar valores comunes como un dominio o un usuario.
@@ -112,6 +124,7 @@ Por diseño quedan fuera de la sincronización:
 - Contenido de sesiones SSH/RDP/VNC/Telnet.
 - Snapshots de pantalla para restaurar sesiones (`session_snapshots/`).
 - Comandos locales de Preferencias → Comandos.
+- Scripts (`scripts.json`); se mueven entre equipos con el export/import Markdown.
 
 Los exports JSON locales sí pueden incluir una sección `secrets`, pero solo después de confirmación explícita. Ese JSON no va cifrado por sí mismo.
 

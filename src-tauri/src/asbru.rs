@@ -52,7 +52,14 @@ fn method_to_conn_type(method: &str) -> (String, Option<String>) {
         ("RDP".to_string(), Some("rdp".to_string()))
     } else {
         // Protocolo no soportado (PACShell, VNC, Telnet…): se muestra deshabilitado.
-        (if m.is_empty() { "?".to_string() } else { m.to_string() }, None)
+        (
+            if m.is_empty() {
+                "?".to_string()
+            } else {
+                m.to_string()
+            },
+            None,
+        )
     }
 }
 
@@ -91,7 +98,10 @@ pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
         let parent = val_str(env, "parent");
         match parent.as_deref() {
             None | Some("__PAC__ROOT__") => roots.push(uuid.clone()),
-            Some(p) => by_parent.entry(p.to_string()).or_default().push(uuid.clone()),
+            Some(p) => by_parent
+                .entry(p.to_string())
+                .or_default()
+                .push(uuid.clone()),
         }
         nodes.insert(uuid, env.clone());
     }
@@ -108,7 +118,11 @@ pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
         if is_group {
             let children = by_parent
                 .get(uuid)
-                .map(|kids| kids.iter().filter_map(|k| build(k, nodes, by_parent)).collect())
+                .map(|kids| {
+                    kids.iter()
+                        .filter_map(|k| build(k, nodes, by_parent))
+                        .collect()
+                })
                 .unwrap_or_default();
             return Some(AsbruNode {
                 uid: uuid.to_string(),
@@ -128,10 +142,7 @@ pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
 
         let method = val_str(env, "method").unwrap_or_default();
         let (protocol, conn_type) = method_to_conn_type(&method);
-        let port = env
-            .get("port")
-            .and_then(|v| v.as_u64())
-            .map(|p| p as u32);
+        let port = env.get("port").and_then(|v| v.as_u64()).map(|p| p as u32);
 
         Some(AsbruNode {
             uid: uuid.to_string(),
@@ -195,7 +206,8 @@ pub fn asbru_decrypt(blob: String) -> Result<String, String> {
     let iv = &material[56..64];
 
     // Blowfish estándar (OpenSSL) usa big-endian, el byte order por defecto.
-    let cipher: Blowfish = Blowfish::new_from_slice(key).map_err(|e| format!("clave inválida: {e}"))?;
+    let cipher: Blowfish =
+        Blowfish::new_from_slice(key).map_err(|e| format!("clave inválida: {e}"))?;
 
     let mut out: Vec<u8> = Vec::with_capacity(ct.len());
     let mut prev: [u8; 8] = iv.try_into().unwrap();
@@ -228,7 +240,8 @@ mod tests {
     #[test]
     fn decrypts_known_blob() {
         // Blob real de un nodo del export de Ásbrú.
-        let blob = "53616c7465645f5f4e61bc0000000000d761fb328fd62b3acd6c43dd4b160708655044057b636f78";
+        let blob =
+            "53616c7465645f5f4e61bc0000000000d761fb328fd62b3acd6c43dd4b160708655044057b636f78";
         let pt = asbru_decrypt(blob.to_string()).unwrap();
         assert_eq!(pt, "<password|/Fujitsu/AD>");
     }

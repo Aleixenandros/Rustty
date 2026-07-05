@@ -120,10 +120,7 @@ pub fn list_entries() -> Result<Vec<EntrySummary>, AppError> {
 
 /// Devuelve el valor de la propiedad solicitada para la entrada `entry_uuid`.
 /// `None` si no existe la entrada o si la propiedad no tiene valor.
-pub fn get_property(
-    entry_uuid: &str,
-    property: EntryProperty,
-) -> Result<Option<String>, AppError> {
+pub fn get_property(entry_uuid: &str, property: EntryProperty) -> Result<Option<String>, AppError> {
     let guard = UNLOCKED.lock().unwrap();
     let u = guard
         .as_ref()

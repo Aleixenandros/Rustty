@@ -46,6 +46,16 @@ export const EVENT_PREFIX = Object.freeze({
   vncClosed: "vnc-closed-",
   /** `telnet-closed-{sessionId}` → payload: null */
   telnetClosed: "telnet-closed-",
+  /** `script-progress-{runId}` → {@link ScriptProgressEvent} */
+  scriptProgress: "script-progress-",
+  /** `script-output-{runId}` → {@link ScriptOutputEvent} */
+  scriptOutput: "script-output-",
+  /** `script-host-done-{runId}` → {@link ScriptHostDoneEvent} */
+  scriptHostDone: "script-host-done-",
+  /** `script-host-error-{runId}` → {@link ScriptHostErrorEvent} */
+  scriptHostError: "script-host-error-",
+  /** `script-done-{runId}` → {@link ScriptDoneEvent} */
+  scriptDone: "script-done-",
 });
 
 /**
@@ -123,4 +133,47 @@ export function eventName(kind, suffix) {
  * @typedef {object} TrayAction
  * @property {string} action Acción solicitada desde la bandeja (p. ej. `switch-workspace`).
  * @property {string} [workspaceId] Workspace destino cuando `action === "switch-workspace"`.
+ */
+
+// --- Payloads de los eventos de scripts (sufijo = `runId`) ------------------
+// Emitidos por el ejecutor de scripts del backend durante una tirada. Cada host
+// (perfil) de la tirada se identifica por su `profileId`.
+
+/**
+ * @typedef {object} ScriptProgressEvent
+ * @property {string} profileId Perfil (host) al que corresponde el progreso.
+ * @property {string} host Host (dirección) del perfil.
+ * @property {"connecting"|"running"|"waiting"|"done"} phase Fase del runner.
+ * @property {number} stepIndex Índice (0-based) del paso en curso.
+ * @property {number} totalSteps Total de pasos de la receta.
+ */
+
+/**
+ * @typedef {object} ScriptOutputEvent
+ * @property {string} profileId Perfil (host) que produjo la salida.
+ * @property {string} host Host (dirección) del perfil.
+ * @property {string} chunk Fragmento de salida del terminal (texto).
+ */
+
+/**
+ * @typedef {object} ScriptHostDoneEvent
+ * @property {string} profileId Perfil (host) que terminó su receta.
+ * @property {string} host Host (dirección) del perfil.
+ * @property {number|null} exitCode Código de salida observado, si aplica.
+ * @property {number} durationMs Duración total de la receta en este host.
+ */
+
+/**
+ * @typedef {object} ScriptHostErrorEvent
+ * @property {string} profileId Perfil (host) que falló.
+ * @property {string} host Host (dirección) del perfil.
+ * @property {string} message Mensaje de error legible.
+ * @property {number|null} stepIndex Paso (0-based) en el que falló, si se sabe.
+ */
+
+/**
+ * @typedef {object} ScriptDoneEvent
+ * @property {number} total Hosts totales de la tirada.
+ * @property {number} okCount Hosts completados sin error.
+ * @property {number} errorCount Hosts que fallaron.
  */

@@ -22,7 +22,7 @@ El estado visual del árbol (workspaces y carpetas abiertos) se recuerda localme
 
 El formulario de crear/editar conexión incluye el botón **Probar**. En perfiles SSH valida la resolución/conexión, la host key, la autenticación y la disponibilidad del subsistema SFTP reutilizando el mismo visor de diagnóstico que una sesión real. En perfiles RDP, FTP y FTPS comprueba que el puerto configurado responde y muestra la latencia aproximada. VNC y Telnet se lanzan con clientes externos y no tienen todavía una prueba dedicada.
 
-La prueba no guarda el perfil ni escribe secretos nuevos en el keyring. Si la conexión usa KeePass, Rustty resuelve la contraseña desde la base desbloqueada igual que haría al conectar.
+La prueba no guarda el perfil ni escribe secretos nuevos en el keyring. Si la conexión usa KeePass, Rustty resuelve la contraseña desde la base desbloqueada igual que haría al conectar. El diagnóstico corre en segundo plano: la ventana sigue respondiendo mientras se completa, incluso contra un host que no contesta.
 
 ## Plantillas
 
@@ -42,6 +42,8 @@ También puedes marcar un perfil propio como plantilla desde su menú contextual
 ## Selección múltiple y movimiento
 
 En la sidebar puedes seleccionar varias conexiones con **Ctrl/Cmd+click** y rangos con **Shift+click**. Al arrastrar una conexión seleccionada hacia una carpeta o workspace, Rustty mueve el lote completo de conexiones seleccionadas dentro del mismo workspace origen.
+
+El borrado también opera sobre el lote: si eliminas una conexión que forma parte de una selección múltiple, Rustty borra todas las seleccionadas tras una única confirmación con el recuento.
 
 ## Conexiones favoritas
 
@@ -148,7 +150,9 @@ Los perfiles pueden agruparse en carpetas de la barra lateral. Cada workspace ti
 
 Las carpetas se guardan como rutas completas dentro de cada workspace, por ejemplo `Producción/Web`. Si tienes subcarpetas con el mismo nombre bajo padres distintos, Rustty opera sobre la ruta completa y el workspace real del nodo seleccionado.
 
-Por defecto las **carpetas se pintan antes que las conexiones** dentro de cada nodo. Puedes invertirlo desde el popover ≡ → "📁 Carpetas primero"; el orden interno de cada grupo (alfabético o manual) se aplica por separado.
+Por defecto las **carpetas se pintan antes que las conexiones** dentro de cada nodo. Puedes invertirlo desde el popover ≡ → "Carpetas primero"; el orden interno de cada grupo (alfabético o manual) se aplica por separado.
+
+El menú contextual de una carpeta incluye además **Ejecutar script…**, que lanza una receta sobre todas las conexiones SSH de esa carpeta y sus subcarpetas; la misma opción aparece en el menú de cada conexión SSH. Ver la [guía de scripts](?page=Scripts).
 
 Al renombrar, mover o borrar una carpeta en un equipo, el cambio viaja con la sincronización y se refleja en el resto de equipos.
 
