@@ -46,6 +46,20 @@ Durante la ejecución, el panel muestra una fila por host con el paso en curso (
 
 Cada host usa su **propia conexión SSH** (respetando ProxyJump, verificación de host key y el resto de opciones del perfil) y se cierra limpiamente al terminar, haya o no paso de desconexión.
 
+### Grabar desde la sesión
+
+Rustty permite generar scripts de forma interactiva a partir de las acciones reales que realizas en una terminal.
+
+- **Cómo iniciar**: En el modal de **Scripts** (rail lateral → Scripts), pulsa el botón **Grabar desde la sesión…**. Se requiere tener una sesión SSH activa y conectada.
+- **Interfaz de grabación**: Al iniciar, el modal se cierra y aparece una barra flotante en la parte inferior de la ventana con un contador de pasos grabados.
+- **Flujo de captura**: Cada comando que escribas y ejecutes con `Intro` se registrará como un paso de tipo **Enviar comando**. Entre comandos, Rustty añade automáticamente un paso **Esperar fin de comando** (para detectar que el prompt remoto vuelve a estar disponible).
+- **Seguridad y redacción de contraseñas (Heurística de eco apagado)**: Si ejecutas un comando que solicita contraseña (como `sudo`, `su` o login SSH secundario) y la terminal apaga el eco, la grabadora detecta la palabra clave del prompt de contraseña de forma heurística. Para proteger tu seguridad, **la contraseña escrita nunca se almacena literal** en los pasos del script. En su lugar, Rustty inserta un paso genérico **Enviar contraseña (keyring)** con el perfil vacío (`profileId: null`), de modo que puedas asociar una credencial del keyring o de KeePass al editar el script.
+- **Límites**: La grabación admite un máximo de **50 pasos**. Si se alcanza este tope, la grabación se marcará como truncada y dejará de añadir pasos adicionales.
+- **Guardado y finalización**:
+  - Pulsa **Detener y editar** en la barra flotante para detener la grabación, materializar los pasos en el editor de scripts y abrir el formulario del script con el objetivo preconfigurado en el perfil desde el cual se grabó.
+  - Pulsa **Descartar** para detener la grabación y borrar todos los pasos acumulados.
+  - Si la pestaña de la sesión SSH que estás grabando se cierra o se desconecta, la grabación se detiene y se abre el editor con los pasos acumulados de manera automática para evitar pérdidas de progreso.
+
 ### Seguridad de los scripts
 
 - Los scripts se guardan en `scripts.json`, en el directorio de datos, y **nunca contienen contraseñas**: los pasos de contraseña guardan solo la referencia al keyring o el UUID de KeePass.

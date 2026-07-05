@@ -65,7 +65,7 @@ Los valores de credenciales maestras y secretos se resuelven en el backend en el
 
 RDP, VNC y Telnet se lanzan fuera del WebView mediante clientes del sistema. Rustty conserva el perfil, las notas, los favoritos y el estado de la pestaña, pero el contenido de esas sesiones no pasa por el terminal embebido.
 
-RDP usa el flujo normal de secretos de Rustty cuando el cliente/plataforma permite pasar credenciales. En VNC y Telnet, el visor o cliente externo pide sus propias credenciales; Rustty no inyecta contraseñas VNC/Telnet en procesos externos.
+RDP usa el flujo normal de secretos de Rustty cuando el cliente/plataforma permite pasar credenciales. Adicionalmente, al usar `xfreerdp` en Linux, se activa la verificación de certificado basada en TOFU (`/cert:tofu`) en lugar de ignorar la verificación en silencio, de modo que el cliente recuerda el certificado del servidor y advierte al usuario si cambia de forma inesperada. En VNC y Telnet, el visor o cliente externo pide sus propias credenciales; Rustty no inyecta contraseñas VNC/Telnet en procesos externos.
 
 Telnet no cifra el tráfico. Úsalo solo cuando el dispositivo o la red lo exijan y asumiendo que las credenciales y comandos pueden verse en tránsito.
 

@@ -56,6 +56,10 @@ Los **snippets remotos** sí: viajan dentro del backup cifrado como `snippet:<id
 
 Ninguna de las dos cosas. Los scripts se guardan en un `scripts.json` local que **nunca contiene contraseñas**: los pasos de contraseña solo referencian el keyring o una entrada KeePass, y la salida que muestra el panel redacta los secretos enviados. Para llevar un script a otro equipo, expórtalo como Markdown desde el panel de Scripts e impórtalo allí. Más detalle en la [guía de scripts](?page=Scripts).
 
+## ¿Se pueden grabar scripts directamente a partir de lo que tecleo en la terminal?
+
+Sí. Rustty incluye un grabador interactivo (botón **Grabar desde la sesión…** en el panel de Scripts). Cuando está activo en una sesión SSH conectada, captura los comandos que envías e inserta automáticamente las esperas al prompt. Por seguridad, las contraseñas introducidas bajo eco apagado se detectan heurísticamente y no se graban literales; en su lugar, se genera un paso genérico para que asocies tu credencial guardada al terminar la grabación.
+
 ## ¿iCloud necesita Client ID o secret?
 
 No. iCloud Drive se usa como carpeta local de macOS; Rustty escribe el blob cifrado y el sistema se encarga de subirlo.
