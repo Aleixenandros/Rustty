@@ -6,7 +6,7 @@ Rustty ofrece tres niveles de automatización, de mayor a menor alcance: **scrip
 
 Un script es una lista ordenada de pasos (enviar un comando, esperar a que termine, comprobar su código de salida, enviar una contraseña…) que Rustty ejecuta contra un objetivo: una conexión, una carpeta o una selección de conexiones. Solo funciona sobre perfiles **SSH**.
 
-El botón **Scripts** del rail lateral abre el panel con la lista de scripts guardados. Desde ahí puedes crear un **Nuevo script**, y sobre cada uno: **Ejecutar**, **Editar**, **Duplicar**, **Exportar** como Markdown o **Eliminar**. También puedes lanzar uno directamente con clic derecho sobre una conexión SSH o una carpeta de la sidebar → **Ejecutar script…**: se abre un selector con tus scripts y el objetivo ya apuntando a esa conexión o carpeta (las carpetas incluyen sus subcarpetas).
+El botón **Scripts** del rail lateral abre el panel con la lista de scripts guardados. Desde ahí puedes crear un **Nuevo script**, consultar las **Ejecuciones recientes** (ver más abajo) y, sobre cada script: **Ejecutar**, **Editar**, **Duplicar**, **Exportar** como Markdown o **Eliminar**. También puedes lanzar uno directamente con clic derecho sobre una conexión SSH o una carpeta de la sidebar → **Ejecutar script…**: se abre un selector con tus scripts y el objetivo ya apuntando a esa conexión o carpeta (las carpetas incluyen sus subcarpetas).
 
 ### Editor
 
@@ -27,7 +27,7 @@ Debajo se define la lista de **pasos**, que puedes reordenar con las flechas o q
 | **Enviar contraseña (keyring)** | Envía la contraseña guardada en el keyring: la de la propia conexión o la de otro perfil que elijas. Se envía oculta y nunca aparece en la salida. |
 | **Enviar contraseña (KeePass)** | Envía la contraseña de una entrada KeePass por su UUID. Requiere la base desbloqueada. |
 | **Pausa** | Espera los milisegundos indicados. |
-| **Desconectar** | Cierra la sesión de ese host; los pasos posteriores ya no se ejecutan. |
+| **Desconectar** | Cierra la sesión de ese host; los pasos posteriores ya no se ejecutan. Si el comando anterior todavía no ha terminado (un «Enviar comando» sin una «Espera» detrás), **espera a que acabe** antes de cerrar, para no cortarlo a mitad. |
 
 El patrón típico es encadenar **Enviar comando** → **Esperar fin de comando** → **Comprobar código de salida**, y repetir. Para comandos interactivos (un `sudo` que pide contraseña, un instalador con prompt), combina **Esperar patrón (regex)** con los pasos de contraseña.
 
@@ -42,9 +42,27 @@ Al pulsar **Ejecutar**, si el script usa `${ask:...}`, Rustty pregunta esos valo
 
 Antes de lanzar, la **previsualización por host** muestra los comandos que se enviarían a cada máquina, con los secretos ya redactados (`••••`). Es el momento de comprobar que las variables se resuelven como esperas.
 
-Durante la ejecución, el panel muestra una fila por host con el paso en curso (`N/M`), la salida (colapsable) y el resultado final: código de salida, duración o error. Puedes **Abortar** un host concreto o **Abortar todo**; la cancelación surte efecto entre pasos.
+Durante la ejecución, el panel muestra una fila por host con el paso en curso (`N/M`), un **registro de ejecución** (la línea de tiempo de fases y pasos: conexión establecida, cada paso con su comando, el resultado con la duración o el error) y la **salida** de los comandos con un contador de líneas. Con un solo host, registro y salida se abren desplegados. Puedes **Abortar** un host concreto o **Abortar todo**; la cancelación surte efecto entre pasos.
+
+La salida sale ya limpia de las secuencias de control del terminal (colores, títulos de ventana, barras de progreso): no verás «caracteres raros» como `[?2004h`.
 
 Cada host usa su **propia conexión SSH** (respetando ProxyJump, verificación de host key y el resto de opciones del perfil) y se cierra limpiamente al terminar, haya o no paso de desconexión.
+
+### Copiar, exportar y reintentar
+
+- **Copiar**: el registro y la salida se pueden seleccionar con el ratón, y cada host tiene un botón **Copiar** que lleva al portapapeles su registro más su salida.
+- **Exportar .log**: en el pie de la ejecución, guarda en un fichero de texto el registro y la salida de todas las conexiones de la tirada.
+- **Reintentar**: cuando la ejecución termina, si alguna conexión falló aparecen **Reintentar fallidos** (solo las que dieron error) y **Reintentar todo**. Relanzan la misma receta reutilizando el modo y las credenciales de la tirada anterior.
+
+### Ejecuciones recientes
+
+El botón **Ejecuciones recientes** del panel de Scripts abre el historial de las últimas tiradas guardadas en este equipo (hasta 30). De cada una puedes:
+
+- **Reabrir** la ejecución en modo solo lectura para ver su registro y su salida.
+- **Exportar .log** a un fichero.
+- **Borrar historial** por completo.
+
+El historial se guarda en `script_runs.json`, en el directorio de datos, con **permisos privados (0600)**. Contiene la salida ya redactada de secretos (`••••`) pero puede incluir salida normal de comandos, así que se protege como el resto de datos sensibles y **nunca guarda contraseñas**. No se sincroniza entre equipos.
 
 ### Grabar desde la sesión
 
@@ -65,6 +83,7 @@ Rustty permite generar scripts de forma interactiva a partir de las acciones rea
 - Los scripts se guardan en `scripts.json`, en el directorio de datos, y **nunca contienen contraseñas**: los pasos de contraseña guardan solo la referencia al keyring o el UUID de KeePass.
 - Las credenciales alternativas de una tirada no se guardan con el script; las manuales viven solo en memoria durante la ejecución.
 - La salida que se muestra en el panel pasa por **redacción de secretos**: los valores enviados (contraseñas incluidas) se sustituyen por `••••`.
+- El historial de **Ejecuciones recientes** (`script_runs.json`) se guarda con permisos privados (0600), con la salida ya redactada y sin contraseñas. No se sincroniza.
 - Los scripts **no se sincronizan** entre equipos. Para moverlos o versionarlos, usa **Exportar**: genera un runbook Markdown legible que **Importar Markdown…** reconstruye en otro equipo (sin ids ni secretos).
 - Un script ejecuta comandos reales en tus servidores: revisa la previsualización y prueba primero en modo **canario** antes de lanzarlo contra una carpeta entera.
 
