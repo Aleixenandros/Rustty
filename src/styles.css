@@ -9063,6 +9063,48 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   word-break: break-word;
 }
 
+/* Registro de ejecución por host (timeline de fases/pasos) */
+.script-run-lines {
+  color: var(--subtext0);
+  font-size: 10px;
+  margin-left: 6px;
+}
+
+.script-run-log {
+  list-style: none;
+  margin: 6px 0 2px;
+  padding: 0;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.script-run-log-entry {
+  position: relative;
+  padding: 2px 0 2px 16px;
+  color: var(--subtext1);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.script-run-log-entry::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--surface2);
+}
+
+.script-run-log-entry.step { color: var(--text); }
+.script-run-log-entry.step::before { background: var(--blue); }
+.script-run-log-entry.ok { color: var(--green); }
+.script-run-log-entry.ok::before { background: var(--green); }
+.script-run-log-entry.error { color: var(--red); }
+.script-run-log-entry.error::before { background: var(--red); }
+
 .script-run-footer {
   display: flex;
   align-items: center;

@@ -11,8 +11,20 @@
 /** Caracteres que en POSIX no necesitan quoting (ruta "limpia"). */
 const POSIX_SAFE = /^[A-Za-z0-9_@%+=:,.\/-]+$/;
 
-/** Caracteres que en Windows no necesitan quoting (incluye `\` y `:` de unidad). */
-const WINDOWS_SAFE = /^[A-Za-z0-9_@%+=:,.\\/-]+$/;
+/**
+ * Caracteres que en Windows no necesitan quoting (incluye `\` y `:` de unidad).
+ * Sin `%` (cmd expande `%VAR%` incluso entre comillas dobles) ni `,` (PowerShell
+ * parte un token sin quotear en varios argumentos por la coma).
+ */
+const WINDOWS_SAFE = /^[A-Za-z0-9_@+=:.\\/-]+$/;
+
+/**
+ * Comillas simples que PowerShell acepta como delimitador de string literal:
+ * la ASCII y las tipográficas U+2018/U+2019/U+201A/U+201B. Todas se escapan
+ * doblándolas; si no, un nombre de fichero con una de ellas rompería el
+ * quoting y el resto (`$(…)`, backticks) se evaluaría al pulsar Intro.
+ */
+const PS_QUOTE_CHARS = /['‘’‚‛]/g;
 
 /**
  * Quoting POSIX robusto. Una ruta "limpia" se deja tal cual para no ensuciar la
@@ -28,17 +40,20 @@ export function quotePosixPath(path) {
 }
 
 /**
- * Quoting para Windows (cmd.exe / PowerShell). Los nombres de archivo de Windows
- * no admiten `" < > | * ?`, así que basta con envolver en comillas dobles cuando
- * hay espacios o caracteres que el shell trataría de forma especial. Por robustez,
- * una comilla doble (no válida en rutas Windows reales) se duplica como `""`.
+ * Quoting para la consola local de Windows, cuyo shell es PowerShell salvo
+ * fallback extremo (el backend lanza pwsh → powershell → cmd). Las comillas
+ * dobles NO sirven: dentro de `"…"` PowerShell interpola `$(…)`, `$var` y
+ * backticks, así que un fichero llamado `x$(calc)y.txt` ejecutaría comandos al
+ * pulsar Intro. Se usa la string literal de comillas simples, donde todo es
+ * inerte salvo la propia comilla (ASCII o tipográfica), que se dobla. Una ruta
+ * "limpia" se deja tal cual, lo que además la mantiene válida en cmd.
  * @param {string} path
  * @returns {string}
  */
 export function quoteWindowsPath(path) {
-  if (path === "") return '""';
+  if (path === "") return "''";
   if (WINDOWS_SAFE.test(path)) return path;
-  return '"' + path.replace(/"/g, '""') + '"';
+  return "'" + path.replace(PS_QUOTE_CHARS, "$&$&") + "'";
 }
 
 /**

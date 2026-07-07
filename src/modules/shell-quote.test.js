@@ -45,21 +45,51 @@ describe("quoteWindowsPath", () => {
     );
   });
 
-  it("envuelve en comillas dobles cuando hay espacios", () => {
+  it("envuelve en comillas simples (PowerShell) cuando hay espacios", () => {
     expect(quoteWindowsPath("C:\\Program Files\\app\\bin.exe")).toBe(
-      '"C:\\Program Files\\app\\bin.exe"'
+      "'C:\\Program Files\\app\\bin.exe'"
     );
   });
 
-  it("duplica una comilla doble por robustez", () => {
-    expect(quoteWindowsPath('C:\\a "b" c')).toBe('"C:\\a ""b"" c"');
+  it("neutraliza la interpolación de PowerShell ($(), $var, backtick)", () => {
+    expect(quoteWindowsPath("C:\\x$(calc)y.txt")).toBe("'C:\\x$(calc)y.txt'");
+    expect(quoteWindowsPath("C:\\a$env_var.txt")).toBe("'C:\\a$env_var.txt'");
+    expect(quoteWindowsPath("C:\\back`tick.txt")).toBe("'C:\\back`tick.txt'");
+  });
+
+  it("quotea %VAR% en vez de dejarlo expandible", () => {
+    expect(quoteWindowsPath("C:\\%USERPROFILE%.txt")).toBe(
+      "'C:\\%USERPROFILE%.txt'"
+    );
+  });
+
+  it("quotea la coma para que PowerShell no parta el token en array", () => {
+    expect(quoteWindowsPath("C:\\a,b.txt")).toBe("'C:\\a,b.txt'");
+  });
+
+  it("dobla la comilla simple ASCII y las tipográficas que PowerShell trata como delimitador", () => {
+    expect(quoteWindowsPath("C:\\it's mine.txt")).toBe("'C:\\it''s mine.txt'");
+    expect(quoteWindowsPath("C:\\a’$(calc).txt")).toBe(
+      "'C:\\a’’$(calc).txt'"
+    );
+    expect(quoteWindowsPath("C:\\b‘x‚y‛z")).toBe(
+      "'C:\\b‘‘x‚‚y‛‛z'"
+    );
+  });
+
+  it("una comilla doble queda inerte dentro de comillas simples", () => {
+    expect(quoteWindowsPath('C:\\a "b" c')).toBe("'C:\\a \"b\" c'");
+  });
+
+  it("la cadena vacía se quotea explícitamente", () => {
+    expect(quoteWindowsPath("")).toBe("''");
   });
 });
 
 describe("quotePath (despacho por plataforma)", () => {
   it("usa POSIX por defecto y Windows cuando se pide", () => {
     expect(quotePath("/tmp/a b", "posix")).toBe("'/tmp/a b'");
-    expect(quotePath("C:\\a b", "windows")).toBe('"C:\\a b"');
+    expect(quotePath("C:\\a b", "windows")).toBe("'C:\\a b'");
   });
 });
 
@@ -93,6 +123,6 @@ describe("buildDropInsertText", () => {
       buildDropInsertText(["C:\\Program Files\\x", "C:\\tmp\\y"], {
         platform: "windows",
       })
-    ).toBe('"C:\\Program Files\\x" C:\\tmp\\y ');
+    ).toBe("'C:\\Program Files\\x' C:\\tmp\\y ");
   });
 });

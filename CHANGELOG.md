@@ -2,6 +2,33 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.46.0] - 2026-07-07
+
+### Añadido
+
+- **Registro de ejecución en los scripts**: al lanzar un script, cada conexión
+  muestra ahora una línea de tiempo con lo que va ocurriendo —conexión
+  establecida, cada paso con su comando, y el resultado con la duración—, además
+  de la salida de los comandos con un contador de líneas. Antes solo se veía el
+  estado final sin ningún detalle.
+
+### Corregido
+
+- **Los scripts que terminaban en un comando ya muestran su salida**: si la
+  receta acababa con un «Enviar comando» sin un paso de espera posterior, la
+  conexión se cerraba al instante y no se mostraba nada (el comando podía incluso
+  no llegar a ejecutarse). Ahora se espera a que termine y se recoge su salida.
+- **Al soltar un fichero en la consola local de Windows**, un nombre con
+  caracteres especiales (`$(...)`, comillas, `%VAR%`) ya no puede ejecutar
+  comandos al pulsar Intro.
+- **El asistente de importar conexiones** ya no interpreta como HTML los nombres
+  de protocolo de un fichero manipulado.
+- **Exportar e importar copias cifradas y restaurar una copia histórica** vuelven
+  a mostrar los diálogos de contraseña y confirmación (antes, en algunas
+  plataformas, el botón parecía no hacer nada).
+- Corregidas varias **fugas de recursos** al cerrar paneles de archivos (SFTP) y
+  conexiones FTP/FTPS.
+
 ## [1.45.0] - 2026-07-06
 
 ### Añadido

@@ -595,7 +595,19 @@ export async function runSync(ctx) {
 
 /* ─────────────────────────── Backup cifrado a fichero ─────────────── */
 
+// wry no implementa window.prompt/confirm (devuelven null/false sin mostrar
+// nada), así que estos flujos reciben en `ctx.dialogs` los diálogos
+// tematizados de main.js: promptSecret({title,message,label}) → string|null
+// y confirm({title,message,submitLabel,danger}) → boolean.
+function requireDialogs(ctx) {
+  if (!ctx?.dialogs) {
+    throw new Error("ctx.dialogs requerido (promptSecret/confirm)");
+  }
+  return ctx.dialogs;
+}
+
 export async function exportToFile(ctx) {
+  const dialogs = requireDialogs(ctx);
   const path = await saveDialog({
     title: "Exportar backup cifrado de Rustty",
     defaultPath: `rustty-sync-${new Date().toISOString().slice(0, 10)}.bin`,
@@ -604,9 +616,11 @@ export async function exportToFile(ctx) {
   if (!path) return null;
 
   // Pide passphrase al usuario
-  const passphrase = window.prompt(
-    "Passphrase para cifrar el fichero (no la pierdas):"
-  );
+  const passphrase = await dialogs.promptSecret({
+    title: "Exportar backup cifrado",
+    message: "Passphrase para cifrar el fichero (no la pierdas):",
+    label: "Passphrase",
+  });
   if (!passphrase) return null;
 
   const state = await buildSyncState({
@@ -623,6 +637,7 @@ export async function exportToFile(ctx) {
 }
 
 export async function importFromFile(ctx) {
+  const dialogs = requireDialogs(ctx);
   const path = await openDialog({
     title: "Importar backup cifrado de Rustty",
     multiple: false,
@@ -630,17 +645,26 @@ export async function importFromFile(ctx) {
   });
   if (!path) return null;
 
-  const passphrase = window.prompt("Passphrase del fichero:");
+  const passphrase = await dialogs.promptSecret({
+    title: "Importar backup cifrado",
+    message: "Passphrase con la que se cifró el fichero.",
+    label: "Passphrase",
+  });
   if (!passphrase) return null;
 
   const state = await invoke("sync_import_file", { path, passphrase });
-  if (!window.confirm(
-    "¿Importar el backup? Se fusionará con el estado actual (last-write-wins por item)."
-  )) {
-    return null;
-  }
+  const okImport = await dialogs.confirm({
+    title: "Importar backup",
+    message: "Se fusionará con el estado actual (last-write-wins por item).",
+    submitLabel: "Importar",
+  });
+  if (!okImport) return null;
   const allowSecrets = stateHasSecrets(state)
-    ? window.confirm("El backup contiene contraseñas/passphrases cifradas. ¿Guardarlas en el keyring local?")
+    ? await dialogs.confirm({
+        title: "Importar backup",
+        message: "El backup contiene contraseñas/passphrases cifradas. ¿Guardarlas en el keyring local?",
+        submitLabel: "Guardar en el keyring",
+      })
     : false;
   const summary = await applyMergedState(state, { ...ctx, allowSecrets });
   return summary;
@@ -654,6 +678,7 @@ export async function listSnapshots() {
 }
 
 export async function restoreSnapshot(snapshotId, ctx) {
+  const dialogs = requireDialogs(ctx);
   const passphrase = await getStoredPassphrase();
   if (!passphrase) {
     throw new Error("Configura la passphrase de sync antes de restaurar");
@@ -665,7 +690,11 @@ export async function restoreSnapshot(snapshotId, ctx) {
     webdavPassword,
   });
   const allowSecrets = stateHasSecrets(state)
-    ? window.confirm("La copia contiene contraseñas/passphrases cifradas. ¿Guardarlas en el keyring local?")
+    ? await dialogs.confirm({
+        title: "Restaurar copia",
+        message: "La copia contiene contraseñas/passphrases cifradas. ¿Guardarlas en el keyring local?",
+        submitLabel: "Guardar en el keyring",
+      })
     : false;
   return await applyMergedState(state, { ...ctx, allowSecrets });
 }

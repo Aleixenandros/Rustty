@@ -602,6 +602,75 @@ async fn execute_step(
     }
 }
 
+/// `true` si la receta termina con envíos cuya salida nadie leería: hay un
+/// `send`/`sendPassword*` sin `waitPrompt`/`waitRegex` posterior. En ese caso
+/// el runner añade un drenaje final implícito; sin él, el canal se cerraba nada
+/// más enviar el último comando (podía ni ejecutarse) y no se emitía NINGUNA
+/// salida — el caso natural de un script recién creado con un único `send`.
+/// Un `disconnect` corta la ejecución, así que anula el drenaje.
+fn needs_final_drain(steps: &[Step]) -> bool {
+    let mut pending = false;
+    for step in steps {
+        match step {
+            Step::Send { .. }
+            | Step::SendPasswordFromKeyring { .. }
+            | Step::SendPasswordFromKeepass { .. } => pending = true,
+            Step::WaitPrompt | Step::WaitRegex { .. } => pending = false,
+            Step::Disconnect => return false,
+            Step::ExpectExit { .. } | Step::Sleep { .. } => {}
+        }
+    }
+    pending
+}
+
+/// Drenaje final implícito (ver `needs_final_drain`): un `waitPrompt` con el
+/// marcador `$?` que espera a que el último comando termine y emite su salida.
+/// A diferencia del `waitPrompt` explícito, un EOF no es error (p. ej. la
+/// receta terminó con `send: exit`): se emite la cola pendiente y se sigue.
+async fn final_drain(
+    state: &mut HostState<'_>,
+    step_index: usize,
+    run_cancel: &AtomicBool,
+    host_cancel: &AtomicBool,
+) -> Result<Option<i32>, String> {
+    let prefix = marker_prefix(state.run_id, step_index);
+    let cmd = format!("printf '\\n{prefix}%d__\\n' \"$?\"");
+    state.send_line(&cmd).await?;
+
+    let mut acc = String::new();
+    let mut emitted = 0usize;
+    let deadline = Instant::now() + DEFAULT_WAIT_PROMPT;
+    let match_prefix = prefix.clone();
+    let outcome = pump_until(
+        state,
+        &mut acc,
+        &mut emitted,
+        Some(&prefix),
+        deadline,
+        run_cancel,
+        host_cancel,
+        |buf| parse_marker_exit(buf, &match_prefix).is_some(),
+    )
+    .await;
+
+    match outcome {
+        PumpOutcome::Matched => Ok(parse_marker_exit(&acc, &prefix)),
+        PumpOutcome::Eof => {
+            // Conexión terminada: emitir la última línea parcial (sin `\n`)
+            // que `emit_new_lines` no llegó a emitir, si no es el marcador.
+            let tail = &acc[emitted..];
+            if !tail.trim().is_empty() && !tail.contains(&prefix) {
+                state.emit_output(tail);
+            }
+            Ok(None)
+        }
+        PumpOutcome::Timeout => {
+            Err("Tiempo de espera agotado esperando el fin del último comando".into())
+        }
+        PumpOutcome::Cancelled => Err("Ejecución cancelada".into()),
+    }
+}
+
 async fn wait_prompt(
     state: &mut HostState<'_>,
     step_index: usize,
@@ -853,6 +922,16 @@ async fn run_host(
         }
     };
 
+    emit_progress(
+        app,
+        run_id,
+        &profile_id,
+        &host_addr,
+        "connected",
+        0,
+        total_steps,
+    );
+
     let mut state = HostState {
         channel,
         app,
@@ -899,6 +978,32 @@ async fn run_host(
                 emit_host_error(app, run_id, &profile_id, &host_addr, &msg, Some(i as u32));
                 ok = false;
                 break;
+            }
+        }
+    }
+
+    // Drenaje final implícito: sin él, una receta que termina en `send` cerraba
+    // el canal al instante y no se emitía nada de salida (ni terminaba el comando).
+    if ok && needs_final_drain(steps) {
+        emit_progress(
+            app,
+            run_id,
+            &profile_id,
+            &host_addr,
+            "draining",
+            total_steps.saturating_sub(1),
+            total_steps,
+        );
+        match final_drain(&mut state, steps.len(), run_cancel, &host_cancel).await {
+            Ok(code) => {
+                if code.is_some() {
+                    state.last_exit = code;
+                }
+            }
+            Err(e) => {
+                let msg = redact_secrets(&e, &state.secrets);
+                emit_host_error(app, run_id, &profile_id, &host_addr, &msg, None);
+                ok = false;
             }
         }
     }
@@ -1159,6 +1264,42 @@ mod tests {
         assert_eq!(v["okCount"], 3);
         assert_eq!(v["errorCount"], 1);
         assert_eq!(v["total"], 4);
+    }
+
+    #[test]
+    fn needs_final_drain_detecta_envios_sin_lectura() {
+        let send = || Step::Send { text: "ls".into() };
+        // El caso del bug: receta de un único `send` → hay que drenar.
+        assert!(needs_final_drain(&[send()]));
+        // Contraseñas enviadas también dejan salida pendiente.
+        assert!(needs_final_drain(&[
+            send(),
+            Step::SendPasswordFromKeyring { profile_id: None },
+        ]));
+        // Un wait posterior ya lee la salida: no hay drenaje extra.
+        assert!(!needs_final_drain(&[send(), Step::WaitPrompt]));
+        assert!(!needs_final_drain(&[
+            send(),
+            Step::WaitRegex {
+                pattern: "listo".into(),
+                timeout_ms: 1000,
+            },
+        ]));
+        // Pero un `send` tras el último wait vuelve a dejar salida pendiente.
+        assert!(needs_final_drain(&[send(), Step::WaitPrompt, send()]));
+        // `expectExit`/`sleep` no leen ni envían: no cambian la decisión.
+        assert!(needs_final_drain(&[send(), Step::Sleep { ms: 5 }]));
+        assert!(!needs_final_drain(&[
+            send(),
+            Step::WaitPrompt,
+            Step::ExpectExit { code: 0 },
+        ]));
+        // `disconnect` corta la ejecución: nunca se drena.
+        assert!(!needs_final_drain(&[send(), Step::Disconnect]));
+        assert!(!needs_final_drain(&[send(), Step::Disconnect, send()]));
+        // Receta vacía o sin envíos.
+        assert!(!needs_final_drain(&[]));
+        assert!(!needs_final_drain(&[Step::Sleep { ms: 5 }]));
     }
 
     #[test]

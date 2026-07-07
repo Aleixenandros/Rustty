@@ -143,7 +143,8 @@ export function eventName(kind, suffix) {
  * @typedef {object} ScriptProgressEvent
  * @property {string} profileId Perfil (host) al que corresponde el progreso.
  * @property {string} host Host (dirección) del perfil.
- * @property {"connecting"|"running"|"waiting"|"done"} phase Fase del runner.
+ * @property {"connecting"|"connected"|"running"|"waiting"|"draining"|"done"} phase
+ *   Fase del runner (`draining` = drenaje final implícito tras el último paso).
  * @property {number} stepIndex Índice (0-based) del paso en curso.
  * @property {number} totalSteps Total de pasos de la receta.
  */

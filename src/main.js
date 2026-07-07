@@ -2264,6 +2264,16 @@ async function syncOpenBackendFolder() {
   await openPathInFileManager(path, "carpeta de sync");
 }
 
+// Diálogos que sync.js usa en export/import/restore: wry no implementa
+// window.prompt/confirm, así que se le inyectan los tematizados de main.js.
+const syncDialogs = {
+  promptSecret: async (opts) => {
+    const result = await promptCredential(opts);
+    return result ? result.value : null;
+  },
+  confirm: (opts) => confirmThemed(opts),
+};
+
 async function syncExportFile() {
   try {
     const includeSecrets = await askExportStoredSecrets(profiles.length);
@@ -2273,6 +2283,7 @@ async function syncExportFile() {
       prefs,
       deviceId: _syncDeviceIdCache,
       exportedSecrets: includeSecrets ? await collectExportedSecrets(profiles) : null,
+      dialogs: syncDialogs,
     });
     if (path) toast(t("prefs_sync.done_export").replace("{path}", path), "success");
   } catch (err) {
@@ -2283,7 +2294,7 @@ async function syncExportFile() {
 async function syncImportFile() {
   try {
     const summary = await sync.importFromFile({
-      profiles, prefs, deviceId: _syncDeviceIdCache,
+      profiles, prefs, deviceId: _syncDeviceIdCache, dialogs: syncDialogs,
     });
     if (!summary) return;
     migrateLegacyFolderColors();
@@ -2347,7 +2358,7 @@ async function syncRestoreSnapshot() {
   try {
     setSyncStatus("busy", "prefs_sync.status_busy");
     const summary = await sync.restoreSnapshot(id, {
-      profiles, prefs, deviceId: _syncDeviceIdCache,
+      profiles, prefs, deviceId: _syncDeviceIdCache, dialogs: syncDialogs,
     });
     migrateLegacyFolderColors();
     normalizeWorkspaceColors();
@@ -10854,10 +10865,10 @@ async function closeSession(sessionId, opts = {}) {
   // antes de que el terminal desaparezca.
   abortScriptRecordingIfSession(sessionId);
 
-  // Si hay un panel SFTP abierto, desconectarlo primero
-  if (s.sftp?.sftpSessionId) {
-    invoke("sftp_disconnect", { sessionId: s.sftp.sftpSessionId }).catch(() => {});
-  }
+  // Si hay un panel SFTP abierto, cerrarlo primero por closeSftpPanel: además
+  // de desconectar el backend libera sus listeners (sftp-log). Para pestañas
+  // FTP/FTPS (el panel ES la pestaña) también quita la pestaña y la sesión.
+  if (s.sftp) await closeSftpPanel(sessionId);
 
   // Shell local: usa su propio manejador de cierre.
   // Antes de cerrar, comprobar si hay un proceso hijo activo (skipConfirm=true
@@ -10888,9 +10899,13 @@ async function closeSession(sessionId, opts = {}) {
   }
 
   if (isFileTransferConnectionType(s.type)) {
-    sessions.delete(sessionId);
-    removeTab(sessionId);
-    renderConnectionList();
+    // closeSftpPanel ya quitó pestaña y sesión; si el panel nunca llegó a
+    // abrirse (connect fallido → s.sftp era null), retirar aquí la huérfana.
+    if (sessions.has(sessionId)) {
+      sessions.delete(sessionId);
+      removeTab(sessionId);
+      renderConnectionList();
+    }
     return;
   }
 
@@ -12252,9 +12267,12 @@ async function launchScriptRun() {
     hosts.set(pid, {
       name: p ? p.name || p.host || pid : pid,
       status: "pending",
+      phase: "",
       stepIndex: 0,
       totalSteps: script.steps?.length || 0,
       output: "",
+      lineCount: 0,
+      log: [],
       exitCode: null,
       error: "",
     });
@@ -12276,12 +12294,32 @@ async function launchScriptRun() {
     run.unlisteners.push(
       await listen(eventName("scriptProgress", runId), (e) => {
         if (scriptRunState !== run) return;
-        const { profileId, stepIndex, totalSteps } = e.payload || {};
+        const { profileId, phase, stepIndex, totalSteps } = e.payload || {};
         const h = run.hosts.get(profileId);
         if (!h) return;
-        h.status = "running";
-        h.stepIndex = Number(stepIndex) || 0;
-        h.totalSteps = Number(totalSteps) || h.totalSteps;
+        h.phase = String(phase || "");
+        if (totalSteps != null) h.totalSteps = Number(totalSteps) || h.totalSteps;
+        if (phase === "connecting") {
+          h.status = "connecting";
+          pushScriptHostLog(h, "info", t("scripts.log_connecting"));
+        } else if (phase === "connected") {
+          h.status = "running";
+          pushScriptHostLog(h, "info", t("scripts.log_connected"));
+        } else if (phase === "draining") {
+          h.status = "running";
+          pushScriptHostLog(h, "info", t("scripts.log_draining"));
+        } else if (phase === "done") {
+          h.stepIndex = Number(stepIndex) || 0;
+        } else {
+          // running / waiting: un paso concreto de la receta.
+          h.status = "running";
+          h.stepIndex = Number(stepIndex) || 0;
+          pushScriptHostLog(h, "step", t("scripts.log_step", {
+            step: h.stepIndex + 1,
+            total: Math.max(h.totalSteps, 1),
+            desc: scriptStepTimelineLabel(run.script, h.stepIndex),
+          }));
+        }
         updateScriptHostRow(run, profileId);
       })
     );
@@ -12292,29 +12330,38 @@ async function launchScriptRun() {
         const h = run.hosts.get(profileId);
         if (!h || typeof chunk !== "string") return;
         h.output = (h.output + chunk).slice(-SCRIPT_OUTPUT_CAP);
+        h.lineCount += (chunk.match(/\n/g) || []).length;
         updateScriptHostRow(run, profileId);
       })
     );
     run.unlisteners.push(
       await listen(eventName("scriptHostDone", runId), (e) => {
         if (scriptRunState !== run) return;
-        const { profileId, exitCode } = e.payload || {};
+        const { profileId, exitCode, durationMs } = e.payload || {};
         const h = run.hosts.get(profileId);
         if (!h) return;
         h.status = "ok";
         h.exitCode = typeof exitCode === "number" ? exitCode : null;
+        h.durationMs = Number(durationMs) || 0;
         run.okCount += 1;
+        pushScriptHostLog(h, "ok", t("scripts.log_done", {
+          secs: (h.durationMs / 1000).toFixed(1),
+        }));
         updateScriptHostRow(run, profileId);
       })
     );
     run.unlisteners.push(
       await listen(eventName("scriptHostError", runId), (e) => {
         if (scriptRunState !== run) return;
-        const { profileId, message } = e.payload || {};
+        const { profileId, message, stepIndex } = e.payload || {};
         const h = run.hosts.get(profileId);
         if (!h) return;
         h.status = "error";
         h.error = String(message || "");
+        const at = typeof stepIndex === "number"
+          ? t("scripts.log_error_at", { step: stepIndex + 1, msg: h.error })
+          : h.error;
+        pushScriptHostLog(h, "error", at);
         updateScriptHostRow(run, profileId);
       })
     );
@@ -12376,10 +12423,42 @@ function unlistenScriptRun(run) {
   }
 }
 
+/** Añade una entrada al registro de ejecución de un host (acotado). */
+function pushScriptHostLog(h, kind, text) {
+  if (!h.log) h.log = [];
+  h.log.push({ kind, text: String(text || "") });
+  if (h.log.length > 300) h.log.splice(0, h.log.length - 300);
+}
+
+/**
+ * Etiqueta corta y legible de un paso para el registro de ejecución. Usa el
+ * nombre del tipo (`scripts.type_*`) más un detalle no sensible: el comando de
+ * un `send` (marcador `${...}` tal cual, como en el editor), el patrón de un
+ * `waitRegex`, el código esperado, etc.
+ */
+function scriptStepTimelineLabel(script, stepIndex) {
+  const step = script?.steps?.[stepIndex];
+  if (!step) return t("scripts.type_send");
+  const typeName = t("scripts.type_" + step.type);
+  let detail = "";
+  switch (step.type) {
+    case "send": detail = step.text || ""; break;
+    case "waitRegex": detail = step.pattern || ""; break;
+    case "expectExit": detail = String(step.code); break;
+    case "sleep": detail = `${step.ms} ms`; break;
+    case "sendPasswordFromKeepass": detail = step.uuid || ""; break;
+    default: detail = "";
+  }
+  detail = detail.replace(/\s+/g, " ").trim();
+  if (detail.length > 120) detail = detail.slice(0, 117) + "…";
+  return detail ? `${typeName}: ${detail}` : typeName;
+}
+
 function renderScriptRunHosts() {
   const box = document.getElementById("script-run-hosts");
   const run = scriptRunState;
   if (!box || !run) return;
+  const single = run.hosts.size === 1;
   box.innerHTML = [...run.hosts.entries()]
     .map(
       ([pid, h]) => `
@@ -12390,17 +12469,25 @@ function renderScriptRunHosts() {
           <button type="button" class="global-tunnel-action danger" data-script-run-abort="${escHtml(pid)}">${escHtml(t("scripts.abort_host"))}</button>
         </div>
         <div class="script-run-host-error hidden" data-role="error"></div>
-        <details>
-          <summary>${escHtml(t("scripts.output_label"))}</summary>
+        <details class="script-run-log-details" ${single ? "open" : ""}>
+          <summary>${escHtml(t("scripts.log_label"))}</summary>
+          <ol class="script-run-log" data-role="log"></ol>
+        </details>
+        <details class="script-run-output-details" ${single ? "open" : ""}>
+          <summary>${escHtml(t("scripts.output_label"))} <span class="script-run-lines" data-role="lines"></span></summary>
           <pre data-role="output"></pre>
         </details>
       </div>`
     )
     .join("");
+  // El re-render vacía las filas: repintar el estado ya acumulado de cada host.
+  for (const pid of run.hosts.keys()) updateScriptHostRow(run, pid);
 }
 
 function scriptHostBadge(h) {
   switch (h.status) {
+    case "connecting":
+      return { cls: "running", text: t("scripts.status_connecting") };
     case "running":
       return {
         cls: "running",
@@ -12436,8 +12523,21 @@ function updateScriptHostRow(run, profileId) {
   const errEl = row.querySelector('[data-role="error"]');
   errEl.textContent = h.error || "";
   errEl.classList.toggle("hidden", !h.error);
+  // Registro de ejecución: repintar solo cuando cambia el número de entradas.
+  const logEl = row.querySelector('[data-role="log"]');
+  if (logEl && logEl.childElementCount !== (h.log?.length || 0)) {
+    logEl.innerHTML = (h.log || [])
+      .map((entry) => `<li class="script-run-log-entry ${escHtml(entry.kind)}">${escHtml(entry.text)}</li>`)
+      .join("");
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  const linesEl = row.querySelector('[data-role="lines"]');
+  if (linesEl) linesEl.textContent = h.lineCount ? t("scripts.output_lines", { n: h.lineCount }) : "";
   const out = row.querySelector('[data-role="output"]');
-  if (out.textContent !== h.output) out.textContent = h.output;
+  if (out.textContent !== h.output) {
+    out.textContent = h.output;
+    out.scrollTop = out.scrollHeight;
+  }
   const abortBtn = row.querySelector("[data-script-run-abort]");
   if (abortBtn) abortBtn.disabled = run.finished || h.status === "ok" || h.status === "error";
 }
@@ -13517,6 +13617,9 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
       label: `${protoLabel} falló`,
       detail: String(err),
     });
+    // Liberar los listeners ya registrados (sftp-log) antes de descartar el
+    // estado; si no, cada intento fallido dejaba uno fugado para siempre.
+    for (const ul of s.sftp.unlisteners) { try { ul(); } catch {} }
     panel.remove();
     s.sftp = null;
     throw err;
@@ -17336,11 +17439,12 @@ async function importWizardPickFile() {
     const fname = importWizard.fileName.split(/[/\\]/).pop();
     document.getElementById("iw-file-name").textContent = fname;
     const summary = document.getElementById("iw-parse-summary");
+    // Los protocolos vienen del fichero importado: escaparlos, `t()` no lo hace.
     summary.innerHTML = t("import_wizard.summary", {
       total: conns.length,
       supported,
       folders: containers,
-      protocols: [...importWizard.protocols].join(", ") || "—",
+      protocols: escHtml([...importWizard.protocols].join(", ")) || "—",
     }).replace(/\n/g, "<br>");
     summary.classList.remove("hidden");
     document.getElementById("iw-next").disabled = supported === 0;
@@ -17365,14 +17469,14 @@ function renderImportWizardSelection() {
     const id = `iw-proto-${proto}`;
     const label = document.createElement("label");
     label.className = "iw-proto-chip";
-    label.innerHTML = `<input type="checkbox" id="${id}" checked data-proto="${proto}"><span>${proto} → ${protoMap[proto] || "?"}</span>`;
+    label.innerHTML = `<input type="checkbox" id="${escHtml(id)}" checked data-proto="${escHtml(proto)}"><span>${escHtml(proto)} → ${escHtml(protoMap[proto] || "?")}</span>`;
     protoBox.appendChild(label);
   }
   protoBox.querySelectorAll("input[data-proto]").forEach((cb) => {
     cb.addEventListener("change", () => {
       // Marca/desmarca todas las conexiones de ese protocolo en el árbol.
       const proto = cb.dataset.proto;
-      document.querySelectorAll(`#iw-tree .iw-conn[data-proto="${proto}"] input`).forEach((c) => {
+      document.querySelectorAll(`#iw-tree .iw-conn[data-proto="${CSS.escape(proto)}"] input`).forEach((c) => {
         c.checked = cb.checked;
         c.disabled = !cb.checked;
         c.closest(".iw-node")?.classList.toggle("iw-disabled", !cb.checked);
@@ -17393,7 +17497,7 @@ function renderImportWizardSelection() {
       if (n.type === "Connection") row.dataset.proto = n.protocol;
       row.dataset.uid = n.uid;
       const protoBadge = n.type === "Connection"
-        ? `<span class="iw-node-proto">${n.protocol || "?"}</span>`
+        ? `<span class="iw-node-proto">${escHtml(n.protocol || "?")}</span>`
         : "";
       row.style.paddingLeft = `${10 + depth * 18}px`;
       row.innerHTML = `<label><input type="checkbox" ${supported || n.type === "Container" ? "checked" : ""} ${isUnsupportedConn ? "disabled" : ""}><span class="iw-node-name">${escHtml(n.name)}</span></label>${protoBadge}`;
