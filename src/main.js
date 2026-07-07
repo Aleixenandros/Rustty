@@ -11500,8 +11500,10 @@ let scriptsCache = [];
 let scriptEditorState = null;
 /** Fase de opciones del run: { script, target, profileIds, params } o null. */
 let scriptRunSetup = null;
-/** Run en curso: { runId, script, hosts, unlisteners, finished, … } o null. */
+/** Run en curso (o de solo lectura del historial): { runId, hosts, … } o null. */
 let scriptRunState = null;
+/** Historial de ejecuciones cargado del disco (último `scripts_history_get`). */
+let scriptRunsHistory = [];
 /** TargetSpec preseleccionado al abrir el selector desde el menú contextual. */
 let scriptPickTarget = null;
 /** Grabación activa: { sessionId, profileId, state } o null. */
@@ -11670,6 +11672,7 @@ async function openScriptsModalWithNew(presetTarget = null) {
 
 function showScriptsListView() {
   document.getElementById("scripts-editor-view")?.classList.add("hidden");
+  document.getElementById("scripts-runs-view")?.classList.add("hidden");
   document.getElementById("scripts-list-view")?.classList.remove("hidden");
   scriptEditorState = null;
 }
@@ -11711,6 +11714,7 @@ function openScriptEditor(script = null, presetTarget = null) {
     ? cloneScriptValue(script)
     : emptyScript(presetTarget ? cloneScriptValue(presetTarget) : undefined);
   document.getElementById("scripts-list-view")?.classList.add("hidden");
+  document.getElementById("scripts-runs-view")?.classList.add("hidden");
   document.getElementById("scripts-editor-view")?.classList.remove("hidden");
   document.getElementById("script-ed-errors")?.classList.add("hidden");
   document.getElementById("script-ed-name").value = scriptEditorState.name || "";
@@ -12259,6 +12263,17 @@ async function launchScriptRun() {
     toast(t("scripts.cred_missing"), "warning");
     return;
   }
+  await startScriptRun(script, profileIds, { concurrency, mode, stopOnError, params, credentials });
+}
+
+/**
+ * Arranca una ejecución del `script` sobre `profileIds` con las `options` ya
+ * resueltas (incluyen las credenciales efímeras del run, solo en memoria).
+ * Registra los listeners, muestra la fase de estado e invoca al backend.
+ * Reutilizable por el botón «Ejecutar» y por «Reintentar».
+ */
+async function startScriptRun(script, profileIds, options) {
+  if (scriptRunState) return;
   const runId = crypto.randomUUID?.() || `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
   const hosts = new Map();
@@ -12274,6 +12289,7 @@ async function launchScriptRun() {
       lineCount: 0,
       log: [],
       exitCode: null,
+      durationMs: 0,
       error: "",
     });
   }
@@ -12283,8 +12299,12 @@ async function launchScriptRun() {
     hosts,
     unlisteners: [],
     finished: false,
+    readonly: false,
     total: profileIds.length,
     okCount: 0,
+    startedAt: new Date().toISOString(),
+    // Guardado para «Reintentar»: las credenciales viven solo en memoria.
+    launchArgs: { script, profileIds: [...profileIds], options },
   };
   scriptRunState = run;
 
@@ -12369,15 +12389,17 @@ async function launchScriptRun() {
       await listen(eventName("scriptDone", runId), (e) => {
         if (scriptRunState !== run) return;
         run.finished = true;
+        run.finishedAt = new Date().toISOString();
         unlistenScriptRun(run);
         const total = Number(e.payload?.total) || run.total;
         const ok = Number(e.payload?.okCount) || 0;
+        run.summary = { ok, total };
         document.getElementById("script-run-summary-line").textContent = t("scripts.done_summary", { ok, total });
-        const abortAll = document.getElementById("btn-script-abort-all");
-        if (abortAll) abortAll.disabled = true;
         document
           .querySelectorAll("#script-run-hosts [data-script-run-abort]")
           .forEach((b) => { b.disabled = true; });
+        updateScriptRunFooter(run);
+        saveScriptRunToHistory(run).catch(() => {});
         if (ok === total) toast(t("scripts.done_toast_ok", { n: total }), "success");
         else toast(t("scripts.done_toast_err", { ok, total }), "warning", 6000);
       })
@@ -12391,9 +12413,8 @@ async function launchScriptRun() {
 
   document.getElementById("script-run-setup")?.classList.add("hidden");
   document.getElementById("script-run-status")?.classList.remove("hidden");
-  const abortAll = document.getElementById("btn-script-abort-all");
-  if (abortAll) abortAll.disabled = false;
   document.getElementById("script-run-summary-line").textContent = "";
+  updateScriptRunFooter(run);
   renderScriptRunHosts();
 
   try {
@@ -12401,7 +12422,7 @@ async function launchScriptRun() {
       scriptId: script.id,
       runId,
       profileIds,
-      options: { concurrency, mode, stopOnError, params, credentials },
+      options,
     });
   } catch (err) {
     unlistenScriptRun(run);
@@ -12459,6 +12480,7 @@ function renderScriptRunHosts() {
   const run = scriptRunState;
   if (!box || !run) return;
   const single = run.hosts.size === 1;
+  const readonly = !!run.readonly;
   box.innerHTML = [...run.hosts.entries()]
     .map(
       ([pid, h]) => `
@@ -12466,7 +12488,8 @@ function renderScriptRunHosts() {
         <div class="script-run-host-top">
           <span class="script-run-host-name" title="${escHtml(h.name)}">${escHtml(h.name)}</span>
           <span class="script-status-badge" data-role="badge">${escHtml(t("scripts.status_pending"))}</span>
-          <button type="button" class="global-tunnel-action danger" data-script-run-abort="${escHtml(pid)}">${escHtml(t("scripts.abort_host"))}</button>
+          <button type="button" class="global-tunnel-action" data-script-run-copy="${escHtml(pid)}">${escHtml(t("scripts.copy"))}</button>
+          ${readonly ? "" : `<button type="button" class="global-tunnel-action danger" data-script-run-abort="${escHtml(pid)}">${escHtml(t("scripts.abort_host"))}</button>`}
         </div>
         <div class="script-run-host-error hidden" data-role="error"></div>
         <details class="script-run-log-details" ${single ? "open" : ""}>
@@ -12555,7 +12578,13 @@ async function abortScriptRun(profileId = null) {
 
 async function closeScriptRunModal() {
   const run = scriptRunState;
-  if (run && !run.finished) {
+  // "Terminado" = el backend lo confirmó (`finished`) o todos los hosts ya
+  // están en un estado final (ok/error). Así no pregunta por abortar cuando en
+  // realidad ya no queda nada en ejecución (p. ej. si no llegó `scriptDone`).
+  const allDone =
+    run && run.hosts.size > 0 &&
+    [...run.hosts.values()].every((h) => h.status === "ok" || h.status === "error");
+  if (run && !run.finished && !allDone) {
     const ok = await confirmThemed({
       title: t("scripts.abort_close_title"),
       message: t("scripts.abort_close_msg"),
@@ -12570,6 +12599,251 @@ async function closeScriptRunModal() {
   scriptRunState = null;
   scriptRunSetup = null;
   document.getElementById("script-run-overlay")?.classList.add("hidden");
+}
+
+/** Estado de la barra inferior del run (abortar / reintentar / exportar). */
+function updateScriptRunFooter(run) {
+  if (!run) return;
+  const abortAll = document.getElementById("btn-script-abort-all");
+  const retryFailed = document.getElementById("btn-script-run-retry-failed");
+  const retryAll = document.getElementById("btn-script-run-retry-all");
+  const exportBtn = document.getElementById("btn-script-run-export");
+  const readonly = !!run.readonly;
+  const finished = !!run.finished;
+  // Abortar: solo mientras corre un run real (nunca en la vista de historial).
+  if (abortAll) {
+    abortAll.classList.toggle("hidden", readonly);
+    abortAll.disabled = finished;
+  }
+  // Reintentar: al terminar un run real (no en la vista de historial).
+  const failed = [...run.hosts.values()].filter((h) => h.status === "error").length;
+  const canRetry = finished && !readonly && !!run.launchArgs;
+  if (retryFailed) {
+    retryFailed.classList.toggle("hidden", !(canRetry && failed > 0));
+    retryFailed.textContent = t("scripts.retry_failed", { n: failed });
+  }
+  if (retryAll) retryAll.classList.toggle("hidden", !canRetry);
+  if (exportBtn) exportBtn.disabled = false;
+}
+
+/**
+ * Relanza el run reutilizando script/opciones/credenciales del anterior. Con
+ * `onlyFailed` solo reejecuta los hosts que terminaron en error.
+ */
+async function retryScriptRun(onlyFailed) {
+  const prev = scriptRunState;
+  if (!prev || !prev.finished || prev.readonly || !prev.launchArgs) return;
+  const { script, options } = prev.launchArgs;
+  const targets = onlyFailed
+    ? [...prev.hosts.entries()].filter(([, h]) => h.status === "error").map(([pid]) => pid)
+    : prev.launchArgs.profileIds;
+  if (!targets.length) return;
+  // Liberar el estado del run anterior antes de arrancar el nuevo.
+  unlistenScriptRun(prev);
+  scriptRunState = null;
+  document.getElementById("script-run-summary-line").textContent = "";
+  await startScriptRun(script, targets, options);
+}
+
+/** Texto (registro + salida) de un host, para copiar o exportar. */
+function scriptHostToText(name, h) {
+  const lines = [`=== ${name} ===`];
+  const dur = h.durationMs ? ` · ${(h.durationMs / 1000).toFixed(1)} s` : "";
+  lines.push(`${t("scripts.export_status")}: ${scriptHostBadge(h).text}${dur}`);
+  if (h.error) lines.push(`${t("scripts.export_error")}: ${h.error}`);
+  lines.push("", `-- ${t("scripts.log_label")} --`);
+  for (const e of h.log || []) lines.push(`• ${e.text}`);
+  lines.push("", `-- ${t("scripts.output_label")} --`, (h.output || "").replace(/\s+$/, ""));
+  return lines.join("\n");
+}
+
+/** Texto completo de un run: cabecera + todos los hosts. */
+function scriptRunToText(run) {
+  const when = run.startedAt ? new Date(run.startedAt).toLocaleString() : "";
+  const head = [`# ${run.script?.name || t("scripts.run_title")}${when ? ` — ${when}` : ""}`];
+  if (run.summary) head.push(`# ${t("scripts.done_summary", { ok: run.summary.ok, total: run.summary.total })}`);
+  const bodies = [...run.hosts.entries()].map(([pid, h]) => scriptHostToText(h.name || pid, h));
+  return `${head.join("\n")}\n\n${bodies.join("\n\n")}\n`;
+}
+
+/** Copia al portapapeles el registro + la salida de un host. */
+async function copyScriptHostOutput(pid) {
+  const h = scriptRunState?.hosts.get(pid);
+  if (!h) return;
+  try {
+    await writeClipboardText(scriptHostToText(h.name || pid, h));
+    toast(t("scripts.copied"), "success");
+  } catch (err) {
+    toast(`${err}`, "error");
+  }
+}
+
+/** Exporta el run completo a un fichero `.log`. */
+async function exportScriptRunLog(run) {
+  if (!run) return;
+  const base = (run.script?.name || "script").replace(/[^\p{L}\p{N}._-]+/gu, "-").toLowerCase() || "script";
+  let path;
+  try {
+    path = await saveDialog({
+      title: t("scripts.export_log_title"),
+      defaultPath: `${base}.log`,
+      filters: [{ name: "Log", extensions: ["log", "txt"] }],
+    });
+  } catch (err) {
+    toast(`${err}`, "error");
+    return;
+  }
+  if (!path) return;
+  try {
+    await invoke("write_text_file", { path, contents: scriptRunToText(run) });
+    toast(t("scripts.exported_log"), "success");
+  } catch (err) {
+    toast(`${err}`, "error");
+  }
+}
+
+/** Persiste el run terminado en el historial en disco (best-effort). */
+async function saveScriptRunToHistory(run) {
+  if (!run || run.readonly) return;
+  const HIST_OUTPUT_CAP = 64 * 1024;
+  const record = {
+    id: run.runId,
+    scriptId: run.script?.id || "",
+    scriptName: run.script?.name || "",
+    startedAt: run.startedAt || new Date().toISOString(),
+    finishedAt: run.finishedAt || new Date().toISOString(),
+    mode: run.launchArgs?.options?.mode || "parallel",
+    okCount: run.summary?.ok ?? run.okCount ?? 0,
+    errorCount: [...run.hosts.values()].filter((h) => h.status === "error").length,
+    total: run.summary?.total ?? run.total,
+    hosts: [...run.hosts.entries()].map(([pid, h]) => ({
+      profileId: pid,
+      name: h.name || pid,
+      status: h.status,
+      exitCode: typeof h.exitCode === "number" ? h.exitCode : null,
+      error: h.error || "",
+      durationMs: Number(h.durationMs) || 0,
+      log: (h.log || []).map((e) => ({ kind: e.kind, text: e.text })),
+      output: (h.output || "").slice(-HIST_OUTPUT_CAP),
+    })),
+  };
+  await invoke("scripts_history_save", { record });
+}
+
+// ── Historial de ejecuciones (solo lectura) ──────────────────────
+
+/** Materializa un registro guardado como un `run` de solo lectura. */
+function recordToRun(record) {
+  const hosts = new Map();
+  for (const hr of record.hosts || []) {
+    const output = hr.output || "";
+    hosts.set(hr.profileId, {
+      name: hr.name || hr.profileId,
+      status: hr.status || "ok",
+      phase: "",
+      stepIndex: 0,
+      totalSteps: 0,
+      output,
+      lineCount: output ? (output.match(/\n/g) || []).length : 0,
+      log: Array.isArray(hr.log) ? hr.log.map((e) => ({ kind: e.kind, text: e.text })) : [],
+      exitCode: typeof hr.exitCode === "number" ? hr.exitCode : null,
+      durationMs: Number(hr.durationMs) || 0,
+      error: hr.error || "",
+    });
+  }
+  const total = Number(record.total) || hosts.size;
+  const ok = Number(record.okCount) || 0;
+  return {
+    runId: record.id,
+    script: { id: record.scriptId, name: record.scriptName, steps: [] },
+    hosts,
+    unlisteners: [],
+    finished: true,
+    readonly: true,
+    total,
+    okCount: ok,
+    startedAt: record.startedAt,
+    finishedAt: record.finishedAt,
+    summary: { ok, total },
+  };
+}
+
+/** Abre una ejecución guardada en el modal de run, en solo lectura. */
+function openHistoryRun(record) {
+  if (scriptRunState) return; // hay un run en curso: no pisarlo
+  const run = recordToRun(record);
+  scriptRunState = run;
+  scriptRunSetup = null;
+  document.getElementById("script-run-title").textContent = record.scriptName || t("scripts.run_title");
+  document.getElementById("script-run-setup")?.classList.add("hidden");
+  document.getElementById("script-run-status")?.classList.remove("hidden");
+  document.getElementById("script-run-summary-line").textContent =
+    t("scripts.done_summary", { ok: run.summary.ok, total: run.summary.total });
+  document.getElementById("script-run-overlay")?.classList.remove("hidden");
+  updateScriptRunFooter(run);
+  renderScriptRunHosts();
+}
+
+/** Muestra la vista de ejecuciones recientes dentro del gestor de scripts. */
+async function showScriptRunsView() {
+  document.getElementById("scripts-list-view")?.classList.add("hidden");
+  document.getElementById("scripts-editor-view")?.classList.add("hidden");
+  document.getElementById("scripts-runs-view")?.classList.remove("hidden");
+  scriptEditorState = null;
+  try {
+    scriptRunsHistory = (await invoke("scripts_history_get")) || [];
+  } catch {
+    scriptRunsHistory = [];
+  }
+  renderScriptRunsHistory();
+}
+
+function renderScriptRunsHistory() {
+  const list = document.getElementById("scripts-runs-list");
+  if (!list) return;
+  if (!scriptRunsHistory.length) {
+    list.innerHTML = `<div class="tunnel-empty">${escHtml(t("scripts.history_empty"))}</div>`;
+    return;
+  }
+  list.innerHTML = scriptRunsHistory
+    .map((r) => {
+      const when = r.startedAt ? new Date(r.startedAt).toLocaleString() : "";
+      const ok = Number(r.okCount) || 0;
+      const total = Number(r.total) || 0;
+      const allOk = total > 0 && ok === total;
+      const badge = allOk ? t("scripts.status_ok") : t("scripts.done_summary", { ok, total });
+      const hostsLabel = (r.hosts || []).map((h) => h.name).join(", ");
+      return `
+        <div class="script-row" data-run-id="${escHtml(r.id)}">
+          <span class="script-row-name" title="${escHtml(r.scriptName || "")}">${escHtml(r.scriptName || "—")}</span>
+          <span class="script-row-target" title="${escHtml(hostsLabel)}">${escHtml(hostsLabel)}</span>
+          <span class="script-row-meta ${allOk ? "" : "error"}">${escHtml(when)} · ${escHtml(badge)}</span>
+          <span class="script-row-actions">
+            <button type="button" class="global-tunnel-action" data-run-action="open">${escHtml(t("scripts.history_open"))}</button>
+            <button type="button" class="global-tunnel-action" data-run-action="export">${escHtml(t("scripts.export_log"))}</button>
+          </span>
+        </div>`;
+    })
+    .join("");
+}
+
+/** Vacía el historial de ejecuciones tras confirmar. */
+async function clearScriptRunsHistory() {
+  const ok = await confirmThemed({
+    title: t("scripts.history_clear"),
+    message: t("scripts.history_clear_confirm"),
+    submitLabel: t("scripts.history_clear"),
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await invoke("scripts_history_clear");
+    scriptRunsHistory = [];
+    renderScriptRunsHistory();
+    toast(t("scripts.history_cleared"), "success");
+  } catch (err) {
+    toast(`${err}`, "error");
+  }
 }
 
 // ── Selector de script (desde el menú contextual) ────────────────
@@ -12620,6 +12894,22 @@ function initScriptsUi() {
   document.getElementById("btn-script-rec-stop")?.addEventListener("click", () => stopScriptRecording(true));
   document.getElementById("btn-script-rec-cancel")?.addEventListener("click", () => stopScriptRecording(false));
   document.getElementById("btn-script-import")?.addEventListener("click", importScriptFromMarkdown);
+  document.getElementById("btn-script-history")?.addEventListener("click", showScriptRunsView);
+  document.getElementById("btn-scripts-runs-back")?.addEventListener("click", () => {
+    document.getElementById("scripts-runs-view")?.classList.add("hidden");
+    showScriptsListView();
+    renderScriptsList();
+  });
+  document.getElementById("btn-scripts-runs-clear")?.addEventListener("click", clearScriptRunsHistory);
+  document.getElementById("scripts-runs-list")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-run-action]");
+    if (!btn) return;
+    const row = btn.closest("[data-run-id]");
+    const rec = scriptRunsHistory.find((r) => r.id === row?.dataset.runId);
+    if (!rec) return;
+    if (btn.dataset.runAction === "open") openHistoryRun(rec);
+    else if (btn.dataset.runAction === "export") exportScriptRunLog(recordToRun(rec));
+  });
   document.getElementById("btn-script-ed-back")?.addEventListener("click", () => {
     showScriptsListView();
     renderScriptsList();
@@ -12707,7 +12997,15 @@ function initScriptsUi() {
   document.getElementById("script-run-cred-master")?.addEventListener("change", updateScriptRunLaunchEnabled);
   document.getElementById("script-run-cred-keepass")?.addEventListener("change", updateScriptRunLaunchEnabled);
   document.getElementById("btn-script-abort-all")?.addEventListener("click", () => abortScriptRun(null));
+  document.getElementById("btn-script-run-export")?.addEventListener("click", () => exportScriptRunLog(scriptRunState));
+  document.getElementById("btn-script-run-retry-failed")?.addEventListener("click", () => retryScriptRun(true));
+  document.getElementById("btn-script-run-retry-all")?.addEventListener("click", () => retryScriptRun(false));
   document.getElementById("script-run-hosts")?.addEventListener("click", (e) => {
+    const copyBtn = e.target.closest("[data-script-run-copy]");
+    if (copyBtn) {
+      copyScriptHostOutput(copyBtn.dataset.scriptRunCopy);
+      return;
+    }
     const btn = e.target.closest("[data-script-run-abort]");
     if (!btn) return;
     btn.disabled = true;

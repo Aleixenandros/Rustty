@@ -8855,6 +8855,10 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   font-size: 11px;
 }
 
+.script-row-meta.error {
+  color: var(--red);
+}
+
 .script-row-actions {
   display: flex;
   gap: 6px;
@@ -9013,6 +9017,11 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   font-size: 11px;
   white-space: pre-wrap;
   word-break: break-word;
+  /* La salida y el registro deben poder seleccionarse/copiarse pese al
+     `user-select: none` global del body. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 /* Filas de estado por host */
@@ -9076,6 +9085,9 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   padding: 0;
   max-height: 200px;
   overflow: auto;
+  /* Seleccionable/copiable pese al `user-select: none` global del body. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .script-run-log-entry {

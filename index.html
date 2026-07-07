@@ -1149,8 +1149,21 @@
               <button type="button" class="btn-primary" id="btn-script-new" data-i18n="scripts.new">Nuevo script</button>
               <button type="button" class="btn-secondary" id="btn-script-record" data-i18n="scripts.record">Grabar desde la sesión…</button>
               <button type="button" class="btn-secondary" id="btn-script-import" data-i18n="scripts.import_md">Importar Markdown…</button>
+              <button type="button" class="btn-secondary" id="btn-script-history" data-i18n="scripts.history">Ejecuciones recientes</button>
             </div>
             <div id="scripts-list" class="global-tunnel-list"></div>
+          </div>
+
+          <!-- Vista 3: ejecuciones recientes (historial, solo lectura) -->
+          <div id="scripts-runs-view" class="hidden">
+            <div class="scripts-toolbar">
+              <button type="button" class="btn-secondary" id="btn-scripts-runs-back" data-i18n="scripts.history_back">Volver</button>
+              <button type="button" class="btn-secondary danger" id="btn-scripts-runs-clear" data-i18n="scripts.history_clear">Borrar historial</button>
+            </div>
+            <p class="prefs-panel-hint" data-i18n="scripts.history_hint">
+              Las últimas ejecuciones guardadas en este equipo. Puedes reabrirlas para ver su registro y salida, o exportarlas a un fichero.
+            </p>
+            <div id="scripts-runs-list" class="global-tunnel-list"></div>
           </div>
 
           <!-- Vista 2: editor paso a paso -->
@@ -1291,6 +1304,9 @@
             <div class="script-run-footer">
               <span id="script-run-summary-line"></span>
               <span class="script-run-footer-actions">
+                <button type="button" class="global-tunnel-action hidden" id="btn-script-run-retry-failed">Reintentar fallidos</button>
+                <button type="button" class="global-tunnel-action hidden" id="btn-script-run-retry-all" data-i18n="scripts.retry_all">Reintentar todo</button>
+                <button type="button" class="global-tunnel-action" id="btn-script-run-export" data-i18n="scripts.export_log">Exportar .log</button>
                 <button type="button" class="global-tunnel-action danger" id="btn-script-abort-all" data-i18n="scripts.abort_all">Abortar todo</button>
                 <button type="button" class="btn-secondary" id="btn-script-run-done" data-i18n="scripts.close_btn">Cerrar</button>
               </span>

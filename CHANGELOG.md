@@ -2,6 +2,37 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.47.0] - 2026-07-07
+
+### Añadido
+
+- **Copiar y exportar la salida de los scripts**: cada conexión tiene ahora un
+  botón «Copiar» que lleva al portapapeles su registro y su salida, y el pie de
+  la ejecución incluye «Exportar .log» para guardarlo todo en un fichero. La
+  salida y el registro también se pueden seleccionar con el ratón.
+- **Ejecuciones recientes**: la sección «Scripts» guarda las últimas ejecuciones
+  en este equipo (botón «Ejecuciones recientes»). Puedes reabrir cualquiera para
+  ver su registro y su salida, exportarla, o borrar todo el historial. El
+  historial se guarda con permisos privados (0600) y nunca contiene contraseñas.
+- **Reintentar**: cuando una ejecución termina, aparecen «Reintentar fallidos» y
+  «Reintentar todo», que relanzan la misma receta reutilizando el modo y las
+  credenciales del run (solo los equipos con error, o todos).
+
+### Corregido
+
+- **Caracteres raros en la salida de los scripts**: la salida se limpia ahora de
+  las secuencias de control del terminal (colores, títulos de ventana, el modo
+  «bracketed paste» que se veía como `[?2004h`) y de las barras de progreso
+  redibujadas, tanto en pantalla como al copiar o exportar.
+- **El paso «Desconectar» ya no se adelanta al comando anterior**: si la receta
+  envía un comando y a continuación desconecta (sin un paso de espera entre
+  medias), ahora se espera a que el comando termine antes de cerrar la conexión,
+  en lugar de cortarlo a mitad.
+- **Al cerrar la ejecución ya terminada no se pregunta por abortar**: si todas
+  las conexiones han acabado, cerrar la ventana no vuelve a preguntar si se
+  quiere abortar. El aviso de «esperando la salida final» se ha reescrito para
+  dejar claro que se está esperando a que termine el último comando.
+
 ## [1.46.0] - 2026-07-07
 
 ### Añadido

@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::error::AppError;
 
-use super::types::Script;
+use super::types::{RunRecord, Script};
 
 /// Carga la lista de scripts del disco. Lista vacía si el fichero no existe.
 pub fn load(path: &Path) -> Result<Vec<Script>, AppError> {
@@ -32,6 +32,33 @@ pub fn save(path: &Path, scripts: &[Script]) -> Result<(), AppError> {
     }
     let data = serde_json::to_string_pretty(scripts)?;
     crate::atomic_file::write(path, data.as_bytes(), false)?;
+    Ok(())
+}
+
+// ─── Historial de ejecuciones (`script_runs.json`) ───────────────────────────
+
+/// Carga el historial de ejecuciones. Lista vacía si el fichero no existe o
+/// está corrupto (el historial es prescindible: nunca debe romper la app).
+pub fn load_runs(path: &Path) -> Result<Vec<RunRecord>, AppError> {
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let data = std::fs::read_to_string(path)?;
+    if data.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    Ok(serde_json::from_str(&data).unwrap_or_default())
+}
+
+/// Guarda el historial de ejecuciones de forma atómica y **privada** (0600): la
+/// salida de los comandos puede ser sensible aunque vaya ya redactada de
+/// secretos. Crea el directorio padre si hace falta.
+pub fn save_runs(path: &Path, runs: &[RunRecord]) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let data = serde_json::to_string_pretty(runs)?;
+    crate::atomic_file::write(path, data.as_bytes(), true)?;
     Ok(())
 }
 

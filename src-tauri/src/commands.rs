@@ -2282,6 +2282,31 @@ pub fn scripts_abort(
     Ok(())
 }
 
+/// Devuelve el historial de ejecuciones (las más recientes primero).
+#[tauri::command]
+pub fn scripts_history_get(
+    state: State<'_, ScriptManager>,
+) -> Result<Vec<crate::scripts::RunRecord>, String> {
+    state.history_get()
+}
+
+/// Guarda una ejecución en el historial. El registro llega ya redactado desde
+/// el frontend (la salida emitida pasó por `redact_secrets`); el backend lo
+/// persiste en privado (0600) y recorta al tope.
+#[tauri::command]
+pub fn scripts_history_save(
+    state: State<'_, ScriptManager>,
+    record: crate::scripts::RunRecord,
+) -> Result<(), String> {
+    state.history_save(record)
+}
+
+/// Vacía el historial de ejecuciones.
+#[tauri::command]
+pub fn scripts_history_clear(state: State<'_, ScriptManager>) -> Result<(), String> {
+    state.history_clear()
+}
+
 /// Resuelve las credenciales de CONEXIÓN de un perfil para el motor de scripts:
 /// contraseña (keyring/KeePass/maestra, con sustitución de `${}`) y passphrase de
 /// clave privada (keyring). No expone nada; se pasa directamente al runner.

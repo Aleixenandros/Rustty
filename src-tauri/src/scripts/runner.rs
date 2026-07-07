@@ -24,7 +24,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -113,6 +113,46 @@ struct DoneEvent {
 /// token seguro para incrustar en el marcador y en el `printf`.
 fn sanitize_token(s: &str) -> String {
     s.chars().filter(|c| c.is_ascii_alphanumeric()).collect()
+}
+
+// ─── Saneado de la salida cruda del PTY ──────────────────────────────────────
+
+/// Regex de secuencias de escape de terminal (OSC, CSI y escapes de un carácter).
+/// Se usa para limpiar la salida antes de mostrarla/exportarla: el runner corre
+/// sobre un PTY, así que el shell emite colores, títulos de ventana y el modo
+/// «bracketed paste» (`\x1b[?2004h`) que en un `<pre>` se verían como caracteres
+/// raros (`[?2004h`, `[0m`, …). Espeja `stripAnsi` de `scripts/recorder.js`.
+fn ansi_regex() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // OSC: ESC ] … (BEL | ESC \) | CSI: ESC [ … letra | ESC + un carácter.
+        regex::Regex::new(
+            r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-Z\\-_]",
+        )
+        .expect("regex ANSI válida")
+    })
+}
+
+/// Limpia un fragmento de salida cruda del PTY para presentarlo en la UI y en
+/// los exports: quita las secuencias de escape ANSI/OSC, normaliza `\r\n` → `\n`
+/// y colapsa los retornos de carro sueltos (una barra de progreso que se
+/// redibuja con `\r` deja solo su estado final, no el rastro de sobrescrituras).
+fn sanitize_output_chunk(s: &str) -> String {
+    let no_ansi = ansi_regex().replace_all(s, "");
+    let normalized = no_ansi.replace("\r\n", "\n");
+    if !normalized.contains('\r') {
+        return normalized;
+    }
+    // Semántica de sobrescritura: por línea, quedarse con lo que hay tras el
+    // último `\r` (lo que quedaría visible en el terminal).
+    let mut out = String::with_capacity(normalized.len());
+    for (i, line) in normalized.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(line.rsplit('\r').next().unwrap_or(line));
+    }
+    out
 }
 
 /// Prefijo del marcador de un paso (incluye el `_` previo al exit code):
@@ -418,15 +458,25 @@ struct HostState<'a> {
     secrets: Vec<String>,
     /// Exit code capturado por el último `waitPrompt`.
     last_exit: Option<i32>,
+    /// Hay un `send`/`sendPassword*` cuya salida aún no ha leído ningún
+    /// `waitPrompt`/`waitRegex`. Sirve para que un `disconnect` posterior espere
+    /// a que ese comando termine antes de cerrar el canal (si no, cerraría de
+    /// golpe y el comando podría ni ejecutarse).
+    pending_output: bool,
 }
 
 impl HostState<'_> {
-    /// Emite un fragmento de salida como `ScriptOutput`, redactando secretos.
+    /// Emite un fragmento de salida como `ScriptOutput`, limpiando las
+    /// secuencias de terminal y redactando secretos.
     fn emit_output(&self, chunk: &str) {
         if chunk.is_empty() {
             return;
         }
-        let redacted = redact_secrets(chunk, &self.secrets);
+        let clean = sanitize_output_chunk(chunk);
+        if clean.is_empty() {
+            return;
+        }
+        let redacted = redact_secrets(&clean, &self.secrets);
         let _ = self.app.emit(
             &event_name(EventKind::ScriptOutput, self.run_id),
             OutputEvent {
@@ -558,11 +608,13 @@ async fn execute_step(
                 }
             }
             state.send_line(&resolved).await?;
+            state.pending_output = true;
             Ok(StepFlow::Continue)
         }
         Step::WaitPrompt => {
             let code = wait_prompt(state, step_index, run_cancel, host_cancel).await?;
             state.last_exit = Some(code);
+            state.pending_output = false;
             Ok(StepFlow::Continue)
         }
         Step::WaitRegex {
@@ -570,6 +622,7 @@ async fn execute_step(
             timeout_ms,
         } => {
             wait_regex(state, pattern, *timeout_ms, run_cancel, host_cancel).await?;
+            state.pending_output = false;
             Ok(StepFlow::Continue)
         }
         Step::ExpectExit { code } => match state.last_exit {
@@ -583,11 +636,13 @@ async fn execute_step(
                 .unwrap_or_else(|| state.profile_id.clone());
             let pw = read_keyring_password(&pid)?;
             state.send_secret(pw).await?;
+            state.pending_output = true;
             Ok(StepFlow::Continue)
         }
         Step::SendPasswordFromKeepass { uuid } => {
             let pw = read_keepass_password(uuid)?;
             state.send_secret(pw).await?;
+            state.pending_output = true;
             Ok(StepFlow::Continue)
         }
         Step::Sleep { ms } => {
@@ -595,6 +650,17 @@ async fn execute_step(
             Ok(StepFlow::Continue)
         }
         Step::Disconnect => {
+            // Si el último comando aún no lo ha leído nadie, esperar a que
+            // termine (drenaje tolerante a EOF) ANTES de cerrar: si no, el
+            // canal se cerraría de golpe y el comando podría ni ejecutarse.
+            if state.pending_output {
+                if let Ok(code) = final_drain(state, step_index, run_cancel, host_cancel).await {
+                    if code.is_some() {
+                        state.last_exit = code;
+                    }
+                }
+                state.pending_output = false;
+            }
             let _ = state.channel.eof().await;
             let _ = state.channel.close().await;
             Ok(StepFlow::Disconnected)
@@ -940,6 +1006,7 @@ async fn run_host(
         host: host_addr.clone(),
         secrets,
         last_exit: None,
+        pending_output: false,
     };
     let resolve = ResolveCtx {
         ctx: SubstContext::from_profile(&profile),
@@ -1300,6 +1367,27 @@ mod tests {
         // Receta vacía o sin envíos.
         assert!(!needs_final_drain(&[]));
         assert!(!needs_final_drain(&[Step::Sleep { ms: 5 }]));
+    }
+
+    #[test]
+    fn sanitize_output_quita_ansi_y_colapsa_cr() {
+        // Bracketed paste + color: los «caracteres raros» del PTY desaparecen.
+        assert_eq!(
+            sanitize_output_chunk("\x1b[?2004hcd /root\x1b[0m\r\n"),
+            "cd /root\n"
+        );
+        // OSC (título de ventana) también se elimina.
+        assert_eq!(
+            sanitize_output_chunk("\x1b]0;usuario@host\x07prompt$ "),
+            "prompt$ "
+        );
+        // Barra de progreso redibujada con `\r`: queda solo el estado final.
+        assert_eq!(
+            sanitize_output_chunk("archivo 10%\rarchivo 55%\rarchivo 100%\n"),
+            "archivo 100%\n"
+        );
+        // Texto normal (sin secuencias) intacto.
+        assert_eq!(sanitize_output_chunk("hola mundo\n"), "hola mundo\n");
     }
 
     #[test]

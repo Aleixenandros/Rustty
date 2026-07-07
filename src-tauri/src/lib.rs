@@ -198,6 +198,9 @@ pub fn run() {
             commands::scripts_preview,
             commands::scripts_run,
             commands::scripts_abort,
+            commands::scripts_history_get,
+            commands::scripts_history_save,
+            commands::scripts_history_clear,
             // ── Notas Markdown por conexión (runbooks)
             commands::note_get,
             commands::note_set,

@@ -13,6 +13,10 @@ use serde::{Deserialize, Serialize};
 /// pequeñas, no orquestación tipo Ansible.
 pub const MAX_STEPS: usize = 50;
 
+/// Tope de ejecuciones guardadas en el historial `script_runs.json`. El resto
+/// se descarta al guardar una nueva (las más recientes primero).
+pub const MAX_RUN_HISTORY: usize = 30;
+
 /// Un script guardado: nombre, descripción (Markdown), objetivo y la lista
 /// ordenada de pasos. `createdAt`/`updatedAt` son ISO 8601.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +146,57 @@ pub struct HostPreview {
     pub host: String,
     pub name: String,
     pub commands: Vec<String>,
+}
+
+/// Registro persistido de una ejecución pasada (historial «Ejecuciones
+/// recientes»). Lo construye el frontend con datos **ya redactados** (toda la
+/// salida emitida pasó por `subst::redact_secrets`) y lo persiste el backend en
+/// `script_runs.json`. No contiene contraseñas: solo referencias y salida ya
+/// redactada. El fichero se escribe en privado (0600) porque la salida de los
+/// comandos puede ser sensible aunque no lleve secretos.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunRecord {
+    pub id: String,
+    pub script_id: String,
+    pub script_name: String,
+    pub started_at: String,
+    pub finished_at: String,
+    pub mode: String,
+    pub ok_count: u32,
+    pub error_count: u32,
+    pub total: u32,
+    #[serde(default)]
+    pub hosts: Vec<RunHostRecord>,
+}
+
+/// Estado final de un host en una ejecución guardada.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunHostRecord {
+    pub profile_id: String,
+    pub name: String,
+    /// `ok` | `error` | `pending` | `running`… (el mismo del estado de la UI).
+    pub status: String,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub error: String,
+    #[serde(default)]
+    pub duration_ms: u64,
+    #[serde(default)]
+    pub log: Vec<RunLogEntry>,
+    /// Salida ya saneada y redactada (acotada por el frontend).
+    #[serde(default)]
+    pub output: String,
+}
+
+/// Una línea del registro de ejecución de un host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunLogEntry {
+    pub kind: String,
+    pub text: String,
 }
 
 #[cfg(test)]

@@ -58,6 +58,33 @@ impl ScriptManager {
         self.data_dir.join("scripts.json")
     }
 
+    fn history_path(&self) -> PathBuf {
+        self.data_dir.join("script_runs.json")
+    }
+
+    /// Devuelve el historial de ejecuciones (las más recientes primero).
+    pub fn history_get(&self) -> Result<Vec<RunRecord>, String> {
+        store::load_runs(&self.history_path()).map_err(|e| e.to_string())
+    }
+
+    /// Añade una ejecución al historial (al frente), deduplica por id y recorta
+    /// al tope `MAX_RUN_HISTORY`. Guardado atómico y privado.
+    pub fn history_save(&self, record: RunRecord) -> Result<(), String> {
+        let mut runs = self.history_get()?;
+        runs.insert(0, record);
+        let mut seen = std::collections::HashSet::new();
+        runs.retain(|r| seen.insert(r.id.clone()));
+        if runs.len() > types::MAX_RUN_HISTORY {
+            runs.truncate(types::MAX_RUN_HISTORY);
+        }
+        store::save_runs(&self.history_path(), &runs).map_err(|e| e.to_string())
+    }
+
+    /// Vacía el historial de ejecuciones.
+    pub fn history_clear(&self) -> Result<(), String> {
+        store::save_runs(&self.history_path(), &[]).map_err(|e| e.to_string())
+    }
+
     /// Devuelve todos los scripts (cacheados en memoria tras la primera carga).
     pub fn get_all(&self) -> Result<Vec<Script>, String> {
         let mut cache = self
@@ -220,6 +247,46 @@ mod tests {
         let err = mgr.upsert(s).unwrap_err();
         assert!(err.contains("50"), "el error debe citar el tope: {err}");
         assert!(mgr.get_all().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn run_record(id: &str) -> RunRecord {
+        RunRecord {
+            id: id.to_string(),
+            script_id: "s1".into(),
+            script_name: "Demo".into(),
+            started_at: "2026-07-07T10:00:00Z".into(),
+            finished_at: "2026-07-07T10:00:05Z".into(),
+            mode: "parallel".into(),
+            ok_count: 1,
+            error_count: 0,
+            total: 1,
+            hosts: vec![],
+        }
+    }
+
+    #[test]
+    fn history_save_recorta_y_deduplica() {
+        let (mgr, dir) = manager();
+        assert!(mgr.history_get().unwrap().is_empty());
+
+        // Guardar más del tope: se conservan los MAX_RUN_HISTORY más recientes.
+        for i in 0..(types::MAX_RUN_HISTORY + 5) {
+            mgr.history_save(run_record(&format!("r{i}"))).unwrap();
+        }
+        let hist = mgr.history_get().unwrap();
+        assert_eq!(hist.len(), types::MAX_RUN_HISTORY);
+        // El último guardado queda el primero (orden: más reciente al frente).
+        assert_eq!(hist[0].id, format!("r{}", types::MAX_RUN_HISTORY + 4));
+
+        // Reguardar un id existente no duplica y lo mueve al frente.
+        mgr.history_save(run_record("r10")).unwrap();
+        let hist = mgr.history_get().unwrap();
+        assert_eq!(hist[0].id, "r10");
+        assert_eq!(hist.iter().filter(|r| r.id == "r10").count(), 1);
+
+        mgr.history_clear().unwrap();
+        assert!(mgr.history_get().unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
