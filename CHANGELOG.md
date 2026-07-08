@@ -2,6 +2,34 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.48.0] - 2026-07-08
+
+### Añadido
+
+- **Más idiomas en los avisos**: los mensajes emergentes (túneles, conexiones,
+  transferencias, pruebas de conexión, selección de archivos…) y el diálogo de
+  eliminar una conexión respetan ahora el idioma elegido en los cinco idiomas de
+  la app (español, inglés, francés, portugués y alemán), en vez de aparecer
+  siempre en español. Una comprobación interna vigila además que ningún idioma
+  se quede sin traducir esos mensajes.
+
+### Cambiado
+
+- **Permisos del sistema más ajustados**: Rustty pide ahora solo los permisos
+  que realmente usa para abrir enlaces y carpetas. Se han retirado un permiso de
+  «mostrar en la carpeta» que no se utilizaba y una lista de direcciones
+  permitidas que no tenía ningún efecto.
+
+### Corregido
+
+- **La latencia deja de medirse en sesiones caídas**: cuando una sesión se
+  cierra o falla, la barra inferior ya no sigue midiendo la latencia contra un
+  host que puede estar inaccesible.
+- **Menos saturación al mover mucho tráfico por un túnel**: el contador de
+  tráfico de los túneles SSH se actualiza de forma agrupada (varias veces por
+  segundo) en lugar de por cada fragmento, evitando sobrecargar la interfaz en
+  transferencias grandes; al terminar muestra siempre el total exacto.
+
 ## [1.47.0] - 2026-07-07
 
 ### Añadido

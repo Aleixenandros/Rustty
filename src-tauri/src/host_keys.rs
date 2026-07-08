@@ -314,6 +314,10 @@ where
     let mut buf = vec![0u8; 8192];
     let mut bytes_up = 0u64;
     let mut bytes_down = 0u64;
+    // Coalescing de los eventos de tráfico (ver `tunnel_throttle`): emitir a lo
+    // sumo cada intervalo/umbral en vez de por chunk, con flush final exacto.
+    let mut last_emit = std::time::Instant::now();
+    let mut last_emit_total = 0u64;
     loop {
         tokio::select! {
             msg = channel.wait() => {
@@ -323,7 +327,7 @@ where
                             break;
                         }
                         bytes_down = bytes_down.saturating_add(data.len() as u64);
-                        emit_tunnel_traffic(&traffic, bytes_up, bytes_down);
+                        maybe_emit_traffic(&traffic, bytes_up, bytes_down, &mut last_emit, &mut last_emit_total);
                     }
                     Some(ChannelMsg::Eof)
                     | Some(ChannelMsg::Close)
@@ -341,15 +345,42 @@ where
                             break;
                         }
                         bytes_up = bytes_up.saturating_add(n as u64);
-                        emit_tunnel_traffic(&traffic, bytes_up, bytes_down);
+                        maybe_emit_traffic(&traffic, bytes_up, bytes_down, &mut last_emit, &mut last_emit_total);
                     }
                 }
             }
         }
     }
+    // Flush final con los totales exactos por si el último chunk no cruzó el umbral.
+    if bytes_up.saturating_add(bytes_down) != last_emit_total {
+        emit_tunnel_traffic(&traffic, bytes_up, bytes_down);
+    }
     let _ = channel.eof().await;
     let _ = channel.close().await;
     Ok(())
+}
+
+/// Emite un evento de tráfico solo si el throttle lo permite (ver
+/// [`crate::tunnel_throttle`]), actualizando el estado de coalescing.
+fn maybe_emit_traffic(
+    traffic: &Option<(String, String, AppHandle)>,
+    bytes_up: u64,
+    bytes_down: u64,
+    last_emit: &mut std::time::Instant,
+    last_emit_total: &mut u64,
+) {
+    if traffic.is_none() {
+        return;
+    }
+    let total = bytes_up.saturating_add(bytes_down);
+    if crate::tunnel_throttle::should_emit_traffic(
+        last_emit.elapsed(),
+        total.saturating_sub(*last_emit_total),
+    ) {
+        emit_tunnel_traffic(traffic, bytes_up, bytes_down);
+        *last_emit = std::time::Instant::now();
+        *last_emit_total = total;
+    }
 }
 
 fn emit_tunnel_traffic(

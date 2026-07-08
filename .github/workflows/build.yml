@@ -109,8 +109,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName:       ${{ github.ref_name }}
-          releaseName:   "Rustty ${{ github.ref_name }}"
+          # Solo publicar release cuando el disparador es un tag `v*`. En un
+          # `workflow_dispatch` desde `main`, `github.ref_name` sería «main» y
+          # crearía un release «Rustty main»; con tagName vacío tauri-action se
+          # limita a compilar (smoke test) sin tocar releases.
+          tagName:       ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName:   ${{ startsWith(github.ref, 'refs/tags/') && format('Rustty {0}', github.ref_name) || '' }}
           releaseBody:   "Ver CHANGELOG para detalles."
           releaseDraft:  true
           prerelease:    false

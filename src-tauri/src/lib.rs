@@ -18,6 +18,7 @@ mod sftp_manager;
 mod ssh_manager;
 mod subst;
 mod sync;
+mod tunnel_throttle;
 
 use std::path::PathBuf;
 

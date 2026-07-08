@@ -5054,7 +5054,7 @@ async function moveFolderTo(folderPath, sourceWs, targetParent, targetWs) {
 
   if (sameWs && newPath === folderPath) return;
   if (sameWs && newPath.startsWith(folderPath + "/")) {
-    toast("No se puede mover una carpeta dentro de sí misma", "error");
+    toast(t("toast.folder_move_self"), "error");
     return;
   }
 
@@ -5597,7 +5597,7 @@ async function renameProfileById(profileId) {
   if (idx >= 0) profiles[idx] = updated;
   renderConnectionList();
   scheduleProfileAutoSync();
-  toast(`Conexión renombrada a "${trimmed}"`, "success");
+  toast(t("toast.conn_renamed", { name: trimmed }), "success");
 }
 
 async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiveWorkspaceId()) {
@@ -7469,7 +7469,7 @@ async function runConnectionTestFromModal() {
   const testId = `conn-test-${crypto.randomUUID()}`;
   resetConnectionTestPanel();
   document.getElementById("connection-test-panel")?.classList.remove("hidden");
-  setConnectionTestStatus("Probando…", "busy");
+  setConnectionTestStatus(t("toast.test_busy"), "busy");
   if (btn) btn.disabled = true;
 
   try {
@@ -7543,8 +7543,8 @@ async function runConnectionTestFromModal() {
       status: "error",
       message: String(err),
     });
-    setConnectionTestStatus("Error", "error");
-    toast(`Prueba de conexión fallida: ${err}`, "error", 8000);
+    setConnectionTestStatus(t("toast.test_error"), "error");
+    toast(t("toast.test_failed", { err }), "error", 8000);
     recordActivity({
       kind: "connection",
       status: "error",
@@ -7745,7 +7745,7 @@ async function resolveSshCredentials(profile, cred = null) {
   if (view.authType === "password") {
     if (view.keepassEntryUuid) {
       if (!keepassUnlocked) {
-        toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
+        toast(t("toast.keepass_locked"), "warning");
         return null;
       }
     } else if (view.passwordSource === "master") {
@@ -7792,7 +7792,7 @@ async function resolvePasswordOnlyCredentials(profile, {
   const promptProfile = { ...profile, username: view.username };
   if (view.keepassEntryUuid) {
     if (!keepassUnlocked) {
-      toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
+      toast(t("toast.keepass_locked"), "warning");
       return null;
     }
     return passwordOverride || null;
@@ -7921,7 +7921,7 @@ async function wakeProfile(profileId) {
       onAction: () => connectProfile(profileId, { force: true }),
     });
   } catch (err) {
-    toast(`Wake On LAN falló: ${err}`, "error", 7000, {
+    toast(t("toast.wol_failed", { err }), "error", 7000, {
       actionLabel: "Reintentar",
       onAction: () => wakeProfile(profileId),
     });
@@ -8213,7 +8213,7 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
   let password = passwordOverride;
   if (view.keepassEntryUuid) {
     if (!keepassUnlocked) {
-      toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
+      toast(t("toast.keepass_locked"), "warning");
       return;
     }
   } else if (view.passwordSource === "master") {
@@ -8284,13 +8284,13 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
         const btn = pane.querySelector(".rdp-disconnect-btn");
         if (btn) btn.textContent = "Cerrar pestaña";
       }
-      toast(`Sesión RDP "${profile.name}" cerrada`, "info");
+      toast(t("toast.rdp_closed", { name: profile.name }), "info");
     });
     sessionObj.unlisteners.push(unlisten);
 
     renderConnectionList();
     setActiveTab(sessionId);
-    toast(`Sesión RDP "${profile.name}" iniciada`, "success");
+    toast(t("toast.rdp_started", { name: profile.name }), "success");
   } catch (err) {
     sessions.delete(tempId);
     removeTab(tempId);
@@ -8579,7 +8579,7 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
     ${sftpBtn}
     ${tunnelBtn}
     ${runbookBtn}
-    <button class="tab-close" title="Cerrar" aria-label="Cerrar">${TAB_CLOSE_ICON_SVG}</button>`;
+    <button class="tab-close" title="${t("toast.close")}" aria-label="${t("toast.close")}">${TAB_CLOSE_ICON_SVG}</button>`;
   tab.addEventListener("click", (e) => {
     if (e.target.classList.contains("tab-close")) return;
     if (e.target.classList.contains("tab-sftp")) return;
@@ -9773,6 +9773,13 @@ function updateStatusBar() {
   if (latEl) latEl.textContent = "—";
   const probe = async () => {
     if (activeSessionId !== s.sessionId) return; // cambió la sesión activa
+    // No sondear una sesión que ya no está viva: al caer (closed/error/canceled)
+    // el host puede ser inalcanzable y el intervalo seguiría pinging para siempre.
+    if (s.status === "closed" || s.status === "error" || s.status === "canceled") {
+      if (_statusLatencyTimer) { clearInterval(_statusLatencyTimer); _statusLatencyTimer = null; }
+      if (latEl && activeSessionId === s.sessionId) latEl.textContent = "—";
+      return;
+    }
     try {
       const ms = await invoke("tcp_ping", { host: profile.host, port: profile.port });
       if (latEl && activeSessionId === s.sessionId) latEl.textContent = `${ms} ms`;
@@ -10488,7 +10495,7 @@ function buildConnectionLogPanel(sessionId) {
   panel.innerHTML = `
     <div class="connection-log-head">
       <span>Diagnóstico de conexión</span>
-      <button type="button" class="connection-log-close" aria-label="Cerrar">✕</button>
+      <button type="button" class="connection-log-close" aria-label="${t("toast.close")}">✕</button>
     </div>
     <div class="connection-log-list"></div>
   `;
@@ -11087,9 +11094,9 @@ async function deleteProfile(profileId) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
   const confirmed = await confirmThemed({
-    title: "Eliminar conexión",
-    message: `¿Eliminar "${profile.name}"? Esta acción no se puede deshacer.`,
-    submitLabel: "Eliminar",
+    title: t("toast.del_conn_title"),
+    message: t("toast.del_conn_confirm", { name: profile.name }),
+    submitLabel: t("toast.del_conn_submit"),
     danger: true,
   });
   if (!confirmed) return;
@@ -11099,9 +11106,9 @@ async function deleteProfile(profileId) {
     savePrefs();
     renderConnectionList();
     scheduleProfileAutoSync();
-    toast("Conexión eliminada", "success");
+    toast(t("toast.conn_deleted"), "success");
   } catch (err) {
-    toast(`Error al eliminar: ${err}`, "error");
+    toast(t("toast.conn_delete_error", { err }), "error");
   }
 }
 
@@ -11133,7 +11140,7 @@ async function deleteSelectedProfiles(targetId) {
 
   const confirmed = await confirmThemed({
     title: "Eliminar conexiones",
-    message: `¿Eliminar ${ids.length} conexiones? Esta acción no se puede deshacer.`,
+    message: t("toast.del_conn_multi_confirm", { n: ids.length }),
     submitLabel: "Eliminar",
     danger: true,
   });
@@ -11145,14 +11152,14 @@ async function deleteSelectedProfiles(targetId) {
     try {
       if (await deleteProfileData(id)) ok++;
     } catch (err) {
-      toast(`Error al eliminar "${profile?.name || id}": ${err}`, "error");
+      toast(t("toast.conn_delete_error_named", { name: profile?.name || id, err }), "error");
     }
   }
   sidebarSelectedConnectionIds.clear();
   savePrefs();
   renderConnectionList();
   scheduleProfileAutoSync();
-  if (ok) toast(`${ok} ${ok === 1 ? "conexión eliminada" : "conexiones eliminadas"}`, "success");
+  if (ok) toast(ok === 1 ? t("toast.conn_deleted_one", { n: ok }) : t("toast.conn_deleted_many", { n: ok }), "success");
 }
 
 /**
@@ -11376,7 +11383,7 @@ async function openTunnelForProfile(profileId) {
     sessionId = findOpenSessionForProfile(profileId);
   }
   if (!sessionId) {
-    toast("Abre primero una sesión SSH para crear el túnel", "warning");
+    toast(t("toast.tunnel_need_ssh"), "warning");
     return;
   }
   await openTunnelPanel(sessionId, { focusForm: true });
@@ -13356,13 +13363,13 @@ async function ensureConnectedSshSessionForProfile(profileId) {
 async function startGlobalTunnelFromForm() {
   const { profileId, tunnel, persist } = readGlobalTunnelForm();
   if (!profileId) {
-    toast("Selecciona una conexión SSH", "warning");
+    toast(t("toast.select_ssh_conn"), "warning");
     return;
   }
   try {
     const sessionId = await ensureConnectedSshSessionForProfile(profileId);
     if (!sessionId) {
-      toast("No se pudo abrir una sesión SSH para el túnel", "error", 8000);
+      toast(t("toast.tunnel_ssh_open_failed"), "error", 8000);
       return;
     }
     await startSshTunnel(sessionId, tunnel, { persist });
@@ -13373,7 +13380,7 @@ async function startGlobalTunnelFromForm() {
     updateGlobalTunnelFields();
     renderGlobalTunnelLists();
   } catch (err) {
-    toast(`No se pudo abrir el túnel: ${err}`, "error", 8000);
+    toast(t("toast.tunnel_open_failed", { err }), "error", 8000);
   }
 }
 
@@ -13443,13 +13450,13 @@ async function startSavedGlobalTunnel(profileId, tunnelId) {
   try {
     const sessionId = await ensureConnectedSshSessionForProfile(profileId);
     if (!sessionId) {
-      toast("No se pudo abrir una sesión SSH para el túnel", "error", 8000);
+      toast(t("toast.tunnel_ssh_open_failed"), "error", 8000);
       return;
     }
     await startSshTunnel(sessionId, tunnel, { persist: false });
     renderGlobalTunnelLists();
   } catch (err) {
-    toast(`No se pudo abrir el túnel: ${err}`, "error", 8000);
+    toast(t("toast.tunnel_open_failed", { err }), "error", 8000);
   }
 }
 
@@ -13473,7 +13480,7 @@ async function deleteSavedGlobalTunnel(profileId, tunnelId) {
 async function toggleTunnelPanel(sessionId) {
   const s = sessions.get(sessionId);
   if (!s || s.status !== "connected") {
-    toast("La sesión SSH debe estar conectada", "warning");
+    toast(t("toast.ssh_must_connect"), "warning");
     return;
   }
   if (s.tunnelPanel) {
@@ -13580,7 +13587,7 @@ async function startTunnelFromPanel(sessionId, panel) {
     panel.querySelector('[name="bindHost"]').value = "127.0.0.1";
     panel.querySelector('[name="type"]').dispatchEvent(new Event("change"));
   } catch (err) {
-    toast(`No se pudo abrir el túnel: ${err}`, "error", 8000);
+    toast(t("toast.tunnel_open_failed", { err }), "error", 8000);
   }
 }
 
@@ -13609,13 +13616,13 @@ async function startSshTunnel(sessionId, cfg, opts = {}) {
   renderTunnelList(sessionId);
   if (opts.persist && s.profileId) await persistTunnelForProfile(s.profileId, tunnel);
   renderGlobalTunnelLists();
-  toast(`Túnel abierto: ${describeTunnel(tunnel)}`, "success");
+  toast(t("toast.tunnel_opened", { desc: describeTunnel(tunnel) }), "success");
   return tunnel;
 }
 
 async function stopSshTunnel(sessionId, tunnelId) {
   await invoke("ssh_stop_tunnel", { sessionId, tunnelId }).catch((err) => {
-    toast(`No se pudo cerrar el túnel: ${err}`, "error");
+    toast(t("toast.tunnel_close_failed", { err }), "error");
   });
   const s = sessions.get(sessionId);
   const tunnel = s?.tunnels?.get(tunnelId);
@@ -13647,7 +13654,7 @@ async function startProfileAutoTunnels(sessionId) {
     try {
       await startSshTunnel(sessionId, cfg, { persist: false });
     } catch (err) {
-      toast(`Autotúnel "${cfg.name || cfg.id}" falló: ${err}`, "warning", 8000);
+      toast(t("toast.autotunnel_failed", { name: cfg.name || cfg.id, err }), "warning", 8000);
     }
   }
 }
@@ -13787,7 +13794,7 @@ async function toggleSftpPanel(sessionId) {
     return;
   }
   if (s.status !== "connected") {
-    toast("La sesión debe estar conectada", "warning");
+    toast(t("toast.session_must_connect"), "warning");
     return;
   }
   await openSftpPanel(sessionId);
@@ -13805,7 +13812,7 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
   if (profile.auth_type === "password" && !password) {
     if (profile.keepass_entry_uuid) {
       if (!keepassUnlocked) {
-        toast("KeePass bloqueada; desbloquéala en Preferencias", "warning");
+        toast(t("toast.keepass_locked"), "warning");
         return;
       }
     } else {
@@ -13909,7 +13916,7 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
     s.sftp.localCwd = localHome;
     await navigateSftpLocal(sessionId, localHome);
   } catch (err) {
-    toast(`${protoLabel} falló: ${err}`, "error");
+    toast(t("toast.proto_failed", { proto: protoLabel, err }), "error");
     appendSftpActivity(panel, {
       status: "error",
       label: `${protoLabel} falló`,
@@ -14041,7 +14048,7 @@ async function toggleSftpElevated(sessionId) {
       btn?.classList.toggle("active", wasElevated);
       await navigateSftp(sessionId, prevCwd || "/");
     } catch (err2) {
-      toast(`SFTP caído: ${err2}`, "error");
+      toast(t("toast.sftp_down", { err: err2 }), "error");
     }
   } finally {
     if (btn) btn.disabled = false;
@@ -14057,7 +14064,7 @@ function activeSftpSession() {
 function toggleActiveSftpPanel() {
   const s = activeSftpSession();
   if (!s) {
-    toast("Selecciona una sesión SSH primero", "warning");
+    toast(t("toast.select_ssh_first"), "warning");
     return;
   }
   toggleSftpPanel(activeSessionId);
@@ -15532,26 +15539,26 @@ async function handleSftpContextMenuAction(action) {
       break;
     case "download":
       if (rows.length) transferRows(sessionId, "download", rows);
-      else toast("Selecciona uno o más elementos remotos", "warning");
+      else toast(t("toast.select_remote_items"), "warning");
       break;
     case "upload-selected":
       if (rows.length) transferRows(sessionId, "upload", rows);
-      else toast("Selecciona uno o más elementos locales", "warning");
+      else toast(t("toast.select_local_items"), "warning");
       break;
     case "upload-files":
       await uploadLocalFilesFromDialog(sessionId);
       break;
     case "rename":
       if (rows.length === 1) await promptRename(sessionId, side, rows[0].path, rows[0].name);
-      else toast("Selecciona un único elemento para renombrar", "warning");
+      else toast(t("toast.select_one_rename"), "warning");
       break;
     case "chmod":
       if (rows.length) await promptSftpPermissions(sessionId, side, rows);
-      else toast("Selecciona uno o más elementos", "warning");
+      else toast(t("toast.select_items"), "warning");
       break;
     case "delete":
       if (rows.length) await confirmDeleteRows(sessionId, side, rows);
-      else toast("Selecciona uno o más elementos", "warning");
+      else toast(t("toast.select_items"), "warning");
       break;
   }
 }
@@ -15655,7 +15662,7 @@ async function transferSelected(sessionId, direction) {
   const sourceSide = direction === "upload" ? "local" : "remote";
   const rows = selectedRows(sessionId, sourceSide);
   if (rows.length === 0) {
-    toast(`Selecciona uno o más elementos en ${sourceSide === "local" ? "Local" : "Remoto"}`, "warning");
+    toast(t("toast.select_items_in", { side: sourceSide === "local" ? t("toast.side_local") : t("toast.side_remote") }), "warning");
     return;
   }
   transferRows(sessionId, direction, rows);
@@ -16278,7 +16285,7 @@ async function uploadLocalFilesFromDialog(sessionId) {
       directory: false,
     });
   } catch (err) {
-    toast(`Error al abrir diálogo: ${err}`, "error");
+    toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
   if (!paths) return;
@@ -16325,7 +16332,7 @@ async function promptSftpPermissions(sessionId, side, rows) {
   if (!modeText) return;
   const mode = parseOctalMode(modeText);
   if (mode === null) {
-    toast("Permisos no válidos. Usa octal, por ejemplo 755 o 0644.", "warning");
+    toast(t("toast.chmod_invalid"), "warning");
     return;
   }
 
@@ -16884,7 +16891,7 @@ async function exportConnections(folderFilter, workspaceId = getActiveWorkspaceI
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
   } catch (err) {
-    toast(`Error al abrir diálogo: ${err}`, "error");
+    toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
   if (!path) return; // usuario canceló
@@ -16932,7 +16939,7 @@ async function exportConnectionsByWorkspace(workspaceId) {
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
   } catch (err) {
-    toast(`Error al abrir diálogo: ${err}`, "error");
+    toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
   if (!path) return;
@@ -16961,7 +16968,7 @@ async function importConnections() {
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
   } catch (err) {
-    toast(`Error al abrir diálogo: ${err}`, "error");
+    toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
   if (!path) return; // usuario canceló
@@ -17241,7 +17248,7 @@ async function importFromSshConfig() {
       defaultPath,
     });
   } catch (err) {
-    toast(`Error al abrir diálogo: ${err}`, "error");
+    toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
   if (!path) return;
@@ -19807,7 +19814,7 @@ function handleRenameHotkey(e) {
       e.stopPropagation();
       const rows = selectedSftpContextRows(sessionId, side);
       if (rows.length === 1) promptRename(sessionId, side, rows[0].path, rows[0].name);
-      else if (rows.length > 1) toast("Selecciona un único elemento para renombrar", "warning");
+      else if (rows.length > 1) toast(t("toast.select_one_rename"), "warning");
     }
     return true;
   }
@@ -21914,7 +21921,7 @@ async function exportSessionHistory(sessionId) {
       filters: [{ name: "Texto", extensions: ["txt"] }],
     });
   } catch (err) {
-    toast(`Error al abrir diálogo: ${err}`, "error");
+    toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
   if (!path) return; // usuario canceló

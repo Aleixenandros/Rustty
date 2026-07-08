@@ -1765,6 +1765,27 @@ async fn pump_tunnel(
     let mut buf = vec![0u8; 16384];
     let mut bytes_up = 0u64;
     let mut bytes_down = 0u64;
+    // Coalescing de los eventos de tráfico: en vez de emitir por cada chunk
+    // (avalancha IPC en transferencias masivas), emitimos a lo sumo cada
+    // TRAFFIC_MIN_INTERVAL o cada TRAFFIC_MIN_BYTES; al final se hace un flush
+    // con los totales exactos.
+    let event = event_name(EventKind::SshTunnelTraffic, &session_id);
+    let mut last_emit = std::time::Instant::now();
+    let mut last_emit_total = 0u64;
+    let mut maybe_emit = |bytes_up: u64, bytes_down: u64| {
+        let total = bytes_up.saturating_add(bytes_down);
+        if crate::tunnel_throttle::should_emit_traffic(
+            last_emit.elapsed(),
+            total.saturating_sub(last_emit_total),
+        ) {
+            let _ = app_handle.emit(
+                &event,
+                SshTunnelTrafficEvent { id: tunnel_id.clone(), bytes_up, bytes_down },
+            );
+            last_emit = std::time::Instant::now();
+            last_emit_total = total;
+        }
+    };
     loop {
         tokio::select! {
             read = local_rx.read(&mut buf) => {
@@ -1775,10 +1796,7 @@ async fn pump_tunnel(
                             break;
                         }
                         bytes_up = bytes_up.saturating_add(n as u64);
-                        let _ = app_handle.emit(
-                            &event_name(EventKind::SshTunnelTraffic, &session_id),
-                            SshTunnelTrafficEvent { id: tunnel_id.clone(), bytes_up, bytes_down },
-                        );
+                        maybe_emit(bytes_up, bytes_down);
                     }
                 }
             }
@@ -1789,10 +1807,7 @@ async fn pump_tunnel(
                             break;
                         }
                         bytes_down = bytes_down.saturating_add(data.len() as u64);
-                        let _ = app_handle.emit(
-                            &event_name(EventKind::SshTunnelTraffic, &session_id),
-                            SshTunnelTrafficEvent { id: tunnel_id.clone(), bytes_up, bytes_down },
-                        );
+                        maybe_emit(bytes_up, bytes_down);
                     }
                     Some(ChannelMsg::Eof)
                     | Some(ChannelMsg::Close)
@@ -1803,6 +1818,14 @@ async fn pump_tunnel(
                 }
             }
         }
+    }
+    // Flush final: asegura que la UI vea los totales exactos aunque el último
+    // chunk no cruzara el umbral de emisión.
+    if bytes_up.saturating_add(bytes_down) != last_emit_total {
+        let _ = app_handle.emit(
+            &event,
+            SshTunnelTrafficEvent { id: tunnel_id.clone(), bytes_up, bytes_down },
+        );
     }
     let _ = channel.eof().await;
     let _ = channel.close().await;
