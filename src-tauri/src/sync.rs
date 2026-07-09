@@ -62,20 +62,15 @@ pub fn get_or_create_device_id(data_dir: &Path) -> String {
 
 // ─── Configuración del sync (en disco como sync_config.json) ─────────
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncBackendKind {
+    #[default]
     None,
     Local,
     Icloud,
     Webdav,
     GoogleDrive,
-}
-
-impl Default for SyncBackendKind {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -306,8 +301,8 @@ impl SyncState {
         for (key, remote) in other.items {
             let local_ts = self.items.get(&key).map(|i| i.updated_at);
             let tomb_ts = self.tombstones.get(&key).copied();
-            let beats_local = local_ts.map_or(true, |t| remote.updated_at > t);
-            let beats_tomb = tomb_ts.map_or(true, |t| remote.updated_at > t);
+            let beats_local = local_ts.is_none_or(|t| remote.updated_at > t);
+            let beats_tomb = tomb_ts.is_none_or(|t| remote.updated_at > t);
             if beats_local && beats_tomb {
                 self.items.insert(key.clone(), remote);
                 self.tombstones.remove(&key);
@@ -318,8 +313,8 @@ impl SyncState {
         for (key, ts) in other.tombstones {
             let local_ts = self.items.get(&key).map(|i| i.updated_at);
             let local_tomb_ts = self.tombstones.get(&key).copied();
-            let beats_local = local_ts.map_or(true, |t| ts > t);
-            let beats_tomb = local_tomb_ts.map_or(true, |t| ts > t);
+            let beats_local = local_ts.is_none_or(|t| ts > t);
+            let beats_tomb = local_tomb_ts.is_none_or(|t| ts > t);
             if beats_local && beats_tomb {
                 self.items.remove(&key);
                 self.tombstones.insert(key, ts);

@@ -11,7 +11,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+
+use zeroize::Zeroizing;
+
+use crate::locks::MutexExt;
 use std::thread;
 use std::time::Duration;
 
@@ -210,10 +215,9 @@ pub enum SessionCommand {
         tunnel_id: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
-    /// Devuelve los túneles activos en esta sesión.
-    ListTunnels {
-        reply: oneshot::Sender<Vec<SshTunnelInfo>>,
-    },
+    /// Activa/desactiva en vivo el keepalive de la sesión. `Some(n>0)` envía un
+    /// `keepalive@openssh.com` cada `n` segundos; `None` o `Some(0)` lo apaga.
+    SetKeepAlive(Option<u32>),
     /// Conexión TCP aceptada por un listener local o SOCKS.
     TunnelAccepted {
         tunnel_id: String,
@@ -307,8 +311,7 @@ impl SshManager {
         });
 
         self.sessions
-            .lock()
-            .unwrap()
+            .lock_recover()
             .insert(session_id, SessionHandle { cmd_tx });
 
         Ok(())
@@ -316,7 +319,7 @@ impl SshManager {
 
     /// Envía bytes de entrada (teclas del usuario) a la sesión activa
     pub fn send_input(&self, session_id: &str, data: Vec<u8>) -> Result<(), AppError> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock_recover();
         let handle = sessions
             .get(session_id)
             .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
@@ -328,7 +331,7 @@ impl SshManager {
 
     /// Solicita al servidor SSH un cambio de tamaño del PTY
     pub fn resize(&self, session_id: &str, cols: u32, rows: u32) -> Result<(), AppError> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock_recover();
         let handle = sessions
             .get(session_id)
             .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
@@ -338,13 +341,27 @@ impl SshManager {
             .map_err(|_| AppError::SessionNotFound(session_id.to_string()))
     }
 
+    /// Activa/desactiva en vivo el keepalive de una sesión (segundos; `None`/`0`
+    /// = desactivado). Tiene efecto inmediato sobre la sesión en curso y se
+    /// conserva a través de reconexiones automáticas.
+    pub fn set_keep_alive(&self, session_id: &str, secs: Option<u32>) -> Result<(), AppError> {
+        let sessions = self.sessions.lock_recover();
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+        handle
+            .cmd_tx
+            .send(SessionCommand::SetKeepAlive(secs))
+            .map_err(|_| AppError::SessionNotFound(session_id.to_string()))
+    }
+
     pub async fn start_tunnel(
         &self,
         session_id: &str,
         config: SshTunnelConfig,
     ) -> Result<SshTunnelInfo, String> {
         let cmd_tx = {
-            let sessions = self.sessions.lock().unwrap();
+            let sessions = self.sessions.lock_recover();
             sessions
                 .get(session_id)
                 .ok_or_else(|| format!("Sesión SSH {session_id} no encontrada"))?
@@ -361,7 +378,7 @@ impl SshManager {
 
     pub async fn stop_tunnel(&self, session_id: &str, tunnel_id: String) -> Result<(), String> {
         let cmd_tx = {
-            let sessions = self.sessions.lock().unwrap();
+            let sessions = self.sessions.lock_recover();
             sessions
                 .get(session_id)
                 .ok_or_else(|| format!("Sesión SSH {session_id} no encontrada"))?
@@ -376,26 +393,9 @@ impl SshManager {
             .map_err(|_| "La sesión SSH no respondió".to_string())?
     }
 
-    pub async fn list_tunnels(&self, session_id: &str) -> Result<Vec<SshTunnelInfo>, String> {
-        let cmd_tx = {
-            let sessions = self.sessions.lock().unwrap();
-            sessions
-                .get(session_id)
-                .ok_or_else(|| format!("Sesión SSH {session_id} no encontrada"))?
-                .cmd_tx
-                .clone()
-        };
-        let (reply, rx) = oneshot::channel();
-        cmd_tx
-            .send(SessionCommand::ListTunnels { reply })
-            .map_err(|_| format!("Sesión SSH {session_id} no disponible"))?;
-        rx.await
-            .map_err(|_| "La sesión SSH no respondió".to_string())
-    }
-
     /// Cierra y elimina una sesión del mapa de estado
     pub fn disconnect(&self, session_id: &str) -> Result<(), AppError> {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock_recover();
         if let Some(handle) = sessions.remove(session_id) {
             let _ = handle.cmd_tx.send(SessionCommand::Disconnect);
         }
@@ -405,8 +405,7 @@ impl SshManager {
     pub fn disconnect_all(&self) {
         let handles: Vec<_> = self
             .sessions
-            .lock()
-            .unwrap()
+            .lock_recover()
             .drain()
             .map(|(_, h)| h)
             .collect();
@@ -426,10 +425,13 @@ pub async fn test_connection(
     // Redacción defensiva del mensaje de error de prueba antes de devolverlo al
     // frontend (toast): ningún error actual interpola la credencial, pero
     // enmascaramos por si una capa inferior llegara a hacerlo.
-    let secret_values: Vec<String> = [password.clone(), passphrase.clone()]
+    // `Zeroizing`: estas copias del secreto (para redacción) se borran de memoria
+    // al liberarse, en vez de quedar en el heap tras el drop.
+    let secret_values: Vec<Zeroizing<String>> = [password.clone(), passphrase.clone()]
         .into_iter()
         .flatten()
         .filter(|s| !s.is_empty())
+        .map(Zeroizing::new)
         .collect();
     run_connection_test(test_id, profile, password, passphrase, app_handle)
         .await
@@ -483,11 +485,21 @@ async fn run_session_with_reconnect(
     // resueltas, que pueden venir de `${master:}`/`${secret:}`). Se usan para
     // redactar defensivamente cualquier mensaje de error antes de emitirlo a un
     // canal no confiable, por si una capa inferior llegara a interpolarlos.
-    let secret_values: Vec<String> = [password.clone(), passphrase.clone()]
+    // `Zeroizing`: estas copias del secreto (para redacción) se borran de memoria
+    // al liberarse, en vez de quedar en el heap tras el drop.
+    let secret_values: Vec<Zeroizing<String>> = [password.clone(), passphrase.clone()]
         .into_iter()
         .flatten()
         .filter(|s| !s.is_empty())
+        .map(Zeroizing::new)
         .collect();
+
+    // Estado de keepalive compartido con el worker: el toggle en vivo lo escribe
+    // aquí para que sobreviva a las reconexiones automáticas (que reconstruyen
+    // el worker). 0 = desactivado. Valor inicial: el del perfil (por defecto off).
+    let keepalive_secs = Arc::new(AtomicU32::new(
+        profile.keep_alive_secs.filter(|s| *s > 0).unwrap_or(0),
+    ));
 
     loop {
         let exit = run_session(
@@ -500,6 +512,7 @@ async fn run_session_with_reconnect(
             app_handle.clone(),
             on_data.clone(),
             log_path.clone(),
+            keepalive_secs.clone(),
         )
         .await;
 
@@ -891,6 +904,19 @@ async fn open_session_log(path: &Path) -> Option<tokio::fs::File> {
         .ok()
 }
 
+/// Crea el temporizador de keepalive de aplicación: `Some(interval)` que dispara
+/// cada `secs` segundos (el primer disparo a los `secs` s, no inmediato), o
+/// `None` si `secs == 0` (desactivado).
+fn make_keepalive_timer(secs: u32) -> Option<tokio::time::Interval> {
+    if secs == 0 {
+        return None;
+    }
+    let period = Duration::from_secs(secs as u64);
+    let mut it = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+    it.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    Some(it)
+}
+
 async fn run_session(
     session_id: String,
     profile: ConnectionProfile,
@@ -901,6 +927,7 @@ async fn run_session(
     app_handle: AppHandle,
     on_data: Channel<Response>,
     log_path: Option<PathBuf>,
+    keepalive_secs: Arc<AtomicU32>,
 ) -> SessionExit {
     // Si está activado el log de sesión, abrimos el fichero en modo append.
     let mut log_file = match &log_path {
@@ -909,11 +936,11 @@ async fn run_session(
     };
 
     // 1. TCP + handshake SSH
-    let keepalive_interval = profile
-        .keep_alive_secs
-        .filter(|s| *s > 0)
-        .map(|s| Duration::from_secs(s as u64))
-        .unwrap_or_else(|| Duration::from_secs(DEFAULT_SSH_KEEPALIVE_SECS));
+    // El keepalive es de nivel de aplicación (ver el bucle de E/S): se envía
+    // `keepalive@openssh.com` desde el worker según `keepalive_secs`, togglable
+    // en vivo. Por eso el keepalive interno de russh queda desactivado aquí;
+    // así apagar el keepalive tiene efecto inmediato (el de russh es fijo al
+    // conectar y no se puede parar en caliente).
     let preferred = if profile.allow_legacy_algorithms {
         legacy_preferred(profile.legacy_algorithms.as_deref())
     } else {
@@ -921,8 +948,7 @@ async fn run_session(
     };
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
-        keepalive_interval: Some(keepalive_interval),
-        keepalive_max: DEFAULT_SSH_KEEPALIVE_MAX,
+        keepalive_interval: None,
         preferred,
         ..Default::default()
     });
@@ -1291,6 +1317,9 @@ async fn run_session(
     // supera el umbral o tras una breve ventana de inactividad. Ver
     // `SSH_DATA_FLUSH_THRESHOLD` / `SSH_DATA_FLUSH_QUIET`.
     let mut out_buf: Vec<u8> = Vec::with_capacity(SSH_DATA_FLUSH_THRESHOLD);
+    // Keepalive de aplicación togglable en vivo (ver `SessionCommand::SetKeepAlive`).
+    // A 0 el temporizador queda inerte y su rama del `select!` se desactiva.
+    let mut ka_timer = make_keepalive_timer(keepalive_secs.load(Ordering::Relaxed));
     loop {
         tokio::select! {
             msg = channel.wait() => {
@@ -1329,6 +1358,12 @@ async fn run_session(
             _ = tokio::time::sleep(SSH_DATA_FLUSH_QUIET), if !out_buf.is_empty() => {
                 let _ = on_data.send(Response::new(std::mem::take(&mut out_buf)));
             }
+            // Keepalive de aplicación: cuando está activo enviamos un
+            // `keepalive@openssh.com` (sin pedir respuesta) para mantener viva la
+            // conexión frente a NAT/idle. La rama se apaga con `ka_timer == None`.
+            _ = async { ka_timer.as_mut().unwrap().tick().await }, if ka_timer.is_some() => {
+                let _ = handle.send_keepalive(false).await;
+            }
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(SessionCommand::Input(data)) => {
@@ -1336,6 +1371,11 @@ async fn run_session(
                     }
                     Some(SessionCommand::Resize { cols, rows }) => {
                         let _ = channel.window_change(cols, rows, 0, 0).await;
+                    }
+                    Some(SessionCommand::SetKeepAlive(secs)) => {
+                        let n = secs.filter(|s| *s > 0).unwrap_or(0);
+                        keepalive_secs.store(n, Ordering::Relaxed);
+                        ka_timer = make_keepalive_timer(n);
                     }
                     Some(SessionCommand::StartTunnel { config, reply }) => {
                         let result = start_tunnel_runtime(
@@ -1357,10 +1397,6 @@ async fn run_session(
                             &tunnel_id,
                         ).await;
                         let _ = reply.send(result);
-                    }
-                    Some(SessionCommand::ListTunnels { reply }) => {
-                        let list = tunnels.values().map(|t| t.info.clone()).collect();
-                        let _ = reply.send(list);
                     }
                     Some(SessionCommand::TunnelAccepted { tunnel_id, stream, peer_host, peer_port }) => {
                         if let Some(tunnel) = tunnels.get(&tunnel_id) {
@@ -2016,8 +2052,8 @@ pub(crate) fn legacy_preferred(selected: Option<&[String]>) -> Preferred {
     let mut keys: Vec<Algorithm> = default
         .key
         .iter()
-        .cloned()
         .filter(|k| !excluded.contains(&k.as_str()))
+        .cloned()
         .collect();
 
     for entry in catalog {

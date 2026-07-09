@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.48.0"
+version = "1.49.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -56,6 +56,8 @@ uuid = { version = "1", features = ["v4"] }
 dirs = "6"
 # Manejo ergonómico de errores
 thiserror = "2"
+# Borrado seguro de secretos en memoria (Zeroizing) al liberarlos
+zeroize = "1"
 # Lectura de bases de datos KeePass (.kdbx)
 keepass = "0.13"
 # Enumeración de fuentes del sistema para el selector de familia del terminal

@@ -1,10 +1,11 @@
 use std::net::UdpSocket;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tauri::ipc::{Channel, Response};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
+use zeroize::Zeroizing;
 
 use crate::credentials::{self, CredentialKind, CredentialMeta, CredentialStore};
 use crate::external_client::{TelnetManager, VncManager};
@@ -527,12 +528,18 @@ pub async fn ssh_stop_tunnel(
     ssh_state.stop_tunnel(&session_id, tunnel_id).await
 }
 
+/// Activa/desactiva en vivo el keepalive de una sesión SSH. `secs` es el
+/// intervalo en segundos; `None` o `0` lo desactiva. Efecto inmediato sobre la
+/// sesión en curso (se conserva a través de reconexiones automáticas).
 #[tauri::command]
-pub async fn ssh_list_tunnels(
+pub fn ssh_set_keepalive(
     ssh_state: State<'_, SshManager>,
     session_id: String,
-) -> Result<Vec<SshTunnelInfo>, String> {
-    ssh_state.list_tunnels(&session_id).await
+    secs: Option<u32>,
+) -> Result<(), String> {
+    ssh_state
+        .set_keep_alive(&session_id, secs)
+        .map_err(|e| e.to_string())
 }
 
 // ─── Comandos RDP ────────────────────────────────────────────────────────────
@@ -549,6 +556,10 @@ pub fn rdp_connect(
     password: Option<String>,
     ask_answers: Option<std::collections::HashMap<String, String>>,
     credential_id: Option<String>,
+    // El frontend preasigna el `session_id` para registrar el listener de cierre
+    // (`rdp-closed-{id}`) antes de lanzar el proceso y no perder un cierre
+    // inmediato.
+    session_id: String,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
@@ -562,8 +573,6 @@ pub fn rdp_connect(
 
     let password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
 
-    let session_id = uuid::Uuid::new_v4().to_string();
-
     rdp_state
         .launch(
             session_id.clone(),
@@ -574,8 +583,7 @@ pub fn rdp_connect(
             profile.domain.as_deref(),
             password.as_deref(),
             app_handle,
-        )
-        .map_err(|e| e)?;
+        )?;
 
     Ok(session_id)
 }
@@ -598,6 +606,8 @@ pub fn vnc_connect(
     app_handle: AppHandle,
     profile_id: String,
     credential_id: Option<String>,
+    // Preasignado por el frontend (ver `rdp_connect`).
+    session_id: String,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
@@ -609,7 +619,6 @@ pub fn vnc_connect(
     }
     credentials::substitute_connection_fields(&mut profile, &cred_state);
 
-    let session_id = uuid::Uuid::new_v4().to_string();
     vnc_state.launch(
         session_id.clone(),
         profile_id,
@@ -638,6 +647,8 @@ pub fn telnet_connect(
     app_handle: AppHandle,
     profile_id: String,
     credential_id: Option<String>,
+    // Preasignado por el frontend (ver `rdp_connect`).
+    session_id: String,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
@@ -649,7 +660,6 @@ pub fn telnet_connect(
     }
     credentials::substitute_connection_fields(&mut profile, &cred_state);
 
-    let session_id = uuid::Uuid::new_v4().to_string();
     telnet_state.launch(
         session_id.clone(),
         profile_id,
@@ -799,15 +809,6 @@ pub async fn sftp_home_dir(
     session_id: String,
 ) -> Result<String, String> {
     sftp_state.home_dir(&session_id).await
-}
-
-#[tauri::command]
-pub async fn sftp_stat(
-    sftp_state: State<'_, SftpManager>,
-    session_id: String,
-    path: String,
-) -> Result<FileEntry, String> {
-    sftp_state.stat(&session_id, path).await
 }
 
 #[tauri::command]
@@ -1134,13 +1135,6 @@ pub fn local_path_join(base: String, name: String) -> Result<String, String> {
         .into_owned())
 }
 
-#[tauri::command]
-pub fn local_path_parent(path: String) -> Result<Option<String>, String> {
-    Ok(PathBuf::from(path)
-        .parent()
-        .map(|p| p.to_string_lossy().into_owned()))
-}
-
 // ─── Comandos de keyring ──────────────────────────────────────────────────────
 
 /// Guarda una contraseña/passphrase en el gestor de credenciales del SO.
@@ -1190,8 +1184,15 @@ pub async fn keepass_unlock(
     keyfile_path: Option<String>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        keepass_manager::unlock(&path, password.as_deref(), keyfile_path.as_deref())
-            .map_err(|e| e.to_string())
+        // La passphrase maestra se borra de memoria (Zeroizing) al terminar el
+        // desbloqueo, en vez de quedar en el heap tras el drop.
+        let password = password.map(Zeroizing::new);
+        keepass_manager::unlock(
+            &path,
+            password.as_ref().map(|p| p.as_str()),
+            keyfile_path.as_deref(),
+        )
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("El desbloqueo de KeePass no respondió: {e}"))?
@@ -1216,20 +1217,6 @@ pub fn keepass_list_entries() -> Result<Vec<keepass_manager::EntrySummary>, Stri
     keepass_manager::list_entries().map_err(|e| e.to_string())
 }
 
-/// Devuelve el valor de una propiedad de una entrada KeePass.
-/// `property` ∈ {"password", "username", "title", "url", "notes"}.
-/// El frontend lo usa para previsualizar referencias por propiedad antes de
-/// guardarlas en el perfil; siempre requiere la DB desbloqueada.
-#[tauri::command]
-pub fn keepass_get_property(
-    entry_uuid: String,
-    property: String,
-) -> Result<Option<String>, String> {
-    let property = keepass_manager::EntryProperty::from_str(&property)
-        .ok_or_else(|| format!("Propiedad KeePass desconocida: {property}"))?;
-    keepass_manager::get_property(&entry_uuid, property).map_err(|e| e.to_string())
-}
-
 // ─── Directorio de datos ──────────────────────────────────────────────────────
 
 /// Devuelve la ruta al directorio de datos de la app donde se guardan los perfiles.
@@ -1247,72 +1234,11 @@ pub fn get_data_dir(state: State<crate::DataDir>) -> Result<String, String> {
     Ok(state.0.to_string_lossy().into_owned())
 }
 
-/// Devuelve el directorio de descargas del usuario (p.ej. ~/Downloads).
-/// Si no se puede determinar, hace fallback al home.
-#[tauri::command]
-pub fn get_download_dir() -> Result<String, String> {
-    dirs::download_dir()
-        .or_else(dirs::home_dir)
-        .map(|p| p.to_string_lossy().into_owned())
-        .ok_or_else(|| "No se pudo determinar el directorio de descargas".into())
-}
-
-/// Sanea un nombre de fichero a su componente final, rechazando rutas
-/// absolutas, separadores y travesías (`..`). Defensa frente a path traversal
-/// cuando el frontend propone el nombre de un temporal: solo se acepta un
-/// único componente «normal» de ruta.
-fn sanitize_file_name(name: &str) -> Result<String, String> {
-    use std::path::Component;
-    let mut comps = std::path::Path::new(name).components();
-    match (comps.next(), comps.next()) {
-        (Some(Component::Normal(s)), None) => {
-            let s = s.to_string_lossy();
-            if s.is_empty() || s == "." || s == ".." {
-                Err("nombre de fichero no válido".into())
-            } else {
-                Ok(s.into_owned())
-            }
-        }
-        _ => Err("nombre de fichero no válido".into()),
-    }
-}
-
 /// Escritura atómica de exports (JSON de backup, temporales de subida): vuelca a
 /// un temporal hermano y renombra sobre el destino, sin restringir permisos.
 /// Delega en [`crate::atomic_file::write`]; ver allí el detalle de garantías.
 fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     crate::atomic_file::write(path, data, false)
-}
-
-/// Escribe un fichero binario en disco.
-/// Se usa para subidas vía input HTML: el frontend pasa los bytes leídos
-/// del File API y esta función los materializa en un path temporal que
-/// luego `sftp_upload` transfiere al servidor. El nombre se sanea para que
-/// no pueda salirse de la carpeta de temporales (path traversal).
-#[tauri::command]
-pub fn write_temp_file(
-    app_handle: AppHandle,
-    name: String,
-    data: Vec<u8>,
-) -> Result<String, String> {
-    let safe_name = sanitize_file_name(&name)?;
-    let dir = app_handle
-        .path()
-        .app_cache_dir()
-        .map_err(|e| e.to_string())?
-        .join("sftp-uploads");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(&safe_name);
-    write_atomic(&path, &data).map_err(|e| e.to_string())?;
-    Ok(path.to_string_lossy().into_owned())
-}
-
-/// Elimina un fichero del sistema (se usa tras subidas para limpiar temporales).
-/// `std::fs::remove_file` desenlaza el propio path: sobre un symlink borra el
-/// enlace, nunca su destino.
-#[tauri::command]
-pub fn remove_file(path: String) -> Result<(), String> {
-    std::fs::remove_file(&path).map_err(|e| e.to_string())
 }
 
 /// Escribe texto (ej. JSON de export) a un path absoluto, de forma atómica
@@ -1327,15 +1253,6 @@ pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
 #[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
-}
-
-/// Une dos segmentos de ruta usando el separador nativo del SO.
-#[tauri::command]
-pub fn join_path(base: String, name: String) -> Result<String, String> {
-    Ok(std::path::Path::new(&base)
-        .join(&name)
-        .to_string_lossy()
-        .into_owned())
 }
 
 /// Salida de un comando local ejecutado por el catálogo de "Comandos locales".
@@ -1949,7 +1866,7 @@ fn valid_snapshot_id(id: &str) -> bool {
 
 /// Escribe el snapshot de forma atómica y privada (0600 en Unix): el contenido
 /// del terminal es sensible y un corte a mitad no debe dejar el fichero truncado.
-fn write_snapshot_file(path: &PathBuf, data: &[u8]) -> std::io::Result<()> {
+fn write_snapshot_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
     crate::atomic_file::write(path, data, true)
 }
 
@@ -2112,17 +2029,6 @@ pub fn master_cred_import(
     meta: CredentialMeta,
 ) -> Result<(), String> {
     credentials::cred_import(&store, meta).map_err(|e| e.to_string())
-}
-
-/// Renombra una credencial (solo cambia `name`; no toca el keyring, indexado por
-/// id). Valida unicidad y ausencia de espacios.
-#[tauri::command]
-pub fn master_cred_rename(
-    store: State<CredentialStore>,
-    id: String,
-    new_name: String,
-) -> Result<CredentialMeta, String> {
-    credentials::cred_rename(&store, id, new_name).map_err(|e| e.to_string())
 }
 
 /// Elimina la credencial del catálogo y su valor del keyring. Si `force` es
@@ -2545,12 +2451,6 @@ pub fn note_import(notes: State<NotesManager>, doc: NoteDoc) -> Result<(), Strin
     notes.import(doc).map_err(|e| e.to_string())
 }
 
-/// Búsqueda full-text simple sobre título, tags y cuerpo de las notas.
-#[tauri::command]
-pub fn note_search(notes: State<NotesManager>, query: String) -> Result<Vec<NoteSummary>, String> {
-    notes.search(&query).map_err(|e| e.to_string())
-}
-
 /// Ruta de la carpeta `notes/` (para abrirla en el explorador del SO).
 #[tauri::command]
 pub fn notes_dir(notes: State<NotesManager>) -> Result<String, String> {
@@ -2580,22 +2480,6 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("rustty-test-{tag}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("crea dir temporal de test");
         dir
-    }
-
-    #[test]
-    fn sanitize_file_name_acepta_nombre_simple() {
-        assert_eq!(sanitize_file_name("informe.txt").unwrap(), "informe.txt");
-        assert_eq!(sanitize_file_name("a b c.log").unwrap(), "a b c.log");
-    }
-
-    #[test]
-    fn sanitize_file_name_rechaza_travesias_y_separadores() {
-        for malo in ["", ".", "..", "../evil", "a/b", "/etc/passwd", "sub/dir/x"] {
-            assert!(
-                sanitize_file_name(malo).is_err(),
-                "debería rechazar {malo:?}"
-            );
-        }
     }
 
     #[test]

@@ -2,6 +2,43 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.49.0] - 2026-07-09
+
+### Añadido
+
+- **Mantener la sesión SSH activa**: nueva opción para evitar que el servidor te
+  desconecte por inactividad (por ejemplo detrás de un router con NAT). Se activa
+  por conexión en el formulario y también con el botón derecho sobre la pestaña de
+  la sesión, con efecto inmediato sin reconectar. Viene **desactivada por defecto**.
+- **Francés y portugués completos**: la pestaña de Copias de seguridad y
+  sincronización, el formulario de conexión, las opciones de apariencia y los
+  textos de «hace un momento / hace 3 min» dejan de aparecer en español cuando la
+  app está en francés o portugués. Los cinco idiomas quedan ya al 100 %, y una
+  comprobación interna vigila que ninguno se quede atrás en el futuro.
+
+### Cambiado
+
+- **Más solidez frente a errores internos**: si un fallo puntual bloqueaba un
+  «cerrojo» interno, las sesiones de terminal, ficheros y consola local podían
+  quedarse colgadas en silencio; ahora se recuperan y siguen funcionando.
+- **Menos rastro de contraseñas en memoria**: las contraseñas y la clave maestra
+  de KeePass se borran de la memoria en cuanto dejan de usarse, en vez de quedar
+  ahí hasta que el sistema reutilice ese espacio.
+
+### Corregido
+
+- **Pestañas que se quedaban «conectando» o «conectadas» para siempre**: cerrar
+  una conexión SSH justo mientras conectaba podía dejar una sesión huérfana por
+  detrás; y una conexión RDP, VNC, Telnet o de consola local que se cerraba en el
+  primer instante podía dejar la pestaña marcada como conectada sin estarlo. Ambos
+  casos quedan resueltos.
+- **Avisos de los scripts traducidos**: los mensajes de validación del editor de
+  scripts (nombre obligatorio, demasiados pasos, patrón inválido…) respetan ahora
+  el idioma de la app en vez de salir siempre en español.
+- **Limpieza de seguridad**: se retiran diez órdenes internas que ya no usaba
+  nadie —una de ellas permitía borrar cualquier fichero sin restricción— y se
+  refuerza el gestor de known_hosts.
+
 ## [1.48.0] - 2026-07-08
 
 ### Añadido

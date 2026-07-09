@@ -92,7 +92,7 @@ describe("validateScript", () => {
   it("rechaza nombre vacío", () => {
     const r = validateScript({ name: "  ", target: okTarget, steps: [] });
     expect(r.ok).toBe(false);
-    expect(r.errors.some((e) => e.includes("nombre"))).toBe(true);
+    expect(r.errors.some((e) => e.code === "name_required")).toBe(true);
   });
 
   it("rechaza objetivos mal formados", () => {
@@ -122,7 +122,7 @@ describe("validateScript", () => {
     });
     expect(bad.ok).toBe(false);
     // Un error por cada uno de los siete pasos mal formados.
-    expect(bad.errors.filter((e) => e.startsWith("Paso ")).length).toBeGreaterThanOrEqual(7);
+    expect(bad.errors.filter((e) => e.params && e.params.step != null).length).toBeGreaterThanOrEqual(7);
   });
 
   it("permite `sendPasswordFromKeyring` con profileId null", () => {
@@ -144,7 +144,7 @@ describe("validateScript", () => {
     const steps = Array.from({ length: MAX_STEPS + 1 }, () => makeStep("waitPrompt"));
     const r = validateScript({ name: "x", target: okTarget, steps });
     expect(r.ok).toBe(false);
-    expect(r.errors.some((e) => e.includes("máximo"))).toBe(true);
+    expect(r.errors.some((e) => e.code === "too_many_steps")).toBe(true);
   });
 
   it("rechaza entradas no objeto", () => {

@@ -5668,6 +5668,36 @@ function keepAliveFromInput(value) {
   return Math.min(n, 3600);
 }
 
+/** Intervalo (s) que aplica el toggle rápido de keepalive al activarlo. */
+const KEEPALIVE_DEFAULT_SECS = 30;
+
+/**
+ * Alterna en vivo el keepalive de una sesión SSH (botón derecho de la pestaña).
+ * Aplica el cambio a la sesión en curso vía `ssh_set_keepalive` y, si la sesión
+ * tiene un perfil guardado, persiste `keep_alive_secs` para que sea la config de
+ * la conexión (no solo de esta sesión). 0/null = desactivado.
+ */
+async function toggleSessionKeepAlive(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s || s.type !== "ssh") return;
+  const next = (s._keepAliveSecs || 0) > 0 ? 0 : KEEPALIVE_DEFAULT_SECS;
+  try {
+    await invoke("ssh_set_keepalive", { sessionId, secs: next || null });
+  } catch (err) {
+    toast(t("toast.keepalive_error", { err: String(err) }), "error");
+    return;
+  }
+  s._keepAliveSecs = next;
+  const profile = s.profileId ? profiles.find((p) => p.id === s.profileId) : null;
+  if (profile) {
+    const updated = { ...profile, keep_alive_secs: next || null };
+    const idx = profiles.findIndex((p) => p.id === profile.id);
+    if (idx >= 0) profiles[idx] = updated;
+    await invoke("save_profile", { profile: updated }).catch(() => {});
+  }
+  toast(next > 0 ? t("toast.keepalive_on") : t("toast.keepalive_off"), "success");
+}
+
 function autoReconnectFromInput(value) {
   if (value === "" || value === null || value === undefined) return null;
   const n = parseInt(value, 10);
@@ -8147,6 +8177,9 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   // para reaplicarlos al reconectar (manual o tras caída).
   session._overrides = overrides || null;
   session._initialDir = initialDir || null;
+  // Estado de keepalive de la sesión (para el toggle rápido de la pestaña):
+  // parte del valor del perfil (por defecto desactivado).
+  session._keepAliveSecs = profile.keep_alive_secs || 0;
 
   // Restaurar pantalla de la sesión anterior (solo visual) antes de conectar.
   if (restore && !isPrivate) {
@@ -8163,6 +8196,14 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   try {
     const dataChannel = new Channel();
     session.unlisteners = await registerSshListeners(sessionId, session.terminal, dataChannel);
+    if (session._closing) {
+      // La pestaña se cerró mientras registrábamos los listeners: deshacemos sin
+      // llegar a conectar (el backend aún no tiene la sesión).
+      for (const ul of session.unlisteners) { try { ul(); } catch {} }
+      sessions.delete(sessionId);
+      removeTab(sessionId);
+      return;
+    }
     await invoke("ssh_connect", {
       sessionId,
       onData: dataChannel,
@@ -8176,6 +8217,16 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
       sessionLogOverride: isPrivate ? false : null,
       overrides: overrides || null,
     });
+    if (session._closing) {
+      // Se cerró durante el connect: el backend ya registró la sesión, así que
+      // la desconectamos explícitamente para no dejarla huérfana (sin dueño ni
+      // listeners liberables desde la UI).
+      await invoke("ssh_disconnect", { sessionId }).catch(() => {});
+      for (const ul of session.unlisteners) { try { ul(); } catch {} }
+      sessions.delete(sessionId);
+      removeTab(sessionId);
+      return;
+    }
 
     updateTabStatus(sessionId, "connecting");
     setActiveTab(sessionId);
@@ -8233,10 +8284,13 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
     }
   }
 
-  const tempId = `rdp-${profileId}-${Date.now()}`;
+  // Preasignamos el sessionId (como SFTP) para registrar el listener de cierre
+  // ANTES de lanzar el proceso: si xfreerdp/mstsc muere en los primeros ms, el
+  // evento `rdp-closed-*` no se pierde (si no, la pestaña quedaría «conectada»).
+  const sessionId = `rdp-${crypto.randomUUID()}`;
   const sessionObj = {
     profileId,
-    id: tempId,
+    id: sessionId,
     type: "rdp",
     status: "connecting",
     unlisteners: [],
@@ -8245,55 +8299,51 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
     terminal: null,
     fitAddon: null,
   };
-  sessions.set(tempId, sessionObj);
-  createRdpTab(tempId, profile, "connecting");
+  sessions.set(sessionId, sessionObj);
+  createRdpTab(sessionId, profile, "connecting");
+
+  // Escuchar el cierre del proceso externo (antes del invoke).
+  const unlisten = await listen(eventName("rdpClosed", sessionId), () => {
+    sessionObj.status = "closed";
+    updateTabStatus(sessionId, "error");
+    renderConnectionList();
+    // Actualizar el texto del panel RDP
+    const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
+    if (pane) {
+      const label = pane.querySelector(".rdp-status-label");
+      if (label) label.textContent = "Sesión cerrada";
+      const btn = pane.querySelector(".rdp-disconnect-btn");
+      if (btn) btn.textContent = "Cerrar pestaña";
+    }
+    toast(t("toast.rdp_closed", { name: profile.name }), "info");
+  });
+  sessionObj.unlisteners.push(unlisten);
 
   try {
-    const sessionId = await invoke("rdp_connect", {
+    await invoke("rdp_connect", {
+      sessionId,
       profileId,
       password: password || null,
       credentialId: credId || null,
     });
 
-    // Migrar tempId → sessionId real
-    sessionObj.id = sessionId;
-    sessions.delete(tempId);
-    sessions.set(sessionId, sessionObj);
-
-    document.querySelectorAll(`[data-session="${tempId}"]`).forEach((el) => {
-      el.dataset.session = sessionId;
-    });
-    const vi = viewSelection.indexOf(tempId);
-    if (vi >= 0) viewSelection[vi] = sessionId;
-    if (activeSessionId === tempId) activeSessionId = sessionId;
+    // Si el proceso ya se cerró durante el lanzamiento, no lo marcamos conectado.
+    if (sessionObj.status === "closed") {
+      renderConnectionList();
+      return;
+    }
 
     sessionObj.status = "connected";
     updateTabStatus(sessionId, "connected");
     if (!sessionObj.private) recordRecentConnection(profileId);
 
-    // Escuchar el cierre del proceso externo
-    const unlisten = await listen(eventName("rdpClosed", sessionId), () => {
-      sessionObj.status = "closed";
-      updateTabStatus(sessionId, "error");
-      renderConnectionList();
-      // Actualizar el texto del panel RDP
-      const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
-      if (pane) {
-        const label = pane.querySelector(".rdp-status-label");
-        if (label) label.textContent = "Sesión cerrada";
-        const btn = pane.querySelector(".rdp-disconnect-btn");
-        if (btn) btn.textContent = "Cerrar pestaña";
-      }
-      toast(t("toast.rdp_closed", { name: profile.name }), "info");
-    });
-    sessionObj.unlisteners.push(unlisten);
-
     renderConnectionList();
     setActiveTab(sessionId);
     toast(t("toast.rdp_started", { name: profile.name }), "success");
   } catch (err) {
-    sessions.delete(tempId);
-    removeTab(tempId);
+    for (const ul of sessionObj.unlisteners) { try { ul(); } catch {} }
+    sessions.delete(sessionId);
+    removeTab(sessionId);
     toast(`Error RDP: ${err}`, "error");
   }
 }
@@ -8322,10 +8372,12 @@ async function connectExternalNoAuth(profileId, kind, { credId = null } = {}) {
   const connectCmd = kind === "vnc" ? "vnc_connect" : "telnet_connect";
   const closedEvent = kind === "vnc" ? "vncClosed" : "telnetClosed";
 
-  const tempId = `${kind}-${profileId}-${Date.now()}`;
+  // sessionId preasignado + listener de cierre antes del invoke (como SFTP/RDP):
+  // así un `*-closed-*` inmediato no deja la pestaña colgada en «conectada».
+  const sessionId = `${kind}-${crypto.randomUUID()}`;
   const sessionObj = {
     profileId,
-    id: tempId,
+    id: sessionId,
     type: kind,
     status: "connecting",
     unlisteners: [],
@@ -8333,50 +8385,47 @@ async function connectExternalNoAuth(profileId, kind, { credId = null } = {}) {
     terminal: null,
     fitAddon: null,
   };
-  sessions.set(tempId, sessionObj);
-  createExternalTab(tempId, profile, "connecting", kind);
+  sessions.set(sessionId, sessionObj);
+  createExternalTab(sessionId, profile, "connecting", kind);
+
+  const unlisten = await listen(eventName(closedEvent, sessionId), () => {
+    sessionObj.status = "closed";
+    updateTabStatus(sessionId, "error");
+    renderConnectionList();
+    const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
+    if (pane) {
+      const label = pane.querySelector(".rdp-status-label");
+      if (label) label.textContent = t("external.session_closed");
+      const btn = pane.querySelector(".rdp-disconnect-btn");
+      if (btn) btn.textContent = t("external.close_tab");
+    }
+    toast(t("external.toast_closed", { proto: meta.label, name: profile.name }), "info");
+  });
+  sessionObj.unlisteners.push(unlisten);
 
   try {
-    const sessionId = await invoke(connectCmd, {
+    await invoke(connectCmd, {
+      sessionId,
       profileId,
       credentialId: credId || null,
     });
 
-    sessionObj.id = sessionId;
-    sessions.delete(tempId);
-    sessions.set(sessionId, sessionObj);
-    document.querySelectorAll(`[data-session="${tempId}"]`).forEach((el) => {
-      el.dataset.session = sessionId;
-    });
-    const vi = viewSelection.indexOf(tempId);
-    if (vi >= 0) viewSelection[vi] = sessionId;
-    if (activeSessionId === tempId) activeSessionId = sessionId;
+    if (sessionObj.status === "closed") {
+      renderConnectionList();
+      return;
+    }
 
     sessionObj.status = "connected";
     updateTabStatus(sessionId, "connected");
     if (!sessionObj.private) recordRecentConnection(profileId);
 
-    const unlisten = await listen(eventName(closedEvent, sessionId), () => {
-      sessionObj.status = "closed";
-      updateTabStatus(sessionId, "error");
-      renderConnectionList();
-      const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
-      if (pane) {
-        const label = pane.querySelector(".rdp-status-label");
-        if (label) label.textContent = t("external.session_closed");
-        const btn = pane.querySelector(".rdp-disconnect-btn");
-        if (btn) btn.textContent = t("external.close_tab");
-      }
-      toast(t("external.toast_closed", { proto: meta.label, name: profile.name }), "info");
-    });
-    sessionObj.unlisteners.push(unlisten);
-
     renderConnectionList();
     setActiveTab(sessionId);
     toast(t("external.toast_started", { proto: meta.label, name: profile.name }), "success");
   } catch (err) {
-    sessions.delete(tempId);
-    removeTab(tempId);
+    for (const ul of sessionObj.unlisteners) { try { ul(); } catch {} }
+    sessions.delete(sessionId);
+    removeTab(sessionId);
     toast(t("external.toast_error", { proto: meta.label, err: String(err) }), "error");
   }
 }
@@ -9259,18 +9308,8 @@ async function reconnectLocalInPlace(s) {
         markTabActivity(sessionId);
       }
     };
-    await invoke("local_shell_open", {
-      sessionId,
-      onData: dataChannel,
-      cwd: prefs.localShellCwd || null,
-      cols: s.terminal.cols,
-      rows: s.terminal.rows,
-    });
-    s.status = "connected";
-    hideReconnectOverlay(sessionId);
-    updateTabStatus(sessionId, "connected");
-    renderDashboard();
-
+    // Listener de cierre antes del invoke (ver `openLocalShell`): evita perder
+    // el evento si el proceso muere nada más reabrir.
     const ulClose = await listen(eventName("shellClosed", sessionId), () => {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
@@ -9280,7 +9319,22 @@ async function reconnectLocalInPlace(s) {
       markTabActivity(sessionId, { kind: "disconnect" });
     });
     s.unlisteners.push(ulClose);
+    await invoke("local_shell_open", {
+      sessionId,
+      onData: dataChannel,
+      cwd: prefs.localShellCwd || null,
+      cols: s.terminal.cols,
+      rows: s.terminal.rows,
+    });
+    if (s.status !== "closed") {
+      s.status = "connected";
+      hideReconnectOverlay(sessionId);
+      updateTabStatus(sessionId, "connected");
+      renderDashboard();
+    }
   } catch (err) {
+    for (const ul of s.unlisteners) { try { ul(); } catch {} }
+    s.unlisteners = [];
     s.status = "error";
     updateTabStatus(sessionId, "error");
     showReconnectOverlay(sessionId, "Error al reabrir");
@@ -10868,6 +10922,10 @@ async function closeSession(sessionId, opts = {}) {
 
   if (!skipConfirm && !(await confirmCloseSession(sessionId))) return;
 
+  // Señal para que un connect SSH en vuelo (aún en «connecting») se aborte a sí
+  // mismo tras cada await en vez de dejar una sesión backend huérfana.
+  s._closing = true;
+
   // Si se estaba grabando un script sobre esta sesión, materializar lo captado
   // antes de que el terminal desaparezca.
   abortScriptRecordingIfSession(sessionId);
@@ -11463,7 +11521,7 @@ async function renderKnownHostsList() {
     .map((e) => {
       const hostLabel = e.port && e.port !== 22 ? `${e.host}:${e.port}` : e.host;
       return `
-        <div class="global-tunnel-row" data-line="${e.line}">
+        <div class="global-tunnel-row" data-line="${escHtml(String(e.line))}">
           <span class="tunnel-kind">${escHtml(e.algorithm)}</span>
           <span class="global-tunnel-profile">${escHtml(hostLabel)}</span>
           <span class="global-tunnel-desc">${escHtml(e.fingerprint)}</span>
@@ -11642,6 +11700,21 @@ function scriptTargetLabel(target) {
     }
   }
   return `${base} · ${countLabel}`;
+}
+
+/**
+ * Traduce un error de validación de script (código + params del módulo puro
+ * `model.js`) a texto localizado. Los errores de paso llevan `params.step` y se
+ * envuelven con el prefijo «Paso N:».
+ */
+function scriptErrorText(err) {
+  if (!err || typeof err !== "object" || !err.code) return String(err ?? "");
+  const params = err.params || {};
+  const base = t("scripts.err." + err.code, params);
+  if (params.step != null) {
+    return t("scripts.err.step_prefix", { n: params.step, msg: base });
+  }
+  return base;
 }
 
 /** Fecha corta local para la lista (cadena vacía si el ISO es inválido). */
@@ -11943,7 +12016,7 @@ async function saveScriptFromEditor() {
   const errBox = document.getElementById("script-ed-errors");
   if (!ok) {
     errBox.innerHTML = `${escHtml(t("scripts.validation_title"))}<ul>${errors
-      .map((e) => `<li>${escHtml(e)}</li>`)
+      .map((e) => `<li>${escHtml(scriptErrorText(e))}</li>`)
       .join("")}</ul>`;
     errBox.classList.remove("hidden");
     return;
@@ -13724,16 +13797,9 @@ async function openLocalShell() {
         markTabActivity(sessionId);
       }
     };
-    await invoke("local_shell_open", {
-      sessionId,
-      onData: dataChannel,
-      cwd: prefs.localShellCwd || null,
-      cols: s.terminal.cols,
-      rows: s.terminal.rows,
-    });
-    s.status = "connected";
-    updateTabStatus(sessionId, "connected");
-
+    // Registramos el listener de cierre ANTES del invoke: si el proceso muere
+    // en los primeros ms, el evento `shell-closed-*` no se pierde (si no,
+    // la pestaña quedaría «conectada» para siempre).
     const ulClose = await listen(eventName("shellClosed", sessionId), () => {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
@@ -13742,6 +13808,18 @@ async function openLocalShell() {
       markTabActivity(sessionId, { kind: "disconnect" });
     });
     s.unlisteners.push(ulClose);
+    await invoke("local_shell_open", {
+      sessionId,
+      onData: dataChannel,
+      cwd: prefs.localShellCwd || null,
+      cols: s.terminal.cols,
+      rows: s.terminal.rows,
+    });
+    // Si el cierre no se adelantó al connect, marcamos la sesión como conectada.
+    if (s.status !== "closed") {
+      s.status = "connected";
+      updateTabStatus(sessionId, "connected");
+    }
 
     // Nota: el input ya lo enruta `handleTerminalInput` (registrado en createTerminalTab)
     // detectando el tipo de sesión por `_closeOverride`. El resize también lo
@@ -13758,6 +13836,7 @@ async function openLocalShell() {
       sessions.delete(sessionId);
     };
   } catch (err) {
+    for (const ul of s.unlisteners) { try { ul(); } catch {} }
     sessions.delete(sessionId);
     removeTab(sessionId);
     toast(`Error al abrir la consola: ${err}`, "error");
@@ -21736,6 +21815,20 @@ function showTabContextMenu(x, y, sessionId) {
     && !ctxSession._closeOverride;
   menu.querySelector(".tabctx-dup-overrides")?.classList.toggle("hidden", !canDupOverrides);
 
+  // "Mantener sesión activa" (keepalive): solo en sesiones SSH. El label y el
+  // check reflejan el estado actual de la sesión (`_keepAliveSecs`).
+  const kaItem = menu.querySelector(".tabctx-keepalive");
+  if (kaItem) {
+    const isSsh = ctxSession?.type === "ssh" && !ctxSession._closeOverride;
+    kaItem.classList.toggle("hidden", !isSsh);
+    if (isSsh) {
+      const on = (ctxSession._keepAliveSecs || 0) > 0;
+      kaItem.classList.toggle("active", on);
+      const kaLabel = kaItem.querySelector(".tabctx-keepalive-label");
+      if (kaLabel) kaLabel.textContent = on ? t("tabctx.keepalive_disable") : t("tabctx.keepalive_enable");
+    }
+  }
+
   const targetTab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
   const isPinned = !!targetTab?.classList.contains("is-pinned");
   const pinLabel = menu.querySelector(".tabctx-pin-label");
@@ -21799,6 +21892,11 @@ async function handleTabContextAction(action) {
       delete s.alias;
     }
     updateTabLabel(targetId);
+    return;
+  }
+
+  if (action === "toggle-keepalive") {
+    await toggleSessionKeepAlive(targetId);
     return;
   }
 

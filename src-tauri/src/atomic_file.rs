@@ -12,6 +12,21 @@
 //! primer instante, de modo que los secretos (`profiles.json`, `credentials.json`,
 //! notas) nunca quedan legibles por otros usuarios ni durante la ventana de
 //! escritura.
+//!
+//! ## Límite conocido en Windows (`private` no fija una ACL por fichero)
+//!
+//! En Windows el flag `private` **no** aplica un DACL restrictivo al fichero: la
+//! confidencialidad se apoya en que los datos de la app viven bajo `%APPDATA%`
+//! (`C:\Users\<usuario>\AppData\Roaming\com.rustty.app`), un directorio cuyo ACL
+//! por defecto ya concede acceso solo al propio usuario (y a los administradores
+//! del equipo, que de todos modos pueden leer cualquier cosa de la sesión). No se
+//! establece un DACL explícito por fichero **de forma deliberada**: hacerlo bien
+//! exige la crate `windows-sys` (construir un SDDL y llamar a
+//! `SetNamedSecurityInfo`) y validación real sobre Windows, y el riesgo de una ACL
+//! mal formada —dejar el fichero inaccesible para la propia app— supera hoy la
+//! ganancia frente a la herencia del directorio. Si en el futuro se endurece, el
+//! punto único es `open_tmp` en la rama `#[cfg(not(unix))]`, sin tocar el resto
+//! del módulo.
 
 use std::io;
 use std::path::Path;
@@ -70,6 +85,9 @@ fn open_tmp(tmp: &Path, private: bool) -> io::Result<std::fs::File> {
 
 #[cfg(not(unix))]
 fn open_tmp(tmp: &Path, _private: bool) -> io::Result<std::fs::File> {
+    // `_private` no tiene efecto en Windows (límite documentado en la cabecera del
+    // módulo): la confidencialidad se apoya en el ACL de `%APPDATA%`, no en un DACL
+    // por fichero. `create_new` sí mantiene la garantía anti-symlink/anti-carrera.
     std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)

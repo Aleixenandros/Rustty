@@ -91,7 +91,7 @@ fn parse_cli_command(args: &[String]) -> Option<CliCommand> {
     let first = args.first().copied();
     match first {
         Some("-l") | Some("--list") => Some(CliCommand::List {
-            json: args.iter().any(|arg| *arg == "--json"),
+            json: args.contains(&"--json"),
         }),
         Some("-c") | Some("--connect") => match args.get(1) {
             Some(query) => parse_connect_command(query, &args[2..]),

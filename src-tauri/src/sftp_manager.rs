@@ -16,6 +16,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
+
+use crate::locks::MutexExt;
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -97,25 +99,25 @@ impl TransferControls {
     }
 
     fn take_cancel(&self, transfer_id: &str) -> bool {
-        self.canceled.lock().unwrap().remove(transfer_id)
+        self.canceled.lock_recover().remove(transfer_id)
     }
 
     fn is_paused(&self, transfer_id: &str) -> bool {
-        self.paused.lock().unwrap().contains(transfer_id)
+        self.paused.lock_recover().contains(transfer_id)
     }
 
     fn cancel(&self, transfer_id: String) {
         // Cancelar también levanta la pausa para que el bucle salga inmediatamente.
-        self.paused.lock().unwrap().remove(&transfer_id);
-        self.canceled.lock().unwrap().insert(transfer_id);
+        self.paused.lock_recover().remove(&transfer_id);
+        self.canceled.lock_recover().insert(transfer_id);
     }
 
     fn pause(&self, transfer_id: String) {
-        self.paused.lock().unwrap().insert(transfer_id);
+        self.paused.lock_recover().insert(transfer_id);
     }
 
     fn resume(&self, transfer_id: &str) {
-        self.paused.lock().unwrap().remove(transfer_id);
+        self.paused.lock_recover().remove(transfer_id);
     }
 }
 
@@ -127,10 +129,6 @@ enum SftpCommand {
     ListDir {
         path: String,
         reply: Reply<Vec<FileEntry>>,
-    },
-    Stat {
-        path: String,
-        reply: Reply<FileEntry>,
     },
     HomeDir {
         reply: Reply<String>,
@@ -325,8 +323,7 @@ impl SftpManager {
         match ready_result {
             Ok(Ok(())) => {
                 self.sessions
-                    .lock()
-                    .unwrap()
+                    .lock_recover()
                     .insert(session_id, SftpHandle { tx, controls });
                 Ok(())
             }
@@ -344,7 +341,7 @@ impl SftpManager {
         T: Send + 'static,
     {
         let tx = {
-            let map = self.sessions.lock().unwrap();
+            let map = self.sessions.lock_recover();
             let handle = map
                 .get(session_id)
                 .ok_or_else(|| format!("Sesión de ficheros no encontrada: {session_id}"))?;
@@ -369,11 +366,6 @@ impl SftpManager {
             reply,
         })
         .await
-    }
-
-    pub async fn stat(&self, session_id: &str, path: String) -> Result<FileEntry, String> {
-        self.send(session_id, move |reply| SftpCommand::Stat { path, reply })
-            .await
     }
 
     pub async fn home_dir(&self, session_id: &str) -> Result<String, String> {
@@ -498,7 +490,7 @@ impl SftpManager {
     }
 
     pub fn cancel_transfer(&self, session_id: &str, transfer_id: String) -> Result<(), String> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock_recover();
         let Some(handle) = sessions.get(session_id) else {
             return Err("Sesión de ficheros no encontrada".to_string());
         };
@@ -507,7 +499,7 @@ impl SftpManager {
     }
 
     pub fn pause_transfer(&self, session_id: &str, transfer_id: String) -> Result<(), String> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock_recover();
         let Some(handle) = sessions.get(session_id) else {
             return Err("Sesión de ficheros no encontrada".to_string());
         };
@@ -516,7 +508,7 @@ impl SftpManager {
     }
 
     pub fn resume_transfer(&self, session_id: &str, transfer_id: String) -> Result<(), String> {
-        let sessions = self.sessions.lock().unwrap();
+        let sessions = self.sessions.lock_recover();
         let Some(handle) = sessions.get(session_id) else {
             return Err("Sesión de ficheros no encontrada".to_string());
         };
@@ -525,7 +517,7 @@ impl SftpManager {
     }
 
     pub fn disconnect(&self, session_id: &str) -> Result<(), String> {
-        if let Some(handle) = self.sessions.lock().unwrap().remove(session_id) {
+        if let Some(handle) = self.sessions.lock_recover().remove(session_id) {
             let _ = handle.tx.send(SftpCommand::Close);
         }
         Ok(())
@@ -534,8 +526,7 @@ impl SftpManager {
     pub fn disconnect_all(&self) {
         let handles: Vec<_> = self
             .sessions
-            .lock()
-            .unwrap()
+            .lock_recover()
             .drain()
             .map(|(_, h)| h)
             .collect();
@@ -590,9 +581,6 @@ async fn run_sftp_worker(
         match cmd {
             SftpCommand::ListDir { path, reply } => {
                 let _ = reply.send(backend.list_dir(&path).await);
-            }
-            SftpCommand::Stat { path, reply } => {
-                let _ = reply.send(backend.stat(&path).await);
             }
             SftpCommand::HomeDir { reply } => {
                 let _ = reply.send(backend.home_dir().await);
@@ -784,9 +772,11 @@ async fn connect_and_open_sftp(
     // none`. Para sesiones SFTP de descarga/subida grande es la solución
     // limpia: para sesiones SSH interactivas dejamos el default por
     // higiene criptográfica en sesiones de días.
-    let mut limits = russh::Limits::default();
-    limits.rekey_write_limit = usize::MAX;
-    limits.rekey_read_limit = usize::MAX;
+    let limits = russh::Limits {
+        rekey_write_limit: usize::MAX,
+        rekey_read_limit: usize::MAX,
+        ..russh::Limits::default()
+    };
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
         window_size: 32 * 1024 * 1024,
@@ -890,9 +880,8 @@ async fn connect_and_open_sftp(
         }
         AuthType::Agent => authenticate_with_agent(&mut handle, &profile.username)
             .await
-            .map_err(|e| {
+            .inspect_err(|e| {
                 emit_sftp_log(app_handle, session_id, "auth", "error", e.clone());
-                e
             })?,
     };
 

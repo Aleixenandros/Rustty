@@ -10,6 +10,7 @@ mod host_keys;
 mod ipc;
 mod keepass_manager;
 mod local_shell_manager;
+mod locks;
 mod notes;
 mod profiles;
 mod rdp_manager;
@@ -189,7 +190,6 @@ pub fn run() {
             commands::master_cred_list,
             commands::master_cred_set,
             commands::master_cred_import,
-            commands::master_cred_rename,
             commands::master_cred_delete,
             commands::template_asks,
             // ── Motor de scripts (recetas interactivas por host)
@@ -209,7 +209,6 @@ pub fn run() {
             commands::note_list,
             commands::note_export_all,
             commands::note_import,
-            commands::note_search,
             commands::notes_dir,
             // ── Sesiones SSH
             commands::ssh_connect,
@@ -219,7 +218,7 @@ pub fn run() {
             commands::ssh_resize,
             commands::ssh_start_tunnel,
             commands::ssh_stop_tunnel,
-            commands::ssh_list_tunnels,
+            commands::ssh_set_keepalive,
             commands::get_profile_password,
             // ── Keyring (credenciales del SO)
             commands::keyring_set,
@@ -230,7 +229,6 @@ pub fn run() {
             commands::keepass_lock,
             commands::keepass_status,
             commands::keepass_list_entries,
-            commands::keepass_get_property,
             // ── Sesiones RDP
             commands::rdp_connect,
             commands::rdp_disconnect,
@@ -250,7 +248,6 @@ pub fn run() {
             commands::sftp_disconnect,
             commands::sftp_list_dir,
             commands::sftp_home_dir,
-            commands::sftp_stat,
             commands::sftp_mkdir,
             commands::sftp_create_file,
             commands::sftp_remove,
@@ -272,17 +269,12 @@ pub fn run() {
             commands::local_rename,
             commands::local_chmod,
             commands::local_path_join,
-            commands::local_path_parent,
             // ── Utilidades
             commands::get_data_dir,
-            commands::get_download_dir,
-            commands::write_temp_file,
-            commands::remove_file,
             commands::write_text_file,
             commands::read_text_file,
             asbru::parse_asbru,
             asbru::asbru_decrypt,
-            commands::join_path,
             commands::run_local_command,
             commands::list_monospace_fonts,
             commands::tcp_ping,

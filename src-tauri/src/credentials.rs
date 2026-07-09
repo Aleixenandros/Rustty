@@ -503,42 +503,6 @@ pub fn cred_import(store: &CredentialStore, meta: CredentialMeta) -> Result<(), 
     store.write_all(&catalog)
 }
 
-/// Renombra una credencial (solo cambia `name`; no toca el keyring, que está
-/// indexado por id). Valida nombre y unicidad dentro del mismo kind.
-pub fn cred_rename(
-    store: &CredentialStore,
-    id: String,
-    new_name: String,
-) -> Result<CredentialMeta, AppError> {
-    if !is_valid_name(&new_name) {
-        return Err(AppError::Auth(format!(
-            "Nombre de credencial inválido «{new_name}»: sin espacios; empieza por letra o «_» y solo letras, dígitos, «_», «-» o «.»."
-        )));
-    }
-
-    let mut catalog = store.load_all()?;
-    let idx = catalog
-        .iter()
-        .position(|c| c.id == id)
-        .ok_or_else(|| AppError::Auth(format!("Credencial {id} no encontrada.")))?;
-    let kind = catalog[idx].kind;
-
-    if catalog
-        .iter()
-        .any(|c| c.kind == kind && c.name == new_name && c.id != id)
-    {
-        return Err(AppError::Auth(format!(
-            "Ya existe una credencial «{new_name}» de ese tipo."
-        )));
-    }
-
-    catalog[idx].name = new_name;
-    catalog[idx].updated_at = Some(now_iso());
-    let meta = catalog[idx].clone();
-    store.write_all(&catalog)?;
-    Ok(meta)
-}
-
 /// Elimina una credencial del catálogo y su valor del keyring.
 ///
 /// Si `force == false` y algún perfil la referencia (`master_credential_id`),

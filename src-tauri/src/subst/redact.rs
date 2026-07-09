@@ -17,15 +17,18 @@ pub const REDACTED: &str = "••••";
 /// La redacción es por valor literal: si un secreto no aparece tal cual en el
 /// texto, no se altera nada. Esto basta para los canales auditados, donde el
 /// único riesgo sería interpolar el valor resuelto en un mensaje.
-pub fn redact_secrets(text: &str, secret_values: &[String]) -> String {
+/// Genérico sobre `AsRef<str>` para aceptar también `Zeroizing<String>` (secretos
+/// que se autoborran de memoria) sin copiarlos a un `Vec<String>` intermedio.
+pub fn redact_secrets<S: AsRef<str>>(text: &str, secret_values: &[S]) -> String {
     let mut out = text.to_string();
     for value in secret_values {
+        let value = value.as_ref();
         // Ignora cadenas vacías (umbral mínimo: >= 1 carácter).
         if value.is_empty() {
             continue;
         }
-        if out.contains(value.as_str()) {
-            out = out.replace(value.as_str(), REDACTED);
+        if out.contains(value) {
+            out = out.replace(value, REDACTED);
         }
     }
     out
@@ -73,7 +76,7 @@ mod tests {
 
     #[test]
     fn lista_vacia_devuelve_igual() {
-        assert_eq!(redact_secrets("texto", &[]), "texto");
+        assert_eq!(redact_secrets("texto", &[] as &[&str]), "texto");
     }
 
     #[test]
@@ -91,7 +94,7 @@ mod tests {
         // contraseña resuelta no debe contener el valor tras redactar.
         let password = "MiClaveSuperSecreta".to_string();
         let mensaje = format!("Autenticación fallida para ada con clave {password}");
-        let redactado = redact_secrets(&mensaje, &[password.clone()]);
+        let redactado = redact_secrets(&mensaje, std::slice::from_ref(&password));
         assert!(!redactado.contains(&password));
         assert!(redactado.contains("••••"));
     }

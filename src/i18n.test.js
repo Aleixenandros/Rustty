@@ -38,11 +38,13 @@ describe("i18n · paridad de claves", () => {
     }
   });
 
-  it("en y de están completos respecto a es", () => {
-    // Los idiomas «completos» (inglés y alemán) no deben perder ninguna clave
-    // respecto al castellano; si esto falla, se ha añadido una clave a `es` sin
-    // traducirla en el resto.
-    for (const lang of ["en", "de"]) {
+  it("todos los idiomas están completos respecto a es (paridad total)", () => {
+    // Desde que se completaron fr/pt (2026-07-09), NINGÚN idioma puede perder
+    // claves respecto al castellano: si esto falla, se ha añadido una clave a
+    // `es` sin traducirla en algún idioma. Junto con el test de huérfanas, esto
+    // garantiza que los 5 diccionarios tengan exactamente el mismo juego de claves.
+    for (const lang of SUPPORTED_LANGS) {
+      if (lang === "es") continue;
       const missing = esKeys.filter((k) => !keySets[lang].has(k));
       expect(missing, `faltan en ${lang}: ${missing.join(", ")}`).toEqual([]);
     }

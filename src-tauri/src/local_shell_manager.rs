@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{mpsc, Arc, Mutex};
 
+use crate::locks::MutexExt;
+
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter};
@@ -124,8 +126,7 @@ impl LocalShellManager {
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<ShellCommand>();
         self.sessions
-            .lock()
-            .unwrap()
+            .lock_recover()
             .insert(session_id.clone(), ShellHandle { cmd_tx, shell_pid });
 
         // ── Hilo de lectura: shell → frontend ────────────────────
@@ -144,7 +145,7 @@ impl LocalShellManager {
                         // El shell terminó: retira el handle muerto del mapa
                         // antes de avisar al frontend (evita acumular sesiones
                         // cerradas si el usuario no cierra la pestaña).
-                        sessions_r.lock().unwrap().remove(&sid_r);
+                        sessions_r.lock_recover().remove(&sid_r);
                         let _ = app_r.emit(&event_name(EventKind::ShellClosed, &sid_r), ());
                         break;
                     }
@@ -183,7 +184,7 @@ impl LocalShellManager {
     }
 
     pub fn send_input(&self, session_id: &str, data: Vec<u8>) -> Result<(), String> {
-        let map = self.sessions.lock().unwrap();
+        let map = self.sessions.lock_recover();
         let handle = map
             .get(session_id)
             .ok_or_else(|| format!("Sesión de shell no encontrada: {session_id}"))?;
@@ -194,7 +195,7 @@ impl LocalShellManager {
     }
 
     pub fn resize(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        let map = self.sessions.lock().unwrap();
+        let map = self.sessions.lock_recover();
         let handle = map
             .get(session_id)
             .ok_or_else(|| format!("Sesión de shell no encontrada: {session_id}"))?;
@@ -220,7 +221,7 @@ impl LocalShellManager {
     /// un beneficio claro. El build de Windows no se ve afectado.
     pub fn has_running_job(&self, session_id: &str) -> bool {
         let pid = {
-            let map = self.sessions.lock().unwrap();
+            let map = self.sessions.lock_recover();
             match map.get(session_id) {
                 Some(h) => h.shell_pid,
                 None => return false,
@@ -231,7 +232,7 @@ impl LocalShellManager {
     }
 
     pub fn close(&self, session_id: &str) -> Result<(), String> {
-        if let Some(handle) = self.sessions.lock().unwrap().remove(session_id) {
+        if let Some(handle) = self.sessions.lock_recover().remove(session_id) {
             let _ = handle.cmd_tx.send(ShellCommand::Close);
         }
         Ok(())
@@ -240,8 +241,7 @@ impl LocalShellManager {
     pub fn close_all(&self) {
         let handles: Vec<_> = self
             .sessions
-            .lock()
-            .unwrap()
+            .lock_recover()
             .drain()
             .map(|(_, h)| h)
             .collect();

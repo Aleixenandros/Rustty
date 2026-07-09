@@ -196,112 +196,117 @@ function isValidRegex(pattern) {
 }
 
 /**
+ * Error de validación como **código estable** + parámetros de interpolación, sin
+ * texto de idioma: la capa de UI lo traduce con `t("scripts.err." + code, params)`.
+ * Así el módulo puro no depende de i18n y sigue siendo testeable por código.
+ * @typedef {{ code: string, params?: Record<string, string|number> }} ValidationError
+ */
+
+/**
  * Valida un objetivo. Devuelve la lista de errores (vacía si es válido).
  * @param {any} target
- * @returns {string[]}
+ * @returns {ValidationError[]}
  */
 function validateTarget(target) {
   if (!target || typeof target !== "object") {
-    return ["El objetivo es obligatorio."];
+    return [{ code: "target_required" }];
   }
   switch (target.kind) {
     case "profile":
-      return isNonEmptyString(target.profileId)
-        ? []
-        : ["El objetivo de tipo perfil necesita `profileId`."];
+      return isNonEmptyString(target.profileId) ? [] : [{ code: "profile_needs_id" }];
     case "folder": {
-      /** @type {string[]} */
+      /** @type {ValidationError[]} */
       const errs = [];
-      if (typeof target.workspaceId !== "string") errs.push("La carpeta necesita `workspaceId` (cadena).");
-      if (typeof target.folderPath !== "string") errs.push("La carpeta necesita `folderPath` (cadena).");
-      if (typeof target.recursive !== "boolean") errs.push("La carpeta necesita `recursive` (booleano).");
+      if (typeof target.workspaceId !== "string") errs.push({ code: "folder_needs_workspace" });
+      if (typeof target.folderPath !== "string") errs.push({ code: "folder_needs_path" });
+      if (typeof target.recursive !== "boolean") errs.push({ code: "folder_needs_recursive" });
       return errs;
     }
     case "adhoc":
       if (!Array.isArray(target.profileIds) || target.profileIds.length === 0) {
-        return ["La selección ad-hoc necesita al menos un perfil."];
+        return [{ code: "adhoc_needs_profile" }];
       }
-      return target.profileIds.every(isNonEmptyString)
-        ? []
-        : ["La selección ad-hoc contiene ids inválidos."];
+      return target.profileIds.every(isNonEmptyString) ? [] : [{ code: "adhoc_invalid_ids" }];
     default:
-      return [`Tipo de objetivo desconocido: ${String(target.kind)}.`];
+      return [{ code: "target_unknown", params: { kind: String(target.kind) } }];
   }
 }
 
 /**
  * Valida un paso. Devuelve la lista de errores (vacía si es válido).
  * @param {any} step
- * @returns {string[]}
+ * @returns {ValidationError[]}
  */
 function validateStep(step) {
   if (!step || typeof step !== "object") {
-    return ["no es un objeto."];
+    return [{ code: "step_not_object" }];
   }
   switch (step.type) {
     case "send":
-      return typeof step.text === "string" ? [] : ["`send` necesita `text` (cadena)."];
+      return typeof step.text === "string" ? [] : [{ code: "send_needs_text" }];
     case "waitPrompt":
       return [];
     case "waitRegex": {
-      /** @type {string[]} */
+      /** @type {ValidationError[]} */
       const errs = [];
-      if (!isNonEmptyString(step.pattern)) errs.push("`waitRegex` necesita `pattern`.");
-      else if (!isValidRegex(step.pattern)) errs.push("`waitRegex` tiene un `pattern` inválido.");
+      if (!isNonEmptyString(step.pattern)) errs.push({ code: "waitregex_needs_pattern" });
+      else if (!isValidRegex(step.pattern)) errs.push({ code: "waitregex_invalid_pattern" });
       if (typeof step.timeoutMs !== "number" || !Number.isFinite(step.timeoutMs) || step.timeoutMs <= 0) {
-        errs.push("`waitRegex` necesita `timeoutMs` > 0.");
+        errs.push({ code: "waitregex_needs_timeout" });
       }
       return errs;
     }
     case "expectExit":
       return typeof step.code === "number" && Number.isInteger(step.code)
         ? []
-        : ["`expectExit` necesita `code` entero."];
+        : [{ code: "expectexit_needs_code" }];
     case "sendPasswordFromKeyring":
       return step.profileId === null || isNonEmptyString(step.profileId)
         ? []
-        : ["`sendPasswordFromKeyring` necesita `profileId` (cadena o null)."];
+        : [{ code: "keyring_needs_profile" }];
     case "sendPasswordFromKeepass":
-      return isNonEmptyString(step.uuid) ? [] : ["`sendPasswordFromKeepass` necesita `uuid`."];
+      return isNonEmptyString(step.uuid) ? [] : [{ code: "keepass_needs_uuid" }];
     case "sleep":
       return typeof step.ms === "number" && Number.isFinite(step.ms) && step.ms >= 0
         ? []
-        : ["`sleep` necesita `ms` >= 0."];
+        : [{ code: "sleep_needs_ms" }];
     case "disconnect":
       return [];
     default:
-      return [`tipo de paso desconocido: ${String(step.type)}.`];
+      return [{ code: "step_unknown", params: { type: String(step.type) } }];
   }
 }
 
 /**
- * Valida un script completo (nombre, objetivo y cada paso).
+ * Valida un script completo (nombre, objetivo y cada paso). Los errores son
+ * códigos ({@link ValidationError}); la UI los traduce. Los de paso llevan el
+ * número de paso en `params.step`.
  * @param {unknown} script
- * @returns {{ ok: boolean, errors: string[] }}
+ * @returns {{ ok: boolean, errors: ValidationError[] }}
  */
 export function validateScript(script) {
-  /** @type {string[]} */
+  /** @type {ValidationError[]} */
   const errors = [];
   if (!script || typeof script !== "object") {
-    return { ok: false, errors: ["El script no es un objeto."] };
+    return { ok: false, errors: [{ code: "not_object" }] };
   }
   const s = /** @type {any} */ (script);
 
   if (typeof s.name !== "string" || s.name.trim() === "") {
-    errors.push("El nombre es obligatorio.");
+    errors.push({ code: "name_required" });
   }
 
   errors.push(...validateTarget(s.target));
 
   if (!Array.isArray(s.steps)) {
-    errors.push("Los pasos deben ser una lista.");
+    errors.push({ code: "steps_must_be_list" });
   } else {
     if (s.steps.length > MAX_STEPS) {
-      errors.push(`Demasiados pasos (máximo ${MAX_STEPS}).`);
+      errors.push({ code: "too_many_steps", params: { max: MAX_STEPS } });
     }
     s.steps.forEach((/** @type {any} */ step, /** @type {number} */ i) => {
       for (const e of validateStep(step)) {
-        errors.push(`Paso ${i + 1}: ${e}`);
+        errors.push({ code: e.code, params: { ...(e.params || {}), step: i + 1 } });
       }
     });
   }

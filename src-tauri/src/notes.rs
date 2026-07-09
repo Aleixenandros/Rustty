@@ -153,7 +153,7 @@ fn excerpt_of(body: &str) -> String {
         let cleaned = line
             .trim_start_matches('#')
             .trim_start_matches('>')
-            .trim_start_matches(|c| matches!(c, '-' | '*' | '+'))
+            .trim_start_matches(['-', '*', '+'])
             .replace(['`', '*', '_'], "")
             .trim()
             .to_string();
@@ -319,26 +319,6 @@ impl NotesManager {
         Ok(docs.into_iter().map(summary_of).collect())
     }
 
-    /// Búsqueda full-text simple (case-insensitive) sobre título, tags y cuerpo.
-    pub fn search(&self, query: &str) -> Result<Vec<NoteSummary>, AppError> {
-        let q = query.trim().to_lowercase();
-        if q.is_empty() {
-            return Ok(vec![]);
-        }
-        let docs = self.export_all()?;
-        let mut out: Vec<NoteSummary> = docs
-            .into_iter()
-            .filter(|d| {
-                d.title.to_lowercase().contains(&q)
-                    || d.body.to_lowercase().contains(&q)
-                    || d.tags.iter().any(|t| t.to_lowercase().contains(&q))
-            })
-            .map(summary_of)
-            .collect();
-        out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        Ok(out)
-    }
-
     /// Migra el campo inline `ConnectionProfile.notes` a ficheros `.md`. Para
     /// cada perfil con `notes` no vacío y sin `<id>.md` existente, crea el
     /// fichero. Idempotente: no toca notas ya migradas ni perfiles sin notas.
@@ -463,34 +443,6 @@ mod tests {
             updated_at: now_iso(),
         };
         assert!(mgr.write(&doc).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn search_encuentra_por_cuerpo_y_tags() {
-        let (mgr, dir) = temp_mgr();
-        mgr.set(
-            "n1",
-            "reiniciar el servicio api".into(),
-            "Runbook API".into(),
-            "api".into(),
-            vec!["prod".into()],
-        )
-        .unwrap();
-        mgr.set(
-            "n2",
-            "notas varias".into(),
-            "Otra".into(),
-            "otra".into(),
-            vec!["dev".into()],
-        )
-        .unwrap();
-        let hits = mgr.search("api").unwrap();
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].profile_id, "n1");
-        let by_tag = mgr.search("PROD").unwrap();
-        assert_eq!(by_tag.len(), 1);
-        assert!(mgr.search("inexistente").unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
