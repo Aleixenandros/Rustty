@@ -7203,30 +7203,42 @@ body.sftp-log-resizing {
   height: 28px;
   padding: 0 10px;
   border-radius: 4px;
-  border: 1px solid var(--surface2);
-  background: var(--surface0);
-  color: var(--text);
+  /* Acento del tema en reposo (no gris): tinte del azul del tema activo. */
+  border: 1px solid color-mix(in srgb, var(--blue) 45%, var(--surface2));
+  background: color-mix(in srgb, var(--blue) 12%, var(--surface0));
+  color: var(--blue);
   cursor: pointer;
   font-size: 12px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .global-tunnel-action:hover {
   border-color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 22%, var(--surface0));
   color: var(--blue);
 }
 
 .global-tunnel-action:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: default;
 }
 
 .global-tunnel-action:disabled:hover {
-  border-color: var(--surface2);
-  color: var(--text);
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--surface2));
+  background: color-mix(in srgb, var(--blue) 12%, var(--surface0));
+  color: var(--blue);
+}
+
+/* Variante destructiva (Abortar…): acento rojo del tema. */
+.global-tunnel-action.danger {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--surface2));
+  background: color-mix(in srgb, var(--red) 12%, var(--surface0));
+  color: var(--red);
 }
 
 .global-tunnel-action.danger:hover {
   border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 22%, var(--surface0));
   color: var(--red);
 }
 

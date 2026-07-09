@@ -2,6 +2,24 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.50.0] - 2026-07-09
+
+### Corregido
+
+- **Scripts con una orden larga que se quedaban «en marcha» sin terminar**: si un
+  paso lanzaba un comando que a su vez abría conexiones `ssh`/`rsync` (por ejemplo
+  una réplica a varios servidores), el indicador de progreso se quedaba clavado en
+  el último paso y el script no llegaba a desconectar, aunque la salida completa sí
+  aparecía. La detección del fin de cada comando es ahora inmune a ello: el script
+  termina y marca su resultado como debe.
+
+### Cambiado
+
+- **Botones de acción con el color del tema**: los botones del panel de ejecución
+  de scripts y de los túneles (Reintentar, Exportar, Copiar, Abortar…) ya no se
+  ven grises; toman el acento del tema activo —azul para las acciones normales,
+  rojo para las destructivas— y se intensifican al pasar el ratón.
+
 ## [1.49.0] - 2026-07-09
 
 ### Añadido

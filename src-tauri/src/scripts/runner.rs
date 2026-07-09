@@ -161,6 +161,20 @@ fn marker_prefix(run_id: &str, step_index: usize) -> String {
     format!("__RUSTTY_END_{}_{}_", sanitize_token(run_id), step_index)
 }
 
+/// Compone la línea que somete el marcador de fin de paso. Con un comando
+/// diferido no vacío, lo UNE en la misma línea (`cmd; printf …`) para que el
+/// marcador viaje pegado al comando y ningún hijo que lea del TTY lo robe; sin
+/// comando (o vacío, que daría `; printf …`, un error de sintaxis) somete el
+/// `printf` solo. El `printf` lleva `$?`: la línea del marcador trae el exit code
+/// ya expandido.
+fn compose_end_marker(pending: Option<&str>, prefix: &str) -> String {
+    let printf = format!("printf '\\n{prefix}%d__\\n' \"$?\"");
+    match pending {
+        Some(cmd) if !cmd.trim().is_empty() => format!("{cmd}; {printf}"),
+        _ => printf,
+    }
+}
+
 /// Extrae el exit code del ÚLTIMO marcador válido presente en `buf` (prefijo +
 /// dígitos + `__`). Ignora el eco del comando, que trae `%d` en vez de dígitos.
 fn parse_marker_exit(buf: &str, prefix: &str) -> Option<i32> {
@@ -463,6 +477,12 @@ struct HostState<'a> {
     /// a que ese comando termine antes de cerrar el canal (si no, cerraría de
     /// golpe y el comando podría ni ejecutarse).
     pending_output: bool,
+    /// Comando de un `send` cuya línea aún NO se ha sometido (falta el `\n`).
+    /// Se difiere para poder UNIR el marcador de fin de paso en la misma línea
+    /// de entrada (`cmd; printf …`): así bash lee la línea entera de una vez y
+    /// ningún hijo del comando que lea del TTY (un `ssh`/`rsync`) puede robar el
+    /// marcador tecleado por delante. Se vacía en el siguiente `send`/wait/etc.
+    pending_line: Option<String>,
 }
 
 impl HostState<'_> {
@@ -495,6 +515,27 @@ impl HostState<'_> {
             .data(line.as_bytes())
             .await
             .map_err(|e| format!("No se pudo enviar el comando: {e}"))
+    }
+
+    /// Somete el `send` diferido (si lo hay) como su propia línea, dejándolo en
+    /// ejecución. Se llama antes de cualquier paso que NO vaya a unir el marcador
+    /// al comando (otro `send`, `sendPassword*`, `waitRegex`, `sleep`…).
+    async fn flush_pending_line(&mut self) -> Result<(), String> {
+        if let Some(cmd) = self.pending_line.take() {
+            self.send_line(&cmd).await?;
+        }
+        Ok(())
+    }
+
+    /// Somete el marcador de fin de paso. Si hay un `send` diferido, lo UNE en la
+    /// misma línea de entrada (`cmd; printf …`) para que un hijo del comando que
+    /// lea del TTY (p. ej. un `ssh`/`rsync`) no pueda robar el marcador tecleado
+    /// por delante; si no, lo somete solo (el comando ya corre, p. ej. tras una
+    /// contraseña). El eco de la línea unida se limpia en `emit_new_lines`, que
+    /// recorta la cola `; printf …` y deja visible `prompt + comando` como siempre.
+    async fn send_end_marker(&mut self, prefix: &str) -> Result<(), String> {
+        let line = compose_end_marker(self.pending_line.take().as_deref(), prefix);
+        self.send_line(&line).await
     }
 
     /// Envía un secreto (`secreto + "\n"`) SIN registrarlo ni emitirlo. Lo añade
@@ -571,17 +612,38 @@ where
 }
 
 /// Emite las líneas completas (terminadas en `\n`) del buffer más allá de
-/// `*emitted`, saltando las que contengan `sentinel` (marcador y su eco).
+/// `*emitted`. Una línea con el `sentinel` (marcador) puede ser: el ECO del
+/// comando unido (`prompt + cmd; printf …<marcador>…`), del que se emite solo la
+/// parte `prompt + cmd` recortando la cola del `printf`; o la línea del marcador
+/// expandido (`<marcador>N__`), que se oculta entera.
 fn emit_new_lines(state: &HostState, acc: &str, emitted: &mut usize, sentinel: Option<&str>) {
     while let Some(rel_nl) = acc[*emitted..].find('\n') {
         let line_end = *emitted + rel_nl + 1;
         let line = &acc[*emitted..line_end];
-        let hidden = sentinel.is_some_and(|s| line.contains(s));
-        if !hidden {
-            state.emit_output(line);
+        match sentinel {
+            Some(s) if line.contains(s) => {
+                if let Some(cmd) = command_echo_prefix(line, s) {
+                    if !cmd.trim().is_empty() {
+                        state.emit_output(&format!("{cmd}\n"));
+                    }
+                }
+                // Sin prefijo de comando: es el marcador expandido → oculto.
+            }
+            _ => state.emit_output(line),
         }
         *emitted = line_end;
     }
+}
+
+/// Si `line` es el ECO de un comando unido al marcador (`… cmd; printf '…<prefix>%d__…'`),
+/// devuelve la parte previa a la unión (`prompt + cmd`); si es la línea del
+/// marcador expandido (`<prefix>N__`) u otra línea con el marcador pero sin la
+/// cola `; printf`, devuelve `None` (se oculta entera). Robusto aunque el propio
+/// comando contenga `; printf`: corta en la ÚLTIMA unión previa al marcador.
+fn command_echo_prefix<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
+    let marker_at = line.find(prefix)?;
+    let cut = line[..marker_at].rfind("; printf")?;
+    Some(&line[..cut])
 }
 
 // ─── Ejecución de un paso ────────────────────────────────────────────────────
@@ -601,13 +663,18 @@ async fn execute_step(
 ) -> Result<StepFlow, String> {
     match step {
         Step::Send { text } => {
+            // Someter el envío diferido anterior (si lo hay) como su propia línea.
+            state.flush_pending_line().await?;
             let (resolved, secrets) = resolve.resolve_send(text);
             for s in secrets {
                 if !state.secrets.contains(&s) {
                     state.secrets.push(s);
                 }
             }
-            state.send_line(&resolved).await?;
+            // Diferir el envío: si el siguiente paso es un waitPrompt/disconnect,
+            // el marcador se unirá a ESTA misma línea (`cmd; printf …`), inmune al
+            // robo de stdin por un hijo del comando. Si no, se somete solo al flush.
+            state.pending_line = Some(resolved);
             state.pending_output = true;
             Ok(StepFlow::Continue)
         }
@@ -621,16 +688,27 @@ async fn execute_step(
             pattern,
             timeout_ms,
         } => {
+            // El patrón se espera sobre la salida del comando, sin marcador: hay
+            // que someter el comando diferido para que corra.
+            state.flush_pending_line().await?;
             wait_regex(state, pattern, *timeout_ms, run_cancel, host_cancel).await?;
             state.pending_output = false;
             Ok(StepFlow::Continue)
         }
-        Step::ExpectExit { code } => match state.last_exit {
-            Some(actual) if actual == *code => Ok(StepFlow::Continue),
-            Some(actual) => Err(format!("Se esperaba exit code {code} pero fue {actual}")),
-            None => Err("expectExit sin un waitPrompt previo que capturara el exit code".into()),
-        },
+        Step::ExpectExit { code } => {
+            state.flush_pending_line().await?;
+            match state.last_exit {
+                Some(actual) if actual == *code => Ok(StepFlow::Continue),
+                Some(actual) => Err(format!("Se esperaba exit code {code} pero fue {actual}")),
+                None => {
+                    Err("expectExit sin un waitPrompt previo que capturara el exit code".into())
+                }
+            }
+        }
         Step::SendPasswordFromKeyring { profile_id } => {
+            // El comando que pide la contraseña debe estar corriendo antes de
+            // enviarla: someter el envío diferido primero.
+            state.flush_pending_line().await?;
             let pid = profile_id
                 .clone()
                 .unwrap_or_else(|| state.profile_id.clone());
@@ -640,12 +718,15 @@ async fn execute_step(
             Ok(StepFlow::Continue)
         }
         Step::SendPasswordFromKeepass { uuid } => {
+            state.flush_pending_line().await?;
             let pw = read_keepass_password(uuid)?;
             state.send_secret(pw).await?;
             state.pending_output = true;
             Ok(StepFlow::Continue)
         }
         Step::Sleep { ms } => {
+            // El comando diferido debe correr y luego dormimos.
+            state.flush_pending_line().await?;
             sleep_cancellable(*ms, run_cancel, host_cancel).await?;
             Ok(StepFlow::Continue)
         }
@@ -700,8 +781,9 @@ async fn final_drain(
     host_cancel: &AtomicBool,
 ) -> Result<Option<i32>, String> {
     let prefix = marker_prefix(state.run_id, step_index);
-    let cmd = format!("printf '\\n{prefix}%d__\\n' \"$?\"");
-    state.send_line(&cmd).await?;
+    // Une el marcador al comando diferido (`cmd; printf …`) para que no lo robe
+    // el stdin de un hijo del comando; o lo somete solo si ya está corriendo.
+    state.send_end_marker(&prefix).await?;
 
     let mut acc = String::new();
     let mut emitted = 0usize;
@@ -744,9 +826,10 @@ async fn wait_prompt(
     host_cancel: &AtomicBool,
 ) -> Result<i32, String> {
     let prefix = marker_prefix(state.run_id, step_index);
-    // `printf` con `$?`: la línea del marcador trae el exit code ya expandido.
-    let cmd = format!("printf '\\n{prefix}%d__\\n' \"$?\"");
-    state.send_line(&cmd).await?;
+    // Une el marcador (`$?`, exit code ya expandido) al comando diferido en la
+    // MISMA línea (`cmd; printf …`), inmune al robo de stdin; o lo somete solo si
+    // el comando ya corre (p. ej. tras enviar una contraseña).
+    state.send_end_marker(&prefix).await?;
 
     let mut acc = String::new();
     let mut emitted = 0usize;
@@ -1007,6 +1090,7 @@ async fn run_host(
         secrets,
         last_exit: None,
         pending_output: false,
+        pending_line: None,
     };
     let resolve = ResolveCtx {
         ctx: SubstContext::from_profile(&profile),
@@ -1395,6 +1479,45 @@ mod tests {
         // El run_id se sanea (solo alfanumérico) y el índice de paso lo distingue.
         assert_eq!(marker_prefix("abc-123", 0), "__RUSTTY_END_abc123_0_");
         assert_ne!(marker_prefix("abc-123", 0), marker_prefix("abc-123", 1));
+    }
+
+    #[test]
+    fn compose_end_marker_une_el_comando_para_evitar_robo_de_stdin() {
+        let prefix = marker_prefix("run-1", 2);
+        let printf = format!("printf '\\n{prefix}%d__\\n' \"$?\"");
+        // Con comando diferido: se UNE en la misma línea de entrada. Así bash lee
+        // la línea entera de una vez y ningún hijo del comando (un `ssh` que lea
+        // del TTY) puede robar el marcador tecleado por delante.
+        assert_eq!(
+            compose_end_marker(Some("./replica.sh"), &prefix),
+            format!("./replica.sh; {printf}")
+        );
+        // Sin comando diferido (p. ej. tras enviar una contraseña): marcador solo.
+        assert_eq!(compose_end_marker(None, &prefix), printf);
+        // Comando vacío/en blanco: NO se une (daría `; printf …`, error de sintaxis
+        // que dejaría el marcador sin ejecutar y colgaría la espera).
+        assert_eq!(compose_end_marker(Some("   "), &prefix), printf);
+    }
+
+    #[test]
+    fn command_echo_prefix_recorta_la_cola_del_marcador_del_eco() {
+        let prefix = marker_prefix("run-1", 2);
+        // Eco de la línea unida: se conserva `prompt + comando`, se recorta el printf.
+        let echo = format!("root@h:~/scripts# ./replica.sh; printf '\\n{prefix}%d__\\n' \"$?\"\n");
+        assert_eq!(
+            command_echo_prefix(&echo, &prefix),
+            Some("root@h:~/scripts# ./replica.sh")
+        );
+        // Comando que YA contiene `; printf`: corta en la última unión (la del marcador).
+        let echo2 = format!("$ echo a; printf b; printf '\\n{prefix}%d__\\n' \"$?\"\n");
+        assert_eq!(
+            command_echo_prefix(&echo2, &prefix),
+            Some("$ echo a; printf b")
+        );
+        // Línea del marcador expandido: sin cola `; printf` → se oculta entera.
+        assert_eq!(command_echo_prefix(&format!("{prefix}0__\n"), &prefix), None);
+        // Línea sin el marcador: no aplica.
+        assert_eq!(command_echo_prefix("salida normal\n", &prefix), None);
     }
 
     #[test]
