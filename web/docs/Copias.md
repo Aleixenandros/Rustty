@@ -26,7 +26,9 @@ Cuando activas la sincronización de contraseñas guardadas, Rustty lee del keyr
 
 ## Sincronización automática
 
-La sincronización comprueba el estado **al iniciar la app** y se dispara **cada vez que detecta un cambio local relevante**, con un debounce de 1 minuto para agrupar ráfagas. Esto da margen para renombrar, mover o borrar varias carpetas antes de que Rustty empiece a sincronizar. No hay intervalo periódico ni opción "Auto-sync Sí/No": Rustty se mantiene al día por evento, no por temporizador.
+La sincronización comprueba el estado **al iniciar la app** y se dispara **cada vez que detecta un cambio local relevante**, con un debounce de 1 minuto para agrupar ráfagas. Esto da margen para renombrar, mover o borrar varias carpetas antes de que Rustty empiece a sincronizar.
+
+Desde la v1.51.0 existe además la **sincronización periódica**: un selector en Preferencias → Copias de seguridad para buscar cambios de otros equipos cada 1, 5, 15, 30 o 60 minutos mientras la app está abierta. Viene **desactivada por defecto** y el intervalo lo eliges tú. Si una pasada (periódica o la del arranque) no trae ningún cambio, no reescribe nada y **no toca la interfaz**: ni redibuja la barra lateral ni interrumpe lo que estés haciendo.
 
 Si pulsas **Sincronizar ahora**, Rustty cancela cualquier autosync pendiente y ejecuta la sincronización al momento.
 

@@ -250,7 +250,7 @@ Synchronization is opt-in and encrypts the state before uploading it. Profiles, 
 
 The local JSON exports of connections/folders/workspaces ask before including secrets. If you choose to include them, the JSON contains readable credentials; prefer the encrypted `.rustty-sync.bin` backup to transport passwords.
 
-Synchronization checks the state when the app starts and is triggered when it detects local changes (1-minute debounce). If the local and remote logical content already match, it does not rewrite the remote blob nor create a new snapshot. Before overwriting a different remote blob, an encrypted snapshot is saved; from the **Restore backup** dropdown you can revert to any previous snapshot available in the backend.
+Synchronization checks the state when the app starts, is triggered when it detects local changes (1-minute debounce) and, if you enable it, also runs **periodically at the interval you choose** (1–60 min or disabled, in Preferences → Backups) to pick up changes from other machines without restarting. If the local and remote logical content already match, it does not rewrite the remote blob, does not create a new snapshot and leaves the UI untouched. Before overwriting a different remote blob, an encrypted snapshot is saved; from the **Restore backup** dropdown you can revert to any previous snapshot available in the backend.
 
 Backends:
 
