@@ -19,8 +19,9 @@ use crate::scripts::{HostPreview, RunOptions, Script, ScriptManager};
 use crate::sftp_manager::{FileEntry, SftpManager, TransferConflictPolicy};
 use crate::ssh_manager::{legacy_catalog_info, SshManager, SshTunnelConfig, SshTunnelInfo};
 use crate::sync::{
-    pack_state, resolve_sync_folder, unpack_state, OAuthFinishResult, OAuthProvider,
-    OAuthStartResult, SnapshotEntry, SyncBackendKind, SyncConfig, SyncManager, SyncState,
+    pack_state, resolve_sync_folder, significant_clock_skew, unpack_state, OAuthFinishResult,
+    OAuthProvider, OAuthStartResult, SnapshotEntry, SyncBackendKind, SyncConfig, SyncManager,
+    SyncRunOutcome, SyncState, CONFLICT_MARKER,
 };
 use crate::{DataDir, LaunchMinimized};
 
@@ -1556,15 +1557,16 @@ pub fn sync_oauth_disconnect(state: State<SyncManager>, provider: String) -> Res
 
 /// Ejecuta una sincronización: pull → merge → push, devolviendo el estado
 /// resultante para que el frontend lo aplique. El frontend pasa su `current`
-/// (lo que tiene en memoria) y recibe el merge final.
+/// (lo que tiene en memoria) y recibe el merge final con los metadatos del
+/// ciclo (timestamps acotados, tombstones podados, duplicados fusionados).
 #[tauri::command]
 pub async fn sync_run(
     state: State<'_, SyncManager>,
     current: SyncState,
     passphrase: String,
     webdav_password: Option<String>,
-) -> Result<SyncState, String> {
-    let mut config = state.load_config();
+) -> Result<SyncRunOutcome, String> {
+    let config = state.load_config();
     if !config.enabled || matches!(config.backend, SyncBackendKind::None) {
         return Err("Sincronización no habilitada".into());
     }
@@ -1572,34 +1574,62 @@ pub async fn sync_run(
         .backend(&config, webdav_password.as_deref().unwrap_or(""))
         .map_err(|e| e.to_string())?;
 
-    // 1. Pull
-    let remote = match backend.read().await.map_err(|e| e.to_string())? {
-        Some(bytes) => unpack_state(&passphrase, &bytes).map_err(|e| e.to_string())?,
-        None => SyncState::default(),
+    // La escritura condicional de WebDAV puede rechazar el push (412) si otro
+    // equipo empujó entre nuestro read y nuestro write: se re-lee, re-mezcla
+    // y reintenta una vez en lugar de pisar su push en silencio.
+    let mut retried_conflict = false;
+    let (merged, clamped, pruned_tombstones, deduped) = loop {
+        // 1. Pull. `read_all` trae también los blobs duplicados que una
+        // carrera de primera sync entre dos equipos pudo dejar en Drive:
+        // se fusionan aquí (LWW) y el write posterior retira los sobrantes.
+        let blobs = backend.read_all().await.map_err(|e| e.to_string())?;
+        let deduped = blobs.len() > 1;
+        let mut remote = SyncState::default();
+        for bytes in &blobs {
+            remote.merge(unpack_state(&passphrase, bytes).map_err(|e| e.to_string())?);
+        }
+        // Relojes desviados: un item fechado en el futuro sería imbatible.
+        let clamped = remote.clamp_future_timestamps(chrono::Utc::now());
+
+        // 2. Merge: empezamos con el estado del frontend y aplicamos remoto LWW
+        let mut merged = current.clone();
+        merged.merge(remote.clone());
+        // GC de tombstones según la retención configurada (0 = nunca). El
+        // frontend poda su espejo (prefs.tombstones) al aplicar el resultado.
+        let pruned =
+            merged.prune_tombstones(chrono::Utc::now(), config.tombstone_retention_days);
+
+        // 3. Push solo si el merge aporta un cambio de CONTENIDO al remoto.
+        // Comparamos por contenido (ignorando `updated_at`): un mero refresco
+        // de timestamps —mismo dato— no debe subir ni archivar una versión, o
+        // se acumularían snapshots "restaurables" idénticos en cada arranque.
+        // El cifrado age además produce bytes distintos en cada escritura, así
+        // que comparar el blob cifrado crearía falsos positivos. Con
+        // duplicados fusionados se empuja siempre, para converger a un blob.
+        if deduped || !merged.content_eq(&remote) {
+            let history_keep = config.history_keep.max(1);
+            backend
+                .archive_existing(history_keep)
+                .await
+                .map_err(|e| e.to_string())?;
+            let bytes = pack_state(&passphrase, &merged).map_err(|e| e.to_string())?;
+            if let Err(e) = backend.write(&bytes).await {
+                let msg = e.to_string();
+                if msg.contains(CONFLICT_MARKER) && !retried_conflict {
+                    retried_conflict = true;
+                    continue;
+                }
+                return Err(msg);
+            }
+        }
+        break (merged, clamped, pruned, deduped);
     };
-
-    // 2. Merge: empezamos con el estado del frontend y aplicamos remoto LWW
-    let mut merged = current;
-    merged.merge(remote.clone());
-
-    // 3. Push solo si el merge aporta un cambio de CONTENIDO al remoto.
-    // Comparamos por contenido (ignorando `updated_at`): un mero refresco de
-    // timestamps —mismo dato— no debe subir ni archivar una versión, o se
-    // acumularían snapshots "restaurables" idénticos en cada arranque. El
-    // cifrado age además produce bytes distintos en cada escritura, así que
-    // comparar el blob cifrado crearía falsos positivos.
-    if !merged.content_eq(&remote) {
-        let history_keep = config.history_keep.max(1);
-        backend
-            .archive_existing(history_keep)
-            .await
-            .map_err(|e| e.to_string())?;
-        let bytes = pack_state(&passphrase, &merged).map_err(|e| e.to_string())?;
-        backend.write(&bytes).await.map_err(|e| e.to_string())?;
-    }
 
     // 4. Cache local (snapshot del último merge). No persistimos secretos en
     // sync_state.json: solo deben vivir en keyring local o en el blob E2E.
+    // Nota: ya NO se reescribe sync_config.json aquí (antes se reescribía
+    // entero en cada ciclo solo para refrescar `last_sync_at`; ese timestamp
+    // vivo lo lleva el frontend en sus prefs).
     let mut local_cache = merged.clone();
     local_cache
         .items
@@ -1607,10 +1637,139 @@ pub async fn sync_run(
     state
         .save_local_state(&local_cache)
         .map_err(|e| e.to_string())?;
-    config.last_sync_at = Some(chrono::Utc::now());
-    state.save_config(&config).map_err(|e| e.to_string())?;
 
-    Ok(merged)
+    // Aviso de reloj desviado comparando con el `Date` del servidor.
+    let clock_skew_seconds = backend
+        .observed_server_time()
+        .and_then(|server| significant_clock_skew(server, chrono::Utc::now()));
+
+    Ok(SyncRunOutcome {
+        state: merged,
+        clamped,
+        pruned_tombstones,
+        deduped,
+        clock_skew_seconds,
+    })
+}
+
+/// Vista previa del estado remoto SIN aplicar ni escribir nada. Para el
+/// dry-run de la primera sincronización: el frontend calcula el diff
+/// (altas/cambios/bajas) contra lo local y pide confirmación antes del
+/// primer merge real. Devuelve `None` si el remoto está vacío.
+#[tauri::command]
+pub async fn sync_peek_remote(
+    state: State<'_, SyncManager>,
+    passphrase: String,
+    webdav_password: Option<String>,
+) -> Result<Option<SyncState>, String> {
+    let config = state.load_config();
+    if matches!(config.backend, SyncBackendKind::None) {
+        return Err("No hay backend seleccionado".into());
+    }
+    let backend = state
+        .backend(&config, webdav_password.as_deref().unwrap_or(""))
+        .map_err(|e| e.to_string())?;
+    let blobs = backend.read_all().await.map_err(|e| e.to_string())?;
+    if blobs.is_empty() {
+        return Ok(None);
+    }
+    let mut remote = SyncState::default();
+    for bytes in &blobs {
+        remote.merge(unpack_state(&passphrase, bytes).map_err(|e| e.to_string())?);
+    }
+    Ok(Some(remote))
+}
+
+/// ¿Este equipo ya completó alguna sincronización? (caché local presente).
+/// `false` = candidato a la vista previa de primera sincronización.
+#[tauri::command]
+pub fn sync_cache_exists(state: State<SyncManager>) -> Result<bool, String> {
+    Ok(state.local_state_exists())
+}
+
+/// Elimina del servidor el blob de estado y todo el histórico, y borra la
+/// caché local (`sync_state.json`). Privacidad: al desactivar la sync, los
+/// datos cifrados no deben quedar en el servidor indefinidamente.
+#[tauri::command]
+pub async fn sync_wipe_remote(
+    state: State<'_, SyncManager>,
+    webdav_password: Option<String>,
+) -> Result<(), String> {
+    let config = state.load_config();
+    if matches!(config.backend, SyncBackendKind::None) {
+        return Err("No hay backend seleccionado".into());
+    }
+    let backend = state
+        .backend(&config, webdav_password.as_deref().unwrap_or(""))
+        .map_err(|e| e.to_string())?;
+    backend.wipe().await.map_err(|e| e.to_string())?;
+    state.clear_local_state().map_err(|e| e.to_string())
+}
+
+/// Borra solo la caché local del último merge (al desactivar la sync sin
+/// tocar el servidor).
+#[tauri::command]
+pub fn sync_clear_local_cache(state: State<SyncManager>) -> Result<(), String> {
+    state.clear_local_state().map_err(|e| e.to_string())
+}
+
+/// Rotación de passphrase: re-cifra el blob remoto con la nueva (fusionando
+/// duplicados si los hubiera) y, opcionalmente, también el histórico de
+/// snapshots. Devuelve cuántos snapshots se re-cifraron. Los snapshots que no
+/// descifren con la passphrase antigua (rotaciones previas) se saltan y
+/// quedan cifrados con la suya.
+#[tauri::command]
+pub async fn sync_rotate_passphrase(
+    state: State<'_, SyncManager>,
+    old_passphrase: String,
+    new_passphrase: String,
+    webdav_password: Option<String>,
+    reencrypt_history: bool,
+) -> Result<usize, String> {
+    if new_passphrase.is_empty() {
+        return Err("La nueva passphrase no puede estar vacía".into());
+    }
+    let config = state.load_config();
+    if matches!(config.backend, SyncBackendKind::None) {
+        return Err("No hay backend seleccionado".into());
+    }
+    let backend = state
+        .backend(&config, webdav_password.as_deref().unwrap_or(""))
+        .map_err(|e| e.to_string())?;
+
+    let blobs = backend.read_all().await.map_err(|e| e.to_string())?;
+    if !blobs.is_empty() {
+        let mut remote = SyncState::default();
+        for bytes in &blobs {
+            remote.merge(unpack_state(&old_passphrase, bytes).map_err(|e| e.to_string())?);
+        }
+        let packed = pack_state(&new_passphrase, &remote).map_err(|e| e.to_string())?;
+        backend.write(&packed).await.map_err(|e| e.to_string())?;
+    }
+
+    let mut reencrypted = 0usize;
+    if reencrypt_history {
+        let snapshots = backend.list_snapshots().await.map_err(|e| e.to_string())?;
+        for snap in snapshots {
+            let Some(bytes) = backend
+                .read_snapshot(&snap.id)
+                .await
+                .map_err(|e| e.to_string())?
+            else {
+                continue;
+            };
+            let Ok(snapshot_state) = unpack_state(&old_passphrase, &bytes) else {
+                continue;
+            };
+            let packed = pack_state(&new_passphrase, &snapshot_state).map_err(|e| e.to_string())?;
+            backend
+                .write_snapshot(&snap.id, &packed)
+                .await
+                .map_err(|e| e.to_string())?;
+            reencrypted += 1;
+        }
+    }
+    Ok(reencrypted)
 }
 
 /// Exporta el estado a un fichero cifrado (`.rustty-sync.bin`) con la

@@ -2,6 +2,71 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.52.0] - 2026-07-10
+
+### Añadido
+
+- **RDP en Windows sin doble contraseña**: la contraseña del perfil se entrega
+  de forma segura al cliente de Escritorio remoto de Windows, que conecta
+  directo sin volver a pedirla. Al cerrar la última sesión del host la
+  credencial se retira; si ya tenías una guardada por tu cuenta, no se toca.
+- **Vista previa de la primera sincronización**: al activar la sincronización
+  en un equipo cuando el servidor ya tiene datos, la app muestra qué se
+  añadiría, cambiaría o borraría y pide confirmación antes de aplicar nada.
+- **Actividad de sincronización**: la pestaña Copias de seguridad registra qué
+  hizo cada pasada (cuántos perfiles, temas o notas cambiaron y desde qué
+  equipo). Puedes dar un nombre a cada equipo («Portátil del trabajo») para
+  que el registro sea legible.
+- **Cambiar la passphrase con un asistente**: re-cifra los datos del servidor
+  (y, si quieres, también las copias históricas) con la nueva passphrase. Si
+  otro equipo aún tiene la antigua, verá un aviso claro con lo que debe hacer
+  en lugar de un error técnico.
+- **Generador y medidor de passphrase**: el campo indica la fortaleza de lo
+  que escribes y un botón genera una passphrase fuerte y pronunciable, todo
+  en local.
+- **Eliminar los datos del servidor**: botón para borrar del servidor el
+  estado cifrado y todas las copias históricas; al desactivar la
+  sincronización también se limpia la caché local del equipo.
+- **Sincronizar al salir**: si cierras la app con cambios pendientes de subir,
+  se hace una sincronización final rápida para que no se pierdan hasta el
+  próximo arranque (desactivable).
+- **Indicador discreto al arrancar**: un aviso pequeño en la esquina inferior
+  muestra «Sincronizando…» y «Al día» mientras corre la sincronización de
+  arranque (desactivable).
+
+### Cambiado
+
+- **Sincronización más resistente**: los microcortes de red y los errores
+  pasajeros del servidor se reintentan solos; sin conexión, la app queda en
+  estado «sin conexión» y reintenta en un minuto, sin llenar el centro de
+  actividad de errores.
+- **Equipos con el reloj desajustado ya no mandan**: un equipo con la hora
+  adelantada ya no gana siempre los conflictos de sincronización, y la app
+  avisa si tu reloj difiere mucho del servidor.
+- **Registros de borrado con caducidad configurable**: lo borrado se recuerda
+  unos días para que no «resucite» desde otro equipo; ahora eliges cuántos
+  (90 por defecto, o «conservar siempre» si algún equipo pasa meses apagado).
+- **Credencial de Google Drive mejor guardada**: el secreto de cliente de
+  Drive pasa del archivo de configuración al almacén de claves del sistema.
+
+### Corregido
+
+- **Sesiones RDP en Linux que se cerraban sin explicación**: cuando el cliente
+  RDP externo falla al arrancar (por ejemplo porque el certificado del
+  servidor cambió desde la última conexión), ahora se muestra el motivo real
+  con instrucciones, en vez de un simple «sesión cerrada».
+- **Dos equipos estrenando la sincronización a la vez**: si ambos creaban el
+  archivo en Google Drive en el mismo momento, cada uno podía quedarse con una
+  copia distinta y no verse nunca; ahora se detecta, se fusionan y queda una
+  sola.
+- **Ediciones simultáneas desde dos equipos (WebDAV)**: si otro equipo subía
+  cambios justo mientras el tuyo sincronizaba, ya no se pisan: se detecta el
+  choque, se vuelve a fusionar y se sube el resultado combinado.
+- **Compatibilidad WebDAV más amplia**: el listado de copias históricas
+  funciona ahora con más servidores WebDAV, no solo Nextcloud/ownCloud.
+- **Menos escrituras en disco**: la configuración de sincronización ya no se
+  reescribe entera en cada pasada.
+
 ## [1.51.0] - 2026-07-10
 
 ### Añadido

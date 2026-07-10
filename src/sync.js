@@ -23,6 +23,21 @@ const KEYRING_SERVICE = "rustty";
 const KEY_PASSPHRASE = "sync:passphrase";
 const KEY_WEBDAV_PASS = "sync:webdav_password";
 
+// Espejo de los marcadores estables de error de `sync.rs`: permiten al caller
+// clasificar el fallo sin parsear texto libre.
+export const SYNC_OFFLINE_MARKER = "sync-offline:";
+export const SYNC_BAD_PASSPHRASE_MARKER = "sync-passphrase:";
+
+/** ¿El error es un fallo de conectividad (DNS/connect/timeout)? */
+export function isOfflineError(err) {
+  return String(err).includes(SYNC_OFFLINE_MARKER);
+}
+
+/** ¿El error es «el blob remoto no descifra» (passphrase rotada/incorrecta)? */
+export function isBadPassphraseError(err) {
+  return String(err).includes(SYNC_BAD_PASSPHRASE_MARKER);
+}
+
 // Subset de prefs que se sincroniza (excluimos rutas locales; los secretos
 // viajan como items `secret:*` solo si el usuario activa esa opción).
 const SYNCED_PREF_KEYS = [
@@ -245,6 +260,22 @@ export async function buildSyncState(ctx) {
     await addProfileSecretItems(items, profiles, prefs, deviceId);
   }
 
+  // Identidad de este equipo (`device:<id>`): nombre editable, plataforma y
+  // last_seen. El last_seen es grueso (por día) a propósito: un timestamp
+  // fino cambiaría el CONTENIDO en cada ciclo y rompería el gating de push
+  // por `content_eq` (un push + snapshot por ciclo sin cambios reales).
+  if (deviceId && deviceId !== "—") {
+    items[`device:${deviceId}`] = {
+      data: {
+        name: (ctx.deviceName || "").trim() || null,
+        platform: ctx.devicePlatform || null,
+        last_seen: now.slice(0, 10),
+      },
+      updated_at: now,
+      device_id: deviceId,
+    };
+  }
+
   // El catálogo de credenciales se sincroniza siempre (metadatos `cred:<id>`).
   // Los valores de master/secret solo viajan con el opt-in de secretos.
   await addCredentialItems(items, prefs, deviceId, !!selective.secrets, ctx.credsCatalog);
@@ -307,6 +338,12 @@ export async function applyMergedState(merged, ctx) {
   let credsChanged = 0;
   let notesChanged = 0;
   let prefsSkippedNewerLocal = false;
+  // Dispositivos de origen de los cambios aplicados (para el journal:
+  // «2 perfiles actualizados desde el portátil del trabajo»).
+  const originDevices = new Set();
+  const noteOrigin = (item) => {
+    if (item?.device_id && item.device_id !== ctx.deviceId) originDevices.add(item.device_id);
+  };
 
   const localProfileIds = new Set(profiles.map((p) => p.id));
   const localProfilesById = new Map(profiles.map((p) => [p.id, p]));
@@ -346,6 +383,7 @@ export async function applyMergedState(merged, ctx) {
         await invoke("save_profile", { profile });
         if (!localProfileIds.has(id)) addedProfiles++;
         else updatedProfiles++;
+        noteOrigin(item);
       } catch (err) {
         console.error("[sync] save_profile", id, err);
       }
@@ -374,6 +412,7 @@ export async function applyMergedState(merged, ctx) {
         bundleChanged = true;
       }
       if (bundleChanged) prefsChanged = bundleDataChanged;
+      if (bundleDataChanged) noteOrigin(item);
     } else if (key.startsWith("theme:")) {
       const id = key.slice(6);
       const theme = { ...(item.data || {}) };
@@ -383,6 +422,7 @@ export async function applyMergedState(merged, ctx) {
       if (idx >= 0 && sameValue(list[idx], theme)) continue;
       if (idx >= 0) list[idx] = theme; else list.push(theme);
       themesChanged++;
+      noteOrigin(item);
     } else if (key.startsWith("shortcut:")) {
       const id = key.slice(9);
       prefs.shortcuts = prefs.shortcuts || {};
@@ -392,7 +432,10 @@ export async function applyMergedState(merged, ctx) {
       if (!valueChanged && !timestampChanged) continue;
       prefs.shortcuts[id] = item.data;
       prefs._shortcutsTs[id] = item.updated_at;
-      if (valueChanged) shortcutsChanged++;
+      if (valueChanged) {
+        shortcutsChanged++;
+        noteOrigin(item);
+      }
     } else if (key.startsWith("snippet:")) {
       const id = key.slice(8);
       const snippet = { ...(item.data || {}) };
@@ -402,6 +445,7 @@ export async function applyMergedState(merged, ctx) {
       if (existing && sameValue(existing, snippet)) continue;
       upsertLocalSnippet(snippet);
       snippetsChanged++;
+      noteOrigin(item);
     } else if (key.startsWith("note:")) {
       // Nota Markdown de un perfil: upsert del fichero `.md` (LWW ya resuelto
       // por el merge del SyncState). El backend preserva updated_at/created_at.
@@ -417,6 +461,7 @@ export async function applyMergedState(merged, ctx) {
       try {
         await invoke("note_import", { doc });
         notesChanged++;
+        noteOrigin(item);
       } catch (err) {
         console.error("[sync] note_import", id, err);
       }
@@ -439,6 +484,7 @@ export async function applyMergedState(merged, ctx) {
       try {
         await invoke("master_cred_import", { meta });
         credsChanged++;
+        noteOrigin(item);
       } catch (err) {
         console.error("[sync] master_cred_import", id, err);
       }
@@ -456,9 +502,21 @@ export async function applyMergedState(merged, ctx) {
           prefs._secretsTs = prefs._secretsTs || {};
           prefs._secretsTs[secretKey] = item.updated_at;
           secretsChanged++;
+          noteOrigin(item);
         } catch (err) {
           console.error("[sync] keyring_set", secretKey, err);
         }
+      }
+    } else if (key.startsWith("device:")) {
+      // Identidad de los equipos del anillo de sync ({nombre, plataforma,
+      // last_seen}): solo estado interno para que el journal pueda decir
+      // «desde el portátil del trabajo». Nunca cuenta como cambio ni fuerza
+      // re-render.
+      const id = key.slice(7);
+      prefs._syncDevices = prefs._syncDevices || {};
+      const entry = { ...(item.data || {}) };
+      if (!sameValue(prefs._syncDevices[id], entry)) {
+        prefs._syncDevices[id] = entry;
       }
     }
   }
@@ -513,7 +571,70 @@ export async function applyMergedState(merged, ctx) {
     addedProfiles, deletedProfiles, updatedProfiles, prefsChanged,
     themesChanged, shortcutsChanged, snippetsChanged,
     secretsChanged, credsChanged, notesChanged, prefsSkippedNewerLocal,
+    originDevices: [...originDevices],
   };
+}
+
+/**
+ * Poda el espejo local de tombstones (`prefs.tombstones`) con la misma
+ * retención que aplica el backend al estado. Sin esta mitad, `buildSyncState`
+ * re-añadiría los tombstones viejos en cada ciclo y el GC nunca convergería.
+ * Devuelve cuántos se eliminaron (el caller persiste prefs si hubo cambios).
+ */
+export function pruneLocalTombstones(prefs, retentionDays) {
+  const days = Math.max(0, parseInt(retentionDays, 10) || 0);
+  if (!days || !prefs?.tombstones) return 0;
+  const cutoff = Date.now() - days * 86_400_000;
+  let removed = 0;
+  for (const map of Object.values(prefs.tombstones)) {
+    if (!map || typeof map !== "object") continue;
+    for (const [id, ts] of Object.entries(map)) {
+      const time = new Date(ts).getTime();
+      if (Number.isFinite(time) && time < cutoff) {
+        delete map[id];
+        removed++;
+      }
+    }
+  }
+  return removed;
+}
+
+/**
+ * Diff del estado remoto contra el local para la vista previa (dry-run) de la
+ * primera sincronización: qué añadiría, cambiaría y borraría aplicar el merge.
+ * Devuelve contadores por tipo de item y una muestra de nombres de perfil.
+ */
+export function diffRemoteAgainstLocal(remote, current) {
+  const kinds = {};
+  const bump = (key, field) => {
+    const kind = key.split(":", 1)[0];
+    kinds[kind] = kinds[kind] || { added: 0, changed: 0, deleted: 0 };
+    kinds[kind][field]++;
+  };
+  const addedProfileNames = [];
+
+  for (const [key, item] of Object.entries(remote.items || {})) {
+    if (key.startsWith("device:")) continue; // metadatos, no datos del usuario
+    const local = current.items?.[key];
+    if (!local) {
+      bump(key, "added");
+      if (key.startsWith("profile:") && addedProfileNames.length < 8) {
+        const name = item?.data?.name;
+        if (typeof name === "string" && name) addedProfileNames.push(name);
+      }
+    } else if (!sameValue(local.data, item.data)) {
+      bump(key, "changed");
+    }
+  }
+  for (const key of Object.keys(remote.tombstones || {})) {
+    if (current.items?.[key]) bump(key, "deleted");
+  }
+
+  const total = Object.values(kinds).reduce(
+    (sum, k) => sum + k.added + k.changed + k.deleted,
+    0
+  );
+  return { kinds, total, addedProfileNames };
 }
 
 function stateHasSecrets(state) {
@@ -672,20 +793,103 @@ export async function runSync(ctx) {
     credsCatalog,
   });
 
-  const merged = await invoke("sync_run", {
+  const outcome = await invoke("sync_run", {
     current,
     passphrase,
     webdavPassword,
   });
 
-  const summary = await applyMergedState(merged, {
+  const summary = await applyMergedState(outcome.state, {
     ...ctx,
     allowSecrets: !!config.selective?.secrets,
     prefsSnapshotTs,
     notesDocs,
     credsCatalog,
   });
+  // Metadatos del ciclo (toasts/journal del caller): timestamps futuros
+  // acotados, tombstones podados, duplicados fusionados y desvío de reloj.
+  summary.meta = {
+    clamped: outcome.clamped || 0,
+    prunedTombstones: outcome.pruned_tombstones || 0,
+    deduped: !!outcome.deduped,
+    clockSkewSeconds: outcome.clock_skew_seconds ?? null,
+  };
+  // Mitad frontend del GC de tombstones (el backend ya podó el estado).
+  pruneLocalTombstones(ctx.prefs, config.tombstone_retention_days);
   return summary;
+}
+
+/**
+ * Vista previa del estado remoto sin aplicar nada (`null` si está vacío).
+ * Para el diff de confirmación de la primera sincronización.
+ */
+export async function peekRemote() {
+  const passphrase = await getStoredPassphrase();
+  if (!passphrase) throw new Error("no_passphrase");
+  const config = await getConfig();
+  const webdavPassword =
+    config.backend === "webdav" ? await getStoredWebDavPassword() : null;
+  return await invoke("sync_peek_remote", { passphrase, webdavPassword });
+}
+
+/** ¿Este equipo ya completó alguna sincronización (caché local presente)? */
+export async function cacheExists() {
+  return await invoke("sync_cache_exists");
+}
+
+/** Borra del servidor el blob + histórico y la caché local (privacidad). */
+export async function wipeRemote() {
+  const webdavPassword = await getStoredWebDavPassword();
+  return await invoke("sync_wipe_remote", { webdavPassword });
+}
+
+/** Borra solo la caché local del último merge (al desactivar la sync). */
+export async function clearLocalCache() {
+  return await invoke("sync_clear_local_cache");
+}
+
+/**
+ * Rota la passphrase: re-cifra el blob remoto (y opcionalmente el histórico)
+ * con la nueva. Devuelve cuántos snapshots se re-cifraron. El caller debe
+ * guardar la nueva passphrase en el keyring tras el éxito.
+ */
+export async function rotatePassphrase(oldPassphrase, newPassphrase, reencryptHistory) {
+  const webdavPassword = await getStoredWebDavPassword();
+  return await invoke("sync_rotate_passphrase", {
+    oldPassphrase,
+    newPassphrase,
+    webdavPassword,
+    reencryptHistory: !!reencryptHistory,
+  });
+}
+
+/* ─────────────────────────── Journal de sincronización ─────────────── */
+
+const JOURNAL_STORAGE_KEY = "rustty-sync-journal";
+const JOURNAL_MAX_ENTRIES = 50;
+
+/** Entradas del journal, la más reciente primero. */
+export function loadSyncJournal() {
+  try {
+    const value = JSON.parse(localStorage.getItem(JOURNAL_STORAGE_KEY) || "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Añade una entrada al journal (anillo acotado en localStorage). Un sistema
+ * que mueve todos tus perfiles debe poder explicar qué hizo en cada ciclo.
+ * @param {object} entry {at, backend, counts, devices, manual}
+ */
+export function recordSyncJournal(entry) {
+  const list = loadSyncJournal();
+  list.unshift({ at: new Date().toISOString(), ...entry });
+  localStorage.setItem(
+    JOURNAL_STORAGE_KEY,
+    JSON.stringify(list.slice(0, JOURNAL_MAX_ENTRIES))
+  );
 }
 
 /* ─────────────────────────── Backup cifrado a fichero ─────────────── */

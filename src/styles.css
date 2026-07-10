@@ -5111,7 +5111,84 @@ input[type="checkbox"] {
 .sync-dot.busy    { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); animation: sync-pulse 1s infinite; }
 .sync-dot.success { background: var(--green);  box-shadow: 0 0 6px var(--green); }
 .sync-dot.error   { background: var(--red);    box-shadow: 0 0 6px var(--red); }
+/* Sin conexión: estado neutro (no es un error del usuario ni del servidor). */
+.sync-dot.offline { background: var(--overlay1, var(--overlay0)); }
 @keyframes sync-pulse { 50% { opacity: 0.4; } }
+
+/* Medidor de fortaleza de la passphrase de sync */
+.sync-pass-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.sync-pass-meter-track {
+  flex: 0 0 160px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface0);
+  overflow: hidden;
+}
+.sync-pass-meter-bar {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--red);
+  transition: width .2s, background .2s;
+}
+.sync-pass-meter-bar[data-score="2"] { background: var(--yellow); }
+.sync-pass-meter-bar[data-score="3"],
+.sync-pass-meter-bar[data-score="4"] { background: var(--green); }
+.sync-pass-meter-label {
+  font-size: 11px;
+  color: var(--subtext0);
+}
+.sync-pass-actions { margin-top: 8px; }
+
+/* Journal de sincronización (Preferencias → Copias de seguridad) */
+.sync-journal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: var(--subtext0);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sync-journal-item .sync-journal-when {
+  color: var(--overlay1, var(--subtext0));
+  font-variant-numeric: tabular-nums;
+}
+.sync-journal-empty { color: var(--overlay1, var(--subtext0)); font-style: italic; }
+
+/* Indicador discreto de la sincronización de arranque (esquina inferior) */
+.sync-boot-indicator {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--mantle, var(--surface0));
+  border: 1px solid var(--surface1);
+  color: var(--subtext0);
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+.sync-boot-indicator .sync-boot-spinner {
+  animation: sync-boot-spin 0.9s linear infinite;
+}
+.sync-boot-indicator.done .sync-boot-spinner { display: none; }
+@keyframes sync-boot-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .sync-boot-indicator .sync-boot-spinner { animation: none; }
+}
 
 .sync-buttons {
   display: flex;

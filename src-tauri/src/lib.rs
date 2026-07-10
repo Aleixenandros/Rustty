@@ -296,6 +296,11 @@ pub fn run() {
             commands::sync_import_file,
             commands::sync_list_snapshots,
             commands::sync_read_snapshot,
+            commands::sync_peek_remote,
+            commands::sync_cache_exists,
+            commands::sync_wipe_remote,
+            commands::sync_clear_local_cache,
+            commands::sync_rotate_passphrase,
             // ── Retención de logs de sesión
             commands::session_logs_dir,
             commands::session_logs_list,

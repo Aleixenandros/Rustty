@@ -32,6 +32,7 @@ import { renderMarkdownMinimal, toggleTaskInBody } from "./modules/markdown.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
+import { generatePassphrase, passphraseStrength } from "./modules/passphrase.js";
 import { rankCommandSuggestions } from "./modules/command-suggest.js";
 import { STEP_TYPES, makeStep, emptyScript, validateScript } from "./modules/scripts/model.js";
 import { resolveTarget } from "./modules/scripts/targets.js";
@@ -1741,9 +1742,99 @@ let _syncProfileAutoTimer = null;
 let _syncAutoPullTimer = null;
 let _syncInFlight = false;
 let _syncPending = false;
+let _syncOfflineRetryTimer = null;
+let _syncSkewWarned = false;
+// La vista previa de la primera sincronización ya se superó (o no aplicaba).
+let _syncFirstRunOk = false;
+let _syncExitFlushDone = false;
 const SYNC_AUTO_DEBOUNCE_MS = 60_000;
+// Reintento suave tras un fallo de conectividad (estado offline).
+const SYNC_OFFLINE_RETRY_MS = 60_000;
+// Tope de la sincronización final al cerrar la app (no retrasar el cierre).
+const SYNC_EXIT_FLUSH_TIMEOUT_MS = 3_000;
 // Intervalos seleccionables del pull periódico (segundos; 0 = desactivado).
 const SYNC_PULL_INTERVALS = [0, 60, 300, 900, 1800, 3600];
+
+/** Plataforma legible de este equipo para el item `device:<id>`. */
+function syncDevicePlatform() {
+  const ua = navigator.userAgent || "";
+  if (ua.includes("Windows")) return "Windows";
+  if (ua.includes("Mac")) return "macOS";
+  return "Linux";
+}
+
+/** Nombre legible de un equipo del anillo de sync (para el journal). */
+function syncDeviceLabel(id) {
+  if (!id) return null;
+  const info = prefs._syncDevices?.[id];
+  if (info?.name) return info.name;
+  return `${String(id).slice(0, 8)}…`;
+}
+
+/** Reintento único y silencioso tras un fallo de conectividad. */
+function scheduleSyncOfflineRetry() {
+  if (_syncOfflineRetryTimer) return;
+  _syncOfflineRetryTimer = setTimeout(() => {
+    _syncOfflineRetryTimer = null;
+    runSyncWithCurrentState({ persistConfig: false, announce: false })
+      .catch((e) => console.debug("[sync] reintento offline", e));
+  }, SYNC_OFFLINE_RETRY_MS);
+}
+
+/**
+ * Indicador discreto de la sincronización de arranque (esquina inferior).
+ * Desactivable en Preferencias → Copias de seguridad (prefs.syncBootIndicator).
+ */
+function showSyncBootIndicator() {
+  if (prefs.syncBootIndicator === false) return;
+  const el = document.getElementById("sync-boot-indicator");
+  const text = document.getElementById("sync-boot-indicator-text");
+  if (!el || !text) return;
+  el.classList.remove("hidden", "done");
+  text.textContent = t("prefs_sync.boot_syncing");
+}
+
+/**
+ * Cierra el indicador de arranque. `ok === true` muestra «Al día» un momento;
+ * `false` deja constancia del fallo; `null` (sin ciclo real) lo oculta ya.
+ */
+function finishSyncBootIndicator(ok) {
+  const el = document.getElementById("sync-boot-indicator");
+  const text = document.getElementById("sync-boot-indicator-text");
+  if (!el || el.classList.contains("hidden")) return;
+  if (ok === null) {
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.add("done");
+  text.textContent = ok ? t("prefs_sync.boot_done") : t("prefs_sync.boot_failed");
+  setTimeout(() => el.classList.add("hidden"), 4_000);
+}
+
+/**
+ * Sincronización final al cerrar la app: si el debounce del auto-push seguía
+ * armado, esos cambios se perderían hasta el próximo arranque. Acotada a
+ * SYNC_EXIT_FLUSH_TIMEOUT_MS para no retrasar el cierre; opt-out con el
+ * toggle «Sincronizar al salir».
+ */
+async function flushSyncOnExit() {
+  if (_syncExitFlushDone) return;
+  const cfg = _syncConfigCache;
+  if (!cfg?.enabled || cfg.backend === "none" || cfg.sync_on_exit === false) return;
+  // Sin push pendiente (o sin primera sync confirmada): no retrasar el cierre.
+  if (!_syncProfileAutoTimer || !_syncFirstRunOk) return;
+  _syncExitFlushDone = true;
+  clearTimeout(_syncProfileAutoTimer);
+  _syncProfileAutoTimer = null;
+  try {
+    await settleWithin(
+      runSyncWithCurrentState({ persistConfig: false, announce: false }),
+      SYNC_EXIT_FLUSH_TIMEOUT_MS
+    );
+  } catch (e) {
+    console.debug("[sync] flush al salir", e);
+  }
+}
 
 /**
  * (Re)arma el pull periódico según la configuración vigente. El intervalo lo
@@ -1804,6 +1895,19 @@ async function populateSyncTab() {
   if (intervalEl) {
     intervalEl.value = String(normalizedSyncPullInterval(config.auto_interval_seconds));
   }
+  const onExitEl = document.getElementById("sync-on-exit");
+  if (onExitEl) onExitEl.checked = config.sync_on_exit ?? true;
+  const tombEl = document.getElementById("sync-tombstone-retention");
+  if (tombEl) {
+    const days = String(Math.max(0, parseInt(config.tombstone_retention_days, 10) || 0) || 90);
+    tombEl.value = ["30", "90", "180", "365"].includes(days) ? days
+      : config.tombstone_retention_days === 0 ? "0" : "90";
+  }
+  const devNameEl = document.getElementById("sync-device-name");
+  if (devNameEl) devNameEl.value = prefs.syncDeviceName || "";
+  const bootIndEl = document.getElementById("sync-boot-indicator-toggle");
+  if (bootIndEl) bootIndEl.checked = prefs.syncBootIndicator !== false;
+  renderSyncJournal();
 
   // Passphrase (no la mostramos en claro, solo placeholder distinto si ya existe)
   const passEl = document.getElementById("sync-passphrase");
@@ -1865,7 +1969,7 @@ function setSyncStatus(state, textKey) {
   _syncSidebarState = state;
   _syncSidebarTextKey = textKey;
   if (dot && txt) {
-    dot.classList.remove("idle", "busy", "success", "error");
+    dot.classList.remove("idle", "busy", "success", "error", "offline");
     dot.classList.add(state);
     txt.textContent = t(textKey);
   }
@@ -1905,7 +2009,7 @@ function updateSidebarSyncStatus() {
     ? new Date(lastSyncAt).toLocaleString()
     : t("prefs_sync.last_never");
   if (dot && label && meta) {
-    dot.classList.remove("idle", "busy", "success", "error");
+    dot.classList.remove("idle", "busy", "success", "error", "offline");
     dot.classList.add(state);
     label.textContent = enabled ? t(_syncSidebarTextKey) : t("prefs_sync.status_disabled");
     meta.textContent = enabled ? `${backend} · ${last}` : backend;
@@ -2004,6 +2108,7 @@ async function refreshSyncOAuthStatus() {
 }
 
 async function persistSyncConfig() {
+  const wasEnabled = !!_syncConfigCache?.enabled;
   const config = {
     enabled: document.getElementById("sync-enabled").checked,
     backend: document.getElementById("sync-backend").value,
@@ -2030,6 +2135,14 @@ async function persistSyncConfig() {
       0,
       parseInt(document.getElementById("sync-auto-interval")?.value, 10) || 0
     ),
+    // Sincronización final al cerrar si quedan cambios sin subir.
+    sync_on_exit: document.getElementById("sync-on-exit")?.checked
+      ?? (_syncConfigCache?.sync_on_exit ?? true),
+    // Retención de los registros de borrado (0 = conservar siempre).
+    tombstone_retention_days: Math.max(
+      0,
+      parseInt(document.getElementById("sync-tombstone-retention")?.value, 10) || 0
+    ),
     // Campos sin control en el formulario: preservarlos del config vigente
     // para no resetearlos al guardar (p. ej. un client id propio de Drive).
     auto_sync_enabled: _syncConfigCache?.auto_sync_enabled ?? true,
@@ -2045,6 +2158,20 @@ async function persistSyncConfig() {
   if (passVal) await sync.setStoredPassphrase(passVal);
   const wpVal = document.getElementById("sync-webdav-pass").value;
   if (wpVal) await sync.setStoredWebDavPassword(wpVal);
+  // Ajustes de la pestaña que viven en prefs locales (no viajan en el bundle):
+  // nombre del equipo para el journal e indicador de arranque.
+  const devName = document.getElementById("sync-device-name")?.value?.trim() ?? "";
+  const bootInd = document.getElementById("sync-boot-indicator-toggle")?.checked ?? true;
+  if ((prefs.syncDeviceName || "") !== devName || (prefs.syncBootIndicator !== false) !== bootInd) {
+    prefs.syncDeviceName = devName || null;
+    prefs.syncBootIndicator = bootInd;
+    savePrefs();
+  }
+  // Privacidad: al desactivar la sincronización, la caché local del último
+  // merge (todos los hosts/usuarios) no debe quedarse en disco.
+  if (wasEnabled && !config.enabled) {
+    sync.clearLocalCache().catch((e) => console.error("[sync] limpiar caché", e));
+  }
   updateSidebarSyncStatus();
   return config;
 }
@@ -2125,8 +2252,19 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     if (!_syncDeviceIdCache) {
       _syncDeviceIdCache = await sync.getDeviceId().catch(() => "—");
     }
+    // Vista previa de la primera sincronización: si este equipo nunca
+    // completó una sync y el remoto ya tiene datos, se muestra el alcance
+    // del merge (altas/cambios/bajas) y se pide confirmación antes de tocar
+    // nada — es el momento de mayor riesgo percibido.
+    if (!_syncFirstRunOk) {
+      const proceed = await confirmFirstSyncIfNeeded();
+      if (!proceed) return null;
+      _syncFirstRunOk = true;
+    }
     const summary = await sync.runSync({
       profiles, prefs, deviceId: _syncDeviceIdCache,
+      deviceName: prefs.syncDeviceName || "",
+      devicePlatform: syncDevicePlatform(),
     });
     const total = summary.addedProfiles + summary.deletedProfiles
       + (summary.updatedProfiles || 0)
@@ -2173,6 +2311,37 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     if (announce) {
       toast(t("prefs_sync.done_sync").replace("{n}", total), "success", { category: "sync" });
     }
+    // Aviso único por arranque si el reloj local difiere del servidor: el
+    // LWW confía en la hora de pared y un desvío grande reparte "victorias"
+    // injustas (el backend ya acota los timestamps del futuro al recibir).
+    const skew = summary.meta?.clockSkewSeconds;
+    if (skew && !_syncSkewWarned) {
+      _syncSkewWarned = true;
+      toast(
+        t("prefs_sync.clock_skew_warn", { min: Math.max(1, Math.round(Math.abs(skew) / 60)) }),
+        "warning", 8000, { category: "sync" }
+      );
+    }
+    // Journal: qué hizo cada ciclo con cambios (y desde qué equipo).
+    if (total > 0) {
+      sync.recordSyncJournal({
+        backend: _syncConfigCache?.backend || "none",
+        total,
+        counts: {
+          profiles: summary.addedProfiles + (summary.updatedProfiles || 0) + summary.deletedProfiles,
+          themes: summary.themesChanged,
+          shortcuts: summary.shortcutsChanged,
+          snippets: summary.snippetsChanged || 0,
+          notes: summary.notesChanged || 0,
+          creds: summary.credsChanged || 0,
+          secrets: summary.secretsChanged || 0,
+          prefs: !!summary.prefsChanged,
+        },
+        devices: summary.originDevices || [],
+        manual: !!announce,
+      });
+      renderSyncJournal();
+    }
     // El centro de actividad solo registra syncs con cambios (o manuales):
     // con el pull periódico, anotar cada ciclo vacío sería puro ruido.
     if (total > 0 || announce) {
@@ -2195,6 +2364,34 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     if (summary.prefsSkippedNewerLocal) scheduleProfileAutoSync();
     return summary;
   } catch (err) {
+    // Sin conexión (DNS/connect/timeout): estado «offline» con reintento
+    // automático y sin ruido — ni error rojo ni entrada en actividad.
+    if (sync.isOfflineError(err)) {
+      setSyncStatus("offline", "prefs_sync.status_offline");
+      scheduleSyncOfflineRetry();
+      if (announce) {
+        toast(t("prefs_sync.offline_toast"), "warning", 5000, { category: "sync" });
+      }
+      return null;
+    }
+    // El blob remoto no descifra: casi siempre una passphrase rotada en otro
+    // equipo. Estado propio con instrucción accionable, no un error genérico.
+    if (sync.isBadPassphraseError(err)) {
+      setSyncStatus("error", "prefs_sync.status_bad_passphrase");
+      recordActivity({
+        kind: "sync",
+        status: "error",
+        title: t("prefs_sync.status_bad_passphrase"),
+        detail: t("prefs_sync.bad_passphrase_toast"),
+        actionLabel: "Abrir",
+        action: () => {
+          prefsActiveTab = "data";
+          openSettingsModal();
+        },
+      });
+      toast(t("prefs_sync.bad_passphrase_toast"), "warning", 10000, { category: "sync" });
+      throw err;
+    }
     setSyncStatus("error", "prefs_sync.status_error");
     recordActivity({
       kind: "sync",
@@ -2230,6 +2427,215 @@ async function syncTestNow() {
   } catch (err) {
     setSyncStatus("error", "prefs_sync.status_error");
     toast(`Backend: ${err}`, "error", 6000);
+  }
+}
+
+/**
+ * Vista previa (dry-run) de la primera sincronización: si este equipo no
+ * tiene caché de un merge anterior y el remoto ya está poblado, muestra el
+ * alcance (altas/cambios/bajas por tipo) y pide confirmación. Devuelve si se
+ * puede continuar. Ante cualquier fallo de la previsualización no bloquea: la
+ * sync real reportará el error con su clasificación normal.
+ */
+async function confirmFirstSyncIfNeeded() {
+  try {
+    if (await sync.cacheExists()) return true;
+    const remote = await sync.peekRemote();
+    if (!remote) return true; // remoto vacío: no hay nada que previsualizar
+    const config = _syncConfigCache || (await sync.getConfig());
+    const current = await sync.buildSyncState({
+      profiles,
+      prefs,
+      deviceId: _syncDeviceIdCache,
+      selective: {
+        profiles: !!config.selective?.profiles,
+        prefs: !!config.selective?.prefs,
+        themes: !!config.selective?.themes,
+        shortcuts: !!config.selective?.shortcuts,
+        snippets: !!config.selective?.snippets,
+        notes: config.selective?.notes ?? true,
+        // El diff no necesita leer secretos del keyring.
+        secrets: false,
+      },
+      snippets: sync.loadLocalSnippets(),
+    });
+    const diff = sync.diffRemoteAgainstLocal(remote, current);
+    if (!diff.total) return true; // idéntico: aplicar sin preguntar
+
+    const kindKeys = {
+      profile: "prefs_sync.kind_profile",
+      prefs: "prefs_sync.kind_prefs",
+      theme: "prefs_sync.kind_theme",
+      shortcut: "prefs_sync.kind_shortcut",
+      snippet: "prefs_sync.kind_snippet",
+      note: "prefs_sync.kind_note",
+      cred: "prefs_sync.kind_cred",
+      secret: "prefs_sync.kind_secret",
+    };
+    const parts = [];
+    for (const [kind, c] of Object.entries(diff.kinds)) {
+      const label = kindKeys[kind] ? t(kindKeys[kind]) : kind;
+      const segs = [];
+      if (c.added) segs.push(t("prefs_sync.diff_added", { n: c.added }));
+      if (c.changed) segs.push(t("prefs_sync.diff_changed", { n: c.changed }));
+      if (c.deleted) segs.push(t("prefs_sync.diff_deleted", { n: c.deleted }));
+      if (segs.length) parts.push(`${label}: ${segs.join(", ")}`);
+    }
+    let message = `${t("prefs_sync.first_sync_message")} ${parts.join(" · ")}`;
+    if (diff.addedProfileNames.length) {
+      message += ` (${diff.addedProfileNames.join(", ")}${diff.addedProfileNames.length >= 8 ? "…" : ""})`;
+    }
+    return await confirmThemed({
+      title: t("prefs_sync.first_sync_title"),
+      message,
+      submitLabel: t("prefs_sync.first_sync_apply"),
+    });
+  } catch (e) {
+    console.error("[sync] vista previa primera sync", e);
+    return true;
+  }
+}
+
+/** Render del journal de sincronización en Preferencias → Copias de seguridad. */
+function renderSyncJournal() {
+  const list = document.getElementById("sync-journal-list");
+  if (!list) return;
+  const entries = sync.loadSyncJournal();
+  if (!entries.length) {
+    list.innerHTML = `<li class="sync-journal-empty">${escHtml(t("prefs_sync.journal_empty"))}</li>`;
+    return;
+  }
+  const countKeys = [
+    ["profiles", "prefs_sync.kind_profile"],
+    ["themes", "prefs_sync.kind_theme"],
+    ["shortcuts", "prefs_sync.kind_shortcut"],
+    ["snippets", "prefs_sync.kind_snippet"],
+    ["notes", "prefs_sync.kind_note"],
+    ["creds", "prefs_sync.kind_cred"],
+    ["secrets", "prefs_sync.kind_secret"],
+  ];
+  list.innerHTML = entries.slice(0, 12).map((entry) => {
+    const when = new Date(entry.at).toLocaleString();
+    const c = entry.counts || {};
+    const parts = countKeys
+      .filter(([key]) => c[key] > 0)
+      .map(([key, i18nKey]) => `${c[key]} ${t(i18nKey)}`);
+    if (c.prefs) parts.push(t("prefs_sync.kind_prefs"));
+    const devices = (entry.devices || []).map((id) => syncDeviceLabel(id)).filter(Boolean);
+    const from = devices.length
+      ? ` · ${t("prefs_sync.journal_from", { device: devices.join(", ") })}`
+      : "";
+    const what = parts.join(", ") || t("prefs_sync.journal_no_changes");
+    return `<li class="sync-journal-item"><span class="sync-journal-when">${escHtml(when)}</span> — ${escHtml(what)}${escHtml(from)}</li>`;
+  }).join("");
+}
+
+/** Botón «Eliminar datos del servidor…» (privacidad). */
+async function syncWipeRemoteNow() {
+  const ok = await confirmThemed({
+    title: t("prefs_sync.wipe_confirm_title"),
+    message: t("prefs_sync.wipe_confirm_message"),
+    submitLabel: t("prefs_sync.wipe"),
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await sync.wipeRemote();
+    toast(t("prefs_sync.wipe_done"), "success", 5000, { category: "sync" });
+    setSyncStatus("idle", "prefs_sync.status_idle");
+    refreshSyncSnapshots().catch(() => {});
+  } catch (err) {
+    toast(`Sync: ${err}`, "error", 6000, { category: "sync" });
+  }
+}
+
+/** Botón «Generar passphrase»: rellena el campo con una legible y fuerte. */
+function syncGeneratePassphrase() {
+  const input = document.getElementById("sync-passphrase");
+  if (!input) return;
+  input.value = generatePassphrase();
+  // Visible para que el usuario pueda leerla y apuntarla (vuelve a ocultarse
+  // al perder el foco).
+  input.type = "text";
+  input.focus();
+  input.select();
+  input.addEventListener("blur", () => { input.type = "password"; }, { once: true });
+  updateSyncPassMeter(input.value);
+}
+
+/** Actualiza el medidor de fortaleza bajo el campo de passphrase. */
+function updateSyncPassMeter(value) {
+  const wrap = document.getElementById("sync-pass-meter");
+  const bar = document.getElementById("sync-pass-meter-bar");
+  const label = document.getElementById("sync-pass-meter-label");
+  if (!wrap || !bar || !label) return;
+  if (!value) {
+    wrap.classList.add("hidden");
+    return;
+  }
+  const { score } = passphraseStrength(value);
+  wrap.classList.remove("hidden");
+  bar.style.width = `${Math.max(8, (score / 4) * 100)}%`;
+  bar.dataset.score = String(score);
+  label.textContent = t(`prefs_sync.pass_strength_${score}`);
+}
+
+/**
+ * Flujo guiado de rotación de passphrase: pide la actual (si no está en el
+ * keyring), la nueva por duplicado, ofrece re-cifrar el histórico y guarda la
+ * nueva en el keyring local al terminar. Los demás equipos verán el estado
+ * «passphrase incorrecta» hasta que la actualicen en sus Preferencias.
+ */
+async function syncRotatePassphraseFlow() {
+  const stored = await sync.getStoredPassphrase().catch(() => null);
+  let oldPass = stored;
+  if (!oldPass) {
+    oldPass = await promptCredential({
+      title: t("prefs_sync.rotate_title"),
+      message: t("prefs_sync.rotate_current_msg"),
+      label: t("prefs_sync.rotate_current"),
+    });
+    if (!oldPass) return;
+  }
+  const newPass = await promptCredential({
+    title: t("prefs_sync.rotate_title"),
+    message: t("prefs_sync.rotate_new_msg"),
+    label: t("prefs_sync.rotate_new"),
+  });
+  if (!newPass) return;
+  const repeat = await promptCredential({
+    title: t("prefs_sync.rotate_title"),
+    message: "",
+    label: t("prefs_sync.rotate_repeat"),
+  });
+  if (repeat === null) return;
+  if (repeat !== newPass) {
+    toast(t("prefs_sync.rotate_mismatch"), "warning", 5000);
+    return;
+  }
+  const reencryptHistory = await confirmThemed({
+    title: t("prefs_sync.rotate_title"),
+    message: t("prefs_sync.rotate_history_q"),
+    submitLabel: t("prefs_sync.rotate_history_yes"),
+  });
+  setSyncStatus("busy", "prefs_sync.status_busy");
+  try {
+    const reencrypted = await sync.rotatePassphrase(oldPass, newPass, reencryptHistory);
+    await sync.setStoredPassphrase(newPass);
+    setSyncStatus("success", "prefs_sync.status_success");
+    toast(t("prefs_sync.rotate_done", { n: reencrypted }), "success", 8000, { category: "sync" });
+    const passEl = document.getElementById("sync-passphrase");
+    if (passEl) {
+      passEl.value = "";
+      passEl.placeholder = "•••••••• (configurada)";
+    }
+  } catch (err) {
+    setSyncStatus("error", "prefs_sync.status_error");
+    if (sync.isBadPassphraseError(err)) {
+      toast(t("prefs_sync.rotate_bad_old"), "error", 8000, { category: "sync" });
+    } else {
+      toast(`Sync: ${err}`, "error", 8000, { category: "sync" });
+    }
   }
 }
 
@@ -3216,8 +3622,15 @@ async function init() {
   await initTrayQuickLauncher().catch((e) => console.debug("[tray] init", e));
   await populateSyncTab().catch((e) => console.error("[sync] populate", e));
   if (_syncConfigCache?.enabled && _syncConfigCache.backend !== "none") {
+    // Indicador discreto: la sync de arranque puede tardar segundos (Drive)
+    // y sin señal visible parecía que la app «saltaba» sola al terminar.
+    showSyncBootIndicator();
     runSyncWithCurrentState({ persistConfig: false, announce: false })
-      .catch((e) => console.error("[sync] startup", e));
+      .then((summary) => finishSyncBootIndicator(summary === null ? null : true))
+      .catch((e) => {
+        finishSyncBootIndicator(false);
+        console.error("[sync] startup", e);
+      });
   }
   armSyncAutoPull();
   if (prefs.checkUpdatesOnStartup !== false) {
@@ -8371,7 +8784,7 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
   createRdpTab(sessionId, profile, "connecting");
 
   // Escuchar el cierre del proceso externo (antes del invoke).
-  const unlisten = await listen(eventName("rdpClosed", sessionId), () => {
+  const unlisten = await listen(eventName("rdpClosed", sessionId), (event) => {
     sessionObj.status = "closed";
     updateTabStatus(sessionId, "error");
     renderConnectionList();
@@ -8383,7 +8796,18 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
       const btn = pane.querySelector(".rdp-disconnect-btn");
       if (btn) btn.textContent = "Cerrar pestaña";
     }
-    toast(t("toast.rdp_closed", { name: profile.name }), "info");
+    // El backend adjunta el motivo del cierre (ver RdpClosedEvent en
+    // modules/ipc/events.js): sin código es un cierre limpio; con código,
+    // el proceso externo murió con error y el detalle explica por qué.
+    const info = /** @type {{code?: string|null, detail?: string|null}} */ (event?.payload) || {};
+    if (info.code === "cert-changed") {
+      toast(t("toast.rdp_cert_changed", { name: profile.name }), "error", 12000);
+    } else if (info.code) {
+      const detail = info.detail ? `\n${info.detail}` : "";
+      toast(t("toast.rdp_failed", { name: profile.name }) + detail, "error", 10000);
+    } else {
+      toast(t("toast.rdp_closed", { name: profile.name }), "info");
+    }
   });
   sessionObj.unlisteners.push(unlisten);
 
@@ -18583,6 +19007,14 @@ function bindUIEvents() {
     ?.addEventListener("click", () => refreshSyncSnapshots());
   document.getElementById("btn-sync-restore")
     ?.addEventListener("click", () => syncRestoreSnapshot());
+  document.getElementById("btn-sync-wipe")
+    ?.addEventListener("click", () => syncWipeRemoteNow());
+  document.getElementById("btn-sync-pass-generate")
+    ?.addEventListener("click", () => syncGeneratePassphrase());
+  document.getElementById("btn-sync-pass-rotate")
+    ?.addEventListener("click", () => syncRotatePassphraseFlow());
+  document.getElementById("sync-passphrase")
+    ?.addEventListener("input", (e) => updateSyncPassMeter(e.target.value));
 
   // KeePass
   document.getElementById("btn-keepass-browse")
@@ -21542,7 +21974,13 @@ async function initWindowControls() {
     win.onMoved(() => scheduleWindowStateSave());
   } catch {}
   try {
-    win.onCloseRequested(() => saveWindowStateNow());
+    // Además de guardar el estado de la ventana, hace la sincronización final
+    // acotada si quedaban cambios sin subir (toggle «Sincronizar al salir»).
+    // Tauri espera a que el handler resuelva antes de cerrar de verdad.
+    win.onCloseRequested(async () => {
+      saveWindowStateNow();
+      await flushSyncOnExit();
+    });
   } catch {}
 }
 

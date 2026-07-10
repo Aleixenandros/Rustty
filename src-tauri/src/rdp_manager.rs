@@ -5,29 +5,67 @@ use tauri::{AppHandle, Emitter};
 
 use crate::ipc::{event_name, EventKind};
 
+/// Máximo de stdout+stderr del cliente externo que conservamos como cola
+/// rodante para diagnosticar por qué murió (certificado, NLA, argumentos…).
+const OUTPUT_TAIL_MAX: usize = 4096;
+/// Longitud máxima del `detail` que viaja al frontend en `rdp-closed-*`.
+const DETAIL_MAX: usize = 700;
+
 /// Información de una sesión RDP activa
 pub struct RdpHandle {
     pub child: std::process::Child,
     pub cleanup_path: Option<PathBuf>,
     #[allow(dead_code)]
     pub profile_id: String,
+    /// Cola compartida de stdout+stderr del cliente (diagnóstico de cierre).
+    output_tail: Option<Arc<Mutex<String>>>,
+    /// Hilos lectores de la cola; se les hace join al detectar el cierre para
+    /// no leer la cola antes de que drenen los últimos bytes.
+    output_readers: Vec<std::thread::JoinHandle<()>>,
+    /// Host cuya credencial `TERMSRV/<host>` inyectamos (solo Windows).
+    cred_host: Option<String>,
 }
 
 struct SpawnedRdpClient {
     child: std::process::Child,
     cleanup_path: Option<PathBuf>,
+    output_tail: Option<Arc<Mutex<String>>>,
+    output_readers: Vec<std::thread::JoinHandle<()>>,
+}
+
+/// Payload de `rdp-closed-{id}`: motivo del cierre para la UI.
+/// `code = None` es un cierre limpio; `"cert-changed"` el certificado del
+/// servidor cambió respecto al recordado por el cliente; `"error"` cualquier
+/// otra terminación con fallo (el detalle lleva la cola de salida del cliente).
+#[derive(Clone, serde::Serialize)]
+struct RdpClosePayload {
+    code: Option<&'static str>,
+    detail: Option<String>,
+}
+
+/// Guardia de una credencial `TERMSRV/<host>` inyectada en el Gestor de
+/// credenciales de Windows. `refs` cuenta las sesiones Rustty abiertas contra
+/// ese host (todas comparten la misma clave, se borra al cerrar la última);
+/// `delete_on_close` recuerda si la creamos nosotros — una credencial que
+/// existiera antes de Rustty no se borra jamás.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+struct CredGuard {
+    refs: usize,
+    delete_on_close: bool,
 }
 
 /// Gestor de sesiones RDP.
 /// Lanza el cliente RDP nativo del SO y vigila su ciclo de vida.
 pub struct RdpManager {
     sessions: Arc<Mutex<HashMap<String, RdpHandle>>>,
+    cred_guards: Arc<Mutex<HashMap<String, CredGuard>>>,
 }
 
 impl RdpManager {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            cred_guards: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -44,7 +82,33 @@ impl RdpManager {
         password: Option<&str>,
         app_handle: AppHandle,
     ) -> Result<(), String> {
-        let spawned = spawn_rdp_client(host, port, username, domain, password)?;
+        // Windows: mstsc no acepta la contraseña ni por argv ni por el .rdp;
+        // la vía (la de mRemoteNG / Royal TS) es dejarla en el Gestor de
+        // credenciales como `TERMSRV/<host>` justo antes de lanzar y retirarla
+        // al cerrar la última sesión del host. Se escribe por la API nativa
+        // (CredWriteW vía `keyring`), nunca por `cmdkey` con la contraseña en
+        // la línea de comandos.
+        #[cfg_attr(not(target_os = "windows"), allow(unused_mut))]
+        let mut cred_host: Option<String> = None;
+        #[cfg(target_os = "windows")]
+        if let Some(pass) = password.filter(|p| !p.is_empty()) {
+            // Best-effort: si la inyección falla, mstsc pedirá la contraseña
+            // él mismo (el comportamiento previo).
+            if acquire_windows_credential(&self.cred_guards, host, username, domain, pass).is_ok()
+            {
+                cred_host = Some(host.to_string());
+            }
+        }
+
+        let spawned = match spawn_rdp_client(host, port, username, domain, password, cred_host.is_some()) {
+            Ok(s) => s,
+            Err(e) => {
+                if let Some(h) = cred_host.take() {
+                    release_windows_credential(&self.cred_guards, &h);
+                }
+                return Err(e);
+            }
+        };
 
         self.sessions.lock().unwrap().insert(
             session_id.clone(),
@@ -52,35 +116,47 @@ impl RdpManager {
                 child: spawned.child,
                 cleanup_path: spawned.cleanup_path,
                 profile_id,
+                output_tail: spawned.output_tail,
+                output_readers: spawned.output_readers,
+                cred_host,
             },
         );
 
         // Hilo vigilante: detecta cuándo el proceso externo termina
         let sessions = Arc::clone(&self.sessions);
+        let cred_guards = Arc::clone(&self.cred_guards);
         let sid = session_id.clone();
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_millis(500));
 
+            // None = sigue vivo; Some((handle, status)) = terminó (status None
+            // si try_wait falló y no hay código de salida fiable).
             let finished = {
                 let mut map = sessions.lock().unwrap();
-                if let Some(handle) = map.get_mut(&sid) {
-                    match handle.child.try_wait() {
-                        Ok(Some(_)) | Err(_) => {
-                            let handle = map.remove(&sid);
-                            if let Some(path) = handle.and_then(|h| h.cleanup_path) {
-                                let _ = std::fs::remove_file(path);
-                            }
-                            true
-                        }
-                        Ok(None) => false,
-                    }
-                } else {
-                    break; // La sesión fue eliminada por rdp_disconnect
+                match map.get_mut(&sid) {
+                    Some(handle) => match handle.child.try_wait() {
+                        Ok(None) => None,
+                        Ok(Some(status)) => map.remove(&sid).map(|h| (h, Some(status))),
+                        Err(_) => map.remove(&sid).map(|h| (h, None)),
+                    },
+                    None => break, // La sesión fue eliminada por rdp_disconnect
                 }
             };
 
-            if finished {
-                let _ = app_handle.emit(&event_name(EventKind::RdpClosed, &sid), ());
+            if let Some((mut handle, status)) = finished {
+                if let Some(path) = handle.cleanup_path.take() {
+                    let _ = std::fs::remove_file(path);
+                }
+                // El hijo ya murió: sus tuberías dan EOF enseguida. El join
+                // garantiza que la cola tiene hasta el último byte de salida.
+                for reader in handle.output_readers.drain(..) {
+                    let _ = reader.join();
+                }
+                if let Some(h) = handle.cred_host.take() {
+                    release_windows_credential(&cred_guards, &h);
+                }
+                let payload = close_payload(status, handle.output_tail.as_ref());
+                let _ = app_handle.emit(&event_name(EventKind::RdpClosed, &sid), payload);
                 break;
             }
         });
@@ -94,6 +170,9 @@ impl RdpManager {
             let _ = handle.child.kill();
             if let Some(path) = handle.cleanup_path.take() {
                 let _ = std::fs::remove_file(path);
+            }
+            if let Some(host) = handle.cred_host.take() {
+                release_windows_credential(&self.cred_guards, &host);
             }
         }
         Ok(())
@@ -112,7 +191,204 @@ impl RdpManager {
             if let Some(path) = handle.cleanup_path.take() {
                 let _ = std::fs::remove_file(path);
             }
+            if let Some(host) = handle.cred_host.take() {
+                release_windows_credential(&self.cred_guards, &host);
+            }
         }
+    }
+}
+
+// ─── Diagnóstico del cierre ──────────────────────────────────────────────────
+
+/// Construye el payload de `rdp-closed-*` a partir del código de salida y la
+/// cola de salida capturada del cliente.
+fn close_payload(
+    status: Option<std::process::ExitStatus>,
+    output_tail: Option<&Arc<Mutex<String>>>,
+) -> RdpClosePayload {
+    if status.is_some_and(|s| s.success()) {
+        return RdpClosePayload {
+            code: None,
+            detail: None,
+        };
+    }
+    let tail = output_tail
+        .map(|t| t.lock().unwrap().clone())
+        .unwrap_or_default();
+    let code = if is_cert_changed(&tail) {
+        "cert-changed"
+    } else {
+        "error"
+    };
+    RdpClosePayload {
+        code: Some(code),
+        detail: extract_error_detail(&tail),
+    }
+}
+
+/// Heurística sobre la salida de xfreerdp/rdesktop: el certificado del
+/// servidor no coincide con el recordado (TOFU). FreeRDP lo notifica con el
+/// aviso estilo OpenSSH («host key … changed» / «certificate … changed»).
+fn is_cert_changed(tail: &str) -> bool {
+    let lower = tail.to_lowercase();
+    let cert = lower.contains("certificate") || lower.contains("host key");
+    let changed = lower.contains("changed")
+        || lower.contains("mismatch")
+        || lower.contains("not trusted")
+        || lower.contains("identification has changed");
+    cert && changed
+}
+
+/// Extrae las líneas útiles de la cola de salida del cliente: las marcadas
+/// `[ERROR]` (formato wlog de FreeRDP, recortando el prefijo de timestamp) o,
+/// si no hay ninguna, las últimas líneas no vacías. Devuelve `None` si no hay
+/// nada que contar.
+fn extract_error_detail(tail: &str) -> Option<String> {
+    let error_lines: Vec<&str> = tail
+        .lines()
+        .filter_map(|l| l.find("[ERROR]").map(|i| l[i..].trim()))
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    let mut detail = if error_lines.is_empty() {
+        tail.lines()
+            .rev()
+            .filter(|l| !l.trim().is_empty())
+            .take(3)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        error_lines.join("\n")
+    };
+
+    if detail.len() > DETAIL_MAX {
+        // Conservar el final (los errores últimos son los decisivos),
+        // cortando en un límite de carácter válido.
+        let mut cut = detail.len() - DETAIL_MAX;
+        while !detail.is_char_boundary(cut) {
+            cut += 1;
+        }
+        detail.drain(..cut);
+    }
+
+    let detail = detail.trim().to_string();
+    if detail.is_empty() {
+        None
+    } else {
+        Some(detail)
+    }
+}
+
+/// Lector en hilo propio que acumula la salida del hijo en una cola rodante
+/// acotada (`OUTPUT_TAIL_MAX`).
+#[cfg(target_os = "linux")]
+fn spawn_tail_reader<R: std::io::Read + Send + 'static>(
+    src: R,
+    tail: Arc<Mutex<String>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut src = src;
+        let mut buf = [0u8; 1024];
+        loop {
+            match src.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    let chunk = String::from_utf8_lossy(&buf[..n]);
+                    let mut t = tail.lock().unwrap();
+                    t.push_str(&chunk);
+                    if t.len() > OUTPUT_TAIL_MAX {
+                        let mut cut = t.len() - OUTPUT_TAIL_MAX;
+                        while !t.is_char_boundary(cut) {
+                            cut += 1;
+                        }
+                        t.drain(..cut);
+                    }
+                }
+            }
+        }
+    })
+}
+
+// ─── Credencial TERMSRV en el Gestor de credenciales de Windows ─────────────
+
+/// Inyecta (o refresca) la credencial genérica `TERMSRV/<host>` con la
+/// contraseña del perfil y toma una referencia en el mapa de guardias.
+/// La escribe la API nativa (`CredWriteW` vía `keyring`, blob UTF-16LE, el
+/// mismo formato que crea `cmdkey /generic:`), así que nunca pasa por argv.
+#[cfg(target_os = "windows")]
+fn acquire_windows_credential(
+    guards: &Mutex<HashMap<String, CredGuard>>,
+    host: &str,
+    username: &str,
+    domain: Option<&str>,
+    password: &str,
+) -> Result<(), String> {
+    let target = format!("TERMSRV/{host}");
+    let user = match domain.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(d) => format!("{d}\\{username}"),
+        None => username.to_string(),
+    };
+
+    let entry = keyring::Entry::new_with_target(&target, "rustty", &user)
+        .map_err(|e| format!("credencial TERMSRV: {e}"))?;
+
+    let mut guards = guards.lock().unwrap();
+    let delete_on_close = match guards.get(host) {
+        // Otra sesión Rustty ya inyectó para este host: heredar su decisión.
+        Some(g) => g.delete_on_close,
+        None => match entry.get_attributes() {
+            // No existía: la creamos nosotros y se borra al cerrar la última.
+            Err(keyring::Error::NoEntry) => true,
+            // Huérfana de una ejecución anterior (el crate keyring firma el
+            // comment): también es nuestra y puede borrarse al cerrar.
+            Ok(attrs) => attrs
+                .get("comment")
+                .is_some_and(|c| c.starts_with("keyring v")),
+            // Existe pero no se puede inspeccionar: no borrarla jamás.
+            Err(_) => false,
+        },
+    };
+
+    entry
+        .set_password(password)
+        .map_err(|e| format!("credencial TERMSRV: {e}"))?;
+
+    guards
+        .entry(host.to_string())
+        .and_modify(|g| g.refs += 1)
+        .or_insert(CredGuard {
+            refs: 1,
+            delete_on_close,
+        });
+    Ok(())
+}
+
+/// Suelta una referencia a la credencial inyectada del host; al llegar a cero
+/// la retira del Gestor de credenciales **solo** si la creó Rustty.
+fn release_windows_credential(guards: &Mutex<HashMap<String, CredGuard>>, host: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        let mut map = guards.lock().unwrap();
+        let Some(g) = map.get_mut(host) else { return };
+        g.refs = g.refs.saturating_sub(1);
+        if g.refs > 0 {
+            return;
+        }
+        let delete = g.delete_on_close;
+        map.remove(host);
+        if delete {
+            let target = format!("TERMSRV/{host}");
+            if let Ok(entry) = keyring::Entry::new_with_target(&target, "rustty", "") {
+                let _ = entry.delete_credential();
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (guards, host);
     }
 }
 
@@ -126,6 +402,7 @@ fn spawn_rdp_client(
     username: &str,
     domain: Option<&str>,
     password: Option<&str>,
+    _cred_injected: bool,
 ) -> Result<SpawnedRdpClient, String> {
     // Detectar qué binario está disponible
     let binary = ["xfreerdp3", "xfreerdp", "rdesktop"]
@@ -182,6 +459,13 @@ fn spawn_rdp_client(
         cmd.stdin(std::process::Stdio::piped());
     }
 
+    // Capturamos stdout+stderr: si el cliente muere al arrancar (certificado
+    // cambiado, NLA rechazado, argumento no soportado…) esa salida es el único
+    // diagnóstico disponible y viaja al frontend en `rdp-closed-*`. Antes se
+    // descartaba y cualquier fallo se veía como un simple «sesión cerrada».
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Error al lanzar {binary}: {e}"))?;
@@ -196,13 +480,27 @@ fn spawn_rdp_client(
         }
     }
 
+    let tail = Arc::new(Mutex::new(String::new()));
+    let mut readers = Vec::new();
+    if let Some(out) = child.stdout.take() {
+        readers.push(spawn_tail_reader(out, Arc::clone(&tail)));
+    }
+    if let Some(err) = child.stderr.take() {
+        readers.push(spawn_tail_reader(err, Arc::clone(&tail)));
+    }
+
     Ok(SpawnedRdpClient {
         child,
         cleanup_path: None,
+        output_tail: Some(tail),
+        output_readers: readers,
     })
 }
 
-/// Windows: escribe un archivo .rdp temporal y lo abre con mstsc.exe
+/// Windows: escribe un archivo .rdp temporal y lo abre con mstsc.exe.
+/// La contraseña no viaja por aquí: si el perfil la tiene, `launch` la dejó ya
+/// inyectada como credencial `TERMSRV/<host>` (ver `acquire_windows_credential`)
+/// y `cred_injected` es true, con lo que mstsc conecta directo sin preguntar.
 #[cfg(target_os = "windows")]
 fn spawn_rdp_client(
     host: &str,
@@ -210,8 +508,9 @@ fn spawn_rdp_client(
     username: &str,
     domain: Option<&str>,
     _password: Option<&str>, // mstsc no acepta contraseñas por línea de comandos
+    cred_injected: bool,
 ) -> Result<SpawnedRdpClient, String> {
-    let rdp_path = write_windows_rdp_file(host, port, username, domain)?;
+    let rdp_path = write_windows_rdp_file(host, port, username, domain, cred_injected)?;
     let mut errors = Vec::new();
 
     if let Some(mstsc) = resolve_mstsc_path() {
@@ -220,6 +519,8 @@ fn spawn_rdp_client(
                 return Ok(SpawnedRdpClient {
                     child,
                     cleanup_path: Some(rdp_path),
+                    output_tail: None,
+                    output_readers: Vec::new(),
                 });
             }
             Err(err) => errors.push(err),
@@ -230,6 +531,8 @@ fn spawn_rdp_client(
                 return Ok(SpawnedRdpClient {
                     child,
                     cleanup_path: Some(rdp_path),
+                    output_tail: None,
+                    output_readers: Vec::new(),
                 });
             }
             Err(err) => errors.push(err),
@@ -246,6 +549,8 @@ fn spawn_rdp_client(
         Ok(child) => Ok(SpawnedRdpClient {
             child,
             cleanup_path: None,
+            output_tail: None,
+            output_readers: Vec::new(),
         }),
         Err(url_err) => {
             errors.push(format!("fallback rdp:// falló: {url_err}"));
@@ -263,11 +568,17 @@ fn write_windows_rdp_file(
     port: u16,
     username: &str,
     domain: Option<&str>,
+    cred_injected: bool,
 ) -> Result<PathBuf, String> {
     let domain = domain.unwrap_or("").trim();
-    let mut rdp_content = format!(
-        "full address:s:{host}:{port}\r\nusername:s:{username}\r\npromptcredentialonce:i:1\r\n"
-    );
+    let mut rdp_content =
+        format!("full address:s:{host}:{port}\r\nusername:s:{username}\r\n");
+    if !cred_injected {
+        // Sin credencial inyectada, que mstsc pida la contraseña una sola vez.
+        // Con ella, esta línea sobra: forzaría el segundo prompt que motivó
+        // el reporte de la doble petición de credenciales.
+        rdp_content.push_str("promptcredentialonce:i:1\r\n");
+    }
     if !domain.is_empty() {
         rdp_content.push_str(&format!("domain:s:{domain}\r\n"));
     }
@@ -401,6 +712,7 @@ fn spawn_rdp_client(
     username: &str,
     _domain: Option<&str>,
     _password: Option<&str>,
+    _cred_injected: bool,
 ) -> Result<SpawnedRdpClient, String> {
     // Codificamos el usuario (igual que la variante Windows): un `DOMINIO\usuario`,
     // espacios o `&` romperían la URL o inyectarían parámetros sin escapar.
@@ -413,5 +725,80 @@ fn spawn_rdp_client(
     Ok(SpawnedRdpClient {
         child,
         cleanup_path: None,
+        output_tail: None,
+        output_readers: Vec::new(),
     })
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Cola real de un xfreerdp 3.27 que no pudo conectar (formato wlog).
+    const FREERDP_CONNECT_FAIL: &str = "\
+[14:16:32:577] [874587:000d585e] [WARN][com.freerdp.client.x11] - [load_map_from_xkbfile]: keycode: 0x08 -> no RDP scancode found\n\
+[14:16:32:589] [874587:000d585e] [ERROR][com.freerdp.core] - [get_next_addrinfo]: ERRCONNECT_CONNECT_FAILED [0x00020006]\n\
+[14:16:32:589] [874587:000d585e] [ERROR][com.freerdp.core] - [freerdp_tcp_default_connect]: Couldn't get socket ip address\n\
+[14:16:32:589] [874587:000d585e] [ERROR][com.freerdp.core.nego] - [nego_connect]: Failed to connect\n";
+
+    #[test]
+    fn detail_extrae_solo_lineas_error_sin_prefijo_wlog() {
+        let detail = extract_error_detail(FREERDP_CONNECT_FAIL).unwrap();
+        assert!(detail.starts_with("[ERROR]"));
+        assert!(detail.contains("Failed to connect"));
+        assert!(!detail.contains("[WARN]"));
+        assert!(!detail.contains("14:16:32"));
+    }
+
+    #[test]
+    fn detail_sin_errores_toma_las_ultimas_lineas() {
+        let tail = "linea 1\nlinea 2\n\nlinea 3\nlinea 4\n";
+        let detail = extract_error_detail(tail).unwrap();
+        assert_eq!(detail, "linea 2\nlinea 3\nlinea 4");
+        assert!(extract_error_detail("").is_none());
+        assert!(extract_error_detail("\n  \n").is_none());
+    }
+
+    #[test]
+    fn detail_largo_conserva_el_final() {
+        let mut tail = String::new();
+        for i in 0..200 {
+            tail.push_str(&format!("[ERROR][mod] - fallo número {i}\n"));
+        }
+        let detail = extract_error_detail(&tail).unwrap();
+        assert!(detail.len() <= DETAIL_MAX);
+        assert!(detail.ends_with("fallo número 199"));
+    }
+
+    #[test]
+    fn cert_changed_detecta_aviso_de_freerdp() {
+        let banner = "\
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\
+@           WARNING: CERTIFICATE HAS CHANGED!             @\n\
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\
+The certificate for host.example.com:3389 has changed\n";
+        assert!(is_cert_changed(banner));
+        assert!(is_cert_changed(
+            "[ERROR][com.freerdp.crypto] - The host key for 10.0.0.2:3389 has changed"
+        ));
+        assert!(!is_cert_changed(FREERDP_CONNECT_FAIL));
+        assert!(!is_cert_changed(""));
+    }
+
+    #[test]
+    fn cierre_limpio_no_lleva_codigo() {
+        // En Unix un ExitStatus de éxito se obtiene ejecutando un proceso real.
+        let status = std::process::Command::new("true").status().unwrap();
+        let payload = close_payload(Some(status), None);
+        assert!(payload.code.is_none());
+        assert!(payload.detail.is_none());
+
+        let status = std::process::Command::new("false").status().unwrap();
+        let tail = Arc::new(Mutex::new(FREERDP_CONNECT_FAIL.to_string()));
+        let payload = close_payload(Some(status), Some(&tail));
+        assert_eq!(payload.code, Some("error"));
+        assert!(payload.detail.unwrap().contains("Failed to connect"));
+    }
 }

@@ -39,6 +39,25 @@ const STATE_FILENAME: &str = "rustty-sync.bin";
 const HISTORY_DIR: &str = "rustty-sync-history";
 const DEFAULT_HISTORY_KEEP: usize = 30;
 const STATE_VERSION: u32 = 1;
+/// Retención por defecto de los tombstones (días). 0 = no podar nunca.
+const DEFAULT_TOMBSTONE_RETENTION_DAYS: u32 = 90;
+/// Margen tolerado a los `updated_at` del futuro antes de acotarlos (relojes
+/// desviados): un item fechado más allá de `now + margen` se recorta para que
+/// un equipo con la hora adelantada no gane el LWW «para siempre».
+const FUTURE_TIMESTAMP_MARGIN_SECS: i64 = 300;
+/// Desvío mínimo entre el reloj local y el `Date` del servidor para avisar.
+const CLOCK_SKEW_WARN_SECS: i64 = 300;
+
+// Marcadores estables al inicio de los mensajes de error, para que el frontend
+// pueda clasificar sin parsear texto libre (el contrato IPC devuelve
+// `Err(String)`). Espejados en `src/sync.js`.
+/// Fallo de conectividad (DNS, connect, timeout): estado «offline», no error.
+pub const OFFLINE_MARKER: &str = "sync-offline:";
+/// El blob remoto no descifra: passphrase incorrecta (p. ej. rotada en otro
+/// equipo) o datos corruptos.
+pub const BAD_PASSPHRASE_MARKER: &str = "sync-passphrase:";
+/// Escritura condicional rechazada (ETag cambió entre el GET y el PUT).
+pub const CONFLICT_MARKER: &str = "sync-conflict:";
 
 // ─── Identidad del dispositivo ───────────────────────────────────────
 
@@ -117,8 +136,18 @@ pub struct GoogleDriveConfig {
     pub client_id: String,
     /// Google marca estos secretos como "installed app"; no protegen nada en
     /// un binario distribuido, pero algunos proyectos antiguos aún lo exigen.
+    /// Desde 2026-07 vive en el keyring (`sync:oauth:google_drive:client_secret`)
+    /// por coherencia con el resto de credenciales; este campo queda solo como
+    /// formato legado que `load_config` migra y deja en blanco.
     #[serde(default)]
     pub client_secret: String,
+}
+
+fn google_client_secret_key() -> String {
+    format!(
+        "sync:oauth:{}:client_secret",
+        OAuthProvider::GoogleDrive.key_part()
+    )
 }
 
 fn configured_google_client_id(config: &SyncConfig) -> Option<String> {
@@ -132,12 +161,15 @@ fn configured_google_client_id(config: &SyncConfig) -> Option<String> {
 }
 
 fn configured_google_client_secret(config: &SyncConfig) -> Option<String> {
+    // Orden: campo legado del fichero (configs aún no migradas) → keyring →
+    // secreto embebido en build. `load_config` migra el legado al keyring.
     config
         .google_drive
         .client_secret
         .trim()
         .to_string()
         .into_nonempty()
+        .or_else(|| keyring_get_secret(&google_client_secret_key()).ok().flatten())
         .or_else(|| option_env!("RUSTTY_GOOGLE_DRIVE_CLIENT_SECRET").map(str::to_string))
 }
 
@@ -214,8 +246,17 @@ pub struct SyncConfig {
     #[serde(default = "default_history_keep")]
     pub history_keep: usize,
     /// Última sincronización completada correctamente en este equipo.
+    /// **Legado**: ya no se reescribe en cada ciclo (el frontend lleva el
+    /// timestamp vivo en sus prefs); se conserva para leer configs antiguas.
     #[serde(default)]
     pub last_sync_at: Option<DateTime<Utc>>,
+    /// Días de retención de los tombstones antes de podarlos del estado
+    /// (0 = conservarlos siempre; para equipos que hibernan meses).
+    #[serde(default = "default_tombstone_retention_days")]
+    pub tombstone_retention_days: u32,
+    /// Sincronización final al cerrar la app si quedan cambios sin subir.
+    #[serde(default = "default_true_field")]
+    pub sync_on_exit: bool,
 }
 
 fn default_history_keep() -> usize {
@@ -224,6 +265,10 @@ fn default_history_keep() -> usize {
 
 fn default_auto_sync_enabled() -> bool {
     true
+}
+
+fn default_tombstone_retention_days() -> u32 {
+    DEFAULT_TOMBSTONE_RETENTION_DAYS
 }
 
 impl Default for SyncConfig {
@@ -239,6 +284,8 @@ impl Default for SyncConfig {
             auto_interval_seconds: 300,
             history_keep: DEFAULT_HISTORY_KEEP,
             last_sync_at: None,
+            tombstone_retention_days: DEFAULT_TOMBSTONE_RETENTION_DAYS,
+            sync_on_exit: true,
         }
     }
 }
@@ -254,6 +301,28 @@ pub struct SyncItem {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub device_id: String,
+}
+
+/// Resultado de un ciclo de sincronización para el frontend: el estado
+/// mezclado más los metadatos del ciclo (para toasts/journal).
+#[derive(Serialize)]
+pub struct SyncRunOutcome {
+    pub state: SyncState,
+    /// Timestamps futuros acotados al recibir el remoto (relojes desviados).
+    pub clamped: usize,
+    /// Tombstones podados por antigüedad en este ciclo.
+    pub pruned_tombstones: usize,
+    /// `true` si el remoto tenía blobs duplicados que se fusionaron (Drive).
+    pub deduped: bool,
+    /// Desvío reloj local ↔ servidor (segundos, positivo = local adelantado),
+    /// solo cuando supera el umbral de aviso.
+    pub clock_skew_seconds: Option<i64>,
+}
+
+/// Desvío entre el reloj local y el del servidor si supera el umbral de aviso.
+pub fn significant_clock_skew(server: DateTime<Utc>, now: DateTime<Utc>) -> Option<i64> {
+    let skew = (now - server).num_seconds();
+    (skew.abs() >= CLOCK_SKEW_WARN_SECS).then_some(skew)
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -329,6 +398,41 @@ impl SyncState {
         }
 
         changes
+    }
+
+    /// Acota los `updated_at` que vienen del futuro (reloj desviado en otro
+    /// equipo) a `now + FUTURE_TIMESTAMP_MARGIN_SECS`. Sin esto, un item
+    /// fechado «mañana» es imbatible en el LWW hasta que la realidad lo
+    /// alcance. Devuelve cuántos timestamps se recortaron.
+    pub fn clamp_future_timestamps(&mut self, now: DateTime<Utc>) -> usize {
+        let ceiling = now + chrono::Duration::seconds(FUTURE_TIMESTAMP_MARGIN_SECS);
+        let mut clamped = 0;
+        for item in self.items.values_mut() {
+            if item.updated_at > ceiling {
+                item.updated_at = ceiling;
+                clamped += 1;
+            }
+        }
+        for ts in self.tombstones.values_mut() {
+            if *ts > ceiling {
+                *ts = ceiling;
+                clamped += 1;
+            }
+        }
+        clamped
+    }
+
+    /// Poda los tombstones más antiguos que `retention_days` (0 = nunca).
+    /// Crecen para siempre si no: cada perfil/tema/snippet borrado dejaba una
+    /// entrada eterna que viajaba cifrada en cada push. Devuelve cuántos cayeron.
+    pub fn prune_tombstones(&mut self, now: DateTime<Utc>, retention_days: u32) -> usize {
+        if retention_days == 0 {
+            return 0;
+        }
+        let cutoff = now - chrono::Duration::days(i64::from(retention_days));
+        let before = self.tombstones.len();
+        self.tombstones.retain(|_, ts| *ts >= cutoff);
+        before - self.tombstones.len()
     }
 }
 
@@ -636,6 +740,123 @@ mod tests {
         assert_eq!(local.tombstones.get("profile:1"), Some(&ts(10)));
     }
 
+    /// Un equipo con el reloj adelantado no debe fabricar items imbatibles:
+    /// los `updated_at` más allá de `now + margen` se acotan al recibirlos.
+    #[test]
+    fn clamp_acota_timestamps_futuros() {
+        let now = ts(0);
+        let ceiling = now + chrono::Duration::seconds(FUTURE_TIMESTAMP_MARGIN_SECS);
+
+        let mut st = SyncState::default();
+        st.items
+            .insert("profile:ok".into(), item_en(-100, json!({"v": 1})));
+        st.items.insert(
+            "profile:futuro".into(),
+            item_en(FUTURE_TIMESTAMP_MARGIN_SECS + 3_600, json!({"v": 2})),
+        );
+        st.tombstones
+            .insert("theme:futuro".into(), ts(FUTURE_TIMESTAMP_MARGIN_SECS + 999));
+        st.tombstones.insert("theme:ok".into(), ts(-5));
+
+        let clamped = st.clamp_future_timestamps(now);
+        assert_eq!(clamped, 2);
+        assert_eq!(st.items["profile:futuro"].updated_at, ceiling);
+        assert_eq!(st.items["profile:ok"].updated_at, ts(-100));
+        assert_eq!(st.tombstones["theme:futuro"], ceiling);
+        assert_eq!(st.tombstones["theme:ok"], ts(-5));
+        // Idempotente: una segunda pasada no recorta nada más.
+        assert_eq!(st.clamp_future_timestamps(now), 0);
+    }
+
+    /// La poda de tombstones respeta el umbral configurable y el 0 = nunca.
+    #[test]
+    fn prune_tombstones_respeta_retencion() {
+        let now = ts(0);
+        let mut st = SyncState::default();
+        st.tombstones
+            .insert("profile:viejo".into(), now - chrono::Duration::days(120));
+        st.tombstones
+            .insert("profile:reciente".into(), now - chrono::Duration::days(10));
+
+        // 0 = conservar siempre.
+        assert_eq!(st.prune_tombstones(now, 0), 0);
+        assert_eq!(st.tombstones.len(), 2);
+
+        assert_eq!(st.prune_tombstones(now, 90), 1);
+        assert!(st.tombstones.contains_key("profile:reciente"));
+        assert!(!st.tombstones.contains_key("profile:viejo"));
+    }
+
+    /// El parser PROPFIND debe sobrevivir a las variantes legítimas del XML:
+    /// prefijos de namespace distintos, mayúsculas, CDATA y autocerrados.
+    #[test]
+    fn propfind_parser_tolera_variantes() {
+        // Nextcloud clásico (prefijo d:).
+        let nextcloud = r#"<?xml version="1.0"?>
+            <d:multistatus xmlns:d="DAV:">
+              <d:response><d:href>/remote.php/dav/files/u/Rustty/rustty-sync-history/</d:href></d:response>
+              <d:response><d:href>/remote.php/dav/files/u/Rustty/rustty-sync-history/rustty-sync-20260701T101010Z.bin</d:href></d:response>
+            </d:multistatus>"#;
+        assert_eq!(
+            webdav_history_filenames(nextcloud),
+            vec!["rustty-sync-20260701T101010Z.bin".to_string()]
+        );
+
+        // Prefijo D: en mayúsculas y atributos en la etiqueta (estilo IIS).
+        let iis = r#"<D:multistatus xmlns:D="DAV:">
+            <D:response><D:HREF xml:lang="en">/dav/rustty-sync-history/rustty-sync-20260702T090000Z.bin</D:HREF></D:response>
+        </D:multistatus>"#;
+        assert_eq!(
+            webdav_history_filenames(iis),
+            vec!["rustty-sync-20260702T090000Z.bin".to_string()]
+        );
+
+        // Sin prefijo de namespace + CDATA + href autocerrado + nombre URL-encoded.
+        let raro = r#"<multistatus>
+            <response><href/></response>
+            <response><href><![CDATA[/dav/hist/rustty-sync-20260703T080000Z.bin]]></href></response>
+            <response><href>/dav/hist/rustty-sync-20260704T070000Z%2Ebin</href></response>
+            <response><href>/dav/hist/otro-fichero.txt</href></response>
+        </multistatus>"#;
+        assert_eq!(
+            webdav_history_filenames(raro),
+            vec![
+                "rustty-sync-20260703T080000Z.bin".to_string(),
+                "rustty-sync-20260704T070000Z.bin".to_string(),
+            ]
+        );
+
+        // Cuerpos degenerados: nunca pánico.
+        assert!(webdav_history_filenames("").is_empty());
+        assert!(webdav_history_filenames("<no-xml").is_empty());
+        assert!(webdav_history_filenames("<href>sin cierre").is_empty());
+    }
+
+    /// El primario entre blobs duplicados de Drive es determinista (id menor)
+    /// para que todos los equipos converjan al mismo sin coordinarse.
+    #[test]
+    fn primario_de_duplicados_es_determinista() {
+        let (primary, extras) =
+            primary_and_duplicates(vec!["zz".into(), "aa".into(), "mm".into()]);
+        assert_eq!(primary.as_deref(), Some("aa"));
+        assert_eq!(extras, vec!["mm".to_string(), "zz".to_string()]);
+
+        let (primary, extras) = primary_and_duplicates(Vec::new());
+        assert!(primary.is_none());
+        assert!(extras.is_empty());
+    }
+
+    #[test]
+    fn estados_transitorios_reintentables() {
+        assert!(is_transient_status(StatusCode::TOO_MANY_REQUESTS));
+        assert!(is_transient_status(StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(is_transient_status(StatusCode::SERVICE_UNAVAILABLE));
+        assert!(!is_transient_status(StatusCode::NOT_FOUND));
+        assert!(!is_transient_status(StatusCode::UNAUTHORIZED));
+        assert!(!is_transient_status(StatusCode::OK));
+        assert!(!is_transient_status(StatusCode::PRECONDITION_FAILED));
+    }
+
     #[test]
     fn merge_es_idempotente() {
         // Mezclar dos veces el mismo remoto no produce cambios la segunda vez.
@@ -685,9 +906,16 @@ pub fn decrypt(passphrase: &str, ciphertext: &[u8]) -> Result<Vec<u8>, AppError>
     let decryptor =
         age::Decryptor::new(ciphertext).map_err(|e| AppError::Sync(format!("decryptor: {e}")))?;
     let identity = age::scrypt::Identity::new(SecretString::new(passphrase.to_string().into()));
+    // El marcador permite al frontend distinguir «passphrase incorrecta»
+    // (p. ej. rotada en otro equipo) de cualquier otro fallo y ofrecer el
+    // flujo de actualización en vez de un error rojo genérico.
     let mut reader = decryptor
         .decrypt(std::iter::once(&identity as &dyn age::Identity))
-        .map_err(|e| AppError::Sync(format!("decrypt (¿passphrase incorrecta?): {e}")))?;
+        .map_err(|e| {
+            AppError::Sync(format!(
+                "{BAD_PASSPHRASE_MARKER} passphrase incorrecta o datos corruptos: {e}"
+            ))
+        })?;
     let mut plain = Vec::new();
     reader
         .read_to_end(&mut plain)
@@ -929,6 +1157,13 @@ fn token_missing_refresh_error(provider: OAuthProvider, token: &TokenResponse) -
 pub trait SyncBackend: Send + Sync {
     /// Devuelve `Ok(None)` si el remoto aún no tiene el fichero (primera sync).
     async fn read(&self) -> Result<Option<Vec<u8>>, AppError>;
+    /// Todas las copias del estado remoto (normalmente una). Los backends
+    /// donde una carrera de primera sync puede dejar duplicados (Drive)
+    /// devuelven todas para que el llamador las fusione; el resto delega en
+    /// `read`.
+    async fn read_all(&self) -> Result<Vec<Vec<u8>>, AppError> {
+        Ok(self.read().await?.into_iter().collect())
+    }
     async fn archive_existing(&self, _keep: usize) -> Result<(), AppError> {
         Ok(())
     }
@@ -938,6 +1173,20 @@ pub trait SyncBackend: Send + Sync {
     }
     async fn read_snapshot(&self, _id: &str) -> Result<Option<Vec<u8>>, AppError> {
         Ok(None)
+    }
+    /// Reescribe un snapshot histórico existente (rotación de passphrase).
+    async fn write_snapshot(&self, _id: &str, _data: &[u8]) -> Result<(), AppError> {
+        Err(AppError::Sync(
+            "Este backend no soporta reescribir snapshots".into(),
+        ))
+    }
+    /// Elimina del remoto el blob de estado y todo el histórico (privacidad:
+    /// «Eliminar datos del servidor» al desactivar la sincronización).
+    async fn wipe(&self) -> Result<(), AppError>;
+    /// Hora del servidor observada en la última lectura (header `Date`), para
+    /// avisar de relojes locales muy desviados. `None` si no aplica (local).
+    fn observed_server_time(&self) -> Option<DateTime<Utc>> {
+        None
     }
 }
 
@@ -1046,8 +1295,51 @@ impl SyncBackend for LocalBackend {
     async fn read_snapshot(&self, id: &str) -> Result<Option<Vec<u8>>, AppError> {
         // Validamos que el `id` esté dentro de nuestro HISTORY_DIR para evitar
         // que un valor manipulado lea un fichero arbitrario.
-        let Some(parent) = self.path.parent() else {
+        let target = self.snapshot_path_checked(id)?;
+        if !target.exists() {
             return Ok(None);
+        }
+        let bytes = tokio::fs::read(&target)
+            .await
+            .map_err(|e| AppError::Sync(format!("leer snapshot local: {e}")))?;
+        Ok(Some(bytes))
+    }
+
+    async fn write_snapshot(&self, id: &str, data: &[u8]) -> Result<(), AppError> {
+        let target = self.snapshot_path_checked(id)?;
+        let data = data.to_vec();
+        tokio::task::spawn_blocking(move || crate::atomic_file::write(&target, &data, false))
+            .await
+            .map_err(|e| AppError::Sync(format!("reescribir snapshot local: {e}")))?
+            .map_err(|e| AppError::Sync(format!("reescribir snapshot local: {e}")))?;
+        Ok(())
+    }
+
+    async fn wipe(&self) -> Result<(), AppError> {
+        match tokio::fs::remove_file(&self.path).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(AppError::Sync(format!("borrar remoto local: {e}"))),
+        }
+        if let Some(parent) = self.path.parent() {
+            let history = parent.join(HISTORY_DIR);
+            match tokio::fs::remove_dir_all(&history).await {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(AppError::Sync(format!("borrar histórico local: {e}"))),
+            }
+        }
+        Ok(())
+    }
+}
+
+impl LocalBackend {
+    /// Ruta del snapshot `id` verificando que quede dentro del HISTORY_DIR.
+    fn snapshot_path_checked(&self, id: &str) -> Result<PathBuf, AppError> {
+        let Some(parent) = self.path.parent() else {
+            return Err(AppError::Sync(
+                "Snapshot fuera del directorio histórico".into(),
+            ));
         };
         let history = parent.join(HISTORY_DIR);
         let target = PathBuf::from(id);
@@ -1056,13 +1348,7 @@ impl SyncBackend for LocalBackend {
                 "Snapshot fuera del directorio histórico".into(),
             ));
         }
-        if !target.exists() {
-            return Ok(None);
-        }
-        let bytes = tokio::fs::read(&target)
-            .await
-            .map_err(|e| AppError::Sync(format!("leer snapshot local: {e}")))?;
-        Ok(Some(bytes))
+        Ok(target)
     }
 }
 
@@ -1093,6 +1379,23 @@ pub struct WebDavBackend {
     pub url: String,
     pub username: String,
     pub password: String,
+    /// ETag del último GET del estado: el PUT posterior viaja con `If-Match`
+    /// para no pisar en silencio un push ajeno entre nuestro read y write.
+    etag: Mutex<Option<String>>,
+    /// Hora del servidor (header `Date`) de la última lectura.
+    server_time: Mutex<Option<DateTime<Utc>>>,
+}
+
+impl WebDavBackend {
+    pub fn new(url: String, username: String, password: String) -> Self {
+        Self {
+            url,
+            username,
+            password,
+            etag: Mutex::new(None),
+            server_time: Mutex::new(None),
+        }
+    }
 }
 
 fn history_filename() -> String {
@@ -1131,13 +1434,20 @@ async fn prune_local_history(path: &Path, keep: usize) -> Result<(), AppError> {
 impl SyncBackend for WebDavBackend {
     async fn read(&self) -> Result<Option<Vec<u8>>, AppError> {
         let client = http_client(20)?;
-        let resp = client
-            .get(&self.url)
-            .basic_auth(&self.username, Some(&self.password))
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("webdav GET: {e}")))?;
+        let resp = send_with_retry(
+            client
+                .get(&self.url)
+                .basic_auth(&self.username, Some(&self.password)),
+            "webdav GET",
+        )
+        .await?;
+        if let (Some(t), Ok(mut slot)) = (response_server_time(&resp), self.server_time.lock()) {
+            *slot = Some(t);
+        }
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            if let Ok(mut etag) = self.etag.lock() {
+                *etag = None;
+            }
             return Ok(None);
         }
         if !resp.status().is_success() {
@@ -1145,6 +1455,15 @@ impl SyncBackend for WebDavBackend {
                 "webdav GET status: {}",
                 resp.status()
             )));
+        }
+        // ETag para la escritura condicional posterior de este mismo ciclo.
+        let etag_value = resp
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        if let Ok(mut etag) = self.etag.lock() {
+            *etag = etag_value;
         }
         let bytes = resp
             .bytes()
@@ -1155,30 +1474,41 @@ impl SyncBackend for WebDavBackend {
 
     async fn write(&self, data: &[u8]) -> Result<(), AppError> {
         let client = http_client(30)?;
-        // Asegura que el directorio padre exista (Nextcloud crea recursivo,
-        // los WebDAV genéricos no — usamos MKCOL best-effort si falla con 409).
-        let put = client
-            .put(&self.url)
-            .basic_auth(&self.username, Some(&self.password))
-            .body(data.to_vec())
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("webdav PUT: {e}")))?;
+        // Escritura condicional: si otro equipo empujó entre nuestro GET y
+        // este PUT, el servidor responde 412 y el llamador re-lee y re-mezcla
+        // (sin esto el push ajeno se pisaba en silencio; LWW lo acababa
+        // autocorrigiendo, pero el histórico podía archivar un estado pisado).
+        // Nota: Drive no soporta PUT condicional de contenido — este guard es
+        // exclusivo de WebDAV.
+        let etag = self.etag.lock().ok().and_then(|e| e.clone());
+        let build_put = |client: &reqwest::Client| {
+            let mut put = client
+                .put(&self.url)
+                .basic_auth(&self.username, Some(&self.password))
+                .body(data.to_vec());
+            if let Some(tag) = &etag {
+                put = put.header(reqwest::header::IF_MATCH, tag);
+            }
+            put
+        };
+        let put = send_with_retry(build_put(&client), "webdav PUT").await?;
+        if put.status() == StatusCode::PRECONDITION_FAILED {
+            return Err(AppError::Sync(format!(
+                "{CONFLICT_MARKER} webdav PUT: el estado remoto cambió durante la sincronización"
+            )));
+        }
         if put.status() == reqwest::StatusCode::CONFLICT {
-            // Intenta crear la colección padre y reintenta el PUT
+            // Asegura que el directorio padre exista (Nextcloud crea recursivo,
+            // los WebDAV genéricos no — MKCOL best-effort y reintento del PUT).
             if let Some((parent_url, _)) = self.url.rsplit_once('/') {
-                let _ = client
-                    .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), parent_url)
-                    .basic_auth(&self.username, Some(&self.password))
-                    .send()
-                    .await;
-                let retry = client
-                    .put(&self.url)
-                    .basic_auth(&self.username, Some(&self.password))
-                    .body(data.to_vec())
-                    .send()
-                    .await
-                    .map_err(|e| AppError::Sync(format!("webdav PUT retry: {e}")))?;
+                let _ = send_with_retry(
+                    client
+                        .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), parent_url)
+                        .basic_auth(&self.username, Some(&self.password)),
+                    "webdav MKCOL",
+                )
+                .await;
+                let retry = send_with_retry(build_put(&client), "webdav PUT retry").await?;
                 if !retry.status().is_success() {
                     return Err(AppError::Sync(format!(
                         "webdav PUT (tras MKCOL) status: {}",
@@ -1211,21 +1541,24 @@ impl SyncBackend for WebDavBackend {
             urlencoding::encode(&history_filename())
         );
         let client = http_client(30)?;
-        let _ = client
-            .request(
-                reqwest::Method::from_bytes(b"MKCOL").unwrap(),
-                format!("{}/{}", base, urlencoding::encode(HISTORY_DIR)),
-            )
-            .basic_auth(&self.username, Some(&self.password))
-            .send()
-            .await;
-        let put = client
-            .put(history_url)
-            .basic_auth(&self.username, Some(&self.password))
-            .body(bytes)
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("webdav histórico PUT: {e}")))?;
+        let _ = send_with_retry(
+            client
+                .request(
+                    reqwest::Method::from_bytes(b"MKCOL").unwrap(),
+                    format!("{}/{}", base, urlencoding::encode(HISTORY_DIR)),
+                )
+                .basic_auth(&self.username, Some(&self.password)),
+            "webdav histórico MKCOL",
+        )
+        .await;
+        let put = send_with_retry(
+            client
+                .put(history_url)
+                .basic_auth(&self.username, Some(&self.password))
+                .body(bytes),
+            "webdav histórico PUT",
+        )
+        .await?;
         if !put.status().is_success() {
             return Err(AppError::Sync(format!(
                 "webdav histórico PUT status: {}",
@@ -1242,16 +1575,17 @@ impl SyncBackend for WebDavBackend {
         };
         let client = http_client(20)?;
         let history_base = format!("{}/{}", base, urlencoding::encode(HISTORY_DIR));
-        let resp = client
-            .request(
-                reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
-                &history_base,
-            )
-            .basic_auth(&self.username, Some(&self.password))
-            .header("Depth", "1")
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("webdav snapshots PROPFIND: {e}")))?;
+        let resp = send_with_retry(
+            client
+                .request(
+                    reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+                    &history_base,
+                )
+                .basic_auth(&self.username, Some(&self.password))
+                .header("Depth", "1"),
+            "webdav snapshots PROPFIND",
+        )
+        .await?;
         if !resp.status().is_success() {
             return Ok(Vec::new());
         }
@@ -1273,25 +1607,15 @@ impl SyncBackend for WebDavBackend {
     }
 
     async fn read_snapshot(&self, id: &str) -> Result<Option<Vec<u8>>, AppError> {
-        if !id.starts_with("rustty-sync-") || !id.ends_with(".bin") {
-            return Err(AppError::Sync("Identificador de snapshot inválido".into()));
-        }
-        let Some((base, _)) = self.url.rsplit_once('/') else {
-            return Ok(None);
-        };
-        let url = format!(
-            "{}/{}/{}",
-            base,
-            urlencoding::encode(HISTORY_DIR),
-            urlencoding::encode(id)
-        );
+        let url = self.snapshot_url_checked(id)?;
         let client = http_client(30)?;
-        let resp = client
-            .get(&url)
-            .basic_auth(&self.username, Some(&self.password))
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("webdav snapshot GET: {e}")))?;
+        let resp = send_with_retry(
+            client
+                .get(&url)
+                .basic_auth(&self.username, Some(&self.password)),
+            "webdav snapshot GET",
+        )
+        .await?;
         if resp.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -1307,6 +1631,87 @@ impl SyncBackend for WebDavBackend {
             .map_err(|e| AppError::Sync(format!("webdav snapshot body: {e}")))?;
         Ok(Some(bytes.to_vec()))
     }
+
+    async fn write_snapshot(&self, id: &str, data: &[u8]) -> Result<(), AppError> {
+        let url = self.snapshot_url_checked(id)?;
+        let client = http_client(30)?;
+        let put = send_with_retry(
+            client
+                .put(&url)
+                .basic_auth(&self.username, Some(&self.password))
+                .body(data.to_vec()),
+            "webdav snapshot PUT",
+        )
+        .await?;
+        if !put.status().is_success() {
+            return Err(AppError::Sync(format!(
+                "webdav snapshot PUT status: {}",
+                put.status()
+            )));
+        }
+        Ok(())
+    }
+
+    async fn wipe(&self) -> Result<(), AppError> {
+        let client = http_client(30)?;
+        // Blob principal (404 = ya no existe: objetivo cumplido).
+        let del = send_with_retry(
+            client
+                .delete(&self.url)
+                .basic_auth(&self.username, Some(&self.password)),
+            "webdav DELETE",
+        )
+        .await?;
+        if !del.status().is_success() && del.status() != StatusCode::NOT_FOUND {
+            return Err(AppError::Sync(format!(
+                "webdav DELETE status: {}",
+                del.status()
+            )));
+        }
+        // Histórico completo: DELETE de la colección (recursivo en WebDAV).
+        if let Some((base, _)) = self.url.rsplit_once('/') {
+            let history = format!("{}/{}", base, urlencoding::encode(HISTORY_DIR));
+            let del = send_with_retry(
+                client
+                    .delete(&history)
+                    .basic_auth(&self.username, Some(&self.password)),
+                "webdav histórico DELETE",
+            )
+            .await?;
+            if !del.status().is_success() && del.status() != StatusCode::NOT_FOUND {
+                return Err(AppError::Sync(format!(
+                    "webdav histórico DELETE status: {}",
+                    del.status()
+                )));
+            }
+        }
+        if let Ok(mut etag) = self.etag.lock() {
+            *etag = None;
+        }
+        Ok(())
+    }
+
+    fn observed_server_time(&self) -> Option<DateTime<Utc>> {
+        self.server_time.lock().ok().and_then(|t| *t)
+    }
+}
+
+impl WebDavBackend {
+    /// URL del snapshot `id` validando el patrón de nombre esperado.
+    fn snapshot_url_checked(&self, id: &str) -> Result<String, AppError> {
+        if !id.starts_with("rustty-sync-") || !id.ends_with(".bin") {
+            return Err(AppError::Sync("Identificador de snapshot inválido".into()));
+        }
+        let Some((base, _)) = self.url.rsplit_once('/') else {
+            return Err(AppError::Sync("URL WebDAV sin ruta base".into()));
+        };
+        Ok(format!(
+            "{}/{}/{}",
+            base,
+            urlencoding::encode(HISTORY_DIR),
+            urlencoding::encode(id)
+        ))
+    }
 }
 
 async fn prune_webdav_history(
@@ -1317,16 +1722,17 @@ async fn prune_webdav_history(
     keep: usize,
 ) -> Result<(), AppError> {
     let history_base = format!("{}/{}", base, urlencoding::encode(HISTORY_DIR));
-    let resp = client
-        .request(
-            reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
-            &history_base,
-        )
-        .basic_auth(username, Some(password))
-        .header("Depth", "1")
-        .send()
-        .await
-        .map_err(|e| AppError::Sync(format!("webdav histórico PROPFIND: {e}")))?;
+    let resp = send_with_retry(
+        client
+            .request(
+                reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+                &history_base,
+            )
+            .basic_auth(username, Some(password))
+            .header("Depth", "1"),
+        "webdav histórico PROPFIND",
+    )
+    .await?;
     if !resp.status().is_success() {
         return Ok(());
     }
@@ -1339,32 +1745,28 @@ async fn prune_webdav_history(
     let delete_count = names.len().saturating_sub(keep);
     for name in names.into_iter().take(delete_count) {
         let url = format!("{}/{}", history_base, urlencoding::encode(&name));
-        let _ = client
-            .delete(url)
-            .basic_auth(username, Some(password))
-            .send()
-            .await;
+        let _ = send_with_retry(
+            client.delete(url).basic_auth(username, Some(password)),
+            "webdav histórico DELETE",
+        )
+        .await;
     }
     Ok(())
 }
 
+/// Extrae los nombres de snapshot de un cuerpo PROPFIND.
+///
+/// Parser tolerante en vez de la búsqueda literal de `href>` anterior, que
+/// funcionaba con Nextcloud/ownCloud pero rompía con variantes legítimas del
+/// XML: prefijos de namespace distintos de `d:` (`D:`, ninguno, `ns0:`),
+/// mayúsculas, atributos en la etiqueta, contenido en CDATA o `<href/>`
+/// autocerrado. No pretende ser un parser XML general: solo localizar los
+/// elementos `href` (con cualquier prefijo) y quedarse con los nombres que
+/// sigan el patrón de snapshot.
 fn webdav_history_filenames(body: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let mut rest = body;
-    while let Some(start) = rest.find("<") {
-        rest = &rest[start..];
-        let Some(tag_end) = rest.find(">") else { break };
-        let tag = &rest[..=tag_end];
-        if !tag.ends_with("href>") {
-            rest = &rest[tag_end + 1..];
-            continue;
-        }
-        let Some(end) = rest[tag_end + 1..].find("</") else {
-            rest = &rest[tag_end + 1..];
-            continue;
-        };
-        let href = &rest[tag_end + 1..tag_end + 1 + end];
-        if let Some(raw_name) = href.rsplit('/').find(|part| !part.is_empty()) {
+    for href in xml_element_texts(body, "href") {
+        if let Some(raw_name) = href.trim().rsplit('/').find(|part| !part.is_empty()) {
             let decoded = urlencoding::decode(raw_name)
                 .map(|value| value.into_owned())
                 .unwrap_or_else(|_| raw_name.to_string());
@@ -1372,9 +1774,71 @@ fn webdav_history_filenames(body: &str) -> Vec<String> {
                 out.push(decoded);
             }
         }
-        rest = &rest[tag_end + 1 + end + 2..];
     }
     out
+}
+
+/// Devuelve el texto de cada elemento `<[ns:]local ...>texto</[ns:]local>`
+/// del XML, ignorando namespace y mayúsculas. Los autocerrados (`<href/>`)
+/// cuentan como vacíos y el contenido `<![CDATA[...]]>` se desenvuelve.
+fn xml_element_texts(xml: &str, local_name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find('<') {
+        rest = &rest[start + 1..];
+        let Some(tag_end) = rest.find('>') else { break };
+        let tag = &rest[..tag_end];
+        rest = &rest[tag_end + 1..];
+        // Descartar cierres, comentarios, declaraciones y CDATA sueltos.
+        if tag.starts_with('/') || tag.starts_with('!') || tag.starts_with('?') {
+            continue;
+        }
+        let self_closing = tag.ends_with('/');
+        let tag_name = tag
+            .trim_end_matches('/')
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        if !xml_name_matches(tag_name, local_name) {
+            continue;
+        }
+        if self_closing {
+            out.push(String::new());
+            continue;
+        }
+        // Texto hasta la etiqueta de cierre correspondiente (mismo local name).
+        let mut text = String::new();
+        let mut cursor = rest;
+        while let Some(lt) = cursor.find('<') {
+            text.push_str(&cursor[..lt]);
+            cursor = &cursor[lt + 1..];
+            if let Some(cdata) = cursor.strip_prefix("![CDATA[") {
+                let Some(end) = cdata.find("]]>") else { break };
+                text.push_str(&cdata[..end]);
+                cursor = &cdata[end + 3..];
+                continue;
+            }
+            let Some(close_end) = cursor.find('>') else { break };
+            let close_tag = &cursor[..close_end];
+            cursor = &cursor[close_end + 1..];
+            if let Some(name) = close_tag.strip_prefix('/') {
+                if xml_name_matches(name.trim(), local_name) {
+                    out.push(text);
+                    break;
+                }
+            }
+            // Cualquier otra etiqueta anidada se ignora (href no las tiene).
+        }
+        rest = cursor;
+    }
+    out
+}
+
+/// Compara el nombre de una etiqueta XML con un local name, ignorando el
+/// prefijo de namespace (`d:href`, `D:HREF`, `href` → `href`).
+fn xml_name_matches(tag_name: &str, local_name: &str) -> bool {
+    let local = tag_name.rsplit(':').next().unwrap_or(tag_name);
+    local.eq_ignore_ascii_case(local_name)
 }
 
 /// Cliente HTTP compartido de todo el módulo de sync. Construir un
@@ -1393,6 +1857,62 @@ fn http_client(timeout_secs: u64) -> Result<reqwest::Client, AppError> {
         .build()
         .map_err(|e| AppError::Sync(format!("http client: {e}")))?;
     Ok(CLIENT.get_or_init(|| built).clone())
+}
+
+// ─── Reintentos con backoff y clasificación de errores de red ────────
+
+/// Esperas entre reintentos ante errores transitorios (backoff exponencial).
+const HTTP_RETRY_DELAYS_MS: [u64; 2] = [500, 2000];
+
+/// Estados HTTP transitorios que merecen reintento (throttling y 5xx).
+fn is_transient_status(status: StatusCode) -> bool {
+    status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+/// Fallos de conectividad (DNS/connect/timeout): además de reintentables, el
+/// frontend los muestra como estado «sin conexión», no como error rojo.
+fn is_connectivity_error(e: &reqwest::Error) -> bool {
+    e.is_connect() || e.is_timeout()
+}
+
+fn net_err(what: &str, e: reqwest::Error) -> AppError {
+    if is_connectivity_error(&e) {
+        AppError::Sync(format!("{OFFLINE_MARKER} {what}: {e}"))
+    } else {
+        AppError::Sync(format!("{what}: {e}"))
+    }
+}
+
+/// Envía la petición reintentando ante errores transitorios (429, 5xx,
+/// timeout/connect) con backoff exponencial. Antes, un microcorte de red o un
+/// throttling puntual abortaba el `sync_run` entero hasta el siguiente ciclo.
+/// El último intento devuelve la respuesta tal cual (el llamador valida el
+/// status como siempre). PUT/GET/PROPFIND son idempotentes; el único POST con
+/// efectos (crear en Drive) queda cubierto por la deduplicación de blobs.
+async fn send_with_retry(
+    req: reqwest::RequestBuilder,
+    what: &str,
+) -> Result<reqwest::Response, AppError> {
+    for delay_ms in HTTP_RETRY_DELAYS_MS {
+        // Un cuerpo no clonable (stream) no admite reintento: envío único.
+        let Some(attempt) = req.try_clone() else { break };
+        match attempt.send().await {
+            Ok(resp) if !is_transient_status(resp.status()) => return Ok(resp),
+            Ok(_transient) => {}
+            Err(e) if is_connectivity_error(&e) => {}
+            Err(e) => return Err(net_err(what, e)),
+        }
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+    }
+    req.send().await.map_err(|e| net_err(what, e))
+}
+
+/// Hora del servidor según el header `Date` de la respuesta (RFC 2822).
+fn response_server_time(resp: &reqwest::Response) -> Option<DateTime<Utc>> {
+    let raw = resp.headers().get(reqwest::header::DATE)?.to_str().ok()?;
+    DateTime::parse_from_rfc2822(raw)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
 }
 
 // ─── Caché del access token OAuth ────────────────────────────────────
@@ -1440,13 +1960,17 @@ fn google_file_id_cache() -> &'static Mutex<Option<String>> {
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
+fn clear_google_file_id_cache() {
+    if let Ok(mut cache) = google_file_id_cache().lock() {
+        *cache = None;
+    }
+}
+
 fn clear_google_caches() {
     if let Ok(mut cache) = google_token_cache().lock() {
         cache.clear();
     }
-    if let Ok(mut cache) = google_file_id_cache().lock() {
-        *cache = None;
-    }
+    clear_google_file_id_cache();
 }
 
 async fn refresh_oauth_access_token(
@@ -1478,12 +2002,8 @@ async fn refresh_oauth_access_token(
             "https://oauth2.googleapis.com/token".to_string()
         }
     };
-    let token: TokenResponse = client
-        .post(token_url)
-        .form(&params)
-        .send()
-        .await
-        .map_err(|e| AppError::Sync(format!("refresh OAuth: {e}")))?
+    let token: TokenResponse = send_with_retry(client.post(token_url).form(&params), "refresh OAuth")
+        .await?
         .json()
         .await
         .map_err(|e| AppError::Sync(format!("refresh OAuth json: {e}")))?;
@@ -1515,38 +2035,67 @@ async fn refresh_oauth_access_token(
 
 pub struct GoogleDriveBackend {
     pub config: SyncConfig,
+    /// Ids de blobs de estado duplicados detectados al listar (dos equipos
+    /// haciendo su primera sync a la vez creaban ambos el fichero). Se
+    /// retiran del Drive tras el siguiente `write` correcto.
+    duplicates: Mutex<Vec<String>>,
+    /// Hora del servidor (header `Date`) de la última llamada a la API.
+    server_time: Mutex<Option<DateTime<Utc>>>,
+}
+
+/// Primario determinista entre varios blobs de estado: el de id menor. Todos
+/// los equipos eligen el mismo sin depender de relojes ni del orden (no
+/// garantizado) de `files.list`; el resto son duplicados a fusionar y borrar.
+fn primary_and_duplicates(mut ids: Vec<String>) -> (Option<String>, Vec<String>) {
+    ids.sort();
+    let mut iter = ids.into_iter();
+    let primary = iter.next();
+    (primary, iter.collect())
 }
 
 impl GoogleDriveBackend {
+    pub fn new(config: SyncConfig) -> Self {
+        Self {
+            config,
+            duplicates: Mutex::new(Vec::new()),
+            server_time: Mutex::new(None),
+        }
+    }
+
     async fn access_token(&self) -> Result<String, AppError> {
         refresh_oauth_access_token(OAuthProvider::GoogleDrive, &self.config).await
     }
 
-    async fn file_id(
+    fn note_server_time(&self, resp: &reqwest::Response) {
+        if let (Some(t), Ok(mut slot)) = (response_server_time(resp), self.server_time.lock()) {
+            *slot = Some(t);
+        }
+    }
+
+    /// Ids de **todos** los `rustty-sync.bin` del appDataFolder (normalmente
+    /// uno; más de uno = carrera de primera sync entre equipos).
+    async fn list_state_file_ids(
         &self,
         client: &reqwest::Client,
         token: &str,
-    ) -> Result<Option<String>, AppError> {
-        if let Ok(cache) = google_file_id_cache().lock() {
-            if let Some(id) = cache.as_ref() {
-                return Ok(Some(id.clone()));
-            }
-        }
+    ) -> Result<Vec<String>, AppError> {
         let q = format!(
             "name='{}' and 'appDataFolder' in parents and trashed=false",
             STATE_FILENAME
         );
-        let resp = client
-            .get("https://www.googleapis.com/drive/v3/files")
-            .bearer_auth(token)
-            .query(&[
-                ("spaces", "appDataFolder"),
-                ("fields", "files(id,name)"),
-                ("q", q.as_str()),
-            ])
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("google files.list: {e}")))?;
+        let resp = send_with_retry(
+            client
+                .get("https://www.googleapis.com/drive/v3/files")
+                .bearer_auth(token)
+                .query(&[
+                    ("spaces", "appDataFolder"),
+                    ("fields", "files(id,name)"),
+                    ("q", q.as_str()),
+                ]),
+            "google files.list",
+        )
+        .await?;
+        self.note_server_time(&resp);
         if !resp.status().is_success() {
             return Err(AppError::Sync(format!(
                 "google files.list status: {}",
@@ -1557,26 +2106,77 @@ impl GoogleDriveBackend {
             .json()
             .await
             .map_err(|e| AppError::Sync(format!("google files.list json: {e}")))?;
-        let id = value
+        Ok(value
             .get("files")
             .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|v| v.get("id"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        if let (Some(id), Ok(mut cache)) = (id.as_ref(), google_file_id_cache().lock()) {
-            *cache = Some(id.clone());
-        }
-        Ok(id)
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
+            .map(str::to_string)
+            .collect())
     }
 
+    /// Id del blob primario, cacheado. Si el listado revela duplicados, los
+    /// registra para retirarlos tras el próximo write.
+    async fn file_id(
+        &self,
+        client: &reqwest::Client,
+        token: &str,
+    ) -> Result<Option<String>, AppError> {
+        if let Ok(cache) = google_file_id_cache().lock() {
+            if let Some(id) = cache.as_ref() {
+                return Ok(Some(id.clone()));
+            }
+        }
+        let ids = self.list_state_file_ids(client, token).await?;
+        let (primary, extras) = primary_and_duplicates(ids);
+        if !extras.is_empty() {
+            if let Ok(mut dupes) = self.duplicates.lock() {
+                dupes.extend(extras);
+            }
+        }
+        if let (Some(id), Ok(mut cache)) = (primary.as_ref(), google_file_id_cache().lock()) {
+            *cache = Some(id.clone());
+        }
+        Ok(primary)
+    }
+
+    /// Descarga el contenido de un fichero por id (`None` si ya no existe).
+    async fn download_by_id(
+        &self,
+        client: &reqwest::Client,
+        token: &str,
+        id: &str,
+        what: &str,
+    ) -> Result<Option<Vec<u8>>, AppError> {
+        let url = format!("https://www.googleapis.com/drive/v3/files/{id}");
+        let resp = send_with_retry(
+            client.get(url).bearer_auth(token).query(&[("alt", "media")]),
+            what,
+        )
+        .await?;
+        self.note_server_time(&resp);
+        if resp.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(AppError::Sync(format!("{what} status: {}", resp.status())));
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| AppError::Sync(format!("{what} body: {e}")))?;
+        Ok(Some(bytes.to_vec()))
+    }
+
+    /// Crea un fichero nuevo en el appDataFolder y devuelve su id.
     async fn upload_named(
         &self,
         client: &reqwest::Client,
         token: &str,
         name: &str,
         data: &[u8],
-    ) -> Result<(), AppError> {
+    ) -> Result<String, AppError> {
         let boundary = format!("rustty-{}", Uuid::new_v4().simple());
         let metadata = serde_json::json!({
             "name": name,
@@ -1592,57 +2192,123 @@ impl GoogleDriveBackend {
         body.extend_from_slice(data);
         write!(body, "\r\n--{boundary}--\r\n")
             .map_err(|e| AppError::Sync(format!("google multipart finish: {e}")))?;
-        let resp = client
-            .post("https://www.googleapis.com/upload/drive/v3/files")
-            .bearer_auth(token)
-            .query(&[("uploadType", "multipart")])
-            .header(
-                reqwest::header::CONTENT_TYPE,
-                format!("multipart/related; boundary={boundary}"),
-            )
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("google create: {e}")))?;
+        let resp = send_with_retry(
+            client
+                .post("https://www.googleapis.com/upload/drive/v3/files")
+                .bearer_auth(token)
+                .query(&[("uploadType", "multipart"), ("fields", "id")])
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    format!("multipart/related; boundary={boundary}"),
+                )
+                .body(body),
+            "google create",
+        )
+        .await?;
         if !resp.status().is_success() {
             return Err(AppError::Sync(format!(
                 "google create status: {}",
                 resp.status()
             )));
         }
-        Ok(())
+        let value: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Sync(format!("google create json: {e}")))?;
+        value
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| AppError::Sync("google create: respuesta sin id".into()))
     }
 
-    async fn prune_history(
+    /// Actualiza el contenido de un fichero existente por id.
+    /// `Ok(false)` = el id ya no existe (404).
+    async fn update_by_id(
         &self,
         client: &reqwest::Client,
         token: &str,
-        keep: usize,
-    ) -> Result<(), AppError> {
+        id: &str,
+        data: &[u8],
+    ) -> Result<bool, AppError> {
+        let url = format!("https://www.googleapis.com/upload/drive/v3/files/{id}");
+        let resp = send_with_retry(
+            client
+                .patch(url)
+                .bearer_auth(token)
+                .query(&[("uploadType", "media")])
+                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+                .body(data.to_vec()),
+            "google update",
+        )
+        .await?;
+        if resp.status() == StatusCode::NOT_FOUND {
+            return Ok(false);
+        }
+        if !resp.status().is_success() {
+            return Err(AppError::Sync(format!(
+                "google update status: {}",
+                resp.status()
+            )));
+        }
+        Ok(true)
+    }
+
+    async fn delete_by_id(&self, client: &reqwest::Client, token: &str, id: &str) {
+        let _ = send_with_retry(
+            client
+                .delete(format!("https://www.googleapis.com/drive/v3/files/{id}"))
+                .bearer_auth(token),
+            "google delete",
+        )
+        .await;
+    }
+
+    /// Retira los blobs duplicados registrados (best-effort, tras un write
+    /// correcto: su contenido ya está fusionado en el primario).
+    async fn cleanup_duplicates(&self, client: &reqwest::Client, token: &str) {
+        let extras: Vec<String> = match self.duplicates.lock() {
+            Ok(mut dupes) => dupes.drain(..).collect(),
+            Err(_) => Vec::new(),
+        };
+        for id in extras {
+            self.delete_by_id(client, token, &id).await;
+        }
+    }
+
+    async fn history_files(
+        &self,
+        client: &reqwest::Client,
+        token: &str,
+    ) -> Result<Vec<(String, String)>, AppError> {
         let prefix = format!("{}-rustty-sync-", HISTORY_DIR);
         let q = format!(
             "name contains '{}' and 'appDataFolder' in parents and trashed=false",
             prefix
         );
-        let resp = client
-            .get("https://www.googleapis.com/drive/v3/files")
-            .bearer_auth(token)
-            .query(&[
-                ("spaces", "appDataFolder"),
-                ("fields", "files(id,name)"),
-                ("q", q.as_str()),
-            ])
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("google history list: {e}")))?;
+        let resp = send_with_retry(
+            client
+                .get("https://www.googleapis.com/drive/v3/files")
+                .bearer_auth(token)
+                .query(&[
+                    ("spaces", "appDataFolder"),
+                    ("fields", "files(id,name)"),
+                    ("q", q.as_str()),
+                ]),
+            "google history list",
+        )
+        .await?;
         if !resp.status().is_success() {
-            return Ok(());
+            return Err(AppError::Sync(format!(
+                "google history list status: {}",
+                resp.status()
+            )));
         }
         let value: serde_json::Value = resp
             .json()
             .await
             .map_err(|e| AppError::Sync(format!("google history json: {e}")))?;
-        let mut files: Vec<(String, String)> = value
+        Ok(value
             .get("files")
             .and_then(|v| v.as_array())
             .into_iter()
@@ -1653,15 +2319,23 @@ impl GoogleDriveBackend {
                     file.get("id")?.as_str()?.to_string(),
                 ))
             })
-            .collect();
+            .collect())
+    }
+
+    async fn prune_history(
+        &self,
+        client: &reqwest::Client,
+        token: &str,
+        keep: usize,
+    ) -> Result<(), AppError> {
+        let mut files = match self.history_files(client, token).await {
+            Ok(files) => files,
+            Err(_) => return Ok(()), // poda best-effort, como siempre
+        };
         files.sort_by(|a, b| a.0.cmp(&b.0));
         let delete_count = files.len().saturating_sub(keep);
         for (_, id) in files.into_iter().take(delete_count) {
-            let _ = client
-                .delete(format!("https://www.googleapis.com/drive/v3/files/{id}"))
-                .bearer_auth(token)
-                .send()
-                .await;
+            self.delete_by_id(client, token, &id).await;
         }
         Ok(())
     }
@@ -1675,65 +2349,114 @@ impl SyncBackend for GoogleDriveBackend {
         let Some(id) = self.file_id(&client, &token).await? else {
             return Ok(None);
         };
-        let url = format!("https://www.googleapis.com/drive/v3/files/{id}");
-        let resp = client
-            .get(url)
-            .bearer_auth(&token)
-            .query(&[("alt", "media")])
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("google download: {e}")))?;
-        if resp.status() == StatusCode::NOT_FOUND {
+        let bytes = self
+            .download_by_id(&client, &token, &id, "google download")
+            .await?;
+        if bytes.is_none() {
             // El fichero cacheado ya no existe (borrado desde otro equipo).
             if let Ok(mut cache) = google_file_id_cache().lock() {
                 *cache = None;
             }
-            return Ok(None);
         }
-        if !resp.status().is_success() {
-            return Err(AppError::Sync(format!(
-                "google download status: {}",
-                resp.status()
-            )));
+        Ok(bytes)
+    }
+
+    async fn read_all(&self) -> Result<Vec<Vec<u8>>, AppError> {
+        let client = http_client(30)?;
+        let token = self.access_token().await?;
+
+        // Camino rápido: id cacheado (ciclo normal con un único blob). Los
+        // duplicados solo nacen de una carrera de *primera* sync, y el equipo
+        // sin caché los detecta al listar; no merece un files.list por ciclo.
+        let cached = google_file_id_cache()
+            .lock()
+            .ok()
+            .and_then(|cache| cache.clone());
+        if let Some(id) = cached {
+            match self
+                .download_by_id(&client, &token, &id, "google download")
+                .await?
+            {
+                Some(bytes) => return Ok(vec![bytes]),
+                None => {
+                    if let Ok(mut cache) = google_file_id_cache().lock() {
+                        *cache = None;
+                    }
+                }
+            }
         }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| AppError::Sync(format!("google download body: {e}")))?;
-        Ok(Some(bytes.to_vec()))
+
+        let ids = self.list_state_file_ids(&client, &token).await?;
+        let (primary, extras) = primary_and_duplicates(ids);
+        if !extras.is_empty() {
+            if let Ok(mut dupes) = self.duplicates.lock() {
+                dupes.extend(extras.iter().cloned());
+            }
+        }
+        let Some(primary) = primary else {
+            return Ok(Vec::new());
+        };
+        if let Ok(mut cache) = google_file_id_cache().lock() {
+            *cache = Some(primary.clone());
+        }
+        let mut blobs = Vec::new();
+        for id in std::iter::once(&primary).chain(extras.iter()) {
+            if let Some(bytes) = self
+                .download_by_id(&client, &token, id, "google download")
+                .await?
+            {
+                blobs.push(bytes);
+            }
+        }
+        Ok(blobs)
     }
 
     async fn write(&self, data: &[u8]) -> Result<(), AppError> {
         let client = http_client(30)?;
         let token = self.access_token().await?;
         if let Some(id) = self.file_id(&client, &token).await? {
-            let url = format!("https://www.googleapis.com/upload/drive/v3/files/{id}");
-            let resp = client
-                .patch(url)
-                .bearer_auth(&token)
-                .query(&[("uploadType", "media")])
-                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-                .body(data.to_vec())
-                .send()
-                .await
-                .map_err(|e| AppError::Sync(format!("google update: {e}")))?;
-            if resp.status() == StatusCode::NOT_FOUND {
-                // id cacheado obsoleto: invalidar y crear el fichero de cero.
-                if let Ok(mut cache) = google_file_id_cache().lock() {
-                    *cache = None;
-                }
-            } else if !resp.status().is_success() {
-                return Err(AppError::Sync(format!(
-                    "google update status: {}",
-                    resp.status()
-                )));
-            } else {
+            if self.update_by_id(&client, &token, &id, data).await? {
+                self.cleanup_duplicates(&client, &token).await;
                 return Ok(());
+            }
+            // id cacheado obsoleto: invalidar y crear el fichero de cero.
+            if let Ok(mut cache) = google_file_id_cache().lock() {
+                *cache = None;
             }
         }
 
-        self.upload_named(&client, &token, STATE_FILENAME, data)
-            .await
+        let created = self
+            .upload_named(&client, &token, STATE_FILENAME, data)
+            .await?;
+        // Detección de carrera: si otro equipo creó su blob a la vez, tras
+        // nuestro create hay más de un fichero. Todos los equipos eligen el
+        // mismo primario determinista (id menor); quien no lo creó vuelca su
+        // estado en él y borra el suyo. El equipo del blob retirado no pierde
+        // nada de forma permanente: reconstruye su estado desde los datos
+        // locales y lo re-empuja en su siguiente ciclo.
+        let ids = self.list_state_file_ids(&client, &token).await?;
+        let (primary, extras) = primary_and_duplicates(ids);
+        match primary {
+            Some(primary) if primary != created => {
+                if self.update_by_id(&client, &token, &primary, data).await? {
+                    self.delete_by_id(&client, &token, &created).await;
+                }
+                if let Ok(mut cache) = google_file_id_cache().lock() {
+                    *cache = Some(primary);
+                }
+            }
+            Some(primary) => {
+                for extra in extras {
+                    self.delete_by_id(&client, &token, &extra).await;
+                }
+                if let Ok(mut cache) = google_file_id_cache().lock() {
+                    *cache = Some(primary);
+                }
+            }
+            None => {}
+        }
+        self.cleanup_duplicates(&client, &token).await;
+        Ok(())
     }
 
     async fn archive_existing(&self, keep: usize) -> Result<(), AppError> {
@@ -1760,18 +2483,19 @@ impl SyncBackend for GoogleDriveBackend {
             "name contains '{}' and 'appDataFolder' in parents and trashed=false",
             prefix
         );
-        let resp = client
-            .get("https://www.googleapis.com/drive/v3/files")
-            .bearer_auth(&token)
-            .query(&[
-                ("spaces", "appDataFolder"),
-                ("fields", "files(id,name,modifiedTime)"),
-                ("q", q.as_str()),
-                ("pageSize", "200"),
-            ])
-            .send()
-            .await
-            .map_err(|e| AppError::Sync(format!("google snapshots list: {e}")))?;
+        let resp = send_with_retry(
+            client
+                .get("https://www.googleapis.com/drive/v3/files")
+                .bearer_auth(&token)
+                .query(&[
+                    ("spaces", "appDataFolder"),
+                    ("fields", "files(id,name,modifiedTime)"),
+                    ("q", q.as_str()),
+                    ("pageSize", "200"),
+                ]),
+            "google snapshots list",
+        )
+        .await?;
         if !resp.status().is_success() {
             return Ok(Vec::new());
         }
@@ -1812,28 +2536,40 @@ impl SyncBackend for GoogleDriveBackend {
         }
         let client = http_client(30)?;
         let token = self.access_token().await?;
-        let url = format!("https://www.googleapis.com/drive/v3/files/{id}");
-        let resp = client
-            .get(url)
-            .bearer_auth(&token)
-            .query(&[("alt", "media")])
-            .send()
+        self.download_by_id(&client, &token, id, "google snapshot download")
             .await
-            .map_err(|e| AppError::Sync(format!("google snapshot download: {e}")))?;
-        if resp.status() == StatusCode::NOT_FOUND {
-            return Ok(None);
+    }
+
+    async fn write_snapshot(&self, id: &str, data: &[u8]) -> Result<(), AppError> {
+        if id.is_empty() || id.contains('/') {
+            return Err(AppError::Sync("Identificador de snapshot inválido".into()));
         }
-        if !resp.status().is_success() {
-            return Err(AppError::Sync(format!(
-                "google snapshot status: {}",
-                resp.status()
-            )));
+        let client = http_client(30)?;
+        let token = self.access_token().await?;
+        if !self.update_by_id(&client, &token, id, data).await? {
+            return Err(AppError::Sync("Snapshot no encontrado".into()));
         }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| AppError::Sync(format!("google snapshot body: {e}")))?;
-        Ok(Some(bytes.to_vec()))
+        Ok(())
+    }
+
+    async fn wipe(&self) -> Result<(), AppError> {
+        let client = http_client(30)?;
+        let token = self.access_token().await?;
+        // Todos los blobs de estado (incluidos posibles duplicados) y todo el
+        // histórico. Best-effort fichero a fichero; el appDataFolder en sí lo
+        // gestiona Google.
+        for id in self.list_state_file_ids(&client, &token).await? {
+            self.delete_by_id(&client, &token, &id).await;
+        }
+        for (_, id) in self.history_files(&client, &token).await? {
+            self.delete_by_id(&client, &token, &id).await;
+        }
+        clear_google_file_id_cache();
+        Ok(())
+    }
+
+    fn observed_server_time(&self) -> Option<DateTime<Utc>> {
+        self.server_time.lock().ok().and_then(|t| *t)
     }
 }
 
@@ -1861,19 +2597,59 @@ impl SyncManager {
     }
 
     pub fn load_config(&self) -> SyncConfig {
-        std::fs::read_to_string(self.config_path())
+        let mut config: SyncConfig = std::fs::read_to_string(self.config_path())
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // Migración única: el client_secret de Drive vivía en claro en
+        // sync_config.json; ahora va al keyring como el resto de credenciales.
+        // Tras migrar, el campo queda en blanco y esta rama no vuelve a entrar.
+        if !config.google_drive.client_secret.trim().is_empty()
+            && keyring_set_secret(
+                &google_client_secret_key(),
+                config.google_drive.client_secret.trim(),
+            )
+            .is_ok()
+        {
+            config.google_drive.client_secret.clear();
+            let _ = self.save_config(&config);
+        }
+        config
     }
 
     pub fn save_config(&self, config: &SyncConfig) -> Result<(), AppError> {
-        let s = serde_json::to_string_pretty(config)
+        // El client_secret nunca se persiste en claro: si llega relleno (el
+        // formulario o una config antigua), va al keyring y el fichero queda
+        // con el campo vacío.
+        let mut config = config.clone();
+        let incoming_secret = config.google_drive.client_secret.trim().to_string();
+        if !incoming_secret.is_empty() {
+            keyring_set_secret(&google_client_secret_key(), &incoming_secret)?;
+            config.google_drive.client_secret.clear();
+        }
+        let s = serde_json::to_string_pretty(&config)
             .map_err(|e| AppError::Sync(format!("serialize config: {e}")))?;
         // Escritura atómica: un corte a mitad no puede dejar el fichero vacío.
         crate::atomic_file::write(&self.config_path(), s.as_bytes(), false)
             .map_err(|e| AppError::Sync(format!("write config: {e}")))?;
         Ok(())
+    }
+
+    /// Elimina la caché local del último merge (`sync_state.json`): contiene
+    /// todos los hosts/usuarios sincronizados y no debe sobrevivir a una
+    /// desactivación de la sincronización ni a un borrado de datos remotos.
+    pub fn clear_local_state(&self) -> Result<(), AppError> {
+        match std::fs::remove_file(self.local_state_path()) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(AppError::Sync(format!("borrar caché local: {e}"))),
+        }
+    }
+
+    /// ¿Existe ya la caché local de un merge anterior? (`false` = este equipo
+    /// nunca completó una sincronización: candidato a la vista previa).
+    pub fn local_state_exists(&self) -> bool {
+        self.local_state_path().exists()
     }
 
     /// Carga el último estado sincronizado conocido (cache local).
@@ -2049,15 +2825,13 @@ impl SyncManager {
                 }
                 let base = config.webdav.url.trim_end_matches('/');
                 let url = format!("{}/{}", base, urlencoding::encode(STATE_FILENAME));
-                Ok(Box::new(WebDavBackend {
+                Ok(Box::new(WebDavBackend::new(
                     url,
-                    username: config.webdav.username.clone(),
-                    password: password.to_string(),
-                }))
+                    config.webdav.username.clone(),
+                    password.to_string(),
+                )))
             }
-            SyncBackendKind::GoogleDrive => Ok(Box::new(GoogleDriveBackend {
-                config: config.clone(),
-            })),
+            SyncBackendKind::GoogleDrive => Ok(Box::new(GoogleDriveBackend::new(config.clone()))),
             SyncBackendKind::None => Err(AppError::Sync("No hay backend seleccionado".into())),
         }
     }

@@ -40,7 +40,7 @@ export const EVENT_PREFIX = Object.freeze({
   sftpLog: "sftp-log-",
   /** `sftp-progress-{transferId}` → {@link SftpProgressEvent} */
   sftpProgress: "sftp-progress-",
-  /** `rdp-closed-{sessionId}` → payload: null */
+  /** `rdp-closed-{sessionId}` → {@link RdpClosedEvent} */
   rdpClosed: "rdp-closed-",
   /** `vnc-closed-{sessionId}` → payload: null */
   vncClosed: "vnc-closed-",
@@ -113,6 +113,15 @@ export function eventName(kind, suffix) {
  * @property {string} [current] Ruta relativa del archivo/subcarpeta que se transfiere ahora (solo carpetas).
  * @property {number} [filesDone] Archivos completados hasta ahora (solo carpetas).
  * @property {number} [filesTotal] Total de archivos de la carpeta (solo carpetas).
+ */
+
+/**
+ * @typedef {object} RdpClosedEvent
+ * @property {"cert-changed"|"error"|null} code Motivo del cierre: `null` =
+ *   cierre limpio; `"cert-changed"` = el certificado del servidor no coincide
+ *   con el recordado por el cliente (TOFU); `"error"` = cualquier otro fallo.
+ * @property {string|null} detail Cola de salida del cliente externo (solo
+ *   Linux) con las líneas de error, para diagnóstico.
  */
 
 /**
