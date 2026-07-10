@@ -2,6 +2,43 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.51.0] - 2026-07-10
+
+### Añadido
+
+- **Sincronización periódica con el intervalo que tú elijas**: nueva opción en
+  Preferencias → Copias de seguridad para buscar cambios de otros equipos cada
+  1, 5, 15, 30 o 60 minutos (o nunca) mientras la app está abierta. Hasta ahora,
+  lo que cambiabas en otro equipo solo llegaba al reiniciar la app.
+
+### Cambiado
+
+- **La sincronización deja de interrumpir**: si una pasada (la del arranque o
+  una periódica) no trae ningún cambio, la interfaz no se toca — nada de
+  redibujar la barra lateral, perder el foco o cerrar menús a mitad de trabajo.
+  El centro de actividad solo anota las sincronizaciones con cambios reales o
+  las lanzadas a mano.
+- **Lo que cambias mientras se sincroniza ya no se pierde**: si tocas una
+  preferencia (un favorito, un color, el tema…) justo cuando hay una
+  sincronización en marcha, tu cambio se conserva y se sube en la siguiente
+  pasada, en vez de revertirse en silencio.
+- **Google Drive bastante más rápido**: la app recuerda la autorización y la
+  ubicación del archivo entre operaciones; cada sincronización hace muchas menos
+  llamadas a Google (antes pedía un permiso nuevo en cada paso).
+
+### Corregido
+
+- **Conectar Google Drive al segundo intento**: si cerrabas el navegador sin
+  autorizar y volvías a pulsar «Conectar», la app no podía abrir el puerto de
+  retorno durante 3 minutos. El intento abandonado se descarta y el nuevo
+  funciona a la primera.
+- **Aviso claro si revocas el acceso a Google Drive**: al retirar el permiso
+  desde tu cuenta de Google, la app lo detecta, desconecta el proveedor y te
+  pide reconectar, en vez de fallar para siempre con un error técnico.
+- **Guardado más robusto de la copia en carpeta local**: el archivo de
+  sincronización en carpeta local/NAS y la identidad del equipo se escriben de
+  forma atómica; un corte a mitad ya no puede dejarlos corruptos.
+
 ## [1.50.0] - 2026-07-09
 
 ### Corregido

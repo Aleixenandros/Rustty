@@ -122,9 +122,9 @@ async function readAllNotes() {
 // Añade los metadatos del catálogo de credenciales (siempre) y, solo con el
 // opt-in de secretos, los valores de master/secret leídos del keyring. Sigue
 // el mismo patrón que `addProfileSecretItems` para los secretos de perfil.
-async function addCredentialItems(items, prefs, deviceId, includeSecrets) {
+async function addCredentialItems(items, prefs, deviceId, includeSecrets, catalogHint) {
   const secretTs = prefs._secretsTs || {};
-  const catalog = await readCredentialCatalog();
+  const catalog = catalogHint ?? (await readCredentialCatalog());
   for (const meta of catalog) {
     if (!meta?.id) continue;
     // Metadatos: siempre. Para `var` el `value` no es secreto y viaja aquí;
@@ -227,7 +227,7 @@ export async function buildSyncState(ctx) {
   }
 
   if (selective.notes) {
-    const docs = await readAllNotes();
+    const docs = ctx.notesDocs ?? (await readAllNotes());
     for (const doc of docs) {
       if (!doc?.profile_id) continue;
       items[`note:${doc.profile_id}`] = {
@@ -247,7 +247,7 @@ export async function buildSyncState(ctx) {
 
   // El catálogo de credenciales se sincroniza siempre (metadatos `cred:<id>`).
   // Los valores de master/secret solo viajan con el opt-in de secretos.
-  await addCredentialItems(items, prefs, deviceId, !!selective.secrets);
+  await addCredentialItems(items, prefs, deviceId, !!selective.secrets, ctx.credsCatalog);
 
   const exportedSecrets = ctx.exportedSecrets?.entries;
   if (exportedSecrets && typeof exportedSecrets === "object" && !Array.isArray(exportedSecrets)) {
@@ -276,22 +276,60 @@ export async function buildSyncState(ctx) {
 
 /* ─────────────────────────── Aplicación del estado ───────────────────── */
 
+/** Subconjunto comparable de una nota (contenido; sin timestamps). */
+function noteComparable(doc) {
+  return {
+    title: doc?.title ?? "",
+    connection: doc?.connection ?? "",
+    tags: Array.isArray(doc?.tags) ? doc.tags : [],
+    body: doc?.body ?? "",
+  };
+}
+
+/** Subconjunto comparable de una credencial del catálogo (sin timestamps). */
+function credComparable(meta) {
+  const { updated_at: _u, created_at: _c, ...rest } = meta || {};
+  return rest;
+}
+
 /**
  * Aplica al estado local los cambios resultantes del merge.
- * Devuelve { addedProfiles, deletedProfiles, prefsChanged, themesChanged, shortcutsChanged }
- * para que el caller decida qué refrescar en la UI.
+ * Devuelve el desglose de cambios REALES (los items idénticos a lo local no
+ * cuentan ni se re-escriben) para que el caller decida qué refrescar en la
+ * UI — con un resultado a cero la sync debe ser invisible.
  */
 export async function applyMergedState(merged, ctx) {
   const { profiles, prefs } = ctx;
   const allowSecrets = !!ctx.allowSecrets;
-  let addedProfiles = 0, deletedProfiles = 0, prefsChanged = false;
-  let themesChanged = 0, shortcutsChanged = 0;
+  let addedProfiles = 0, deletedProfiles = 0, updatedProfiles = 0, prefsChanged = false;
+  let themesChanged = 0, shortcutsChanged = 0, snippetsChanged = 0;
   let secretsChanged = 0;
   let credsChanged = 0;
   let notesChanged = 0;
+  let prefsSkippedNewerLocal = false;
 
   const localProfileIds = new Set(profiles.map((p) => p.id));
   const localProfilesById = new Map(profiles.map((p) => [p.id, p]));
+
+  // Estado local de notas y credenciales, cargado UNA vez y solo si el merge
+  // trae items de ese tipo (permite saltar upserts idénticos sin re-escribir
+  // ficheros ni inflar los contadores en cada ciclo).
+  let notesById = null;
+  const ensureNotes = async () => {
+    if (!notesById) {
+      const docs = ctx.notesDocs ?? (await readAllNotes());
+      notesById = new Map(docs.map((doc) => [doc.profile_id, doc]));
+    }
+    return notesById;
+  };
+  let credsById = null;
+  const ensureCreds = async () => {
+    if (!credsById) {
+      const catalog = ctx.credsCatalog ?? (await readCredentialCatalog());
+      credsById = new Map(catalog.map((meta) => [meta.id, meta]));
+    }
+    return credsById;
+  };
 
   // Items
   for (const [key, item] of Object.entries(merged.items || {})) {
@@ -307,10 +345,21 @@ export async function applyMergedState(merged, ctx) {
       try {
         await invoke("save_profile", { profile });
         if (!localProfileIds.has(id)) addedProfiles++;
+        else updatedProfiles++;
       } catch (err) {
         console.error("[sync] save_profile", id, err);
       }
     } else if (key === "prefs:bundle") {
+      // Guardia de carrera: si el usuario tocó las prefs MIENTRAS la sync
+      // estaba en vuelo (el `_prefsUpdatedAt` vivo es posterior a la foto con
+      // la que se lanzó), aplicar el bundle mezclado revertiría esa edición.
+      // Se conserva lo local y el caller programa un push de seguimiento.
+      const liveTs = typeof prefs._prefsUpdatedAt === "string" ? prefs._prefsUpdatedAt : "";
+      const snapshotTs = typeof ctx.prefsSnapshotTs === "string" ? ctx.prefsSnapshotTs : "";
+      if (liveTs && snapshotTs && liveTs > snapshotTs) {
+        prefsSkippedNewerLocal = true;
+        continue;
+      }
       let bundleChanged = false;
       let bundleDataChanged = false;
       for (const [prefKey, value] of Object.entries(item.data || {})) {
@@ -352,13 +401,19 @@ export async function applyMergedState(merged, ctx) {
       const existing = loadLocalSnippets().find((entry) => entry.id === id);
       if (existing && sameValue(existing, snippet)) continue;
       upsertLocalSnippet(snippet);
+      snippetsChanged++;
     } else if (key.startsWith("note:")) {
       // Nota Markdown de un perfil: upsert del fichero `.md` (LWW ya resuelto
       // por el merge del SyncState). El backend preserva updated_at/created_at.
+      // Solo se importa si el CONTENIDO difiere del local: re-escribir notas
+      // idénticas en cada ciclo inflaba `notesChanged` y forzaba re-renders.
       const id = key.slice(5);
       const doc = { ...(item.data || {}) };
       if (!doc.profile_id) doc.profile_id = id;
       doc.updated_at = item.updated_at || doc.updated_at;
+      const localNotes = await ensureNotes();
+      const existing = localNotes.get(doc.profile_id);
+      if (existing && sameValue(noteComparable(existing), noteComparable(doc))) continue;
       try {
         await invoke("note_import", { doc });
         notesChanged++;
@@ -368,10 +423,19 @@ export async function applyMergedState(merged, ctx) {
     } else if (key.startsWith("cred:")) {
       // Metadatos del catálogo de credenciales: upsert por id sin tocar el
       // keyring. El valor real de master/secret llega aparte como `secret:*`.
+      // Igual que las notas: sin cambio real, ni import ni contador.
       const id = key.slice(5);
       const meta = { ...(item.data || {}) };
       if (!meta.id) meta.id = id;
       meta.updated_at = item.updated_at;
+      const localCreds = await ensureCreds();
+      const existing = localCreds.get(meta.id);
+      const existingNormalized = existing
+        ? { ...existing, value: existing.kind !== "var" ? null : existing.value }
+        : null;
+      if (existingNormalized && sameValue(credComparable(existingNormalized), credComparable(meta))) {
+        continue;
+      }
       try {
         await invoke("master_cred_import", { meta });
         credsChanged++;
@@ -414,8 +478,11 @@ export async function applyMergedState(merged, ctx) {
     } else if (key.startsWith("theme:")) {
       const id = key.slice(6);
       if (prefs.customThemes) {
+        const before = prefs.customThemes.length;
         prefs.customThemes = prefs.customThemes.filter((t) => t.id !== id);
-        themesChanged++;
+        // Los tombstones se re-procesan en CADA ciclo: contar solo cuando el
+        // tema aún existía localmente, o cada sync parecería traer cambios.
+        if (prefs.customThemes.length !== before) themesChanged++;
       }
     } else if (key.startsWith("shortcut:")) {
       const id = key.slice(9);
@@ -424,9 +491,15 @@ export async function applyMergedState(merged, ctx) {
         shortcutsChanged++;
       }
     } else if (key.startsWith("snippet:")) {
-      deleteLocalSnippet(key.slice(8));
+      const id = key.slice(8);
+      if (loadLocalSnippets().some((snippet) => snippet.id === id)) {
+        deleteLocalSnippet(id);
+        snippetsChanged++;
+      }
     } else if (key.startsWith("note:")) {
       const id = key.slice(5);
+      const localNotes = await ensureNotes();
+      if (!localNotes.has(id)) continue; // ya no existe: tombstone re-procesado
       try {
         await invoke("note_delete", { profileId: id });
         notesChanged++;
@@ -436,7 +509,11 @@ export async function applyMergedState(merged, ctx) {
     }
   }
 
-  return { addedProfiles, deletedProfiles, prefsChanged, themesChanged, shortcutsChanged, secretsChanged, credsChanged, notesChanged };
+  return {
+    addedProfiles, deletedProfiles, updatedProfiles, prefsChanged,
+    themesChanged, shortcutsChanged, snippetsChanged,
+    secretsChanged, credsChanged, notesChanged, prefsSkippedNewerLocal,
+  };
 }
 
 function stateHasSecrets(state) {
@@ -564,6 +641,19 @@ export async function runSync(ctx) {
   const webdavPassword =
     config.backend === "webdav" ? await getStoredWebDavPassword() : null;
 
+  // Estado local leído UNA vez y compartido entre la construcción del estado
+  // y la aplicación del merge (evita releer todas las notas/credenciales).
+  // La foto de `_prefsUpdatedAt` permite detectar en la aplicación si el
+  // usuario tocó las prefs mientras la sync estaba en vuelo.
+  const prefsSnapshotTs =
+    typeof ctx.prefs?._prefsUpdatedAt === "string" ? ctx.prefs._prefsUpdatedAt : "";
+  // Las notas se leen SIEMPRE (aunque el selectivo esté apagado): el merge
+  // puede traer items `note:` de otros equipos y la aplicación necesita el
+  // estado local para saltarse los idénticos.
+  const syncNotes = config.selective?.notes ?? true;
+  const notesDocs = await readAllNotes();
+  const credsCatalog = await readCredentialCatalog();
+
   const current = await buildSyncState({
     profiles: ctx.profiles,
     prefs: ctx.prefs,
@@ -574,10 +664,12 @@ export async function runSync(ctx) {
       themes: !!config.selective?.themes,
       shortcuts: !!config.selective?.shortcuts,
       snippets: !!config.selective?.snippets,
-      notes: config.selective?.notes ?? true,
+      notes: syncNotes,
       secrets: !!config.selective?.secrets,
     },
     snippets: loadLocalSnippets(),
+    notesDocs,
+    credsCatalog,
   });
 
   const merged = await invoke("sync_run", {
@@ -589,6 +681,9 @@ export async function runSync(ctx) {
   const summary = await applyMergedState(merged, {
     ...ctx,
     allowSecrets: !!config.selective?.secrets,
+    prefsSnapshotTs,
+    notesDocs,
+    credsCatalog,
   });
   return summary;
 }

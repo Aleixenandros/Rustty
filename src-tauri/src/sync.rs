@@ -20,8 +20,8 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -56,7 +56,10 @@ pub fn get_or_create_device_id(data_dir: &Path) -> String {
         }
     }
     let id = Uuid::new_v4().to_string();
-    let _ = std::fs::write(&path, &id);
+    // Atómica como el resto de ficheros de datos (invariante del proyecto):
+    // un corte a mitad no puede dejar un device_id vacío que cambie la
+    // identidad del equipo en el siguiente arranque.
+    let _ = crate::atomic_file::write(&path, id.as_bytes(), false);
     id
 }
 
@@ -198,10 +201,13 @@ pub struct SyncConfig {
     pub google_drive: GoogleDriveConfig,
     #[serde(default)]
     pub selective: SyncSelective,
-    /// Si true, el frontend sincroniza al detectar cambios y cada 5 minutos.
+    /// Si true, el frontend sincroniza al detectar cambios locales (debounce).
     #[serde(default = "default_auto_sync_enabled")]
     pub auto_sync_enabled: bool,
-    /// Campo legacy: 0 = manual; >0 = intervalo antiguo en segundos.
+    /// Intervalo del pull periódico en segundos, elegido por el usuario en
+    /// Preferencias (0 = desactivado). Reutiliza el antiguo campo legacy: las
+    /// configs guardadas por frontends antiguos traen 0 (sin pull periódico) y
+    /// las nuevas instalaciones parten de 300 s como default razonable.
     #[serde(default)]
     pub auto_interval_seconds: u64,
     /// Número de snapshots históricos a conservar antes de podar.
@@ -379,6 +385,63 @@ mod tests {
 
         let code = reader.await.unwrap().unwrap();
         assert_eq!(code, "el-code");
+    }
+
+    /// La caché del access token debe servir el token mientras viva (con
+    /// margen) y dejar de servirlo al expirar o al limpiarla. Una regresión
+    /// aquí reintroduce un refresh por operación (lento) o, peor, sirve
+    /// tokens caducados (todas las llamadas a Drive fallarían con 401).
+    #[test]
+    fn token_cache_respeta_expiracion_y_margen() {
+        let now = Instant::now();
+        let mut cache = TokenCache::default();
+        assert_eq!(cache.get(now), None);
+
+        cache.put("tok".into(), 3600, now);
+        assert_eq!(cache.get(now), Some("tok".into()));
+        // Aún válido justo antes del margen de seguridad (3600 - 61 s).
+        assert_eq!(
+            cache.get(now + Duration::from_secs(3600 - 61)),
+            Some("tok".into())
+        );
+        // Dentro del margen (a 59 s de expirar): se considera caducado.
+        assert_eq!(cache.get(now + Duration::from_secs(3600 - 59)), None);
+
+        cache.put("tok2".into(), 3600, now);
+        cache.clear();
+        assert_eq!(cache.get(now), None);
+    }
+
+    /// `oauth_begin` debe descartar los flujos pendientes ANTES de hacer bind:
+    /// un flujo abandonado retiene el listener del puerto fijo y bloqueaba el
+    /// siguiente intento de conexión durante todo el plazo del callback.
+    #[tokio::test]
+    async fn oauth_begin_descarta_flujos_pendientes_previos() {
+        let dir = std::env::temp_dir().join(format!("rustty-sync-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manager = SyncManager::new(dir.clone());
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        manager.pending_oauth.lock().unwrap().insert(
+            "flujo-abandonado".into(),
+            OAuthPending {
+                provider: OAuthProvider::GoogleDrive,
+                verifier: "v".into(),
+                state: "s".into(),
+                redirect_uri: "http://127.0.0.1:0/oauth/callback".into(),
+                listener,
+            },
+        );
+
+        // Puede fallar (sin client id configurado) o no: en ambos casos el
+        // flujo abandonado tiene que haber sido retirado del mapa.
+        let _ = manager.oauth_begin(OAuthProvider::GoogleDrive).await;
+        assert!(!manager
+            .pending_oauth
+            .lock()
+            .unwrap()
+            .contains_key("flujo-abandonado"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn sync_item(data: serde_json::Value, device_id: &str) -> SyncItem {
@@ -699,8 +762,19 @@ fn keyring_get_secret(key: &str) -> Result<Option<String>, AppError> {
             #[cfg(target_os = "linux")]
             {
                 // The Linux combo backend can read old keyutils-only entries;
-                // re-setting persists them into Secret Service as well.
-                let _ = entry.set_password(&value);
+                // re-setting persists them into Secret Service as well. Basta
+                // UNA vez por clave y arranque: hacerlo en cada lectura
+                // reescribía el Secret Service en cada operación de Drive.
+                use std::collections::HashSet;
+                static REPERSISTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+                let done = REPERSISTED.get_or_init(|| Mutex::new(HashSet::new()));
+                let first_read = done
+                    .lock()
+                    .map(|mut keys| keys.insert(key.to_string()))
+                    .unwrap_or(false);
+                if first_read {
+                    let _ = entry.set_password(&value);
+                }
             }
             Ok(Some(value))
         }
@@ -825,6 +899,8 @@ async fn respond_oauth(stream: &mut tokio::net::TcpStream, ok: bool) {
 struct TokenResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,
+    /// Segundos de vida del access token (Google: ~3600).
+    expires_in: Option<u64>,
     error: Option<String>,
     error_description: Option<String>,
 }
@@ -898,14 +974,15 @@ impl SyncBackend for LocalBackend {
                 .await
                 .map_err(|e| AppError::Sync(format!("crear directorio remoto local: {e}")))?;
         }
-        // Escritura atómica: tmp + rename
-        let tmp = self.path.with_extension("bin.tmp");
-        tokio::fs::write(&tmp, data)
+        // Fuente única de escritura atómica (temporal único + rename + fsync):
+        // el tmp+rename manual anterior no hacía fsync y usaba un nombre
+        // temporal fijo (colisión entre dos procesos escribiendo a la vez).
+        let path = self.path.clone();
+        let data = data.to_vec();
+        tokio::task::spawn_blocking(move || crate::atomic_file::write(&path, &data, false))
             .await
+            .map_err(|e| AppError::Sync(format!("escribir remoto local: {e}")))?
             .map_err(|e| AppError::Sync(format!("escribir remoto local: {e}")))?;
-        tokio::fs::rename(&tmp, &self.path)
-            .await
-            .map_err(|e| AppError::Sync(format!("rename remoto local: {e}")))?;
         Ok(())
     }
 
@@ -1053,10 +1130,7 @@ async fn prune_local_history(path: &Path, keep: usize) -> Result<(), AppError> {
 #[async_trait]
 impl SyncBackend for WebDavBackend {
     async fn read(&self) -> Result<Option<Vec<u8>>, AppError> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(20))
-            .build()
-            .map_err(|e| AppError::Sync(format!("webdav client: {e}")))?;
+        let client = http_client(20)?;
         let resp = client
             .get(&self.url)
             .basic_auth(&self.username, Some(&self.password))
@@ -1080,10 +1154,7 @@ impl SyncBackend for WebDavBackend {
     }
 
     async fn write(&self, data: &[u8]) -> Result<(), AppError> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| AppError::Sync(format!("webdav client: {e}")))?;
+        let client = http_client(30)?;
         // Asegura que el directorio padre exista (Nextcloud crea recursivo,
         // los WebDAV genéricos no — usamos MKCOL best-effort si falla con 409).
         let put = client
@@ -1139,10 +1210,7 @@ impl SyncBackend for WebDavBackend {
             urlencoding::encode(HISTORY_DIR),
             urlencoding::encode(&history_filename())
         );
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| AppError::Sync(format!("webdav client: {e}")))?;
+        let client = http_client(30)?;
         let _ = client
             .request(
                 reqwest::Method::from_bytes(b"MKCOL").unwrap(),
@@ -1309,17 +1377,88 @@ fn webdav_history_filenames(body: &str) -> Vec<String> {
     out
 }
 
+/// Cliente HTTP compartido de todo el módulo de sync. Construir un
+/// `reqwest::Client` por operación tiraba el pool de conexiones (TLS handshake
+/// nuevo en cada llamada a Drive/WebDAV); `Client` es un `Arc` por dentro y
+/// clonarlo es barato. El timeout fino por petición se ajusta con
+/// `RequestBuilder::timeout` donde haga falta.
 fn http_client(timeout_secs: u64) -> Result<reqwest::Client, AppError> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(timeout_secs))
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    let _ = timeout_secs; // el timeout de cliente es global; 30 s cubre todos los usos
+    if let Some(client) = CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let built = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|e| AppError::Sync(format!("http client: {e}")))
+        .map_err(|e| AppError::Sync(format!("http client: {e}")))?;
+    Ok(CLIENT.get_or_init(|| built).clone())
+}
+
+// ─── Caché del access token OAuth ────────────────────────────────────
+//
+// Google devuelve access tokens con ~1 h de vida; refrescarlo en CADA
+// operación (read, write, archive, list) convertía un `sync_run` en 3-4
+// round-trips extra al token endpoint. Se cachea en memoria de proceso con su
+// `expires_in` y un margen de seguridad.
+
+const TOKEN_EXPIRY_MARGIN: Duration = Duration::from_secs(60);
+
+#[derive(Default)]
+struct TokenCache {
+    token: Option<(String, Instant)>,
+}
+
+impl TokenCache {
+    /// Devuelve el token si sigue siendo válido en `now` (con margen).
+    fn get(&self, now: Instant) -> Option<String> {
+        match &self.token {
+            Some((token, expiry)) if now + TOKEN_EXPIRY_MARGIN < *expiry => Some(token.clone()),
+            _ => None,
+        }
+    }
+
+    fn put(&mut self, token: String, expires_in_secs: u64, now: Instant) {
+        self.token = Some((token, now + Duration::from_secs(expires_in_secs)));
+    }
+
+    fn clear(&mut self) {
+        self.token = None;
+    }
+}
+
+fn google_token_cache() -> &'static Mutex<TokenCache> {
+    static CACHE: OnceLock<Mutex<TokenCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(TokenCache::default()))
+}
+
+/// `file_id` de `rustty-sync.bin` en el appDataFolder de Drive. El id es
+/// estable mientras exista el fichero; relistarlo en cada read/write eran 1-2
+/// `files.list` de más por ciclo. Se invalida ante 404 y al (des)conectar.
+fn google_file_id_cache() -> &'static Mutex<Option<String>> {
+    static CACHE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn clear_google_caches() {
+    if let Ok(mut cache) = google_token_cache().lock() {
+        cache.clear();
+    }
+    if let Ok(mut cache) = google_file_id_cache().lock() {
+        *cache = None;
+    }
 }
 
 async fn refresh_oauth_access_token(
     provider: OAuthProvider,
     config: &SyncConfig,
 ) -> Result<String, AppError> {
+    // Caché en memoria: evita un round-trip al token endpoint por operación.
+    if let Ok(cache) = google_token_cache().lock() {
+        if let Some(token) = cache.get(Instant::now()) {
+            return Ok(token);
+        }
+    }
     let refresh_token = keyring_get_secret(&oauth_refresh_key(provider))?
         .ok_or_else(|| AppError::Sync("Proveedor cloud no conectado".into()))?;
     let client = http_client(20)?;
@@ -1349,7 +1488,26 @@ async fn refresh_oauth_access_token(
         .await
         .map_err(|e| AppError::Sync(format!("refresh OAuth json: {e}")))?;
     if let Some(access_token) = token.access_token {
+        if let Ok(mut cache) = google_token_cache().lock() {
+            cache.put(
+                access_token.clone(),
+                token.expires_in.unwrap_or(3600),
+                Instant::now(),
+            );
+        }
         Ok(access_token)
+    } else if token.error.as_deref() == Some("invalid_grant") {
+        // El usuario revocó el acceso (o el refresh token caducó): sin esto,
+        // cada sync fallaba para siempre con el error crudo del endpoint.
+        // Se limpia el token y se deja el proveedor como desconectado con un
+        // mensaje accionable.
+        let _ = keyring_delete_secret(&oauth_refresh_key(provider));
+        clear_google_caches();
+        Err(AppError::Sync(
+            "La autorización de Google Drive fue revocada o ha caducado. \
+             Vuelve a conectar la cuenta en Preferencias → Copias de seguridad."
+                .into(),
+        ))
     } else {
         Err(token_error(provider, &token))
     }
@@ -1369,6 +1527,11 @@ impl GoogleDriveBackend {
         client: &reqwest::Client,
         token: &str,
     ) -> Result<Option<String>, AppError> {
+        if let Ok(cache) = google_file_id_cache().lock() {
+            if let Some(id) = cache.as_ref() {
+                return Ok(Some(id.clone()));
+            }
+        }
         let q = format!(
             "name='{}' and 'appDataFolder' in parents and trashed=false",
             STATE_FILENAME
@@ -1394,13 +1557,17 @@ impl GoogleDriveBackend {
             .json()
             .await
             .map_err(|e| AppError::Sync(format!("google files.list json: {e}")))?;
-        Ok(value
+        let id = value
             .get("files")
             .and_then(|v| v.as_array())
             .and_then(|arr| arr.first())
             .and_then(|v| v.get("id"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()))
+            .map(|s| s.to_string());
+        if let (Some(id), Ok(mut cache)) = (id.as_ref(), google_file_id_cache().lock()) {
+            *cache = Some(id.clone());
+        }
+        Ok(id)
     }
 
     async fn upload_named(
@@ -1517,6 +1684,10 @@ impl SyncBackend for GoogleDriveBackend {
             .await
             .map_err(|e| AppError::Sync(format!("google download: {e}")))?;
         if resp.status() == StatusCode::NOT_FOUND {
+            // El fichero cacheado ya no existe (borrado desde otro equipo).
+            if let Ok(mut cache) = google_file_id_cache().lock() {
+                *cache = None;
+            }
             return Ok(None);
         }
         if !resp.status().is_success() {
@@ -1546,13 +1717,19 @@ impl SyncBackend for GoogleDriveBackend {
                 .send()
                 .await
                 .map_err(|e| AppError::Sync(format!("google update: {e}")))?;
-            if !resp.status().is_success() {
+            if resp.status() == StatusCode::NOT_FOUND {
+                // id cacheado obsoleto: invalidar y crear el fichero de cero.
+                if let Ok(mut cache) = google_file_id_cache().lock() {
+                    *cache = None;
+                }
+            } else if !resp.status().is_success() {
                 return Err(AppError::Sync(format!(
                     "google update status: {}",
                     resp.status()
                 )));
+            } else {
+                return Ok(());
             }
-            return Ok(());
         }
 
         self.upload_named(&client, &token, STATE_FILENAME, data)
@@ -1724,10 +1901,19 @@ impl SyncManager {
     }
 
     pub fn oauth_disconnect(&self, provider: OAuthProvider) -> Result<(), AppError> {
+        clear_google_caches();
         keyring_delete_secret(&oauth_refresh_key(provider))
     }
 
     pub async fn oauth_begin(&self, provider: OAuthProvider) -> Result<OAuthStartResult, AppError> {
+        // Descarta cualquier flujo anterior abandonado ANTES de hacer bind: cada
+        // `OAuthPending` retiene su `TcpListener` en el puerto fijo 53682, así
+        // que un flujo a medias (navegador cerrado sin autorizar) bloqueaba el
+        // siguiente intento con «No se pudo abrir el callback OAuth local»
+        // durante los 180 s del plazo.
+        if let Ok(mut pending) = self.pending_oauth.lock() {
+            pending.clear();
+        }
         let config = self.load_config();
         let client_id = match provider {
             OAuthProvider::GoogleDrive => configured_google_client_id(&config),
@@ -1825,6 +2011,8 @@ impl SyncManager {
         } else {
             return Err(token_missing_refresh_error(provider, &token));
         };
+        // Cuenta (re)conectada: invalida token/file_id de la sesión anterior.
+        clear_google_caches();
         keyring_set_secret(&oauth_refresh_key(provider), &refresh_token)?;
         Ok(OAuthFinishResult {
             provider: provider.key_part().to_string(),

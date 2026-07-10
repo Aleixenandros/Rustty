@@ -2567,6 +2567,21 @@
               </div>
 
               <div class="settings-row settings-row-inline">
+                <label for="sync-auto-interval" data-i18n="prefs_sync.auto_interval">Sincronización periódica</label>
+                <div class="settings-control">
+                  <select id="sync-auto-interval">
+                    <option value="0" data-i18n="prefs_sync.auto_interval_off">Desactivada</option>
+                    <option value="60">1 min</option>
+                    <option value="300">5 min</option>
+                    <option value="900">15 min</option>
+                    <option value="1800">30 min</option>
+                    <option value="3600">60 min</option>
+                  </select>
+                  <p class="form-hint" data-i18n="prefs_sync.auto_interval_hint">Busca cambios de otros equipos cada cierto tiempo mientras la app está abierta. Tú eliges el intervalo; si no hay cambios, no toca nada.</p>
+                </div>
+              </div>
+
+              <div class="settings-row settings-row-inline">
                 <label for="sync-history-keep" data-i18n="prefs_sync.history_keep">Copias históricas</label>
                 <div class="settings-control">
                   <input type="number" id="sync-history-keep" min="1" max="500" step="1" placeholder="30" />

@@ -1738,9 +1738,42 @@ let _syncConfigCache = null;
 let _syncSidebarState = "idle";
 let _syncSidebarTextKey = "prefs_sync.status_idle";
 let _syncProfileAutoTimer = null;
+let _syncAutoPullTimer = null;
 let _syncInFlight = false;
 let _syncPending = false;
 const SYNC_AUTO_DEBOUNCE_MS = 60_000;
+// Intervalos seleccionables del pull periódico (segundos; 0 = desactivado).
+const SYNC_PULL_INTERVALS = [0, 60, 300, 900, 1800, 3600];
+
+/**
+ * (Re)arma el pull periódico según la configuración vigente. El intervalo lo
+ * elige el usuario en Preferencias → Copias de seguridad (0 = desactivado);
+ * sin él, los cambios hechos en otro equipo no llegaban hasta reiniciar la
+ * app. `runSyncWithCurrentState` ya ignora ciclos con una sync en vuelo y no
+ * re-renderiza nada cuando el ciclo no trae cambios.
+ */
+function armSyncAutoPull() {
+  if (_syncAutoPullTimer) {
+    clearInterval(_syncAutoPullTimer);
+    _syncAutoPullTimer = null;
+  }
+  const secs = Math.max(0, parseInt(_syncConfigCache?.auto_interval_seconds, 10) || 0);
+  if (!_syncConfigCache?.enabled || _syncConfigCache.backend === "none" || secs === 0) return;
+  _syncAutoPullTimer = setInterval(() => {
+    runSyncWithCurrentState({ persistConfig: false, announce: false })
+      .catch((err) => console.debug("[sync] pull periódico", err));
+  }, Math.max(60, secs) * 1000);
+}
+
+/** Valor del select de intervalo: el configurado o el elegible más cercano. */
+function normalizedSyncPullInterval(rawSeconds) {
+  const secs = Math.max(0, parseInt(rawSeconds, 10) || 0);
+  if (SYNC_PULL_INTERVALS.includes(secs)) return secs;
+  if (secs === 0) return 0;
+  return SYNC_PULL_INTERVALS
+    .filter((v) => v > 0)
+    .reduce((best, v) => (Math.abs(v - secs) < Math.abs(best - secs) ? v : best), 300);
+}
 async function populateSyncTab() {
   const config = await sync.getConfig().catch(() => ({
     enabled: false, backend: "none",
@@ -1767,6 +1800,10 @@ async function populateSyncTab() {
   document.getElementById("sync-sel-secrets").checked   = config.selective?.secrets ?? false;
   document.getElementById("sync-history-keep").value =
     String(Math.max(1, parseInt(config.history_keep, 10) || DEFAULT_SYNC_HISTORY_KEEP));
+  const intervalEl = document.getElementById("sync-auto-interval");
+  if (intervalEl) {
+    intervalEl.value = String(normalizedSyncPullInterval(config.auto_interval_seconds));
+  }
 
   // Passphrase (no la mostramos en claro, solo placeholder distinto si ya existe)
   const passEl = document.getElementById("sync-passphrase");
@@ -1988,10 +2025,21 @@ async function persistSyncConfig() {
       1,
       parseInt(document.getElementById("sync-history-keep").value, 10) || DEFAULT_SYNC_HISTORY_KEEP
     ),
+    // Pull periódico: intervalo elegido por el usuario (0 = desactivado).
+    auto_interval_seconds: Math.max(
+      0,
+      parseInt(document.getElementById("sync-auto-interval")?.value, 10) || 0
+    ),
+    // Campos sin control en el formulario: preservarlos del config vigente
+    // para no resetearlos al guardar (p. ej. un client id propio de Drive).
+    auto_sync_enabled: _syncConfigCache?.auto_sync_enabled ?? true,
+    google_drive: _syncConfigCache?.google_drive
+      ?? { client_id: "", client_secret: "" },
     last_sync_at: syncLastSyncAt(),
   };
   await sync.saveConfig(config);
   _syncConfigCache = config;
+  armSyncAutoPull();
   // Passphrase + WebDAV pwd al keyring si el usuario rellenó algo nuevo
   const passVal = document.getElementById("sync-passphrase").value;
   if (passVal) await sync.setStoredPassphrase(passVal);
@@ -2080,24 +2128,41 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     const summary = await sync.runSync({
       profiles, prefs, deviceId: _syncDeviceIdCache,
     });
-    // Capturamos el estado de la sidebar AQUÍ, tras el merge, para preservar la
-    // navegación que el usuario haya hecho durante el sync (cambiar de workspace,
-    // abrir/cerrar carpetas). Si capturáramos antes de lanzar el sync, al
-    // restaurar revertiríamos al workspace/perfil que estaba activo al iniciarlo.
-    const sidebarTreeState = captureSidebarTreeState();
-    migrateLegacyFolderColors();
-    normalizeWorkspaceColors();
-    applySyncedUserFolders();
-    registerAllCustomThemes();
-    // Recargar perfiles del backend (puede haber añadidos/borrados)
-    profiles = await invoke("get_profiles");
-    ensureWorkspacesForProfiles();
-    await refreshNotesIndex();
-    restoreSidebarTreeState(sidebarTreeState);
-    renderConnectionList();
-    // Reaplica tema y prefs si cambiaron
-    applyTheme(prefs.theme);
-    applyPrefsToAllTerminals();
+    const total = summary.addedProfiles + summary.deletedProfiles
+      + (summary.updatedProfiles || 0)
+      + summary.themesChanged + summary.shortcutsChanged
+      + (summary.snippetsChanged || 0)
+      + (summary.secretsChanged || 0)
+      + (summary.credsChanged || 0)
+      + (summary.notesChanged || 0)
+      + (summary.prefsChanged ? 1 : 0);
+    // Sin cambios (el caso común del arranque y del pull periódico), la sync
+    // debe ser INVISIBLE: nada de recargar perfiles, re-renderizar la sidebar
+    // y el dashboard ni re-aplicar tema/prefs — eso tiraba el foco, cerraba
+    // menús y daba la sensación de «volver al estado inicial».
+    if (total > 0) {
+      // Capturamos el estado de la sidebar AQUÍ, tras el merge, para preservar la
+      // navegación que el usuario haya hecho durante el sync (cambiar de workspace,
+      // abrir/cerrar carpetas). Si capturáramos antes de lanzar el sync, al
+      // restaurar revertiríamos al workspace/perfil que estaba activo al iniciarlo.
+      const sidebarTreeState = captureSidebarTreeState();
+      migrateLegacyFolderColors();
+      normalizeWorkspaceColors();
+      applySyncedUserFolders();
+      registerAllCustomThemes();
+      // Recargar perfiles del backend (puede haber añadidos/borrados/actualizados)
+      profiles = await invoke("get_profiles");
+      ensureWorkspacesForProfiles();
+      await refreshNotesIndex();
+      restoreSidebarTreeState(sidebarTreeState);
+      renderConnectionList();
+      // Reaplica tema y prefs solo si de verdad cambiaron (evita el flash)
+      if (summary.prefsChanged || summary.themesChanged) {
+        applyTheme(prefs.theme);
+        applyPrefsToAllTerminals();
+      }
+      if (summary.credsChanged) renderCredList().catch(() => {});
+    }
     const lastSyncAt = new Date().toISOString();
     prefs._lastSyncAt = lastSyncAt;
     if (_syncConfigCache) _syncConfigCache.last_sync_at = lastSyncAt;
@@ -2105,27 +2170,29 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     document.getElementById("sync-last-time").textContent =
       new Date(lastSyncAt).toLocaleString();
     setSyncStatus("success", "prefs_sync.status_success");
-    if (summary.credsChanged) renderCredList().catch(() => {});
-    const total = summary.addedProfiles + summary.deletedProfiles
-      + summary.themesChanged + summary.shortcutsChanged
-      + (summary.secretsChanged || 0)
-      + (summary.credsChanged || 0)
-      + (summary.prefsChanged ? 1 : 0);
     if (announce) {
       toast(t("prefs_sync.done_sync").replace("{n}", total), "success", { category: "sync" });
     }
-    recordActivity({
-      kind: "sync",
-      status: "ok",
-      title: t("prefs_sync.done_sync").replace("{n}", total),
-      detail: new Date(lastSyncAt).toLocaleString(),
-      actionLabel: "Abrir",
-      action: () => {
-        prefsActiveTab = "data";
-        openSettingsModal();
-      },
-    });
-    refreshSyncSnapshots().catch(() => {});
+    // El centro de actividad solo registra syncs con cambios (o manuales):
+    // con el pull periódico, anotar cada ciclo vacío sería puro ruido.
+    if (total > 0 || announce) {
+      recordActivity({
+        kind: "sync",
+        status: "ok",
+        title: t("prefs_sync.done_sync").replace("{n}", total),
+        detail: new Date(lastSyncAt).toLocaleString(),
+        actionLabel: "Abrir",
+        action: () => {
+          prefsActiveTab = "data";
+          openSettingsModal();
+        },
+      });
+      refreshSyncSnapshots().catch(() => {});
+    }
+    // Si el usuario tocó las prefs mientras la sync volaba, el bundle mezclado
+    // no se aplicó (se conservó lo local): programar un push de seguimiento
+    // para que esa edición viaje al remoto en breve.
+    if (summary.prefsSkippedNewerLocal) scheduleProfileAutoSync();
     return summary;
   } catch (err) {
     setSyncStatus("error", "prefs_sync.status_error");
@@ -3152,6 +3219,7 @@ async function init() {
     runSyncWithCurrentState({ persistConfig: false, announce: false })
       .catch((e) => console.error("[sync] startup", e));
   }
+  armSyncAutoPull();
   if (prefs.checkUpdatesOnStartup !== false) {
     checkForUpdates({ interactive: false }).catch((e) => console.error("[updates] startup", e));
   }

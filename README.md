@@ -250,7 +250,7 @@ La sincronización es opt-in y cifra el estado antes de subirlo. Se sincronizan 
 
 Los exports JSON locales de conexiones/carpetas/workspaces preguntan antes de incluir secretos. Si eliges incluirlos, el JSON contiene credenciales legibles; usa preferiblemente el backup cifrado `.rustty-sync.bin` para transportar contraseñas.
 
-La sincronización comprueba el estado al iniciar la app y se dispara cuando detecta cambios locales (debounce de 1 minuto). Si el contenido lógico local y remoto ya coincide, no reescribe el blob remoto ni crea un snapshot nuevo. Antes de sobrescribir un blob remoto distinto se guarda un snapshot cifrado; desde el desplegable **Restaurar copia** puedes volver a cualquier snapshot anterior disponible en el backend.
+La sincronización comprueba el estado al iniciar la app, se dispara cuando detecta cambios locales (debounce de 1 minuto) y, si lo activas, también de forma **periódica con el intervalo que tú elijas** (1–60 min o desactivada, en Preferencias → Copias de seguridad) para recoger cambios de otros equipos sin reiniciar. Si el contenido lógico local y remoto ya coincide, no reescribe el blob remoto, no crea un snapshot nuevo y no toca la interfaz. Antes de sobrescribir un blob remoto distinto se guarda un snapshot cifrado; desde el desplegable **Restaurar copia** puedes volver a cualquier snapshot anterior disponible en el backend.
 
 Backends:
 
