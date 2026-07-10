@@ -9,7 +9,7 @@
 
 ## Características principales
 
-- **Multi-protocolo**: conexiones SSH, SFTP, FTP, FTPS, RDP, VNC y Telnet (RDP, VNC y Telnet mediante los clientes externos del sistema: `xfreerdp`/`mstsc`, `vncviewer`/TigerVNC y `telnet`).
+- **Multi-protocolo**: conexiones SSH, SFTP, FTP, FTPS, RDP, VNC y Telnet (RDP, VNC y Telnet mediante los clientes externos del sistema: `xfreerdp`/`mstsc`, `vncviewer`/TigerVNC y `telnet`). En Windows, RDP entra directo sin repetir la contraseña (credencial `TERMSRV` inyectada por la API del sistema y retirada al cerrar); en Linux, si el cliente RDP externo falla al arrancar, Rustty muestra el motivo real (p. ej. certificado del servidor cambiado).
 - **Terminal moderno**: xterm.js con renderizado por GPU (WebGL), temas, cursor configurable, scrollback, **búsqueda dentro del buffer** (Ctrl+F), **selección por doble clic** que corta en separadores de campo (`:`, `@`, `/`, `=`, `.`, `|`) para aislar trozos en salidas densas (`grep`, logs), cola de salida con drenado por lotes para que comandos muy verbosos (`cat` de logs grandes, `journalctl`, etc.) no congelen la interfaz, barra inferior con estado/latencia/diagnóstico, soporte de OSC 7 (seguimiento del `cwd` remoto) y **editor multilínea de comandos** (Ctrl+Shift+E) para redactar instrucciones largas con borrador por perfil y un **historial de comandos compartido entre pestañas** (opt-in) con **autocompletado** en ese mismo editor: al escribir filtra los comandos previos por coincidencia (primero por prefijo) y se navega con las flechas, aceptando con `Tab` o `Intro`.
 - **Snippets, comandos y paleta**: biblioteca de **snippets** insertables en el terminal activo y catálogo de **comandos locales** (ejecutar un comando, abrir una URL o una carpeta) configurables en Preferencias → Comandos, ambos con sustituciones `${host}/${user}/${var:…}/${ask:…}` y confirmación opcional. Una **paleta de comandos global** (`Ctrl+Shift+P`) ofrece búsqueda difusa sobre perfiles, snippets, comandos y acciones de la app. Además, **plantillas de perfil** integradas (Linux SSH, SSH con clave, bastión, SSH heredado, RDP, FTPS) para crear conexiones con valores por defecto, pudiendo marcar tus propios perfiles como plantilla.
 - **Notas Markdown por conexión (runbooks)**: clic derecho sobre una conexión para **añadir o editar una nota en Markdown**, con editor de previsualización en vivo, barra de formato, título y etiquetas. Cada nota se guarda como un archivo `.md` autocontenido (sincronizable, opt-in en Copias de seguridad), resuelve variables `${host}/${user}/…` en la vista y puede mostrarse como **panel runbook** junto a la sesión con casillas de tarea interactivas. Atajo `Ctrl+Shift+M`.
@@ -252,6 +252,8 @@ Los exports JSON locales de conexiones/carpetas/workspaces preguntan antes de in
 
 La sincronización comprueba el estado al iniciar la app, se dispara cuando detecta cambios locales (debounce de 1 minuto) y, si lo activas, también de forma **periódica con el intervalo que tú elijas** (1–60 min o desactivada, en Preferencias → Copias de seguridad) para recoger cambios de otros equipos sin reiniciar. Si el contenido lógico local y remoto ya coincide, no reescribe el blob remoto, no crea un snapshot nuevo y no toca la interfaz. Antes de sobrescribir un blob remoto distinto se guarda un snapshot cifrado; desde el desplegable **Restaurar copia** puedes volver a cualquier snapshot anterior disponible en el backend.
 
+Además: la **primera sincronización** contra un servidor ya poblado muestra una vista previa (qué se añadiría, cambiaría o borraría) y pide confirmación; un **registro de actividad** cuenta qué hizo cada pasada y desde qué equipo (cada equipo puede tener nombre propio); al **cerrar la app** con cambios pendientes se hace una sincronización final rápida (desactivable); los cortes de red se muestran como estado «sin conexión» con reintento automático; la passphrase tiene **medidor de fortaleza, generador local y un asistente de rotación** que re-cifra el estado remoto (y opcionalmente el histórico); y un botón permite **eliminar del servidor** el estado cifrado y todas las copias.
+
 Backends:
 
 - **Google Drive**: OAuth en navegador con callback local; Rustty usa el espacio `appDataFolder` y guarda el refresh token en el keyring.
@@ -372,7 +374,7 @@ RUSTTY_GOOGLE_DRIVE_CLIENT_SECRET
 
 Las contraseñas no se guardan en estos ficheros: viven en el keyring del sistema con el servicio `rustty`, o se resuelven desde una base KeePass referenciada por UUID. Si activas la sync de contraseñas, solo viajan dentro del blob cifrado E2E y se rehidratan de nuevo al keyring local.
 
-La configuración de sincronización vive en `sync_config.json` y el último snapshot local en `sync_state.json`. Los secretos de sync (passphrase maestra, contraseña WebDAV y token OAuth de Google Drive) se guardan en el keyring del sistema.
+La configuración de sincronización vive en `sync_config.json` y el último snapshot local en `sync_state.json` (que se limpia al desactivar la sincronización). Los secretos de sync (passphrase maestra, contraseña WebDAV y token OAuth y client secret de Google Drive) se guardan en el keyring del sistema.
 
 ---
 

@@ -9,7 +9,7 @@
 
 ## Key features
 
-- **Multi-protocol**: SSH, SFTP, FTP, FTPS, RDP, VNC and Telnet connections (RDP, VNC and Telnet via the system's external clients: `xfreerdp`/`mstsc`, `vncviewer`/TigerVNC and `telnet`).
+- **Multi-protocol**: SSH, SFTP, FTP, FTPS, RDP, VNC and Telnet connections (RDP, VNC and Telnet via the system's external clients: `xfreerdp`/`mstsc`, `vncviewer`/TigerVNC and `telnet`). On Windows, RDP connects directly without asking for the password twice (a `TERMSRV` credential is injected through the system API and removed on close); on Linux, if the external RDP client fails at startup, Rustty shows the real reason (e.g. a changed server certificate).
 - **Modern terminal**: xterm.js with GPU (WebGL) rendering, themes, configurable cursor, scrollback, **in-buffer search** (Ctrl+F), **double-click selection** that breaks on field separators (`:`, `@`, `/`, `=`, `.`, `|`) to isolate chunks in dense output (`grep`, logs), batched output draining so very chatty commands (`cat` on large logs, `journalctl`, etc.) do not freeze the UI, a bottom bar with status/latency/diagnostics, OSC 7 support (tracking the remote `cwd`) and a **multi-line command editor** (Ctrl+Shift+E) to compose long commands, with a per-profile draft and a **shared command history across tabs** (opt-in) with **autocomplete** in that same editor: as you type it filters previous commands by match (prefix first) and you navigate with the arrow keys, accepting with `Tab` or `Enter`.
 - **Snippets, commands and palette**: a library of **snippets** that insert into the active terminal and a catalog of **local commands** (run a command, open a URL or a folder), both configurable in Preferences → Commands with `${host}/${user}/${var:…}/${ask:…}` substitutions and optional confirmation. A **global command palette** (`Ctrl+Shift+P`) offers fuzzy search over profiles, snippets, commands and app actions. Plus built-in **profile templates** (Linux SSH, SSH with key, bastion, legacy SSH, RDP, FTPS) to create connections with sensible defaults, and you can mark your own profiles as templates.
 - **Markdown notes per connection (runbooks)**: right-click a connection to **add or edit a Markdown note**, with a live-preview editor, formatting toolbar, title and tags. Each note is stored as a self-contained `.md` file (syncable, opt-in in Backups), resolves `${host}/${user}/…` variables in the preview and can be shown as a **runbook panel** next to the session with interactive task checkboxes. Shortcut `Ctrl+Shift+M`.
@@ -252,6 +252,8 @@ The local JSON exports of connections/folders/workspaces ask before including se
 
 Synchronization checks the state when the app starts, is triggered when it detects local changes (1-minute debounce) and, if you enable it, also runs **periodically at the interval you choose** (1–60 min or disabled, in Preferences → Backups) to pick up changes from other machines without restarting. If the local and remote logical content already match, it does not rewrite the remote blob, does not create a new snapshot and leaves the UI untouched. Before overwriting a different remote blob, an encrypted snapshot is saved; from the **Restore backup** dropdown you can revert to any previous snapshot available in the backend.
 
+Also: the **first sync** against an already populated server shows a preview (what would be added, changed or deleted) and asks for confirmation; an **activity log** records what each pass did and from which machine (each machine can have its own name); **closing the app** with pending changes runs a quick final sync (can be disabled); network outages show as an "offline" state with automatic retry; the passphrase gets a **strength meter, a local generator and a rotation assistant** that re-encrypts the remote state (and optionally the history); and a button lets you **delete the encrypted state and all snapshots from the server**.
+
 Backends:
 
 - **Google Drive**: OAuth in the browser with a local callback; Rustty uses the `appDataFolder` space and stores the refresh token in the keyring.
@@ -372,7 +374,7 @@ RUSTTY_GOOGLE_DRIVE_CLIENT_SECRET
 
 Passwords are not stored in these files: they live in the system keyring under the `rustty` service, or are resolved from a KeePass database referenced by UUID. If you enable password sync, they only travel inside the E2E-encrypted blob and are rehydrated into the local keyring again.
 
-The synchronization configuration lives in `sync_config.json` and the last local snapshot in `sync_state.json`. The sync secrets (master passphrase, WebDAV password and Google Drive OAuth token) are stored in the system keyring.
+The synchronization configuration lives in `sync_config.json` and the last local snapshot in `sync_state.json` (cleared when synchronization is disabled). The sync secrets (master passphrase, WebDAV password, and the Google Drive OAuth token and client secret) are stored in the system keyring.
 
 ---
 
