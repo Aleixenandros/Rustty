@@ -69,6 +69,20 @@ rustty -c <nombre|id|ip|host> --tty --exec "sudo journalctl -u nginx -n 50"
 
 Por defecto, los comandos remotos se ejecutan sin PTY para que sean más predecibles en automatización.
 
+## Primera conexión a un servidor nuevo
+
+Al conectar por primera vez a un servidor cuya clave no conoce, Rustty muestra su huella y pide confirmación **también desde el CLI**, por la propia terminal:
+
+```text
+La autenticidad del host servidor.example:22 no se puede establecer.
+Huella de la clave ssh-ed25519: SHA256:abc…
+¿Confiar en este host y guardar su clave? (sí/no):
+```
+
+Una vez aceptada, la clave se guarda y no se vuelve a preguntar por ese servidor.
+
+Si el comando corre **sin terminal interactiva** (dentro de un script, un cron o una tubería), no hay a quién preguntar: la conexión **se rechaza** con un aviso, en lugar de aprender la clave a ciegas. Para esos casos, conecta una vez desde la interfaz gráfica (o desde una terminal real) para aprobar la huella, o desactiva **Confirmar la huella en la primera conexión** en Preferencias → Seguridad si prefieres el comportamiento automático de siempre.
+
 ## Limitaciones
 
 - Solo funciona con perfiles SSH guardados.
