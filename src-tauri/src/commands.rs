@@ -2038,7 +2038,7 @@ pub fn session_logs_prune(
     }
 
     // Más antiguos primero.
-    files.sort_by(|a, b| a.modified.cmp(&b.modified));
+    files.sort_by_key(|f| f.modified);
 
     // 1) Poda por edad.
     if let Some(days) = max_age_days {
