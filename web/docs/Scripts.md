@@ -78,6 +78,16 @@ Rustty permite generar scripts de forma interactiva a partir de las acciones rea
   - Pulsa **Descartar** para detener la grabación y borrar todos los pasos acumulados.
   - Si la pestaña de la sesión SSH que estás grabando se cierra o se desconecta, la grabación se detiene y se abre el editor con los pasos acumulados de manera automática para evitar pérdidas de progreso.
 
+### Exportar e importar como runbook Markdown
+
+**Exportar** genera un fichero Markdown legible —un *runbook*— con el nombre, la descripción, el objetivo y los pasos del script. Sirve tanto de documentación como de formato de intercambio: **Importar Markdown…** lo reconstruye en otro equipo. No viajan ni ids ni secretos (los pasos de contraseña conservan solo la referencia al keyring o el UUID de KeePass).
+
+El fichero se puede editar a mano. Sus etiquetas estructurales (`**Target:**`, `## Steps`, `recursive=yes`, `timeout=5000ms pattern=…`) son **independientes del idioma de la aplicación**: así un runbook exportado en un equipo en alemán se lee igual en uno en español. Lo que escribes tú —nombre, descripción y comandos— nunca se traduce.
+
+> Los runbooks exportados con versiones anteriores (etiquetas en castellano: `**Objetivo:**`, `## Pasos`, `recursivo sí`) **se siguen importando sin cambios**. Al exportarlos de nuevo se guardan con el formato actual.
+
+Si al importar hay líneas que Rustty no reconoce (un paso con una errata, un número de lista perdido…), **te lo dice antes de guardar**: enumera las líneas afectadas con su número y te deja elegir entre corregir el fichero o importar el script aun sabiendo que quedará incompleto. Nunca se descartan pasos en silencio.
+
 ### Seguridad de los scripts
 
 - Los scripts se guardan en `scripts.json`, en el directorio de datos, y **nunca contienen contraseñas**: los pasos de contraseña guardan solo la referencia al keyring o el UUID de KeePass.

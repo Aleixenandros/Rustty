@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::atomic_file;
 use crate::error::AppError;
 use crate::profiles::ConnectionProfile;
 use crate::subst::{InternalVar, Resolver, SubstContext};
@@ -140,11 +141,18 @@ impl CredentialStore {
     }
 
     /// Carga todos los metadatos del disco. Lista vacía si el fichero no existe.
+    ///
+    /// Igual que `profiles.json`, el store se **recupera** si está dañado
+    /// (cuarentena + última copia válida): un catálogo de credenciales que no
+    /// parsea dejaría a los perfiles que lo referencian sin poder autenticarse.
     pub fn load_all(&self) -> Result<Vec<CredentialMeta>, AppError> {
-        if !self.credentials_path.exists() {
+        let (data, _recovery) =
+            atomic_file::read_or_recover(&self.credentials_path, true, |text| {
+                serde_json::from_str::<Vec<CredentialMeta>>(text).is_ok()
+            })?;
+        let Some(data) = data else {
             return Ok(vec![]);
-        }
-        let data = fs::read_to_string(&self.credentials_path)?;
+        };
         let creds: Vec<CredentialMeta> = serde_json::from_str(&data)?;
         Ok(creds)
     }

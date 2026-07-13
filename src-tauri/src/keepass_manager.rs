@@ -6,6 +6,7 @@ use keepass::{Database, DatabaseKey};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+use crate::locks::MutexExt;
 
 static UNLOCKED: Mutex<Option<UnlockedDb>> = Mutex::new(None);
 
@@ -78,7 +79,7 @@ pub fn unlock(
 
     let db = Database::open(&mut file, key).map_err(|e| AppError::Auth(e.to_string()))?;
 
-    *UNLOCKED.lock().unwrap() = Some(UnlockedDb {
+    *UNLOCKED.lock_recover() = Some(UnlockedDb {
         db,
         path: path.to_string(),
     });
@@ -86,11 +87,11 @@ pub fn unlock(
 }
 
 pub fn lock() {
-    *UNLOCKED.lock().unwrap() = None;
+    *UNLOCKED.lock_recover() = None;
 }
 
 pub fn status() -> KeepassStatus {
-    let guard = UNLOCKED.lock().unwrap();
+    let guard = UNLOCKED.lock_recover();
     match &*guard {
         Some(u) => KeepassStatus {
             unlocked: true,
@@ -104,7 +105,7 @@ pub fn status() -> KeepassStatus {
 }
 
 pub fn list_entries() -> Result<Vec<EntrySummary>, AppError> {
-    let guard = UNLOCKED.lock().unwrap();
+    let guard = UNLOCKED.lock_recover();
     let u = guard
         .as_ref()
         .ok_or_else(|| AppError::Auth("KeePass no desbloqueada".into()))?;
@@ -121,7 +122,7 @@ pub fn list_entries() -> Result<Vec<EntrySummary>, AppError> {
 /// Devuelve el valor de la propiedad solicitada para la entrada `entry_uuid`.
 /// `None` si no existe la entrada o si la propiedad no tiene valor.
 pub fn get_property(entry_uuid: &str, property: EntryProperty) -> Result<Option<String>, AppError> {
-    let guard = UNLOCKED.lock().unwrap();
+    let guard = UNLOCKED.lock_recover();
     let u = guard
         .as_ref()
         .ok_or_else(|| AppError::Auth("KeePass no desbloqueada".into()))?;

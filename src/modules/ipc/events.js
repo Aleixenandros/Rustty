@@ -65,7 +65,27 @@ export const EVENT_PREFIX = Object.freeze({
 export const EVENT = Object.freeze({
   /** `tray-action` → {@link TrayAction} */
   trayAction: "tray-action",
+  /**
+   * `ssh-hostkey-prompt` → {@link HostKeyPromptEvent}
+   *
+   * Global y no por sesión: la política de primera conexión es global (una
+   * preferencia) y el handler TOFU del backend no conoce el `sessionId`. La
+   * respuesta vuelve por el comando `ssh_hostkey_response` con el `promptId`.
+   */
+  hostKeyPrompt: "ssh-hostkey-prompt",
 });
+
+/**
+ * Payload de `ssh-hostkey-prompt`: el servidor presenta una host key desconocida
+ * y el modo estricto exige confirmarla antes de aprenderla.
+ * @typedef {object} HostKeyPromptEvent
+ * @property {string} promptId Identificador con el que responder.
+ * @property {string} host
+ * @property {number} port
+ * @property {string} fingerprint Huella SHA256 de la clave presentada.
+ * @property {string} keyType Algoritmo (`ssh-ed25519`, `rsa-sha2-512`…).
+ * @property {boolean} viaJump `true` si la clave es de un bastión ProxyJump.
+ */
 
 /**
  * Nombre completo de un evento por sesión/transferencia: `prefijo + sufijo`.

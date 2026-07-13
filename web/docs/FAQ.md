@@ -99,3 +99,19 @@ Hasta la 1.2.x el camino SFTP era serie con buffer de 64 KiB, así que el techo 
 ## ¿Por qué la sidebar cambia sola al moverme entre pestañas?
 
 Es intencional: cuando activas una pestaña asociada a un perfil, Rustty abre su workspace/carpeta en la sidebar y marca esa conexión. Así puedes ubicar rápidamente qué perfil corresponde a la sesión activa.
+
+## ¿Por qué ahora me pide confirmar la huella al conectar a un servidor nuevo?
+
+Porque el aviso de "la clave del servidor ha cambiado" solo te protege *después* de haber aprendido la clave buena. Si alguien se interpone ya en esa primera conexión, su clave sería la que Rustty recordara como legítima y ninguna alarma saltaría nunca. Comprueba la huella con el administrador del servidor por un canal de confianza y acéptala una vez; a partir de ahí no se te vuelve a preguntar por ese servidor. Si prefieres el comportamiento anterior, desactiva **Confirmar la huella en la primera conexión** en Preferencias → Seguridad.
+
+## He abierto Rustty otra vez y me ha traído la ventana que ya tenía. ¿Es un fallo?
+
+No, es deliberado. Dos ventanas de Rustty trabajando sobre el mismo fichero de conexiones pueden pisarse los cambios entre ellas, así que al relanzar la app se te devuelve la ventana existente. La línea de comandos (`rustty -c perfil`) sigue funcionando con la app abierta.
+
+## ¿Qué pasa si el fichero de conexiones se corrompe?
+
+Rustty guarda siempre una copia de la última versión válida. Si al arrancar el fichero no se puede leer (un corte de luz a mitad de un guardado, por ejemplo), lo aparta con el nombre `profiles.json.corrupt-<fecha>`, **restaura la copia buena** y te avisa. El fichero dañado nunca se borra, por si quisieras rescatar algo de él a mano. Si no hubiera copia previa, te lo dice explícitamente para que no guardes cambios encima hasta decidir qué hacer.
+
+## Cierro el portátil y al abrirlo mis sesiones parecen conectadas pero no responden
+
+Es lo que pasaba antes: la conexión moría mientras el equipo dormía y nadie se enteraba. Ahora Rustty nota que ha estado suspendido, comprueba las sesiones abiertas y te avisa de las que ya no responden. En Preferencias → Seguridad puedes pedirle además que **reconecte** las caídas (lo hace de forma escalonada, para no saturar el servidor) o que no haga nada.

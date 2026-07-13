@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+
 pub mod runner;
 pub mod store;
 pub mod types;
@@ -190,6 +191,7 @@ impl ScriptManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::locks::MutexExt;
     use crate::scripts::types::{Step, TargetSpec};
 
     fn manager() -> (ScriptManager, PathBuf) {
@@ -298,7 +300,7 @@ mod tests {
 
         // Abortar un host concreto solo marca su flag.
         mgr.abort("run1", Some("p1"));
-        let flags = handle.host_cancels.lock().unwrap();
+        let flags = handle.host_cancels.lock_recover();
         assert!(flags.get("p1").unwrap().load(Ordering::Relaxed));
         assert!(!flags.get("p2").unwrap().load(Ordering::Relaxed));
         drop(flags);
@@ -306,7 +308,7 @@ mod tests {
         // Abortar el run completo marca todo.
         mgr.abort("run1", None);
         assert!(handle.cancel_run.load(Ordering::Relaxed));
-        let flags = handle.host_cancels.lock().unwrap();
+        let flags = handle.host_cancels.lock_recover();
         assert!(flags.get("p2").unwrap().load(Ordering::Relaxed));
     }
 }

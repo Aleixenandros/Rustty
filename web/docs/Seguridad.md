@@ -89,7 +89,17 @@ La auto-actualización (Windows, macOS y AppImage de Linux) está **firmada crip
 
 ## Verificación de host SSH
 
-Rustty usa verificación de `known_hosts` con modelo TOFU: la primera huella conocida de un servidor se recuerda, y si más adelante cambia, la app rechaza la conexión y muestra un aviso explícito ("Host key cambiada") con el fingerprint anterior y el recibido, además de la línea de `~/.ssh/known_hosts` a limpiar. Un cambio inesperado puede indicar una reinstalación legítima del servidor o un ataque de intermediario.
+### La primera conexión: confirmar la huella
+
+Cuando te conectas por primera vez a un servidor, Rustty te muestra la **huella SHA256** de su clave y te pide que la confirmes antes de guardarla. Compruébala con el administrador del servidor por un canal en el que confíes (no por la propia conexión que estás abriendo). Si aceptas, la clave se recuerda y a partir de ahí se te avisará si cambia.
+
+Este paso importa: el aviso de "host key cambiada" solo protege *después* de haber aprendido la clave buena. Si alguien se interpone ya en esa primera conexión, su clave sería la que Rustty aprendiera como legítima, y ninguna alarma saltaría nunca.
+
+Si prefieres el comportamiento clásico —aceptar y recordar la primera clave automáticamente, sin preguntar (TOFU)—, desactiva **Confirmar la huella en la primera conexión** en Preferencias → Seguridad. Es más cómodo, pero renuncias a esa comprobación.
+
+### Cuando la clave cambia
+
+Si la huella de un servidor conocido cambia más adelante, la app **rechaza la conexión** y muestra un aviso explícito ("Host key cambiada") con el fingerprint anterior y el recibido, además de la línea de `~/.ssh/known_hosts` a limpiar. Un cambio inesperado puede indicar una reinstalación legítima del servidor o un ataque de intermediario.
 
 La verificación se aplica también cuando el servidor **cambia de algoritmo de host key** (por ejemplo `ssh-rsa` → `ssh-ed25519`): Rustty compara la clave recibida con todas las entradas previas del host, no solo con las del mismo algoritmo, así rotaciones de tipo de clave no se aprenden en silencio.
 

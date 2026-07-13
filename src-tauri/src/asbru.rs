@@ -75,6 +75,169 @@ fn val_str(env: &serde_yaml_ng::Value, key: &str) -> Option<String> {
 /// a apuntar la app a un fichero gigante y congelar el proceso al parsearlo.
 const ASBRU_READ_LIMIT: u64 = 8 * 1024 * 1024;
 
+/// Anclas distintas admitidas en el YAML. Un export real de Ásbrú no usa ninguna.
+const MAX_ANCHORS: usize = 512;
+/// Apariciones de alias admitidas en el YAML.
+const MAX_ALIASES: usize = 4096;
+/// Nodos que puede llegar a materializar la expansión de alias (estimado).
+const MAX_EXPANDED_NODES: u64 = 100_000;
+/// Entradas del mapa `environments` (conexiones + grupos).
+const MAX_NODES: usize = 20_000;
+/// Profundidad de anidamiento de grupos. `build` es recursivo: sin tope, una
+/// cadena larga de grupos padre→hijo desborda la pila.
+const MAX_DEPTH: usize = 64;
+
+/// Token de anclaje YAML relevante para el presupuesto de expansión.
+enum Tok {
+    Anchor(String),
+    Alias(String),
+}
+
+fn is_name_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'-' || b == b'_'
+}
+
+/// Extrae del texto YAML las anclas (`&nombre`) y los alias (`*nombre`), en
+/// orden de aparición, ignorando comentarios y contenido entrecomillado.
+///
+/// Es un escáner léxico deliberadamente tosco: solo reconoce `&`/`*` en
+/// posición de indicador (inicio de línea o tras un separador). Al usarse para
+/// *acotar*, errar por exceso solo sobreestima el coste; lo que no puede es
+/// pasar por alto una bomba, y una bomba necesita anclas y alias reales.
+fn scan_anchor_tokens(text: &str) -> Vec<Tok> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let bytes = line.as_bytes();
+        let mut i = 0usize;
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut at_boundary = true;
+        while i < bytes.len() {
+            let c = bytes[i];
+            if in_single {
+                if c == b'\'' {
+                    in_single = false;
+                }
+                i += 1;
+                at_boundary = false;
+                continue;
+            }
+            if in_double {
+                if c == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if c == b'"' {
+                    in_double = false;
+                }
+                i += 1;
+                at_boundary = false;
+                continue;
+            }
+            match c {
+                b'#' if at_boundary => break, // comentario hasta fin de línea
+                b'&' | b'*' if at_boundary => {
+                    let start = i + 1;
+                    let mut j = start;
+                    while j < bytes.len() && is_name_byte(bytes[j]) {
+                        j += 1;
+                    }
+                    if j > start {
+                        let name = line[start..j].to_string();
+                        out.push(if c == b'&' {
+                            Tok::Anchor(name)
+                        } else {
+                            Tok::Alias(name)
+                        });
+                        i = j;
+                    } else {
+                        i += 1;
+                    }
+                    at_boundary = false;
+                }
+                b'\'' => {
+                    in_single = true;
+                    i += 1;
+                    at_boundary = false;
+                }
+                b'"' => {
+                    in_double = true;
+                    i += 1;
+                    at_boundary = false;
+                }
+                b' ' | b'\t' | b',' | b'[' | b'{' | b'-' | b':' => {
+                    i += 1;
+                    at_boundary = true;
+                }
+                _ => {
+                    i += 1;
+                    at_boundary = false;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Acota el coste de expandir los alias del YAML **antes** de parsearlo.
+///
+/// La cuota de tamaño (`ASBRU_READ_LIMIT`) no protege de una bomba de alias
+/// («billion laughs»): unos cientos de bytes con nueve anclas que se referencian
+/// nueve veces cada una expanden a 9⁹ nodos *dentro* de `from_str`, cuando ya es
+/// tarde para contar nada. Aquí se estima el coste sin construir el documento:
+/// cada ancla pesa 1 + el peso de los alias que la siguen (hasta la siguiente
+/// ancla), y se rechaza el fichero si algún peso —o el del documento— se dispara.
+fn check_alias_budget(text: &str) -> Result<(), String> {
+    let mut weights: HashMap<String, u64> = HashMap::new();
+    // Ancla que se está definiendo: los alias que la siguen suman a su peso.
+    let mut current: Option<(String, u64)> = None;
+    let mut anchors = 0usize;
+    let mut aliases = 0usize;
+    // Peso del documento (nodos sueltos) y el mayor de los pesos vistos.
+    let mut document: u64 = 1;
+    let mut worst: u64 = 1;
+
+    let close = |cur: Option<(String, u64)>, weights: &mut HashMap<String, u64>, worst: &mut u64| {
+        if let Some((name, w)) = cur {
+            *worst = (*worst).max(w);
+            weights.insert(name, w);
+        }
+    };
+
+    for tok in scan_anchor_tokens(text) {
+        match tok {
+            Tok::Anchor(name) => {
+                anchors += 1;
+                if anchors > MAX_ANCHORS {
+                    return Err("yaml_bomb".to_string());
+                }
+                close(current.take(), &mut weights, &mut worst);
+                current = Some((name, 1));
+            }
+            Tok::Alias(name) => {
+                aliases += 1;
+                if aliases > MAX_ALIASES {
+                    return Err("yaml_bomb".to_string());
+                }
+                // Un alias sin ancla previa no expande nada (YAML no admite
+                // referencias hacia adelante): cuenta como un nodo.
+                let w = weights.get(&name).copied().unwrap_or(1);
+                match current.as_mut() {
+                    Some((_, acc)) => *acc = acc.saturating_add(w),
+                    None => document = document.saturating_add(w),
+                }
+            }
+        }
+    }
+    close(current.take(), &mut weights, &mut worst);
+    worst = worst.max(document);
+
+    if worst > MAX_EXPANDED_NODES {
+        return Err("yaml_bomb".to_string());
+    }
+    Ok(())
+}
+
 /// Parsea el export YAML de Ásbrú y devuelve el árbol normalizado de nodos raíz.
 #[tauri::command]
 pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
@@ -82,6 +245,7 @@ pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
     // para que el frontend los traduzca; ver `import_wizard.err_*` en i18n.js.
     let text = crate::commands::read_text_capped(std::path::Path::new(&path), ASBRU_READ_LIMIT)
         .map_err(|e| format!("read|{e}"))?;
+    check_alias_budget(&text)?;
     let doc: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&text).map_err(|e| format!("yaml|{e}"))?;
 
@@ -89,6 +253,10 @@ pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
         .get("environments")
         .and_then(|v| v.as_mapping())
         .ok_or_else(|| "not_asbru".to_string())?;
+
+    if envs.len() > MAX_NODES {
+        return Err(format!("too_many|{MAX_NODES}"));
+    }
 
     // Indexa nodos por UUID y agrupa hijos por padre, preservando el orden de
     // aparición (Ásbrú no garantiza orden, pero así es estable).
@@ -116,7 +284,13 @@ pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
         uuid: &str,
         nodes: &HashMap<String, serde_yaml_ng::Value>,
         by_parent: &HashMap<String, Vec<String>>,
+        depth: usize,
+        too_deep: &mut bool,
     ) -> Option<AsbruNode> {
+        if depth > MAX_DEPTH {
+            *too_deep = true;
+            return None;
+        }
         let env = nodes.get(uuid)?;
         let is_group = env.get("_is_group").and_then(|v| v.as_i64()).unwrap_or(0) == 1;
         let name = val_str(env, "name").unwrap_or_else(|| "(sin nombre)".to_string());
@@ -126,7 +300,7 @@ pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
                 .get(uuid)
                 .map(|kids| {
                     kids.iter()
-                        .filter_map(|k| build(k, nodes, by_parent))
+                        .filter_map(|k| build(k, nodes, by_parent, depth + 1, too_deep))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -166,10 +340,16 @@ pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
         })
     }
 
+    // La poda por profundidad no se hace en silencio: si el árbol excede el
+    // tope, el import falla en vez de importar un catálogo incompleto.
+    let mut too_deep = false;
     let tree: Vec<AsbruNode> = roots
         .iter()
-        .filter_map(|r| build(r, &nodes, &by_parent))
+        .filter_map(|r| build(r, &nodes, &by_parent, 0, &mut too_deep))
         .collect();
+    if too_deep {
+        return Err(format!("too_deep|{MAX_DEPTH}"));
+    }
     Ok(tree)
 }
 
@@ -250,5 +430,79 @@ mod tests {
             "53616c7465645f5f4e61bc0000000000d761fb328fd62b3acd6c43dd4b160708655044057b636f78";
         let pt = asbru_decrypt(blob.to_string()).unwrap();
         assert_eq!(pt, "<password|/Fujitsu/AD>");
+    }
+
+    /// Escribe un YAML temporal y lo pasa por `parse_asbru`.
+    fn parse_yaml(tag: &str, yaml: &str) -> Result<Vec<AsbruNode>, String> {
+        let dir = std::env::temp_dir().join(format!("rustty-asbru-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("crea dir temporal de test");
+        let path = dir.join("asbru.yml");
+        std::fs::write(&path, yaml).expect("escribe el yaml");
+        let res = parse_asbru(path.to_string_lossy().into_owned());
+        let _ = std::fs::remove_dir_all(&dir);
+        res
+    }
+
+    #[test]
+    fn rechaza_bomba_de_alias_antes_de_parsear() {
+        // «Billion laughs»: 9 anclas encadenadas, cada una con 9 alias de la
+        // anterior. Ocupa menos de 1 KiB pero expande a 9⁹ nodos.
+        let mut yaml = String::from("a: &a [x, x, x, x, x, x, x, x, x]\n");
+        let names = ["b", "c", "d", "e", "f", "g", "h", "i"];
+        let mut prev = "a";
+        for n in names {
+            yaml.push_str(&format!(
+                "{n}: &{n} [*{prev}, *{prev}, *{prev}, *{prev}, *{prev}, *{prev}, *{prev}, *{prev}, *{prev}]\n"
+            ));
+            prev = n;
+        }
+        yaml.push_str("environments: *i\n");
+        assert_eq!(check_alias_budget(&yaml), Err("yaml_bomb".to_string()));
+        assert_eq!(
+            parse_yaml("bomb", &yaml).err().as_deref(),
+            Some("yaml_bomb")
+        );
+    }
+
+    #[test]
+    fn admite_alias_legitimos_y_texto_con_asteriscos() {
+        // Un alias suelto (referencia compartida) no es una bomba, y ni `*` ni
+        // `&` dentro de un valor son indicadores YAML.
+        let yaml = "\
+defaults: &def
+  user: root
+environments:
+  uuid-1:
+    name: web
+    method: SSH
+    ip: 10.0.0.1
+    description: 'ls *.log && echo *ok*'
+    <<: *def
+";
+        assert_eq!(check_alias_budget(yaml), Ok(()));
+        let tree = parse_yaml("ok", yaml).expect("parsea");
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].name, "web");
+    }
+
+    #[test]
+    fn rechaza_un_arbol_de_grupos_mas_profundo_que_el_tope() {
+        // Cadena de MAX_DEPTH + 2 grupos anidados: sin tope, `build` recursivo
+        // desborda la pila con una cadena larga.
+        let mut yaml = String::from("environments:\n");
+        for i in 0..=(MAX_DEPTH + 1) {
+            let parent = if i == 0 {
+                "__PAC__ROOT__".to_string()
+            } else {
+                format!("g{}", i - 1)
+            };
+            yaml.push_str(&format!(
+                "  g{i}:\n    name: grupo{i}\n    _is_group: 1\n    parent: {parent}\n"
+            ));
+        }
+        assert_eq!(
+            parse_yaml("deep", &yaml).err(),
+            Some(format!("too_deep|{MAX_DEPTH}"))
+        );
     }
 }

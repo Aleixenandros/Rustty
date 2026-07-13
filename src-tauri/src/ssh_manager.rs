@@ -245,6 +245,23 @@ struct SessionHandle {
 
 // ─── Estado global gestionado por Tauri ─────────────────────────────────────
 
+/// Todo lo que define una sesión SSH desde que se pide hasta que muere.
+///
+/// Estos seis valores viajaban sueltos por `connect` → `run_session_with_reconnect`
+/// → `run_session` (que por eso rebasaban el límite de argumentos de clippy) y se
+/// re-clonaban uno a uno en cada reintento de reconexión. Agrupados, el bucle de
+/// reconexión clona **una** cosa y no puede olvidarse de ninguno.
+#[derive(Clone)]
+pub struct SessionSpec {
+    pub session_id: String,
+    pub profile: ConnectionProfile,
+    pub password: Option<String>,
+    pub passphrase: Option<String>,
+    pub app_handle: AppHandle,
+    /// Canal binario del caudal del terminal (lo crea el frontend antes del invoke).
+    pub on_data: Channel<Response>,
+}
+
 pub struct SshManager {
     sessions: Mutex<HashMap<String, SessionHandle>>,
 }
@@ -265,21 +282,13 @@ impl SshManager {
     ///   - `ssh-error-{id}`     : error de conexión/autenticación
     ///   - `ssh-reconnecting-{id}` : intentando reconectar (payload: número de intento)
     ///   - `ssh-closed-{id}`    : sesión terminada
-    pub fn connect(
-        &self,
-        session_id: String,
-        profile: ConnectionProfile,
-        password: Option<String>,
-        passphrase: Option<String>,
-        app_handle: AppHandle,
-        on_data: Channel<Response>,
-        default_log_dir: PathBuf,
-    ) -> Result<(), AppError> {
+    pub fn connect(&self, spec: SessionSpec, default_log_dir: PathBuf) -> Result<(), AppError> {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
         let worker_cmd_tx = cmd_tx.clone();
 
-        let sid = session_id.clone();
-        let ah = app_handle.clone();
+        let session_id = spec.session_id.clone();
+        let sid = spec.session_id.clone();
+        let ah = spec.app_handle.clone();
 
         thread::spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread()
@@ -297,14 +306,9 @@ impl SshManager {
                 }
             };
             rt.block_on(run_session_with_reconnect(
-                sid.clone(),
-                profile,
-                password,
-                passphrase,
+                spec,
                 cmd_rx,
                 worker_cmd_tx,
-                ah.clone(),
-                on_data,
                 default_log_dir,
             ));
             let _ = ah.emit(&event_name(EventKind::SshClosed, &sid), "");
@@ -464,16 +468,19 @@ impl ActiveTunnel {
 }
 
 async fn run_session_with_reconnect(
-    session_id: String,
-    profile: ConnectionProfile,
-    password: Option<String>,
-    passphrase: Option<String>,
+    spec: SessionSpec,
     mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
-    app_handle: AppHandle,
-    on_data: Channel<Response>,
     default_log_dir: PathBuf,
 ) {
+    let SessionSpec {
+        session_id,
+        profile,
+        password,
+        passphrase,
+        app_handle,
+        ..
+    } = spec.clone();
     let max_attempts = profile.auto_reconnect.unwrap_or(0);
     let mut attempt: u32 = 0;
     let log_path = if profile.session_log {
@@ -503,14 +510,9 @@ async fn run_session_with_reconnect(
 
     loop {
         let exit = run_session(
-            session_id.clone(),
-            profile.clone(),
-            password.clone(),
-            passphrase.clone(),
+            spec.clone(),
             &mut cmd_rx,
             cmd_tx.clone(),
-            app_handle.clone(),
-            on_data.clone(),
             log_path.clone(),
             keepalive_secs.clone(),
         )
@@ -941,17 +943,20 @@ fn make_keepalive_timer(secs: u32) -> Option<tokio::time::Interval> {
 }
 
 async fn run_session(
-    session_id: String,
-    profile: ConnectionProfile,
-    password: Option<String>,
-    passphrase: Option<String>,
+    spec: SessionSpec,
     cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
-    app_handle: AppHandle,
-    on_data: Channel<Response>,
     log_path: Option<PathBuf>,
     keepalive_secs: Arc<AtomicU32>,
 ) -> SessionExit {
+    let SessionSpec {
+        session_id,
+        profile,
+        password,
+        passphrase,
+        app_handle,
+        on_data,
+    } = spec;
     // Si está activado el log de sesión, abrimos el fichero en modo append.
     let mut log_file = match &log_path {
         Some(p) => open_session_log(p).await,
@@ -1432,25 +1437,22 @@ async fn run_session(
                                 // resultado vuelve como `TunnelHandshaken`.
                                 let task_tx = cmd_tx.clone();
                                 tokio::spawn(async move {
-                                    match tokio::time::timeout(
+                                    // Handshake inválido o timeout: se descarta
+                                    // la conexión en silencio.
+                                    if let Ok(Ok((stream, host, port))) = tokio::time::timeout(
                                         SOCKS5_HANDSHAKE_TIMEOUT,
                                         read_socks5_target(stream),
                                     )
                                     .await
                                     {
-                                        Ok(Ok((stream, host, port))) => {
-                                            let _ = task_tx.send(SessionCommand::TunnelHandshaken {
-                                                tunnel_id,
-                                                stream,
-                                                target_host: host,
-                                                target_port: port,
-                                                peer_host,
-                                                peer_port,
-                                            });
-                                        }
-                                        // Handshake inválido o timeout: se
-                                        // descarta la conexión, como antes.
-                                        _ => {}
+                                        let _ = task_tx.send(SessionCommand::TunnelHandshaken {
+                                            tunnel_id,
+                                            stream,
+                                            target_host: host,
+                                            target_port: port,
+                                            peer_host,
+                                            peer_port,
+                                        });
                                     }
                                 });
                             } else if info.tunnel_type == SshTunnelType::Local {

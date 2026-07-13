@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
+use crate::atomic_file::{self, Recovery};
 use crate::error::AppError;
+use crate::locks::MutexExt;
 
 /// Tipo de autenticación SSH soportado
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -242,21 +245,41 @@ pub struct ConnectionProfile {
 /// Persiste los perfiles en un archivo JSON en el directorio de datos de la app.
 pub struct ProfileManager {
     profiles_path: PathBuf,
+    /// Resultado de la última carga: si el store estaba dañado, el frontend lo
+    /// consulta al arrancar (`profiles_recovery`) para avisar al usuario.
+    recovery: Mutex<Recovery>,
 }
 
 impl ProfileManager {
     pub fn new(data_dir: PathBuf) -> Self {
         ProfileManager {
             profiles_path: data_dir.join("profiles.json"),
+            recovery: Mutex::new(Recovery::Missing),
         }
     }
 
-    /// Carga todos los perfiles del disco
+    /// Qué hizo falta para leer el store en la última carga (ver [`Recovery`]).
+    pub fn last_recovery(&self) -> Recovery {
+        self.recovery.lock_recover().clone()
+    }
+
+    /// Carga todos los perfiles del disco, **recuperando** el store si está
+    /// dañado (ver [`crate::atomic_file::read_or_recover`]): un `profiles.json`
+    /// que no parsea se pone en cuarentena y se restaura la última copia válida,
+    /// en vez de abortar la carga o presentar un catálogo vacío.
+    ///
+    /// El estado de la recuperación se consulta con [`Self::last_recovery`]: el
+    /// frontend lo lee al arrancar para avisar al usuario. Un `Lost` **no** se
+    /// puede callar: el siguiente guardado escribiría encima de la nada.
     pub fn load_all(&self) -> Result<Vec<ConnectionProfile>, AppError> {
-        if !self.profiles_path.exists() {
+        let (data, recovery) = atomic_file::read_or_recover(&self.profiles_path, true, |text| {
+            serde_json::from_str::<Vec<ConnectionProfile>>(text).is_ok()
+        })?;
+        *self.recovery.lock_recover() = recovery;
+
+        let Some(data) = data else {
             return Ok(vec![]);
-        }
-        let data = fs::read_to_string(&self.profiles_path)?;
+        };
         let mut profiles: Vec<ConnectionProfile> = serde_json::from_str(&data)?;
         // Migración idempotente (en memoria; se persiste al primer save): un
         // perfil KeePass antiguo trae `keepass_entry_uuid` pero `password_source`

@@ -12,11 +12,18 @@ use crate::error::AppError;
 use super::types::{RunRecord, Script};
 
 /// Carga la lista de scripts del disco. Lista vacía si el fichero no existe.
+///
+/// Se **recupera** si el store está dañado (cuarentena + última copia válida),
+/// igual que `profiles.json` y `credentials.json`: perder los runbooks por un
+/// JSON truncado sería perder trabajo del usuario que no está en ningún otro
+/// sitio (los scripts no se sincronizan).
 pub fn load(path: &Path) -> Result<Vec<Script>, AppError> {
-    if !path.exists() {
+    let (data, _recovery) = crate::atomic_file::read_or_recover(path, false, |text| {
+        text.trim().is_empty() || serde_json::from_str::<Vec<Script>>(text).is_ok()
+    })?;
+    let Some(data) = data else {
         return Ok(vec![]);
-    }
-    let data = std::fs::read_to_string(path)?;
+    };
     if data.trim().is_empty() {
         return Ok(vec![]);
     }

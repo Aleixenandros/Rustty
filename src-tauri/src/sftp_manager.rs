@@ -93,6 +93,40 @@ pub struct TransferControls {
     paused: Mutex<HashSet<String>>,
 }
 
+/// Lo que toda transferencia arrastra: a quién identifica, a quién le informa del
+/// progreso, cómo se pausa/cancela y si hay que verificar el tamaño al terminar.
+///
+/// Estos cuatro valores viajaban sueltos por cada firma de la cadena de
+/// transferencia (`do_download` → `pipelined_download`, y sus gemelas de subida y
+/// de carpeta), que por eso rebasaban el límite de argumentos de clippy. Agruparlos
+/// no es solo cosmética: garantiza que una función nueva de la cadena no se olvide
+/// de propagar los controles de cancelación.
+#[derive(Clone, Copy)]
+struct TransferCtx<'a> {
+    /// Identifica la transferencia ante los eventos de progreso y los controles.
+    /// En una transferencia de carpeta, cada fichero recibe un hijo `{id}-{n}`.
+    transfer_id: &'a str,
+    app: &'a AppHandle,
+    controls: &'a Arc<TransferControls>,
+    verify_size: bool,
+}
+
+impl<'a> TransferCtx<'a> {
+    /// El mismo contexto para un fichero suelto dentro de una transferencia de
+    /// carpeta: cambia el `transfer_id` y conserva el resto.
+    fn child<'b>(self, transfer_id: &'b str) -> TransferCtx<'b>
+    where
+        'a: 'b,
+    {
+        TransferCtx {
+            transfer_id,
+            app: self.app,
+            controls: self.controls,
+            verify_size: self.verify_size,
+        }
+    }
+}
+
 impl TransferControls {
     fn new() -> Self {
         Self::default()
@@ -220,19 +254,13 @@ trait FileTransfer {
         &mut self,
         remote: &str,
         local: &Path,
-        transfer_id: &str,
-        verify_size: bool,
-        app: &AppHandle,
-        controls: &Arc<TransferControls>,
+        ctx: TransferCtx<'_>,
     ) -> Result<(), String>;
     async fn upload(
         &mut self,
         local: &Path,
         remote: &str,
-        transfer_id: &str,
-        verify_size: bool,
-        app: &AppHandle,
-        controls: &Arc<TransferControls>,
+        ctx: TransferCtx<'_>,
     ) -> Result<(), String>;
     async fn close(&mut self);
 }
@@ -611,16 +639,13 @@ async fn run_sftp_worker(
                 verify_size,
                 reply,
             } => {
-                let res = backend
-                    .download(
-                        &remote,
-                        &local,
-                        &transfer_id,
-                        verify_size,
-                        &app_handle,
-                        &controls,
-                    )
-                    .await;
+                let ctx = TransferCtx {
+                    transfer_id: &transfer_id,
+                    app: &app_handle,
+                    controls: &controls,
+                    verify_size,
+                };
+                let res = backend.download(&remote, &local, ctx).await;
                 let _ = reply.send(res);
             }
             SftpCommand::Upload {
@@ -630,16 +655,13 @@ async fn run_sftp_worker(
                 verify_size,
                 reply,
             } => {
-                let res = backend
-                    .upload(
-                        &local,
-                        &remote,
-                        &transfer_id,
-                        verify_size,
-                        &app_handle,
-                        &controls,
-                    )
-                    .await;
+                let ctx = TransferCtx {
+                    transfer_id: &transfer_id,
+                    app: &app_handle,
+                    controls: &controls,
+                    verify_size,
+                };
+                let res = backend.upload(&local, &remote, ctx).await;
                 let _ = reply.send(res);
             }
             SftpCommand::DownloadDir {
@@ -650,17 +672,14 @@ async fn run_sftp_worker(
                 verify_size,
                 reply,
             } => {
-                let res = do_download_dir(
-                    backend.as_mut(),
-                    &remote,
-                    &local,
-                    &transfer_id,
-                    conflict_policy,
+                let ctx = TransferCtx {
+                    transfer_id: &transfer_id,
+                    app: &app_handle,
+                    controls: &controls,
                     verify_size,
-                    &app_handle,
-                    &controls,
-                )
-                .await;
+                };
+                let res =
+                    do_download_dir(backend.as_mut(), &remote, &local, ctx, conflict_policy).await;
                 let _ = reply.send(res);
             }
             SftpCommand::UploadDir {
@@ -671,17 +690,14 @@ async fn run_sftp_worker(
                 verify_size,
                 reply,
             } => {
-                let res = do_upload_dir(
-                    backend.as_mut(),
-                    &local,
-                    &remote,
-                    &transfer_id,
-                    conflict_policy,
+                let ctx = TransferCtx {
+                    transfer_id: &transfer_id,
+                    app: &app_handle,
+                    controls: &controls,
                     verify_size,
-                    &app_handle,
-                    &controls,
-                )
-                .await;
+                };
+                let res =
+                    do_upload_dir(backend.as_mut(), &local, &remote, ctx, conflict_policy).await;
                 let _ = reply.send(res);
             }
             SftpCommand::Close => break,
@@ -1102,44 +1118,18 @@ impl FileTransfer for SftpBackend {
         &mut self,
         remote: &str,
         local: &Path,
-        transfer_id: &str,
-        verify_size: bool,
-        app: &AppHandle,
-        controls: &Arc<TransferControls>,
+        ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
-        do_download(
-            &self.sftp,
-            remote,
-            local,
-            transfer_id,
-            verify_size,
-            self.max_parallelism,
-            app,
-            controls,
-        )
-        .await
+        do_download(&self.sftp, remote, local, ctx, self.max_parallelism).await
     }
 
     async fn upload(
         &mut self,
         local: &Path,
         remote: &str,
-        transfer_id: &str,
-        verify_size: bool,
-        app: &AppHandle,
-        controls: &Arc<TransferControls>,
+        ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
-        do_upload(
-            &self.sftp,
-            local,
-            remote,
-            transfer_id,
-            verify_size,
-            self.max_parallelism,
-            app,
-            controls,
-        )
-        .await
+        do_upload(&self.sftp, local, remote, ctx, self.max_parallelism).await
     }
 
     async fn close(&mut self) {
@@ -1426,10 +1416,7 @@ impl FileTransfer for FtpBackend {
         &mut self,
         remote: &str,
         local: &Path,
-        transfer_id: &str,
-        verify_size: bool,
-        app: &AppHandle,
-        controls: &Arc<TransferControls>,
+        ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
         let entry = ftp_stat(&mut self.ftp, remote)?;
         let total = entry.size;
@@ -1439,9 +1426,9 @@ impl FileTransfer for FtpBackend {
         let part = part_path(local);
         let result = self
             .ftp
-            .download_to(remote, &part, total, transfer_id, app, controls)
+            .download_to(remote, &part, total, ctx.transfer_id, ctx.app, ctx.controls)
             .and_then(|()| {
-                if !verify_size {
+                if !ctx.verify_size {
                     return Ok(());
                 }
                 let written = std::fs::metadata(&part)
@@ -1468,15 +1455,12 @@ impl FileTransfer for FtpBackend {
         &mut self,
         local: &Path,
         remote: &str,
-        transfer_id: &str,
-        verify_size: bool,
-        app: &AppHandle,
-        controls: &Arc<TransferControls>,
+        ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
         let total = std::fs::metadata(local).map_err(|e| e.to_string())?.len();
         self.ftp
-            .upload_from(local, remote, total, transfer_id, app, controls)?;
-        if verify_size {
+            .upload_from(local, remote, total, ctx.transfer_id, ctx.app, ctx.controls)?;
+        if ctx.verify_size {
             let written = self
                 .ftp
                 .size(remote)
@@ -1670,11 +1654,8 @@ async fn do_download(
     sftp: &SftpSession,
     remote: &str,
     local: &Path,
-    transfer_id: &str,
-    verify_size: bool,
+    ctx: TransferCtx<'_>,
     max_parallelism: usize,
-    app: &AppHandle,
-    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
     let meta = sftp
         .metadata(remote.to_string())
@@ -1696,23 +1677,13 @@ async fn do_download(
         let mut file = tokio::fs::File::create(&part)
             .await
             .map_err(|e| e.to_string())?;
-        pipelined_download(
-            sftp,
-            remote,
-            &mut file,
-            total,
-            transfer_id,
-            max_parallelism,
-            app,
-            controls,
-        )
-        .await?;
+        pipelined_download(sftp, remote, &mut file, total, ctx, max_parallelism).await?;
         // Los datos deben estar en disco antes del rename: si no, un corte de luz
         // dejaría el nombre definitivo apuntando a contenido incompleto.
         file.sync_all().await.map_err(|e| e.to_string())?;
         drop(file);
 
-        if verify_size {
+        if ctx.verify_size {
             let written = tokio::fs::metadata(&part)
                 .await
                 .map_err(|e| format!("verificación local: {e}"))?
@@ -1744,30 +1715,17 @@ async fn do_upload(
     sftp: &SftpSession,
     local: &Path,
     remote: &str,
-    transfer_id: &str,
-    verify_size: bool,
+    ctx: TransferCtx<'_>,
     max_parallelism: usize,
-    app: &AppHandle,
-    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
     let meta = tokio::fs::metadata(local)
         .await
         .map_err(|e| e.to_string())?;
     let total = meta.len();
 
-    pipelined_upload(
-        sftp,
-        local,
-        remote,
-        total,
-        transfer_id,
-        max_parallelism,
-        app,
-        controls,
-    )
-    .await?;
+    pipelined_upload(sftp, local, remote, total, ctx, max_parallelism).await?;
 
-    if verify_size {
+    if ctx.verify_size {
         let written = sftp
             .metadata(remote.to_string())
             .await
@@ -1791,11 +1749,15 @@ async fn pipelined_download(
     remote: &str,
     local_file: &mut tokio::fs::File,
     total: u64,
-    transfer_id: &str,
+    ctx: TransferCtx<'_>,
     max_parallelism: usize,
-    app: &AppHandle,
-    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
+    let TransferCtx {
+        transfer_id,
+        app,
+        controls,
+        ..
+    } = ctx;
     let event = event_name(EventKind::SftpProgress, transfer_id);
     let _ = app.emit(
         &event,
@@ -1947,11 +1909,15 @@ async fn pipelined_upload(
     local: &Path,
     remote: &str,
     total: u64,
-    transfer_id: &str,
+    ctx: TransferCtx<'_>,
     max_parallelism: usize,
-    app: &AppHandle,
-    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
+    let TransferCtx {
+        transfer_id,
+        app,
+        controls,
+        ..
+    } = ctx;
     let event = event_name(EventKind::SftpProgress, transfer_id);
     let _ = app.emit(
         &event,
@@ -2500,12 +2466,12 @@ async fn do_download_dir(
     backend: &mut dyn FileTransfer,
     remote: &str,
     local: &Path,
-    transfer_id: &str,
+    ctx: TransferCtx<'_>,
     conflict_policy: TransferConflictPolicy,
-    verify_size: bool,
-    app: &AppHandle,
-    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
+    let TransferCtx {
+        transfer_id, app, ..
+    } = ctx;
     tokio::fs::create_dir_all(local)
         .await
         .map_err(|e| e.to_string())?;
@@ -2531,7 +2497,7 @@ async fn do_download_dir(
                 bytes_done,
                 bytes_total,
                 app,
-                controls,
+                ctx.controls,
             )
             .await?;
             let mut local_target = ldir.join(&e.name);
@@ -2581,7 +2547,7 @@ async fn do_download_dir(
                 idx += 1;
                 let sub_id = format!("{transfer_id}-{idx}");
                 backend
-                    .download(&e.path, &local_target, &sub_id, verify_size, app, controls)
+                    .download(&e.path, &local_target, ctx.child(&sub_id))
                     .await?;
                 bytes_done += e.size;
                 files_done += 1;
@@ -2605,12 +2571,12 @@ async fn do_upload_dir(
     backend: &mut dyn FileTransfer,
     local: &Path,
     remote: &str,
-    transfer_id: &str,
+    ctx: TransferCtx<'_>,
     conflict_policy: TransferConflictPolicy,
-    verify_size: bool,
-    app: &AppHandle,
-    controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
+    let TransferCtx {
+        transfer_id, app, ..
+    } = ctx;
     let _ = backend.mkdir(remote).await; // ignorar si ya existe
     let summary_event = event_name(EventKind::SftpProgress, transfer_id);
     let mut idx: u32 = 0;
@@ -2636,7 +2602,7 @@ async fn do_upload_dir(
                 bytes_done,
                 bytes_total,
                 app,
-                controls,
+                ctx.controls,
             )
             .await?;
             let path = entry.path();
@@ -2681,7 +2647,7 @@ async fn do_upload_dir(
                 idx += 1;
                 let sub_id = format!("{transfer_id}-{idx}");
                 backend
-                    .upload(&path, &remote_target, &sub_id, verify_size, app, controls)
+                    .upload(&path, &remote_target, ctx.child(&sub_id))
                     .await?;
                 bytes_done += fsize;
                 files_done += 1;

@@ -439,6 +439,7 @@ impl SyncState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::locks::MutexExt;
     use serde_json::json;
 
     /// El callback OAuth debe sobrevivir a conexiones que no son el callback:
@@ -526,7 +527,7 @@ mod tests {
         let manager = SyncManager::new(dir.clone());
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        manager.pending_oauth.lock().unwrap().insert(
+        manager.pending_oauth.lock_recover().insert(
             "flujo-abandonado".into(),
             OAuthPending {
                 provider: OAuthProvider::GoogleDrive,

@@ -6,6 +6,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, Tray
 use tauri::{App, AppHandle, Emitter, Manager, Wry};
 
 use crate::local_shell_manager::LocalShellManager;
+use crate::locks::MutexExt;
 use crate::rdp_manager::RdpManager;
 use crate::sftp_manager::SftpManager;
 use crate::ssh_manager::SshManager;
@@ -229,11 +230,11 @@ fn shutdown_sessions(app: &AppHandle) {
 
 impl TrayState {
     fn replace(&self, parts: TrayParts) {
-        *self.inner.lock().unwrap() = Some(parts);
+        *self.inner.lock_recover() = Some(parts);
     }
 
     fn update(&self, app: &AppHandle, payload: TrayQuickLauncherPayload) -> tauri::Result<()> {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock_recover();
         let Some(parts) = guard.as_ref() else {
             return Ok(());
         };

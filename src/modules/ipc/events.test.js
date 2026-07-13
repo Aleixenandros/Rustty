@@ -51,6 +51,13 @@ describe("contrato de prefijos", () => {
     expect(EVENT.trayAction).toBe("tray-action");
   });
 
+  // Espejo de `HOST_KEY_PROMPT` en src-tauri/src/ipc.rs. Es global (sin sufijo)
+  // porque la política de primera conexión es global y el handler TOFU no conoce
+  // el sessionId.
+  it("el evento global ssh-hostkey-prompt es estable", () => {
+    expect(EVENT.hostKeyPrompt).toBe("ssh-hostkey-prompt");
+  });
+
   it("los catálogos son inmutables (Object.freeze)", () => {
     expect(Object.isFrozen(EVENT_PREFIX)).toBe(true);
     expect(Object.isFrozen(EVENT)).toBe(true);

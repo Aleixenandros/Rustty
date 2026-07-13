@@ -97,6 +97,17 @@ pub fn event_name(kind: EventKind, suffix: &str) -> String {
 /// Payload: `{ action: string, ... }` (campos adicionales según la acción).
 pub const TRAY_ACTION: &str = "tray-action";
 
+/// Evento global (sin sufijo): el servidor presenta una host key **desconocida**
+/// y el modo estricto de primera conexión exige confirmación del usuario.
+///
+/// Es global y no por sesión porque la política es global (una preferencia) y el
+/// handler TOFU (`host_keys`) no conoce el `sessionId`: lo construyen catorce
+/// llamadores distintos (SSH, SFTP, scripts, CLI, saltos ProxyJump). La respuesta
+/// vuelve por el comando `ssh_hostkey_response` con el `promptId` del payload.
+///
+/// Payload: `{ promptId, host, port, fingerprint, keyType, viaJump }`.
+pub const HOST_KEY_PROMPT: &str = "ssh-hostkey-prompt";
+
 #[cfg(test)]
 mod tests {
     use super::*;

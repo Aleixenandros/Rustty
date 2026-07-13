@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
 use crate::ipc::{event_name, EventKind};
+use crate::locks::MutexExt;
 
 /// Máximo de stdout+stderr del cliente externo que conservamos como cola
 /// rodante para diagnosticar por qué murió (certificado, NLA, argumentos…).
@@ -54,6 +55,21 @@ struct CredGuard {
     delete_on_close: bool,
 }
 
+/// A dónde y con qué credencial se conecta una sesión RDP.
+///
+/// Agrupa los siete parámetros que `launch` recibía sueltos (clippy:
+/// `too_many_arguments`). La contraseña sigue sin viajar nunca por argv: se
+/// inyecta como credencial `TERMSRV/<host>` en Windows y por stdin en Linux.
+pub struct RdpTarget<'a> {
+    pub session_id: String,
+    pub profile_id: String,
+    pub host: &'a str,
+    pub port: u16,
+    pub username: &'a str,
+    pub domain: Option<&'a str>,
+    pub password: Option<&'a str>,
+}
+
 /// Gestor de sesiones RDP.
 /// Lanza el cliente RDP nativo del SO y vigila su ciclo de vida.
 pub struct RdpManager {
@@ -71,17 +87,16 @@ impl RdpManager {
 
     /// Lanza el cliente RDP nativo y registra la sesión.
     /// Emite `rdp-closed-{session_id}` cuando el proceso termina.
-    pub fn launch(
-        &self,
-        session_id: String,
-        profile_id: String,
-        host: &str,
-        port: u16,
-        username: &str,
-        domain: Option<&str>,
-        password: Option<&str>,
-        app_handle: AppHandle,
-    ) -> Result<(), String> {
+    pub fn launch(&self, target: RdpTarget<'_>, app_handle: AppHandle) -> Result<(), String> {
+        let RdpTarget {
+            session_id,
+            profile_id,
+            host,
+            port,
+            username,
+            domain,
+            password,
+        } = target;
         // Windows: mstsc no acepta la contraseña ni por argv ni por el .rdp;
         // la vía (la de mRemoteNG / Royal TS) es dejarla en el Gestor de
         // credenciales como `TERMSRV/<host>` justo antes de lanzar y retirarla
@@ -110,7 +125,7 @@ impl RdpManager {
             }
         };
 
-        self.sessions.lock().unwrap().insert(
+        self.sessions.lock_recover().insert(
             session_id.clone(),
             RdpHandle {
                 child: spawned.child,
@@ -132,7 +147,7 @@ impl RdpManager {
             // None = sigue vivo; Some((handle, status)) = terminó (status None
             // si try_wait falló y no hay código de salida fiable).
             let finished = {
-                let mut map = sessions.lock().unwrap();
+                let mut map = sessions.lock_recover();
                 match map.get_mut(&sid) {
                     Some(handle) => match handle.child.try_wait() {
                         Ok(None) => None,
@@ -166,7 +181,7 @@ impl RdpManager {
 
     /// Termina el proceso RDP y elimina la sesión
     pub fn disconnect(&self, session_id: &str) -> Result<(), String> {
-        if let Some(mut handle) = self.sessions.lock().unwrap().remove(session_id) {
+        if let Some(mut handle) = self.sessions.lock_recover().remove(session_id) {
             let _ = handle.child.kill();
             if let Some(path) = handle.cleanup_path.take() {
                 let _ = std::fs::remove_file(path);
@@ -213,7 +228,7 @@ fn close_payload(
         };
     }
     let tail = output_tail
-        .map(|t| t.lock().unwrap().clone())
+        .map(|t| t.lock_recover().clone())
         .unwrap_or_default();
     let code = if is_cert_changed(&tail) {
         "cert-changed"
@@ -297,7 +312,7 @@ fn spawn_tail_reader<R: std::io::Read + Send + 'static>(
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     let chunk = String::from_utf8_lossy(&buf[..n]);
-                    let mut t = tail.lock().unwrap();
+                    let mut t = tail.lock_recover();
                     t.push_str(&chunk);
                     if t.len() > OUTPUT_TAIL_MAX {
                         let mut cut = t.len() - OUTPUT_TAIL_MAX;
@@ -335,7 +350,7 @@ fn acquire_windows_credential(
     let entry = keyring::Entry::new_with_target(&target, "rustty", &user)
         .map_err(|e| format!("credencial TERMSRV: {e}"))?;
 
-    let mut guards = guards.lock().unwrap();
+    let mut guards = guards.lock_recover();
     let delete_on_close = match guards.get(host) {
         // Otra sesión Rustty ya inyectó para este host: heredar su decisión.
         Some(g) => g.delete_on_close,
@@ -371,7 +386,7 @@ fn acquire_windows_credential(
 fn release_windows_credential(guards: &Mutex<HashMap<String, CredGuard>>, host: &str) {
     #[cfg(target_os = "windows")]
     {
-        let mut map = guards.lock().unwrap();
+        let mut map = guards.lock_recover();
         let Some(g) = map.get_mut(host) else { return };
         g.refs = g.refs.saturating_sub(1);
         if g.refs > 0 {

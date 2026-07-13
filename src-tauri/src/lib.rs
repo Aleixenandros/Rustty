@@ -23,6 +23,7 @@ mod sync;
 mod tunnel_throttle;
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use credentials::CredentialStore;
 use external_client::{TelnetManager, VncManager};
@@ -111,6 +112,28 @@ pub fn run() {
     let launched_minimized = std::env::args().any(|a| a == "--minimized");
 
     tauri::Builder::default()
+        // Instancia única. **Debe registrarse el primero** (requisito del plugin).
+        //
+        // Dos motivos: (1) abrir dos ventanas de Rustty contra el mismo
+        // `profiles.json` invita a que una pise los cambios de la otra —los
+        // ciclos leer→modificar→escribir de los stores no están serializados entre
+        // procesos—; (2) al usuario que relanza la app desde el lanzador del SO le
+        // sirve más recuperar su ventana que abrir una nueva vacía.
+        //
+        // No afecta a la CLI: `main()` la despacha y sale **antes** de construir
+        // este Builder, así que `rustty -c perfil` sigue funcionando con la GUI
+        // abierta.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // Segunda instancia: en vez de arrancar, devolvemos el foco a la que
+            // ya está. (El reenvío de `argv` se implementará cuando haya un
+            // consumidor real —deep links—; hoy no lo hay y no se crea superficie
+            // muerta.)
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(build_log_plugin())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -130,11 +153,24 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
+            // El handler TOFU necesita poder pedir confirmación de una host key
+            // nueva al usuario (evento `ssh-hostkey-prompt`). Sin este registro
+            // —caso de la CLI— cae al prompt por stdin.
+            host_keys::register_app(app.handle().clone());
             // Si es la build portable de Windows, los datos viajan junto al
             // .exe en `.conf/com.rustty.app/`. Si no, ruta estándar (identifier).
             let data_dir = resolve_data_dir();
 
             std::fs::create_dir_all(&data_dir).expect("No se pudo crear el directorio de datos");
+
+            // Retira los temporales que dejó un cierre brusco (kill -9, corte de
+            // luz) entre el `open` y el `rename` de una escritura atómica. Solo
+            // toca los que llevan más de una hora inactivos: un temporal reciente
+            // puede ser la escritura **viva** de otra instancia.
+            let swept = atomic_file::sweep_orphan_temps(&data_dir, Duration::from_secs(3600));
+            if swept > 0 {
+                log::info!("Retirados {swept} temporales huérfanos del directorio de datos");
+            }
 
             // Estado global gestionado por Tauri (inyectado en los comandos vía State<T>)
             app.manage(SshManager::new());
@@ -285,6 +321,9 @@ pub fn run() {
             // ── Gestor de known_hosts
             commands::list_known_hosts,
             commands::remove_known_host_line,
+            commands::set_host_key_policy,
+            commands::ssh_hostkey_response,
+            commands::profiles_recovery,
             // ── Sincronización en la nube
             commands::sync_get_config,
             commands::sync_save_config,

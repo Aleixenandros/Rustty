@@ -2,6 +2,93 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.54.0] - 2026-07-13
+
+### Añadido
+
+- **Bloqueo automático de KeePass**: nueva opción en Preferencias → KeePass para
+  cerrar la base sola tras 5, 15, 30 o 60 minutos **sin usarla** (o nunca, que es
+  lo que hacía hasta ahora). El contador solo se reinicia cuando usas la base de
+  verdad —consultar o insertar una credencial—, no con la actividad del terminal:
+  una sesión con un comando largo en marcha ya no mantiene tus contraseñas
+  abiertas toda la tarde. Junto al estado ves cuánto queda para el cierre.
+- **Bloqueo de KeePass al suspender el equipo** (activado por defecto): si cierras
+  el portátil con la base abierta, al despertar la encuentras bloqueada.
+- **Rustty detecta que el equipo ha estado suspendido** y que la red ha vuelto.
+  Tras despertar, una sesión puede seguir apareciendo como conectada aunque su
+  conexión ya esté muerta: ahora se comprueban y se avisa de las que no responden.
+  En Preferencias → Seguridad puedes elegir que además **reconecte** las caídas
+  (de forma escalonada, para no saturar el servidor) o que no haga nada.
+- **El importador de runbooks avisa de lo que no entiende**: al importar un
+  script desde un fichero Markdown editado a mano, la app enumera las líneas que
+  no ha sabido interpretar (con su número de línea) y te deja decidir si importas
+  igualmente. Antes las descartaba en silencio y el script quedaba incompleto sin
+  que nadie lo dijera.
+
+### Cambiado
+
+- **La primera conexión a un servidor ahora pide confirmar su huella**. Hasta
+  ahora Rustty aprendía la clave del servidor en silencio y solo avisaba si
+  *cambiaba* más adelante; eso deja pasar desapercibido a un intermediario que ya
+  estuviera ahí en esa primera conexión. Ahora se muestra la huella y tú decides.
+  Puedes volver al comportamiento anterior desactivando **Confirmar la huella en
+  la primera conexión** en Preferencias → Seguridad. Los servidores que ya
+  conocías no se ven afectados.
+- **Una sola ventana de Rustty**: si la app ya está abierta y la vuelves a lanzar
+  desde el lanzador del sistema, se te devuelve la ventana que tenías en vez de
+  abrir una segunda. Dos ventanas sobre el mismo fichero de conexiones podían
+  pisarse los cambios entre ellas. La línea de comandos (`rustty -c perfil`) sigue
+  funcionando con la app abierta, igual que antes.
+- **Los runbooks exportados usan etiquetas independientes del idioma**
+  (`**Target:**`, `## Steps`, `recursive=yes`…). Antes las etiquetas del fichero
+  estaban fijas en castellano, así que quien usa la app en francés, alemán o
+  portugués exportaba un documento con encabezados en un idioma que no es el
+  suyo. **Los runbooks antiguos se siguen leyendo sin cambios**: al reexportarlos
+  se guardan con el formato nuevo. Lo que tú escribes (nombre, descripción y
+  comandos) no se toca.
+- Puesta al día de las dependencias del proyecto (Rust y JavaScript).
+
+### Corregido
+
+- **Un fichero de conexiones dañado ya no te deja con la lista vacía**. Si
+  `profiles.json` no se puede leer (un corte de luz a mitad de un guardado, un
+  disco lleno), Rustty conserva el fichero dañado a un lado, **restaura la última
+  copia buena** y te lo dice. Antes, un fichero corrupto podía presentarte un
+  catálogo vacío como si nada — y el siguiente guardado lo habría rematado. Lo
+  mismo vale ahora para las credenciales y los scripts.
+- **Las escrituras aguantan un corte de luz**: además del contenido, ahora se
+  sincroniza también la carpeta, de modo que un apagón justo después de guardar no
+  puede dejar el fichero sin nombre. Los temporales que deje un cierre brusco se
+  limpian solos al arrancar.
+- **La actualización automática de Windows podía apuntar a un instalador
+  inexistente**: al preparar la publicación, el instalador `.msi` se renombra, y
+  ni su firma ni el fichero que consulta el actualizador se corregían. Un equipo
+  con Windows podía recibir un error al buscar actualizaciones. Ahora la
+  publicación comprueba que todo lo que anuncia el actualizador existe realmente
+  antes de hacer pública la versión.
+- **La política de seguridad ya no se queda anclada a una versión antigua**:
+  `SECURITY.md` anunciaba soporte para la línea 1.35.x cuando la app ya iba por
+  la 1.53. La versión se propaga sola desde ahora y la publicación falla si
+  alguien la deja desactualizada.
+- **Un fallo interno ya no puede dejar una sesión colgada en silencio**: los
+  cierres de RDP, VNC, KeePass, la bandeja del sistema y la sincronización
+  resisten ahora el mismo tipo de error interno del que ya estaban protegidas las
+  sesiones SSH y SFTP, en vez de matar el hilo y dejar la sesión zombi.
+
+### Seguridad
+
+- **Importaciones de otros clientes acotadas**: un fichero de Ásbrú o mRemoteNG
+  manipulado podía agotar la memoria del equipo aunque ocupara pocos kilobytes,
+  aprovechando las referencias internas del formato para expandirse
+  desmesuradamente al abrirlo. Rustty ahora estima ese coste antes de leerlo y
+  rechaza el fichero, además de limitar cuántas conexiones y cuántos niveles de
+  carpetas admite un import. El límite de tamaño que ya existía no cubría este
+  caso.
+- **Publicar una versión exige pasar toda la batería de pruebas**: el proceso de
+  release no compila, ni firma, ni publica nada hasta que lint, tipos, tests,
+  contraste, i18n y la comprobación de que la versión etiquetada cuadra con el
+  código han pasado.
+
 ## [1.53.0] - 2026-07-13
 
 ### Añadido

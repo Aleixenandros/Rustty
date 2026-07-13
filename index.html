@@ -2277,10 +2277,37 @@
                 </div>
               </div>
 
+              <div class="settings-row">
+                <label for="pref-keepass-autolock" data-i18n="prefs_keepass.autolock">Bloqueo automático</label>
+                <div class="settings-control">
+                  <select id="pref-keepass-autolock">
+                    <option value="0" data-i18n="prefs_keepass.autolock_never">Nunca</option>
+                    <option value="5" data-i18n="prefs_keepass.autolock_5">A los 5 minutos sin usarla</option>
+                    <option value="15" data-i18n="prefs_keepass.autolock_15">A los 15 minutos sin usarla</option>
+                    <option value="30" data-i18n="prefs_keepass.autolock_30">A los 30 minutos sin usarla</option>
+                    <option value="60" data-i18n="prefs_keepass.autolock_60">A los 60 minutos sin usarla</option>
+                  </select>
+                  <p class="settings-hint" data-i18n="prefs_keepass.autolock_hint">
+                    El contador solo se reinicia cuando usas la base (consultar o insertar una credencial), no con la actividad del terminal.
+                  </p>
+                </div>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-keepass-lock-on-suspend" data-i18n="prefs_keepass.lock_on_suspend">Bloquear al suspender el equipo</label>
+                <div class="settings-control">
+                  <input type="checkbox" id="pref-keepass-lock-on-suspend" />
+                  <p class="settings-hint" data-i18n="prefs_keepass.lock_on_suspend_hint">
+                    Si el equipo se suspende o hiberna con la base abierta, se bloquea al despertar.
+                  </p>
+                </div>
+              </div>
+
               <div class="settings-row settings-row-inline">
                 <label data-i18n="prefs_keepass.status">Estado</label>
                 <div class="settings-control">
                   <span id="keepass-status-label" class="keepass-status locked" data-i18n="prefs_keepass.locked">Bloqueada</span>
+                  <span id="keepass-autolock-countdown" class="keepass-countdown hidden"></span>
                   <button type="button" class="btn-primary" id="btn-keepass-unlock" data-i18n="prefs_keepass.unlock">Desbloquear…</button>
                   <button type="button" class="btn-secondary hidden" id="btn-keepass-lock" data-i18n="prefs_keepass.lock">Bloquear</button>
                 </div>
@@ -2411,6 +2438,28 @@
                 </select>
               </div>
               <p class="settings-hint" data-i18n="prefs_security.broadcast_paste_hint">Qué hacer al pegar la contraseña del perfil (Ctrl+P) cuando el modo broadcast está replicando la entrada en varias panes.</p>
+
+              <div class="settings-row">
+                <label for="pref-on-wake" data-i18n="prefs_security.on_wake">Al despertar el equipo o recuperar la red</label>
+                <div class="settings-control">
+                  <select id="pref-on-wake">
+                    <option value="check" data-i18n="prefs_security.on_wake_check">Avisar y comprobar las sesiones</option>
+                    <option value="reconnect" data-i18n="prefs_security.on_wake_reconnect">Comprobar y reconectar las caídas</option>
+                    <option value="nothing" data-i18n="prefs_security.on_wake_nothing">No hacer nada</option>
+                  </select>
+                  <p class="settings-hint" data-i18n="prefs_security.on_wake_hint">
+                    Tras una suspensión, una sesión puede seguir apareciendo como conectada aunque su conexión ya esté muerta. Las reconexiones se lanzan escalonadas para no saturar el servidor.
+                  </p>
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-strict-host-key" />
+                  <span data-i18n="prefs_security.strict_host_key">Confirmar la huella en la primera conexión</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_security.strict_host_key_hint">Al conectar por primera vez a un servidor, muestra la huella de su clave y pide confirmación antes de guardarla. Si lo desactivas, la primera clave se acepta y se recuerda automáticamente (TOFU): cómodo, pero un intermediario en esa primera conexión pasaría inadvertido.</p>
+              </div>
 
               <div class="settings-row">
                 <label class="checkbox-label">

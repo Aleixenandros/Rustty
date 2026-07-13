@@ -65,6 +65,12 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
         continue-on-error: true
 
+      # `package.json` es la fuente única de la versión. Este check falla si no
+      # está propagada a Cargo, los locks o la matriz de soporte de SECURITY.md
+      # (que llegó a prometer parches para una línea ya abandonada).
+      - name: Coherencia de versión
+        run: npm run check:version
+
       - name: Lint (eslint)
         run: npm run lint
 
@@ -81,6 +87,13 @@ jobs:
       - name: Contraste WCAG de temas (estricto)
         run: npm run check:contrast:ci
 
+      # Bloquea regresiones de i18n: texto visible hardcodeado fuera de t(). La
+      # paridad de claves no lo ve (esa cadena nunca llega al catálogo). Falla
+      # solo con hallazgos NUEVOS: la deuda conocida vive en el baseline y solo
+      # puede encoger.
+      - name: i18n sin texto hardcodeado (estricto)
+        run: npm run check:i18n:ci
+
       - name: Build frontend
         run: npm run build
 
@@ -93,16 +106,15 @@ jobs:
         run: cargo test --locked
 
   # ── Clippy ────────────────────────────────────────────────────────
-  # Ambos pasos son INFORMATIVOS (continue-on-error):
-  #   1. Baseline `-D warnings`: hoy falla con ~21 warnings (map_or/is_none_or,
-  #      needless_as_bytes, etc.). Cuando se limpien, quitar `continue-on-error`
-  #      para hacerlo bloqueante.
+  #   1. Baseline `-D warnings`: **BLOQUEANTE** desde v1.54.0. Los avisos
+  #      preexistentes que obligaban al `continue-on-error` están limpios (los
+  #      `too_many_arguments` se resolvieron con structs de parámetros:
+  #      `TransferCtx`, `SessionSpec`, `RdpTarget`). No introducir avisos nuevos.
   #   2. `-W clippy::pedantic`: aviso permanente (nunca bloqueante) para destapar
   #      mejoras de estilo de cara al troceo de los god-files de backend.
-  # Coherente con el backlog «Habilitar clippy pedantic como aviso, no fallo».
   clippy:
     runs-on: ubuntu-latest
-    name: Clippy (advisory)
+    name: Clippy
     steps:
       - uses: actions/checkout@v7
 
@@ -128,10 +140,9 @@ jobs:
             libssl-dev \
             pkg-config
 
-      - name: cargo clippy (baseline)
+      - name: cargo clippy (baseline, bloqueante)
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
-        continue-on-error: true
 
       - name: cargo clippy (pedantic, advisory)
         working-directory: src-tauri

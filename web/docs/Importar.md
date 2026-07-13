@@ -49,3 +49,5 @@ El análisis y el descifrado de los ficheros se hacen **localmente** en Rustty. 
 ## Ficheros aceptados
 
 Cada import tiene un tamaño máximo razonable para lo que espera leer (por ejemplo, 1 MB para un `~/.ssh/config` y 16 MB para el export de otro cliente o una copia de seguridad completa). Un fichero binario, o uno que supere ese tope, se rechaza con un aviso claro en vez de intentar cargarse entero: así, apuntar sin querer a un fichero enorme o equivocado no bloquea la aplicación.
+
+El tamaño no lo es todo: un fichero pequeño también puede ser dañino. Los formatos de estos exports (YAML de Ásbrú, XML de mRemoteNG) permiten que una parte del documento se refiera a otra, y un fichero manipulado puede abusar de ello para que unos pocos kilobytes se conviertan en millones de elementos al abrirlo, agotando la memoria del equipo. Rustty **estima ese coste antes de leer el fichero** y lo rechaza si se dispara. Del mismo modo, un import admite como máximo **20.000 conexiones** y **64 niveles** de carpetas anidadas; si los supera, la importación falla con un aviso en lugar de cargar un catálogo a medias.

@@ -1,13 +1,17 @@
 {
   "name": "rustty",
   "private": true,
-  "version": "1.53.0",
+  "version": "1.54.0",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "sync-version": "node scripts/sync-version.mjs",
+    "check:version": "node scripts/sync-version.mjs --check",
     "check:contrast": "node scripts/check-contrast.mjs",
     "check:contrast:ci": "node scripts/check-contrast.mjs --strict",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:i18n:ci": "node scripts/check-i18n.mjs --strict",
+    "check:i18n:update": "node scripts/check-i18n.mjs --update",
     "dev": "vite",
     "build": "npm run sync-version && vite build",
     "preview": "vite preview",

@@ -5228,6 +5228,13 @@ input[type="checkbox"] {
   color: var(--red);
 }
 
+/* Cuenta atrás del autobloqueo, junto al estado «Desbloqueada». */
+.keepass-countdown {
+  font-size: 12px;
+  color: var(--subtext0);
+  font-variant-numeric: tabular-nums;
+}
+
 .keepass-error {
   color: var(--red);
   font-size: 12px;

@@ -34,9 +34,10 @@ import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
 import { generatePassphrase, passphraseStrength } from "./modules/passphrase.js";
 import { rankCommandSuggestions } from "./modules/command-suggest.js";
+import { detectedWake, staggerDelays } from "./modules/wake.js";
 import { STEP_TYPES, makeStep, emptyScript, validateScript } from "./modules/scripts/model.js";
 import { resolveTarget } from "./modules/scripts/targets.js";
-import { toMarkdown as scriptToMarkdown, fromMarkdown as scriptFromMarkdown } from "./modules/scripts/runbook.js";
+import { toMarkdown as scriptToMarkdown, parseRunbook } from "./modules/scripts/runbook.js";
 import {
   createRecorder,
   feedInput as recorderFeedInput,
@@ -50,6 +51,7 @@ import {
 /** @typedef {import("./modules/ipc/events.js").SshTunnelTrafficEvent} SshTunnelTrafficEvent */
 /** @typedef {import("./modules/ipc/events.js").SshReconnectingEvent} SshReconnectingEvent */
 /** @typedef {import("./modules/ipc/events.js").TrayAction} TrayAction */
+/** @typedef {import("./modules/ipc/events.js").HostKeyPromptEvent} HostKeyPromptEvent */
 
 // ═══════════════════════════════════════════════════════════════
 // ESTADO DE LA APLICACIÓN
@@ -384,6 +386,13 @@ const DEFAULT_PREFS = {
   // largos o con caracteres de control) muestran una previsualización
   // tematizada que el usuario debe confirmar antes de enviarse a la sesión.
   confirmRiskyPaste: true,
+  // Primera conexión SSH: si está activo (default), se muestra la huella de la
+  // host key desconocida y se pide confirmación antes de guardarla. Al
+  // desactivarlo se vuelve al TOFU automático clásico (la primera clave se
+  // aprende en silencio), que es cómodo pero no detecta un intermediario
+  // presente ya en esa primera conexión. La política vive en el backend
+  // (`host_keys`): esta pref solo la fija con `set_host_key_policy`.
+  strictHostKey:   true,
   // Captura la pantalla de cada sesión SSH (no privada) en disco para poder
   // restaurarla luego con «Conectar y restaurar pantalla anterior». Solo es la
   // salida visual; puede contener datos sensibles. Excluido de sync.
@@ -436,6 +445,16 @@ const DEFAULT_PREFS = {
   // KeePass: rutas persistentes (sin contraseña maestra)
   keepassPath:     "",
   keepassKeyfile:  "",
+  // Qué hacer con las sesiones al volver de una suspensión o al recuperar la red:
+  //   "nothing"   → no tocar nada (el usuario decide)
+  //   "check"     → avisar y comprobar cuáles siguen vivas (default)
+  //   "reconnect" → además, reenganchar las caídas de forma escalonada
+  onWakeAction:    "check",
+  // Autobloqueo de la base KeePass, en minutos de inactividad (0 = nunca).
+  // El contador solo lo reinicia el uso REAL de la base (ver `touchKeepass`).
+  keepassAutoLockMinutes: 0,
+  // Bloquear la base si el equipo se suspende (se detecta por el salto de reloj).
+  keepassLockOnSuspend: true,
   // Idioma de la interfaz: "es" | "en" | "fr" | "pt"
   lang:            null, // null → usar detectLanguage() en loadPrefs
   // Overrides de atajos: { [actionId]: accelerator | null }
@@ -1644,6 +1663,10 @@ function openSettingsModal() {
   document.getElementById("pref-right-click-paste").checked = prefs.rightClickPaste;
   const confirmRiskyPasteEl = document.getElementById("pref-confirm-risky-paste");
   if (confirmRiskyPasteEl) confirmRiskyPasteEl.checked = prefs.confirmRiskyPaste !== false;
+  const strictHostKeyEl = document.getElementById("pref-strict-host-key");
+  if (strictHostKeyEl) strictHostKeyEl.checked = prefs.strictHostKey !== false;
+  const onWakeEl = document.getElementById("pref-on-wake");
+  if (onWakeEl) onWakeEl.value = prefs.onWakeAction || "check";
   const shareHistEl = document.getElementById("pref-share-command-history");
   if (shareHistEl) shareHistEl.checked = !!prefs.shareCommandHistory;
   const captureScreenEl = document.getElementById("pref-capture-screen");
@@ -1719,6 +1742,8 @@ function openSettingsModal() {
   // KeePass: rutas y estado
   document.getElementById("pref-keepass-path").value    = prefs.keepassPath || "";
   document.getElementById("pref-keepass-keyfile").value = prefs.keepassKeyfile || "";
+  document.getElementById("pref-keepass-autolock").value = String(prefs.keepassAutoLockMinutes ?? 0);
+  document.getElementById("pref-keepass-lock-on-suspend").checked = !!prefs.keepassLockOnSuspend;
   refreshKeepassStatus();
 
   // Idioma. `prefs.lang` se guarda como null cuando el usuario eligió "Sistema"
@@ -3382,6 +3407,8 @@ function savePrefsFromModal() {
     copyOnSelect:    document.getElementById("pref-copy-on-select").checked,
     rightClickPaste: document.getElementById("pref-right-click-paste").checked,
     confirmRiskyPaste: document.getElementById("pref-confirm-risky-paste")?.checked ?? true,
+    strictHostKey:     document.getElementById("pref-strict-host-key")?.checked ?? true,
+    onWakeAction:      document.getElementById("pref-on-wake")?.value || "check",
     shareCommandHistory: !!document.getElementById("pref-share-command-history")?.checked,
     captureScreen: document.getElementById("pref-capture-screen")?.checked ?? true,
     pastePasswordBroadcast: normalizePastePasswordBroadcast(
@@ -3437,6 +3464,8 @@ function savePrefsFromModal() {
     searchAllWorkspaces: document.getElementById("pref-search-all-workspaces")?.checked ?? true,
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
+    keepassAutoLockMinutes: Number(document.getElementById("pref-keepass-autolock")?.value) || 0,
+    keepassLockOnSuspend:   !!document.getElementById("pref-keepass-lock-on-suspend")?.checked,
     lang:            newLang === null ? null : (SUPPORTED_LANGS.includes(newLang) ? newLang : "es"),
     checkUpdatesOnStartup: document.getElementById("pref-check-updates-startup")?.checked ?? true,
     // Retención de logs de sesión: vacío / inválido → null (sin límite).
@@ -3470,6 +3499,11 @@ function savePrefsFromModal() {
   };
 
   savePrefs();
+  // Reajusta el vigilante de KeePass al nuevo intervalo (o lo para si se ha
+  // puesto en «Nunca» y tampoco se bloquea al suspender).
+  startKeepassAutoLock();
+  // La política de primera conexión la aplica el backend en cada handshake.
+  applyHostKeyPolicy();
   // Aplicar la preferencia de autostart al SO (enable/disable la entrada del SO).
   applyAutostartSetting(prefs.autostart, prefs.autostartMinimized)
     .catch((e) => console.error("[autostart] apply", e));
@@ -3548,8 +3582,10 @@ async function refreshKeepassStatus() {
     btnUnlock.classList.remove("hidden");
     btnLock.classList.add("hidden");
     keepassEntries = [];
+    stopKeepassAutoLock();
   }
   updateKeepassEntryValidation();
+  renderKeepassCountdown();
 }
 
 async function browseKeepassPath() {
@@ -3598,6 +3634,8 @@ async function submitKeepassUnlock() {
     if (keyfile) prefs.keepassKeyfile = keyfile;
     savePrefs();
     await refreshKeepassStatus();
+    touchKeepass();
+    startKeepassAutoLock();
     toast("KeePass desbloqueada", "success");
   } catch (e) {
     errEl.textContent = e?.toString() || "No se pudo desbloquear";
@@ -3613,6 +3651,122 @@ async function lockKeepass() {
   } catch (e) {
     toast("Error al bloquear: " + e, "error");
   }
+}
+
+// ── Autobloqueo de la base KeePass ──────────────────────────────
+//
+// El contador mide **inactividad sobre la base**, no inactividad del usuario: lo
+// reinicia solo `touchKeepass()`, que se llama desde los puntos donde la base se
+// usa de verdad (desbloquear, listar/seleccionar una entrada, resolver una
+// credencial). Deliberadamente NO lo reinician el tráfico del terminal ni los
+// timers de la app: si eso contara como actividad, una sesión con `tail -f`
+// mantendría la base abierta indefinidamente, que es justo lo que se quiere
+// evitar.
+
+/** Timestamp del último uso real de la base. */
+let keepassLastUse = 0;
+/** Intervalo del vigilante (null si no hay nada que vigilar). */
+let keepassAutoLockTimer = null;
+/** Última vez que corrió el tick, para detectar saltos de reloj (suspensión). */
+let keepassLastTick = 0;
+
+/** Cada cuánto comprueba el vigilante. */
+const KEEPASS_TICK_MS = 15_000;
+/**
+ * Salto de reloj a partir del cual se asume que el equipo estuvo suspendido.
+ * Un tick que llega mucho más tarde de lo programado solo puede significar que
+ * el proceso estuvo congelado (suspensión/hibernación) o que la pestaña quedó
+ * parada; en ambos casos, con la base abierta, conviene cerrarla.
+ */
+const KEEPASS_SUSPEND_GAP_MS = 90_000;
+
+/** Marca uso real de la base (reinicia el contador de inactividad). */
+function touchKeepass() {
+  keepassLastUse = Date.now();
+}
+
+/** Minutos de autobloqueo configurados (0 = desactivado). */
+function keepassAutoLockMs() {
+  const min = Number(prefs.keepassAutoLockMinutes) || 0;
+  return min > 0 ? min * 60_000 : 0;
+}
+
+/** Bloquea la base por inactividad o por suspensión, avisando del motivo. */
+async function autoLockKeepass(reason) {
+  stopKeepassAutoLock();
+  try {
+    await invoke("keepass_lock");
+  } catch {
+    // Si el backend ya la había liberado, el refresco de estado lo reflejará.
+  }
+  // Vacía la caché de entradas de la UI (`keepassEntries`) además del material
+  // descifrado del backend.
+  await refreshKeepassStatus();
+  toast(
+    reason === "suspend"
+      ? t("toast.keepass_locked_suspend")
+      : t("toast.keepass_locked_idle"),
+    "warning"
+  );
+}
+
+/** Pinta el tiempo restante junto al estado, si hay autobloqueo activo. */
+function renderKeepassCountdown() {
+  const el = document.getElementById("keepass-autolock-countdown");
+  if (!el) return;
+  const limit = keepassAutoLockMs();
+  if (!keepassUnlocked || !limit) {
+    el.classList.add("hidden");
+    el.textContent = "";
+    return;
+  }
+  const left = Math.max(0, limit - (Date.now() - keepassLastUse));
+  const mins = Math.ceil(left / 60_000);
+  el.textContent = t("prefs_keepass.autolock_left", { minutes: mins });
+  el.classList.remove("hidden");
+}
+
+function stopKeepassAutoLock() {
+  if (keepassAutoLockTimer) {
+    clearInterval(keepassAutoLockTimer);
+    keepassAutoLockTimer = null;
+  }
+  renderKeepassCountdown();
+}
+
+/**
+ * Arranca (o reajusta) el vigilante. Se llama al desbloquear la base y al
+ * cambiar las preferencias. No hace nada si la base está bloqueada o si no hay
+ * ni autobloqueo por inactividad ni bloqueo por suspensión.
+ */
+function startKeepassAutoLock() {
+  stopKeepassAutoLock();
+  if (!keepassUnlocked) return;
+  if (!keepassAutoLockMs() && !prefs.keepassLockOnSuspend) return;
+
+  if (!keepassLastUse) touchKeepass();
+  keepassLastTick = Date.now();
+  keepassAutoLockTimer = setInterval(() => {
+    if (!keepassUnlocked) {
+      stopKeepassAutoLock();
+      return;
+    }
+    const now = Date.now();
+    const drift = now - keepassLastTick - KEEPASS_TICK_MS;
+    keepassLastTick = now;
+
+    if (prefs.keepassLockOnSuspend && drift > KEEPASS_SUSPEND_GAP_MS) {
+      void autoLockKeepass("suspend");
+      return;
+    }
+    const limit = keepassAutoLockMs();
+    if (limit && now - keepassLastUse >= limit) {
+      void autoLockKeepass("idle");
+      return;
+    }
+    renderKeepassCountdown();
+  }, KEEPASS_TICK_MS);
+  renderKeepassCountdown();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3644,6 +3798,12 @@ async function init() {
     profiles = [];
   }
 
+  // Si `profiles.json` estaba dañado, el backend lo ha puesto en cuarentena y ha
+  // restaurado la última copia buena. Hay que decirlo: presentar un catálogo
+  // vacío (o uno viejo) en silencio haría creer al usuario que lo ha perdido
+  // todo, y el siguiente guardado escribiría encima.
+  await reportProfilesRecovery();
+
   ensureWorkspacesForProfiles();
   await refreshNotesIndex();
   loadSnapshotIndex();
@@ -3652,6 +3812,11 @@ async function init() {
   renderConnectionList();
   bindUIEvents();
   await initTrayQuickLauncher().catch((e) => console.debug("[tray] init", e));
+  // La política de primera conexión y su diálogo deben estar listos antes de que
+  // el usuario pueda conectar a nada.
+  applyHostKeyPolicy();
+  await initHostKeyPrompt().catch((e) => console.error("[hostkey] init", e));
+  initWakeWatcher();
   await populateSyncTab().catch((e) => console.error("[sync] populate", e));
   if (_syncConfigCache?.enabled && _syncConfigCache.backend !== "none") {
     // Indicador discreto: la sync de arranque puede tardar segundos (Drive)
@@ -4571,6 +4736,169 @@ async function updateTrayQuickLauncher() {
   await invoke("tray_update_quick_launcher", {
     payload: buildTrayQuickLauncherPayload(),
   });
+}
+
+/**
+ * Avisa si el store de perfiles llegó dañado al arranque. El backend ya ha hecho
+ * lo suyo (cuarentena + restaurar la última copia válida); esto es lo que el
+ * usuario **tiene** que saber para no dar por perdidos sus datos.
+ */
+async function reportProfilesRecovery() {
+  /** @type {{kind: string, corrupt?: string}} */
+  let rec;
+  try {
+    rec = await invoke("profiles_recovery");
+  } catch {
+    return;
+  }
+  if (!rec || rec.kind === "intact" || rec.kind === "missing") return;
+
+  if (rec.kind === "restoredFromBackup") {
+    toast(t("toast.profiles_restored", { path: rec.corrupt || "" }), "warning", 15000);
+  } else if (rec.kind === "lost") {
+    toast(t("toast.profiles_lost", { path: rec.corrupt || "" }), "error", 0);
+  }
+}
+
+// ── Suspensión, reanudación y cambios de red ─────────────────────
+//
+// Ver `modules/wake.js` para el porqué de detectar la suspensión por reloj (un
+// proceso congelado no puede recibir un evento mientras duerme; al despertar, sí
+// puede ver que su tick llegó tardísimo).
+//
+// Al despertar, una sesión SSH suele estar muerta aunque la app aún la pinte como
+// «conectada»: el TCP se cayó mientras el equipo dormía y nadie se enteró. Lo que
+// hacemos con ella lo decide el usuario (`prefs.onWakeAction`).
+
+/** Cada cuánto comprueba el vigilante. */
+const WAKE_TICK_MS = 15_000;
+/** Desfase del tick a partir del cual se asume que el equipo durmió. */
+const WAKE_THRESHOLD_MS = 90_000;
+/** Separación base entre reconexiones, para no lanzarlas todas a la vez. */
+const WAKE_STAGGER_STEP_MS = 2_000;
+const WAKE_STAGGER_JITTER_MS = 1_500;
+
+let _wakeTimer = null;
+let _wakeLastTick = 0;
+
+/** Sesiones que estaban conectadas y pueden haberse quedado obsoletas. */
+function liveSessions() {
+  return [...sessions.values()].filter((s) => s.status === "connected");
+}
+
+/**
+ * Reacciona a un despertar (o a la vuelta de la red). No reconecta nada sin
+ * permiso: `prefs.onWakeAction` manda.
+ * @param {"wake"|"online"} cause
+ */
+async function handleWake(cause) {
+  const action = prefs.onWakeAction || "check";
+  if (action === "nothing") return;
+
+  const live = liveSessions();
+  const dead = [...sessions.values()].filter((s) => ["closed", "error"].includes(s.status));
+  if (!live.length && !dead.length) return;
+
+  toast(
+    cause === "online" ? t("toast.network_back") : t("toast.woke_up"),
+    "info"
+  );
+
+  // Marcar las «conectadas» como sospechosas y comprobarlas de verdad: el socket
+  // pudo morir mientras el equipo dormía sin que llegara ningún `closed`.
+  for (const s of live) {
+    const profile = profiles.find((p) => p.id === s.profileId);
+    if (!profile) continue;
+    invoke("tcp_ping", { host: profile.host, port: profile.port }).catch(() => {
+      // Inalcanzable: la sesión está obsoleta aunque la pintemos conectada.
+      recordActivity({
+        kind: "session",
+        status: "warning",
+        title: t("activity.session_stale", { name: s.name || profile.name }),
+      });
+    });
+  }
+
+  if (action !== "reconnect" || !dead.length) return;
+
+  // Reenganche escalonado: lanzarlas todas a la vez es la forma más fiable de
+  // que fallen (pico de handshakes contra el mismo host o bastión).
+  const delays = staggerDelays(dead.length, WAKE_STAGGER_STEP_MS, WAKE_STAGGER_JITTER_MS);
+  dead.forEach((s, i) => {
+    setTimeout(() => {
+      // Puede haberse cerrado la pestaña mientras esperaba su turno.
+      if (sessions.has(s.id) && ["closed", "error"].includes(sessions.get(s.id).status)) {
+        reconnectSession(s.id).catch((e) => console.error("[wake] reconnect", e));
+      }
+    }, delays[i]);
+  });
+}
+
+/** Arranca el vigilante de suspensión y los avisos de red. */
+function initWakeWatcher() {
+  if (_wakeTimer) clearInterval(_wakeTimer);
+  _wakeLastTick = Date.now();
+  _wakeTimer = setInterval(() => {
+    const now = Date.now();
+    const woke = detectedWake(now, _wakeLastTick, WAKE_TICK_MS, WAKE_THRESHOLD_MS);
+    _wakeLastTick = now;
+    if (woke) void handleWake("wake");
+  }, WAKE_TICK_MS);
+
+  // Cambios de red: el WebView sí los notifica, así que aquí no hace falta
+  // heurística. `offline` solo informa; `online` dispara el mismo flujo.
+  window.addEventListener("offline", () => {
+    if ((prefs.onWakeAction || "check") !== "nothing") {
+      toast(t("toast.network_lost"), "warning");
+    }
+  });
+  window.addEventListener("online", () => void handleWake("online"));
+}
+
+// ── Política de host keys (primera conexión) ─────────────────────
+//
+// La decisión la toma el backend dentro del handshake SSH (`host_keys`), donde
+// no hay UI: aquí solo se le comunica la preferencia y se atiende la pregunta
+// que emite cuando encuentra una clave desconocida.
+
+/** Comunica al backend si hay que confirmar la huella en la primera conexión. */
+function applyHostKeyPolicy() {
+  invoke("set_host_key_policy", { strict: prefs.strictHostKey !== false })
+    .catch((e) => console.error("[hostkey] set policy", e));
+}
+
+/**
+ * Atiende `ssh-hostkey-prompt`: el servidor presentó una host key que no
+ * conocemos y el backend está esperando (con plazo) a que el usuario decida.
+ *
+ * Es un listener **global**, no por sesión: la clave puede venir de un SSH, de
+ * un SFTP, de un script o de un salto ProxyJump, y la política es global.
+ */
+async function initHostKeyPrompt() {
+  await listen(
+    EVENT.hostKeyPrompt,
+    async (/** @type {{ payload: HostKeyPromptEvent }} */ event) => {
+      const p = event.payload || {};
+      const accept = await confirmThemed({
+        title: t("modal_hostkey.title"),
+        message: [
+          t("modal_hostkey.intro", { host: p.host, port: p.port }),
+          "",
+          t("modal_hostkey.fingerprint", { type: p.keyType, fingerprint: p.fingerprint }),
+          "",
+          t("modal_hostkey.advice"),
+        ].join("\n"),
+        submitLabel: t("modal_hostkey.accept"),
+        danger: true,
+      });
+      try {
+        await invoke("ssh_hostkey_response", { promptId: p.promptId, accept });
+      } catch (e) {
+        console.error("[hostkey] response", e);
+      }
+      if (!accept) toast(t("toast.hostkey_rejected", { host: p.host }), "warning");
+    }
+  );
 }
 
 async function initTrayQuickLauncher() {
@@ -6919,6 +7247,7 @@ function closeKeepassPicker() {
 function selectKeepassEntry(uuid) {
   const entry = keepassEntries.find((e) => e.uuid === uuid);
   if (!entry) return;
+  touchKeepass();
   recordKeepassRecent(uuid);
   populateKeepassEntrySelect(uuid);
 }
@@ -8673,6 +9002,11 @@ async function resolveOverrideAuthCredentials(profile, overrides) {
 async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase, { private: isPrivate = false, credId = null, restore = false, overrides = null, initialDir = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
+
+  // Conectar un perfil que saca su contraseña de KeePass **es** uso de la base
+  // (la resuelve el backend en `resolve_password_from_keepass`), así que
+  // reinicia el contador de autobloqueo.
+  if (profile.keepass_entry_uuid) touchKeepass();
 
   // Preguntas `${ask:}` (si las hay) antes de crear la pestaña: si el usuario
   // cancela, abortamos sin dejar nada a medias.
@@ -12635,16 +12969,36 @@ async function importScriptFromMarkdown() {
   }
   if (!path) return;
   let script = null;
+  let ignored = [];
   try {
-    script = scriptFromMarkdown(
+    ({ script, ignored } = parseRunbook(
       await invoke("read_text_file", { path, maxBytes: FILE_READ_LIMITS.runbook })
-    );
+    ));
   } catch {
     script = null;
   }
   if (!script) {
     toast(t("scripts.import_invalid"), "error");
     return;
+  }
+  // El parser es tolerante, pero no silencioso: si ha descartado líneas (un
+  // runbook editado a mano con un typo), el usuario decide si importa igualmente
+  // un script incompleto.
+  if (ignored.length) {
+    const sample = ignored
+      .slice(0, 5)
+      .map((x) => `${t("scripts.import_ignored_line", { line: x.line })}: ${x.text}`)
+      .join("\n");
+    const more = ignored.length > 5
+      ? `\n${t("scripts.import_ignored_more", { count: ignored.length - 5 })}`
+      : "";
+    const ok = await confirmThemed({
+      title: t("scripts.import_ignored_title"),
+      message: `${t("scripts.import_ignored", { count: ignored.length })}\n\n${sample}${more}`,
+      submitLabel: t("scripts.import_ignored_continue"),
+      danger: true,
+    });
+    if (!ok) return;
   }
   try {
     await invoke("scripts_save", { script });
@@ -18089,6 +18443,14 @@ async function importFromSshConfig() {
 // se omite (se cuenta como "no soportado").
 const MRNG_PROTOCOL_MAP = { SSH2: "ssh", SSH1: "ssh", RDP: "rdp" };
 
+// Presupuesto del árbol importado, espejo de `MAX_NODES` / `MAX_DEPTH` de
+// `asbru.rs`. La cuota de tamaño (`FILE_READ_LIMITS.importer`) acota el texto,
+// pero no el coste de recorrerlo: el walk es recursivo y el asistente pinta un
+// nodo por conexión, así que un XML muy anidado desborda la pila del renderer y
+// uno con cientos de miles de nodos congela la WebView.
+const MAX_IMPORT_NODES = 20000;
+const MAX_IMPORT_DEPTH = 64;
+
 const importWizard = {
   source: "mremoteng",
   fileName: null,
@@ -18132,10 +18494,16 @@ function parseMremoteng(xmlText) {
   // Primera pasada: árbol "crudo" con referencia al elemento DOM y al padre,
   // necesario para resolver la herencia de atributos (mrngResolveAttr).
   let counter = 0;
-  const walk = (el, parent) => {
+  const walk = (el, parent, depth) => {
+    if (depth > MAX_IMPORT_DEPTH) {
+      throw new Error(t("import_wizard.err_too_deep", { max: MAX_IMPORT_DEPTH }));
+    }
     const out = [];
     for (const child of Array.from(el.children)) {
       if ((child.tagName || child.nodeName) !== "Node") continue;
+      if (counter >= MAX_IMPORT_NODES) {
+        throw new Error(t("import_wizard.err_too_many", { max: MAX_IMPORT_NODES }));
+      }
       const node = {
         uid: `iw-${counter++}`,
         el: child,
@@ -18145,12 +18513,12 @@ function parseMremoteng(xmlText) {
         protocol: child.getAttribute("Protocol") || "",
         children: [],
       };
-      node.children = walk(child, node);
+      node.children = walk(child, node, depth + 1);
       out.push(node);
     }
     return out;
   };
-  const raw = walk(root, null);
+  const raw = walk(root, null, 0);
 
   // Segunda pasada: normaliza al modelo común resolviendo la herencia.
   const normalize = (n) => {
@@ -18343,8 +18711,19 @@ async function importWizardPickFile() {
         tree = await invoke("parse_asbru", { path: importWizard.fileName });
       } catch (e) {
         const [code, detail] = `${e}`.split("|");
-        const key = { not_asbru: "err_not_asbru", read: "err_read", yaml: "err_yaml" }[code];
-        throw new Error(key ? t(`import_wizard.${key}`, { detail: detail || "" }) : `${e}`);
+        const key = {
+          not_asbru: "err_not_asbru",
+          read: "err_read",
+          yaml: "err_yaml",
+          yaml_bomb: "err_yaml_bomb",
+          too_many: "err_too_many",
+          too_deep: "err_too_deep",
+        }[code];
+        throw new Error(
+          key
+            ? t(`import_wizard.${key}`, { detail: detail || "", max: detail || "" })
+            : `${e}`
+        );
       }
       meta = {
         source: "asbru",

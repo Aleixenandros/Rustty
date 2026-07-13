@@ -136,7 +136,7 @@ fn parse_connect_command(query: &str, rest: &[&str]) -> Option<CliCommand> {
     }
 
     let remote_command = match command_parts {
-        Some(parts) if parts.is_empty() => {
+        Some([]) => {
             return Some(CliCommand::Invalid(
                 "Indica el comando remoto despues de --exec o --.".to_string(),
             ));
@@ -257,12 +257,11 @@ fn list_profiles(json: bool) -> Result<(), String> {
         .max(7);
 
     println!(
-        "{:<name_w$}  {:<host_w$}  {:<user_w$}  {:>5}  {}",
+        "{:<name_w$}  {:<host_w$}  {:<user_w$}  {:>5}  GRUPO",
         "NOMBRE",
         "HOST/IP",
         "USUARIO",
         "PUERTO",
-        "GRUPO",
         name_w = name_w,
         host_w = host_w,
         user_w = user_w
@@ -725,90 +724,6 @@ fn normalize_exit_code(code: u32) -> i32 {
     code.min(255) as i32
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn args(items: &[&str]) -> Vec<String> {
-        items.iter().map(|item| item.to_string()).collect()
-    }
-
-    #[test]
-    fn parses_interactive_connect() {
-        match parse_cli_command(&args(&["-c", "prod"])) {
-            Some(CliCommand::Connect {
-                query,
-                remote_command: None,
-            }) => assert_eq!(query, "prod"),
-            other => panic!("unexpected command: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_exec_command() {
-        match parse_cli_command(&args(&["-c", "prod", "--exec", "uptime"])) {
-            Some(CliCommand::Connect {
-                query,
-                remote_command: Some(remote),
-            }) => {
-                assert_eq!(query, "prod");
-                assert_eq!(remote.command, "uptime");
-                assert!(!remote.tty);
-            }
-            other => panic!("unexpected command: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_double_dash_command_with_tty() {
-        match parse_cli_command(&args(&[
-            "-c",
-            "prod",
-            "--tty",
-            "--",
-            "sudo",
-            "systemctl",
-            "restart",
-            "nginx",
-        ])) {
-            Some(CliCommand::Connect {
-                query,
-                remote_command: Some(remote),
-            }) => {
-                assert_eq!(query, "prod");
-                assert_eq!(remote.command, "sudo systemctl restart nginx");
-                assert!(remote.tty);
-            }
-            other => panic!("unexpected command: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_trailing_command_alias() {
-        match parse_cli_command(&args(&["-c", "prod", "hostname"])) {
-            Some(CliCommand::Connect {
-                query,
-                remote_command: Some(remote),
-            }) => {
-                assert_eq!(query, "prod");
-                assert_eq!(remote.command, "hostname");
-                assert!(!remote.tty);
-            }
-            other => panic!("unexpected command: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rejects_empty_exec_command() {
-        match parse_cli_command(&args(&["-c", "prod", "--exec"])) {
-            Some(CliCommand::Invalid(message)) => {
-                assert!(message.contains("comando remoto"));
-            }
-            other => panic!("unexpected command: {other:?}"),
-        }
-    }
-}
-
 async fn connect_handle(
     profile: &ConnectionProfile,
     config: Arc<client::Config>,
@@ -921,5 +836,89 @@ async fn authenticate_target(
             "Autenticacion fallida. Metodos restantes: {:?}",
             remaining_methods
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn parses_interactive_connect() {
+        match parse_cli_command(&args(&["-c", "prod"])) {
+            Some(CliCommand::Connect {
+                query,
+                remote_command: None,
+            }) => assert_eq!(query, "prod"),
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_exec_command() {
+        match parse_cli_command(&args(&["-c", "prod", "--exec", "uptime"])) {
+            Some(CliCommand::Connect {
+                query,
+                remote_command: Some(remote),
+            }) => {
+                assert_eq!(query, "prod");
+                assert_eq!(remote.command, "uptime");
+                assert!(!remote.tty);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_double_dash_command_with_tty() {
+        match parse_cli_command(&args(&[
+            "-c",
+            "prod",
+            "--tty",
+            "--",
+            "sudo",
+            "systemctl",
+            "restart",
+            "nginx",
+        ])) {
+            Some(CliCommand::Connect {
+                query,
+                remote_command: Some(remote),
+            }) => {
+                assert_eq!(query, "prod");
+                assert_eq!(remote.command, "sudo systemctl restart nginx");
+                assert!(remote.tty);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_trailing_command_alias() {
+        match parse_cli_command(&args(&["-c", "prod", "hostname"])) {
+            Some(CliCommand::Connect {
+                query,
+                remote_command: Some(remote),
+            }) => {
+                assert_eq!(query, "prod");
+                assert_eq!(remote.command, "hostname");
+                assert!(!remote.tty);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_empty_exec_command() {
+        match parse_cli_command(&args(&["-c", "prod", "--exec"])) {
+            Some(CliCommand::Invalid(message)) => {
+                assert!(message.contains("comando remoto"));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
     }
 }

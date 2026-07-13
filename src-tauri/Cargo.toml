@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.53.0"
+version = "1.54.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -93,6 +93,7 @@ tauri-plugin-process = "2.3.1"
 # Coincidencia de patrones para el paso `waitRegex` del motor de scripts. Ya
 # presente en el árbol de dependencias; se declara directo para poder usarlo.
 regex = "1.12.4"
+tauri-plugin-single-instance = "2.4.2"
 
 # Señales POSIX para terminar el árbol de procesos de un «comando local» que se
 # cancela o agota su plazo (`kill(-pgid)`). Solo Unix: en Windows el árbol se

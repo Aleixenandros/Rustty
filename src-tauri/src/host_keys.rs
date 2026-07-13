@@ -1,15 +1,157 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::time::Duration;
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use russh::client;
 use russh::keys::{known_hosts, ssh_key::PublicKey};
 use russh::{Channel, ChannelMsg};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::oneshot;
 
-use crate::ipc::{event_name, EventKind};
+use crate::ipc::{event_name, EventKind, HOST_KEY_PROMPT};
+use crate::locks::MutexExt;
+
+// ── Política de primera conexión (TOFU estricto) ─────────────────────────────
+//
+// Hasta v1.54.0 la primera host key de un servidor se aprendía **en silencio**:
+// un man-in-the-middle en esa primera conexión pasaba inadvertido (el aviso solo
+// salta cuando la clave *cambia*). Ahora, por defecto, se pide confirmar la huella
+// antes de guardarla; el TOFU automático queda como opción explícita.
+//
+// La política es **global** (una preferencia del usuario), no por perfil: por eso
+// vive aquí y no en la firma de `client()`, que construyen catorce llamadores
+// distintos (SSH, SFTP, scripts, CLI y cada salto ProxyJump).
+
+/// `true` = preguntar antes de aprender una clave nueva (default).
+static STRICT_FIRST_CONNECT: AtomicBool = AtomicBool::new(true);
+
+/// Handle de la app para emitir el evento de confirmación. Ausente en la CLI,
+/// que cae al prompt por stdin.
+static APP: OnceLock<AppHandle> = OnceLock::new();
+
+/// Confirmaciones en vuelo: `promptId` → canal por el que llega la respuesta.
+static PENDING: LazyLock<Mutex<HashMap<String, oneshot::Sender<bool>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Plazo para que el usuario conteste. Agotado, la conexión se rechaza: preferimos
+/// no conectar a aprender una clave que nadie miró.
+const HOST_KEY_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Fija la política de primera conexión (la llama el frontend al cargar/guardar
+/// preferencias).
+pub fn set_strict_first_connect(strict: bool) {
+    STRICT_FIRST_CONNECT.store(strict, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn strict_first_connect() -> bool {
+    STRICT_FIRST_CONNECT.load(Ordering::Relaxed)
+}
+
+/// Registra el `AppHandle` (en `setup`). Sin él —CLI— se pregunta por stdin.
+pub fn register_app(app: AppHandle) {
+    let _ = APP.set(app);
+}
+
+/// Payload de `ssh-hostkey-prompt` (espejo de `HostKeyPromptEvent` en events.js).
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostKeyPrompt {
+    prompt_id: String,
+    host: String,
+    port: u16,
+    fingerprint: String,
+    key_type: String,
+    via_jump: bool,
+}
+
+/// Entrega la respuesta del usuario a una confirmación en vuelo.
+/// Devuelve `false` si el `promptId` ya no existe (timeout o respuesta duplicada).
+pub fn resolve_prompt(prompt_id: &str, accept: bool) -> bool {
+    let sender = PENDING.lock_recover().remove(prompt_id);
+    match sender {
+        Some(tx) => tx.send(accept).is_ok(),
+        None => false,
+    }
+}
+
+/// Pide confirmación de una host key nueva. `Ok(true)` = el usuario la acepta.
+async fn confirm_new_host_key(host: &str, port: u16, key: &PublicKey) -> Result<bool, String> {
+    let fingerprint = fingerprint_sha256(key);
+    let key_type = key.algorithm().as_str().to_string();
+
+    let Some(app) = APP.get() else {
+        // Sin interfaz (CLI): preguntar por la terminal.
+        return confirm_on_stdin(host, port, &fingerprint, &key_type);
+    };
+
+    let prompt_id = uuid::Uuid::new_v4().to_string();
+    let (tx, rx) = oneshot::channel();
+    PENDING.lock_recover().insert(prompt_id.clone(), tx);
+
+    let payload = HostKeyPrompt {
+        prompt_id: prompt_id.clone(),
+        host: host.to_string(),
+        port,
+        fingerprint,
+        key_type,
+        via_jump: false,
+    };
+    if let Err(err) = app.emit(HOST_KEY_PROMPT, payload) {
+        PENDING.lock_recover().remove(&prompt_id);
+        return Err(format!("no se pudo pedir confirmación de la host key: {err}"));
+    }
+
+    match tokio::time::timeout(HOST_KEY_PROMPT_TIMEOUT, rx).await {
+        Ok(Ok(accepted)) => Ok(accepted),
+        // El canal se cerró sin respuesta (la ventana se fue, p. ej.).
+        Ok(Err(_)) => Ok(false),
+        Err(_) => {
+            PENDING.lock_recover().remove(&prompt_id);
+            Err(format!(
+                "nadie confirmó la host key de {host}:{port} en {} s; conexión cancelada",
+                HOST_KEY_PROMPT_TIMEOUT.as_secs()
+            ))
+        }
+    }
+}
+
+/// Confirmación por terminal, para la CLI (sin ventana que preguntar).
+fn confirm_on_stdin(
+    host: &str,
+    port: u16,
+    fingerprint: &str,
+    key_type: &str,
+) -> Result<bool, String> {
+    use std::io::{BufRead, IsTerminal, Write};
+
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        // Sin terminal interactiva no hay a quién preguntar: rechazar es lo
+        // seguro (y el usuario puede activar el TOFU automático si lo quiere).
+        return Err(format!(
+            "host key desconocida de {host}:{port} ({key_type}, {fingerprint}). \
+             Sin terminal interactiva no se puede confirmar: conecta una vez desde la app \
+             o activa la confianza automática en Preferencias → Seguridad."
+        ));
+    }
+    println!("La autenticidad del host {host}:{port} no se puede establecer.");
+    println!("Huella de la clave {key_type}: {fingerprint}");
+    print!("¿Confiar en este host y guardar su clave? (sí/no): ");
+    let _ = std::io::stdout().flush();
+
+    let mut line = String::new();
+    if stdin.lock().read_line(&mut line).is_err() {
+        return Ok(false);
+    }
+    let answer = line.trim().to_lowercase();
+    Ok(matches!(answer.as_str(), "si" | "sí" | "s" | "yes" | "y"))
+}
 
 /// Handler TOFU para russh:
 /// - si la host key ya coincide con known_hosts, acepta;
@@ -132,8 +274,30 @@ impl client::Handler for KnownHostsClient {
                         Ok(false)
                     }
                     Ok(_) | Err(_) => {
-                        // No hay entradas previas (o no se pudo leer): aplicar TOFU
-                        // y aprender la clave actual.
+                        // No hay entradas previas: es la PRIMERA conexión a este
+                        // host. Con el modo estricto (default) el usuario confirma
+                        // la huella antes de aprenderla; sin él, TOFU clásico.
+                        if strict_first_connect() {
+                            match confirm_new_host_key(&self.host, self.port, server_public_key)
+                                .await
+                            {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    self.set_failure(format!(
+                                        "Host key de {}:{} rechazada: no se ha confirmado la huella {}. \
+                                         La clave no se ha guardado.",
+                                        self.host,
+                                        self.port,
+                                        fingerprint_sha256(server_public_key)
+                                    ));
+                                    return Ok(false);
+                                }
+                                Err(err) => {
+                                    self.set_failure(err);
+                                    return Ok(false);
+                                }
+                            }
+                        }
                         match known_hosts::learn_known_hosts(
                             &self.host,
                             self.port,
@@ -461,5 +625,35 @@ mod tests {
         if let Ok(b) = PublicKey::from_openssh(OTRA_PUB) {
             assert_ne!(fingerprint_sha256(&a), fingerprint_sha256(&b));
         }
+    }
+
+    #[test]
+    fn el_modo_estricto_es_el_default_y_se_puede_desactivar() {
+        // El default es preguntar: aprender una clave nueva en silencio pasa a
+        // ser una decisión explícita del usuario.
+        assert!(strict_first_connect());
+        set_strict_first_connect(false);
+        assert!(!strict_first_connect());
+        set_strict_first_connect(true);
+        assert!(strict_first_connect());
+    }
+
+    #[test]
+    fn responder_a_un_prompt_inexistente_no_entra_en_panico() {
+        // Una respuesta tardía (el prompt ya caducó) o duplicada devuelve false
+        // en vez de romper: el frontend puede reintentar sin consecuencias.
+        assert!(!resolve_prompt("no-existe", true));
+        assert!(!resolve_prompt("no-existe", false));
+    }
+
+    #[tokio::test]
+    async fn sin_app_ni_terminal_la_clave_desconocida_se_rechaza() {
+        // En la CLI sin TTY (p. ej. dentro de un script) no hay a quién
+        // preguntar: se rechaza con un error accionable en vez de aprender la
+        // clave a ciegas. En el test, stdin no es un terminal.
+        let err = confirm_on_stdin("host.example", 22, "SHA256:abc", "ssh-ed25519")
+            .expect_err("sin TTY debe fallar");
+        assert!(err.contains("host.example"));
+        assert!(err.contains("SHA256:abc"));
     }
 }

@@ -218,6 +218,12 @@ fn apply_connect_overrides(profile: &mut ConnectionProfile, ov: &ConnectOverride
 ///   - `ssh-log-{id}`       : etapa de diagnóstico de conexión
 ///   - `ssh-error-{id}`     : String con el error
 ///   - `ssh-closed-{id}`    : sesión finalizada (limpiamente o por error)
+// Frontera IPC: los argumentos de este comando los dicta el `invoke` del
+// frontend, no una decisión de diseño interna. Agruparlos en un struct
+// obligaría a cambiar la forma del payload en `main.js` —y un fallo ahí no lo
+// caza el compilador, sino el usuario al conectar—. Cuando se trocee
+// `commands.rs` por dominios (tarea del backlog) entrarán los structs de args.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn ssh_connect(
     ssh_state: State<'_, SshManager>,
@@ -266,12 +272,14 @@ pub fn ssh_connect(
 
     ssh_state
         .connect(
-            session_id.clone(),
-            profile,
-            resolved_password,
-            passphrase,
-            app_handle,
-            on_data,
+            crate::ssh_manager::SessionSpec {
+                session_id: session_id.clone(),
+                profile,
+                password: resolved_password,
+                passphrase,
+                app_handle,
+                on_data,
+            },
             data_dir.0.clone(),
         )
         .map_err(|e| e.to_string())?;
@@ -548,6 +556,12 @@ pub fn ssh_set_keepalive(
 
 /// Lanza el cliente RDP nativo y devuelve el session_id.
 /// El backend emitirá `rdp-closed-{id}` cuando el proceso externo termine.
+// Frontera IPC: los argumentos de este comando los dicta el `invoke` del
+// frontend, no una decisión de diseño interna. Agruparlos en un struct
+// obligaría a cambiar la forma del payload en `main.js` —y un fallo ahí no lo
+// caza el compilador, sino el usuario al conectar—. Cuando se trocee
+// `commands.rs` por dominios (tarea del backlog) entrarán los structs de args.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn rdp_connect(
     rdp_state: State<'_, RdpManager>,
@@ -575,17 +589,18 @@ pub fn rdp_connect(
 
     let password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
 
-    rdp_state
-        .launch(
-            session_id.clone(),
+    rdp_state.launch(
+        crate::rdp_manager::RdpTarget {
+            session_id: session_id.clone(),
             profile_id,
-            &profile.host,
-            profile.port,
-            &profile.username,
-            profile.domain.as_deref(),
-            password.as_deref(),
-            app_handle,
-        )?;
+            host: &profile.host,
+            port: profile.port,
+            username: &profile.username,
+            domain: profile.domain.as_deref(),
+            password: password.as_deref(),
+        },
+        app_handle,
+    )?;
 
     Ok(session_id)
 }
@@ -742,6 +757,12 @@ pub fn local_shell_has_job(shell_state: State<'_, LocalShellManager>, session_id
 
 /// Abre una sesión SFTP paralela a la SSH para transferencia de ficheros.
 /// Devuelve el session_id (independiente del de la sesión SSH interactiva).
+// Frontera IPC: los argumentos de este comando los dicta el `invoke` del
+// frontend, no una decisión de diseño interna. Agruparlos en un struct
+// obligaría a cambiar la forma del payload en `main.js` —y un fallo ahí no lo
+// caza el compilador, sino el usuario al conectar—. Cuando se trocee
+// `commands.rs` por dominios (tarea del backlog) entrarán los structs de args.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn sftp_connect(
     sftp_state: State<'_, SftpManager>,
@@ -2672,6 +2693,30 @@ pub fn note_import(notes: State<NotesManager>, doc: NoteDoc) -> Result<(), Strin
 #[tauri::command]
 pub fn notes_dir(notes: State<NotesManager>) -> Result<String, String> {
     Ok(notes.dir().to_string_lossy().to_string())
+}
+
+/// Estado de recuperación del store de perfiles tras la última carga. El
+/// frontend lo consulta al arrancar: si `profiles.json` estaba dañado hay que
+/// **decírselo al usuario**, no presentarle un catálogo vacío como si nada (el
+/// siguiente guardado escribiría encima de la nada).
+#[tauri::command]
+pub fn profiles_recovery(profile_state: State<ProfileManager>) -> crate::atomic_file::Recovery {
+    profile_state.last_recovery()
+}
+
+/// Fija la política de primera conexión SSH: `true` (default) exige confirmar la
+/// huella de una host key nueva antes de aprenderla; `false` es el TOFU
+/// automático clásico. La llama el frontend al cargar y al guardar preferencias.
+#[tauri::command]
+pub fn set_host_key_policy(strict: bool) {
+    crate::host_keys::set_strict_first_connect(strict);
+}
+
+/// Respuesta del usuario a una confirmación de host key (`ssh-hostkey-prompt`).
+/// Devuelve `false` si el `prompt_id` ya había caducado o se respondió antes.
+#[tauri::command]
+pub fn ssh_hostkey_response(prompt_id: String, accept: bool) -> bool {
+    crate::host_keys::resolve_prompt(&prompt_id, accept)
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
 use crate::ipc::{event_name, EventKind};
+use crate::locks::MutexExt;
 
 /// Sesión de cliente externo activa.
 pub struct ExternalHandle {
@@ -48,7 +49,7 @@ impl ExternalClientManager {
         spawned: SpawnedExternalClient,
         app_handle: AppHandle,
     ) -> Result<(), String> {
-        self.sessions.lock().unwrap().insert(
+        self.sessions.lock_recover().insert(
             session_id.clone(),
             ExternalHandle {
                 child: spawned.child,
@@ -64,7 +65,7 @@ impl ExternalClientManager {
             std::thread::sleep(std::time::Duration::from_millis(500));
 
             let finished = {
-                let mut map = sessions.lock().unwrap();
+                let mut map = sessions.lock_recover();
                 if let Some(handle) = map.get_mut(&sid) {
                     match handle.child.try_wait() {
                         Ok(Some(_)) | Err(_) => {
@@ -91,7 +92,7 @@ impl ExternalClientManager {
     }
 
     fn disconnect(&self, session_id: &str) {
-        if let Some(mut handle) = self.sessions.lock().unwrap().remove(session_id) {
+        if let Some(mut handle) = self.sessions.lock_recover().remove(session_id) {
             let _ = handle.child.kill();
             if let Some(path) = handle.cleanup_path.take() {
                 let _ = std::fs::remove_file(path);
