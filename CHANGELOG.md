@@ -2,6 +2,47 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.53.0] - 2026-07-13
+
+### Añadido
+
+- **Los comandos locales ya no se pueden quedar colgados**: cada comando tiene
+  un límite de tiempo (30 s por defecto, configurable o desactivable en
+  Preferencias → Comandos) y un botón **Cancelar** en el aviso mientras se
+  ejecuta. Al cancelarlo, o al agotarse el plazo, se detiene también todo lo
+  que el comando hubiera lanzado por su cuenta.
+- **Límite de salida capturada**: eliges cuánta salida guarda cada comando
+  local (64 KiB a 8 MiB). Si un comando escribe sin parar, la app ya no se
+  queda sin memoria: se queda con lo que cabe y avisa de que la salida está
+  truncada.
+- **Aviso de enlaces simbólicos**: al copiar una carpeta por SFTP, los enlaces
+  simbólicos se omiten (como siempre), pero ahora la app te dice cuántos ha
+  saltado, en el aviso y en el registro de actividad. Antes desaparecían en
+  silencio y parecía que se había copiado todo.
+
+### Cambiado
+
+- **Las descargas nunca dejan un fichero a medias con aspecto de completo**: el
+  fichero se baja a un temporal y solo toma su nombre definitivo cuando ha
+  terminado bien. Si se corta la red o cancelas, no queda basura en tu carpeta:
+  lo que ves con el nombre bueno está entero.
+- **Ficheros de importación acotados**: cada importación (tema, copia de
+  seguridad, `~/.ssh/config`, export de otro cliente…) tiene un tamaño máximo
+  razonable y rechaza ficheros binarios con un aviso claro, en vez de intentar
+  cargar entero un fichero enorme o equivocado y bloquear la aplicación.
+
+### Seguridad
+
+- **Los logs de sesión se crean privados**: en Linux y macOS solo tu usuario
+  puede leerlos (permisos `0600`). Antes, según la configuración del sistema,
+  podían quedar legibles para el resto de usuarios del equipo. Los logs
+  antiguos con permisos abiertos se corrigen solos al volver a usarlos.
+
+### Dependencias
+
+- Actualizados `tauri` (2.11.5), `russh` (0.62), `keepass` (0.13.15) y las
+  herramientas de desarrollo (`vite`, `vitest`, `eslint-plugin-jsdoc`).
+
 ## [1.52.0] - 2026-07-10
 
 ### Añadido

@@ -27,6 +27,8 @@ Los snippets se insertan en la terminal activa y pueden sincronizarse dentro del
 
 Los comandos locales se guardan solo en este equipo (`localStorage`) y **no se sincronizan**. Los de tipo shell se ejecutan con el shell del sistema (`sh -c` o `cmd /C`), así que la confirmación viene activada por defecto y el modal los trata como acciones sensibles. En snippets y comandos locales se resuelven variables internas, `${var:...}` y `${ask:...}`; los marcadores de secretos (`${master:...}` / `${secret:...}`) quedan literales para no exponer valores sensibles en el frontend.
 
+La ejecución está **acotada**: un plazo máximo configurable (30 s por defecto, desactivable), un tope de salida capturada y un botón **Cancelar** en el aviso mientras el comando corre. Al cancelar o agotarse el plazo se termina el comando **y el árbol de procesos que haya lanzado**, de modo que un comando que no termina no puede quedarse consumiendo recursos de fondo. Los detalles están en la [guía de scripts y comandos](Scripts).
+
 ## Scripts
 
 Los scripts (recetas de pasos sobre conexiones SSH) siguen las mismas reglas que el resto de secretos de Rustty:
@@ -109,6 +111,8 @@ Desde el menú contextual de un perfil, **"Abrir en privado"** inicia una sesió
 ## Logs de sesión
 
 La grabación de sesión por perfil vuelca la salida a ficheros en `<data_dir>/session_logs/`. Esos registros pueden contener información sensible (comandos y respuestas del servidor), así que en **Preferencias → Seguridad → Logs de sesión** puedes ver cuántos hay y cuánto ocupan, fijar límites de **retención por edad (días)** y **tamaño total (MB)**, limpiarlos manualmente con un botón y abrir su carpeta directamente.
+
+En Unix los logs se crean con permisos **`0600`** (solo tu usuario puede leerlos), sin depender del `umask` del sistema, que por defecto los habría dejado legibles para el resto de usuarios del equipo. Un log heredado de una versión anterior con permisos más laxos se endurece automáticamente al volver a abrirlo. En Windows la confidencialidad se apoya en los permisos de tu carpeta de perfil, igual que el resto de ficheros de la aplicación. Esto vale también para la ruta personalizada, si la cambias.
 
 ## Restauración de pantalla anterior
 

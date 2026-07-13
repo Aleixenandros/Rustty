@@ -55,6 +55,14 @@ Puedes acceder a estas acciones desde la toolbar, los botones centrales o el men
 
 Las transferencias SFTP grandes están preparadas para superar el umbral de 1 GiB sin cortar la sesión por timeout durante la renegociación de claves.
 
+## Descargas a medias: nunca un fichero engañoso
+
+Una descarga se escribe primero en un fichero temporal hermano del destino (`<nombre>.rustty-part`) y solo **ocupa su nombre definitivo cuando ha terminado bien**, incluida la verificación de tamaño si la tienes activada. Si la transferencia falla, se cancela o se corta la red, el temporal se borra y en tu carpeta no queda un fichero truncado con aspecto de completo. Lo que ves con el nombre bueno está entero.
+
+## Enlaces simbólicos
+
+Al transferir una carpeta, los enlaces simbólicos **no se copian** en ninguna de las dos direcciones: copiarlos tal cual apuntaría a rutas que no existen en el otro extremo, y seguirlos podría sacar la copia del árbol elegido o meterla en un ciclo. Rustty los cuenta y te lo dice al terminar («N enlaces simbólicos omitidos»), tanto en el aviso como en el registro de ACTIVIDAD, para que sepas que la copia no los incluye.
+
 ## Panel TRANSFERENCIAS / ACTIVIDAD
 
 Justo debajo de la vista dividida hay dos secciones siempre visibles:

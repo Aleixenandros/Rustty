@@ -45,3 +45,7 @@ Una barra de progreso muestra cuántas conexiones se van importando. Al terminar
 ## Privacidad
 
 El análisis y el descifrado de los ficheros se hacen **localmente** en Rustty. El fichero de origen no se copia ni se envía a ningún servidor. Las contraseñas, si decides importarlas, acaban únicamente en el keyring del sistema.
+
+## Ficheros aceptados
+
+Cada import tiene un tamaño máximo razonable para lo que espera leer (por ejemplo, 1 MB para un `~/.ssh/config` y 16 MB para el export de otro cliente o una copia de seguridad completa). Un fichero binario, o uno que supere ese tope, se rechaza con un aviso claro en vez de intentar cargarse entero: así, apuntar sin querer a un fichero enorme o equivocado no bloquea la aplicación.

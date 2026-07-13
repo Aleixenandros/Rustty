@@ -2339,6 +2339,34 @@
                 </div>
               </div>
               <div id="localcmd-list" class="global-tunnel-list"></div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-localcmd-timeout" data-i18n="prefs_commands.timeout_label">Límite de tiempo</label>
+                <div class="settings-control">
+                  <select id="pref-localcmd-timeout">
+                    <option value="0" data-i18n="prefs_commands.timeout_off">Sin límite</option>
+                    <option value="10">10 s</option>
+                    <option value="30">30 s</option>
+                    <option value="60">1 min</option>
+                    <option value="300">5 min</option>
+                    <option value="900">15 min</option>
+                  </select>
+                  <p class="form-hint" data-i18n="prefs_commands.timeout_hint">Un comando local que no termina se detiene al agotar el plazo, junto con los procesos que haya lanzado. Siempre puedes cancelarlo a mano desde el aviso mientras se ejecuta.</p>
+                </div>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-localcmd-output" data-i18n="prefs_commands.output_label">Salida capturada</label>
+                <div class="settings-control">
+                  <select id="pref-localcmd-output">
+                    <option value="64">64 KiB</option>
+                    <option value="512">512 KiB</option>
+                    <option value="2048">2 MiB</option>
+                    <option value="8192">8 MiB</option>
+                  </select>
+                  <p class="form-hint" data-i18n="prefs_commands.output_hint">Cuánta salida se guarda de cada comando. Lo que exceda se descarta y el aviso lo indica; el comando sigue ejecutándose con normalidad.</p>
+                </div>
+              </div>
             </section>
 
             <!-- ── Atajos de teclado ── -->

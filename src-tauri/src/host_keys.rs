@@ -173,14 +173,24 @@ impl client::Handler for KnownHostsClient {
         }
     }
 
+    // Desde russh 0.62 los canales que abre el servidor se aceptan o rechazan de
+    // forma explícita con `reply`: soltar el handle sin contestar equivale a un
+    // rechazo `AdministrativelyProhibited`. Aquí eso encaja con la política que
+    // ya teníamos: si el forwarding correspondiente no está activo en el perfil,
+    // el canal se rechaza (antes se ignoraba y quedaba a medio abrir).
     async fn server_channel_open_agent_forward(
         &mut self,
         channel: Channel<russh::client::Msg>,
+        reply: russh::client::ChannelOpenHandle,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
         if !self.agent_forwarding {
+            reply
+                .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
             return Ok(());
         }
+        reply.accept().await;
         tokio::spawn(async move {
             let _ = forward_to_agent(channel).await;
         });
@@ -192,11 +202,16 @@ impl client::Handler for KnownHostsClient {
         channel: Channel<russh::client::Msg>,
         _originator_address: &str,
         _originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
         if !self.x11_forwarding {
+            reply
+                .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
             return Ok(());
         }
+        reply.accept().await;
         tokio::spawn(async move {
             let _ = forward_to_x11(channel).await;
         });
@@ -210,6 +225,7 @@ impl client::Handler for KnownHostsClient {
         connected_port: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
         let target = self.remote_forwards.lock().ok().and_then(|map| {
@@ -219,9 +235,15 @@ impl client::Handler for KnownHostsClient {
                 .or_else(|| map.get(&("".to_string(), connected_port)).cloned())
         });
         let Some(target) = target else {
+            // Conexión entrante a un puerto remoto que no tenemos reenviado:
+            // se rechaza el canal en vez de aceptarlo y cerrarlo acto seguido.
+            reply
+                .reject(russh::ChannelOpenFailure::ConnectFailed)
+                .await;
             let _ = channel.close().await;
             return Ok(());
         };
+        reply.accept().await;
         tokio::spawn(async move {
             if let Ok(stream) =
                 tokio::net::TcpStream::connect((target.host.as_str(), target.port)).await

@@ -892,16 +892,39 @@ async fn run_connection_test(
     Ok(())
 }
 
+/// Abre (creando si hace falta) el log de sesión en modo append.
+///
+/// El fichero guarda la salida del terminal: contraseñas tecleadas por un
+/// `sudo` que no ecoa no, pero sí claves mostradas por pantalla, tokens, rutas y
+/// nombres internos. Es contenido privado y se crea **0600** en Unix
+/// (`OpenOptionsExt::mode`), sin depender del `umask` del usuario, que podría
+/// dejarlo legible por todo el sistema (`0644` con umask 022 es lo habitual).
+/// Como `mode()` solo aplica a la creación, un log ya existente con permisos más
+/// laxos (creado por una versión anterior de Rustty) se endurece al abrirlo.
+///
+/// En Windows la confidencialidad se apoya en el ACL del directorio del perfil
+/// del usuario, igual que el resto de ficheros de la app (mismo límite
+/// documentado en `atomic_file`).
 async fn open_session_log(path: &Path) -> Option<tokio::fs::File> {
     if let Some(parent) = path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-    tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await
-        .ok()
+    let mut opts = tokio::fs::OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let file = opts.open(path).await.ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = file.metadata().await {
+            if meta.permissions().mode() & 0o077 != 0 {
+                let _ =
+                    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await;
+            }
+        }
+    }
+    Some(file)
 }
 
 /// Crea el temporizador de keepalive de aplicación: `Some(interval)` que dispara
@@ -2180,6 +2203,32 @@ fn generate_x11_cookie() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// El log de sesión guarda salida del terminal: debe nacer privado (0600) y
+    /// no heredar un `umask` permisivo. Y si ya existía con permisos laxos (log
+    /// creado por una versión anterior), abrirlo lo endurece.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn el_log_de_sesion_se_crea_y_endurece_a_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("rustty-log-test-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("sesion.log");
+
+        // 1. Creación: 0600 aunque el umask del proceso sea permisivo.
+        let file = open_session_log(&path).await.expect("crea el log");
+        drop(file);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "log recién creado con modo {mode:o}");
+
+        // 2. Log heredado con permisos laxos: al abrirlo se corrige.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let file = open_session_log(&path).await.expect("reabre el log");
+        drop(file);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "log reabierto con modo {mode:o}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Parser de entrada de red NO confiable: CONNECT válido con destino por
     /// nombre de dominio. El cliente recibe el `[5,0]` del método y el reply

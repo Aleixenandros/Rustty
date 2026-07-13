@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.52.0"
+version = "1.53.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -30,7 +30,7 @@ serde_json = "1"
 # interactivo (ssh_manager) como el explorador de ficheros (sftp_manager);
 # nos permite arrancar un sftp-server elevado con `sudo` sobre un canal exec.
 # feature "des": habilita 3des-cbc para servidores legacy muy antiguos.
-russh = { version = "0.61", features = ["des"] }
+russh = { version = "0.62", features = ["des"] }
 russh-sftp = "2.3"
 suppaftp = { version = "10.0.0", features = ["rustls-ring"] }
 webpki-roots = "1"
@@ -93,3 +93,9 @@ tauri-plugin-process = "2.3.1"
 # Coincidencia de patrones para el paso `waitRegex` del motor de scripts. Ya
 # presente en el árbol de dependencias; se declara directo para poder usarlo.
 regex = "1.12.4"
+
+# Señales POSIX para terminar el árbol de procesos de un «comando local» que se
+# cancela o agota su plazo (`kill(-pgid)`). Solo Unix: en Windows el árbol se
+# cierra con `taskkill /T`, que no necesita dependencias.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

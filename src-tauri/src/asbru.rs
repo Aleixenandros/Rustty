@@ -70,12 +70,18 @@ fn val_str(env: &serde_yaml_ng::Value, key: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Cuota del YAML de Ásbrú (`asbru.yml`). Un catálogo enorme de conexiones no
+/// llega a 8 MiB; leer sin tope un fichero elegido a mano deja la puerta abierta
+/// a apuntar la app a un fichero gigante y congelar el proceso al parsearlo.
+const ASBRU_READ_LIMIT: u64 = 8 * 1024 * 1024;
+
 /// Parsea el export YAML de Ásbrú y devuelve el árbol normalizado de nodos raíz.
 #[tauri::command]
 pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
     // Los errores se devuelven como códigos estables («code» o «code|detalle»)
     // para que el frontend los traduzca; ver `import_wizard.err_*` en i18n.js.
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("read|{e}"))?;
+    let text = crate::commands::read_text_capped(std::path::Path::new(&path), ASBRU_READ_LIMIT)
+        .map_err(|e| format!("read|{e}"))?;
     let doc: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&text).map_err(|e| format!("yaml|{e}"))?;
 

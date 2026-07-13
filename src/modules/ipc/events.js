@@ -113,6 +113,9 @@ export function eventName(kind, suffix) {
  * @property {string} [current] Ruta relativa del archivo/subcarpeta que se transfiere ahora (solo carpetas).
  * @property {number} [filesDone] Archivos completados hasta ahora (solo carpetas).
  * @property {number} [filesTotal] Total de archivos de la carpeta (solo carpetas).
+ * @property {number} [skippedSymlinks] Enlaces simbólicos omitidos (solo en el
+ *   evento final de una carpeta): no se transfieren en ninguna dirección, pero
+ *   se cuentan para poder avisar de que la copia no los incluye.
  */
 
 /**

@@ -11,6 +11,7 @@ use crate::credentials::{self, CredentialKind, CredentialMeta, CredentialStore};
 use crate::external_client::{TelnetManager, VncManager};
 use crate::host_keys::fingerprint_sha256;
 use crate::keepass_manager;
+use crate::local_command::{self, LocalCommandOutput, LocalCommandRegistry};
 use crate::local_shell_manager::LocalShellManager;
 use crate::notes::{NoteDoc, NoteSummary, NotesManager};
 use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
@@ -1250,57 +1251,114 @@ pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
     write_atomic(std::path::Path::new(&path), contents.as_bytes()).map_err(|e| e.to_string())
 }
 
-/// Lee un fichero de texto (ej. JSON para import)
-#[tauri::command]
-pub fn read_text_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
-}
+/// Tope por defecto de las lecturas de texto locales cuando el llamador no fija
+/// uno propio (8 MiB): suficiente para cualquier import legítimo y lejos de un
+/// tamaño que congele la WebView al parsear.
+const DEFAULT_READ_LIMIT: u64 = 8 * 1024 * 1024;
+/// Tope duro: ningún llamador puede pedir más que esto.
+const MAX_READ_LIMIT: u64 = 64 * 1024 * 1024;
 
-/// Salida de un comando local ejecutado por el catálogo de "Comandos locales".
-#[derive(serde::Serialize)]
-pub struct LocalCommandOutput {
-    pub code: i32,
-    pub stdout: String,
-    pub stderr: String,
-}
-
-/// Ejecuta `command` con el shell del SO (`sh -c` en Unix, `cmd /C` en Windows)
-/// capturando su salida. No es interactivo. Lo invoca el catálogo de "Comandos
-/// locales" de la UI, que pide confirmación al usuario antes de lanzar acciones
-/// potencialmente destructivas; aquí no hay allowlist porque el catálogo lo
-/// define el propio usuario en su equipo.
-fn run_shell_capture(command: &str) -> std::io::Result<std::process::Output> {
-    #[cfg(windows)]
-    {
-        std::process::Command::new("cmd")
-            .args(["/C", command])
-            .output()
-    }
-    #[cfg(not(windows))]
-    {
-        std::process::Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .output()
+/// Formatea un tamaño en bytes de forma legible para el mensaje de error.
+fn human_size(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * KIB;
+    if bytes >= MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB as f64)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes as f64 / KIB as f64)
+    } else {
+        format!("{bytes} B")
     }
 }
 
-/// Comando IPC que ejecuta un comando local y devuelve código + stdout/stderr.
+/// Valida que el contenido leído sea texto utilizable: rechaza binarios (un
+/// byte NUL no aparece en texto legítimo y sí en ejecutables, imágenes o bases
+/// de datos) y exige UTF-8 válido. Función pura para poder testearla.
+fn text_payload(bytes: Vec<u8>) -> Result<String, String> {
+    if bytes.contains(&0) {
+        return Err(
+            "el fichero parece binario (contiene bytes nulos); se esperaba texto".to_string(),
+        );
+    }
+    String::from_utf8(bytes).map_err(|_| "el fichero no es texto UTF-8 válido".to_string())
+}
+
+/// Lee un fichero de texto local con **cuota**: comprueba que sea un fichero
+/// regular, que no supere `limit` bytes (medido en el propio flujo, no solo por
+/// los metadatos: el tamaño podría cambiar entre el `stat` y la lectura) y que
+/// el contenido sea texto. Punto único por el que pasan todos los imports.
+pub(crate) fn read_text_capped(path: &Path, limit: u64) -> Result<String, String> {
+    use std::io::Read;
+    let limit = limit.clamp(1, MAX_READ_LIMIT);
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let meta = file.metadata().map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("la ruta no es un fichero regular".to_string());
+    }
+    if meta.len() > limit {
+        return Err(format!(
+            "el fichero ocupa {} y supera el límite de {} de esta operación",
+            human_size(meta.len()),
+            human_size(limit)
+        ));
+    }
+    // `take(limit + 1)`: si el fichero creció tras el `stat`, la lectura se
+    // detiene un byte más allá del tope y el error salta igual.
+    let mut buf = Vec::with_capacity(meta.len().min(limit) as usize);
+    file.take(limit + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| e.to_string())?;
+    if buf.len() as u64 > limit {
+        return Err(format!(
+            "el fichero supera el límite de {} de esta operación",
+            human_size(limit)
+        ));
+    }
+    text_payload(buf)
+}
+
+/// Lee un fichero de texto (ej. JSON para import) con un tope de tamaño por
+/// operación. `max_bytes` lo fija el llamador según lo que espere leer (un tema,
+/// un runbook, un `~/.ssh/config`…); sin él se aplica [`DEFAULT_READ_LIMIT`].
 #[tauri::command]
-pub async fn run_local_command(command: String) -> Result<LocalCommandOutput, String> {
+pub fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, String> {
+    read_text_capped(Path::new(&path), max_bytes.unwrap_or(DEFAULT_READ_LIMIT))
+}
+
+/// Comando IPC que ejecuta un comando local del catálogo del usuario y devuelve
+/// código + stdout/stderr, **acotado** en tiempo y en salida y cancelable desde
+/// la UI con el mismo `run_id` (ver [`crate::local_command`]). El catálogo lo
+/// define el propio usuario en su equipo y la UI pide confirmación antes de las
+/// acciones marcadas como peligrosas; aquí no hay allowlist, pero sí límites.
+#[tauri::command]
+pub async fn run_local_command(
+    state: State<'_, LocalCommandRegistry>,
+    command: String,
+    run_id: Option<String>,
+    timeout_secs: Option<u64>,
+    max_output_kb: Option<usize>,
+) -> Result<LocalCommandOutput, String> {
     let command = command.trim().to_string();
     if command.is_empty() {
         return Err("comando vacío".into());
     }
-    let output = tauri::async_runtime::spawn_blocking(move || run_shell_capture(&command))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
-    Ok(LocalCommandOutput {
-        code: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    let run_id = run_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let timeout = local_command::effective_timeout_secs(timeout_secs);
+    let max_output = local_command::effective_output_bytes(max_output_kb);
+    let registry = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        registry.run_blocking(&run_id, &command, timeout, max_output)
     })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+/// Cancela un comando local en curso: marca su `run_id` y termina el árbol de
+/// procesos. Silencioso si el comando ya había terminado.
+#[tauri::command]
+pub fn local_command_cancel(state: State<'_, LocalCommandRegistry>, run_id: String) {
+    state.cancel(&run_id);
 }
 
 /// Lista las familias de fuentes instaladas en el sistema.
@@ -2620,19 +2678,59 @@ pub fn notes_dir(notes: State<NotesManager>) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
+    // La ejecución de comandos locales (stdout, código de salida, timeout,
+    // cancelación y truncado) se prueba en `local_command.rs`, que es quien la
+    // implementa. Aquí quedan las cuotas de las lecturas locales.
+
     #[test]
-    fn run_shell_capture_devuelve_stdout() {
-        let out = run_shell_capture("echo hola").expect("ejecuta echo");
-        assert!(out.status.success());
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hola");
+    fn read_text_capped_lee_texto_por_debajo_del_tope() {
+        let dir = unique_test_dir("read-ok");
+        let path = dir.join("perfil.json");
+        std::fs::write(&path, "{\"hola\":\"señor\"}").unwrap();
+        let leido = read_text_capped(&path, 1024).expect("lee el fichero");
+        assert_eq!(leido, "{\"hola\":\"señor\"}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[cfg(unix)]
     #[test]
-    fn run_shell_capture_propaga_codigo_de_error() {
-        let out = run_shell_capture("exit 3").expect("ejecuta exit");
-        assert_eq!(out.status.code(), Some(3));
+    fn read_text_capped_rechaza_ficheros_grandes() {
+        let dir = unique_test_dir("read-grande");
+        let path = dir.join("enorme.json");
+        std::fs::write(&path, vec![b'x'; 4096]).unwrap();
+        let err = read_text_capped(&path, 1024).expect_err("debería superar la cuota");
+        assert!(err.contains("límite"), "mensaje poco claro: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_text_capped_rechaza_binarios_y_utf8_invalido() {
+        let dir = unique_test_dir("read-bin");
+        // Un byte NUL delata un binario (ejecutable, imagen, base de datos…).
+        let bin = dir.join("imagen.png");
+        std::fs::write(&bin, [0x89, b'P', b'N', b'G', 0x00, 0x1a]).unwrap();
+        let err = read_text_capped(&bin, 1024).expect_err("debería rechazar el binario");
+        assert!(err.contains("binario"), "mensaje poco claro: {err}");
+
+        // Sin NUL pero con UTF-8 roto: tampoco es texto utilizable.
+        let roto = dir.join("roto.txt");
+        std::fs::write(&roto, [0xff, 0xfe, b'a']).unwrap();
+        assert!(read_text_capped(&roto, 1024).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_text_capped_rechaza_directorios() {
+        let dir = unique_test_dir("read-dir");
+        let err = read_text_capped(&dir, 1024).expect_err("un directorio no es un fichero");
+        assert!(!err.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn human_size_es_legible() {
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(2048), "2.0 KiB");
+        assert_eq!(human_size(3 * 1024 * 1024), "3.0 MiB");
     }
 
     fn unique_test_dir(tag: &str) -> std::path::PathBuf {

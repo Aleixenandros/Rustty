@@ -1433,19 +1433,35 @@ impl FileTransfer for FtpBackend {
     ) -> Result<(), String> {
         let entry = ftp_stat(&mut self.ftp, remote)?;
         let total = entry.size;
-        self.ftp
-            .download_to(remote, local, total, transfer_id, app, controls)?;
-        if verify_size {
-            let written = std::fs::metadata(local)
-                .map_err(|e| format!("verificación local: {e}"))?
-                .len();
-            if written != total {
-                return Err(format!(
-                    "verificación fallida: tamaño local {written} B, esperado {total} B"
-                ));
+        // Mismo contrato que SFTP: el fichero se materializa en un `.part` y solo
+        // ocupa su nombre definitivo si la transferencia y la verificación van
+        // bien (ver `part_path`).
+        let part = part_path(local);
+        let result = self
+            .ftp
+            .download_to(remote, &part, total, transfer_id, app, controls)
+            .and_then(|()| {
+                if !verify_size {
+                    return Ok(());
+                }
+                let written = std::fs::metadata(&part)
+                    .map_err(|e| format!("verificación local: {e}"))?
+                    .len();
+                if written != total {
+                    return Err(format!(
+                        "verificación fallida: tamaño local {written} B, esperado {total} B"
+                    ));
+                }
+                Ok(())
+            });
+        match result {
+            Ok(()) => std::fs::rename(&part, local)
+                .map_err(|e| format!("no se pudo publicar la descarga: {e}")),
+            Err(e) => {
+                let _ = std::fs::remove_file(&part);
+                Err(e)
             }
         }
-        Ok(())
     }
 
     async fn upload(
@@ -1630,6 +1646,26 @@ const SFTP_REQUEST_TIMEOUT_SECS: u64 = 120;
 // acotando el buffer a ~16 MiB con la ventana máxima.
 const SFTP_READAHEAD_FACTOR: u64 = 2;
 
+/// Sufijo del fichero temporal en el que se materializa una descarga antes de
+/// ocupar su nombre definitivo.
+const PART_SUFFIX: &str = ".rustty-part";
+
+/// Ruta del temporal de descarga que corresponde a un destino final.
+///
+/// Escribir directo sobre el nombre definitivo deja, ante cualquier fallo a
+/// mitad (red, cancelación, disco lleno), un fichero **truncado con aspecto de
+/// completo** en el directorio del usuario —indistinguible del bueno—. Se baja
+/// primero a `<nombre>.rustty-part` y solo se renombra al nombre final cuando la
+/// transferencia (y la verificación de tamaño, si está activa) ha ido bien.
+fn part_path(final_path: &Path) -> PathBuf {
+    let mut name = final_path
+        .file_name()
+        .map(std::ffi::OsStr::to_os_string)
+        .unwrap_or_else(|| std::ffi::OsString::from("descarga"));
+    name.push(PART_SUFFIX);
+    final_path.with_file_name(name)
+}
+
 async fn do_download(
     sftp: &SftpSession,
     remote: &str,
@@ -1651,36 +1687,57 @@ async fn do_download(
             .await
             .map_err(|e| e.to_string())?;
     }
-    let mut local_file = tokio::fs::File::create(local)
-        .await
-        .map_err(|e| e.to_string())?;
 
-    pipelined_download(
-        sftp,
-        remote,
-        &mut local_file,
-        total,
-        transfer_id,
-        max_parallelism,
-        app,
-        controls,
-    )
-    .await?;
-    drop(local_file);
-
-    if verify_size {
-        let written = tokio::fs::metadata(local)
+    // Se baja al temporal y solo se publica (rename) si todo va bien.
+    let part = part_path(local);
+    let result = async {
+        // `create` trunca: un `.part` superviviente de un cierre brusco de la app
+        // se sobrescribe en vez de acumularse.
+        let mut file = tokio::fs::File::create(&part)
             .await
-            .map_err(|e| format!("verificación local: {e}"))?
-            .len();
-        if written != total {
-            return Err(format!(
-                "verificación fallida: tamaño local {written} B, esperado {total} B"
-            ));
+            .map_err(|e| e.to_string())?;
+        pipelined_download(
+            sftp,
+            remote,
+            &mut file,
+            total,
+            transfer_id,
+            max_parallelism,
+            app,
+            controls,
+        )
+        .await?;
+        // Los datos deben estar en disco antes del rename: si no, un corte de luz
+        // dejaría el nombre definitivo apuntando a contenido incompleto.
+        file.sync_all().await.map_err(|e| e.to_string())?;
+        drop(file);
+
+        if verify_size {
+            let written = tokio::fs::metadata(&part)
+                .await
+                .map_err(|e| format!("verificación local: {e}"))?
+                .len();
+            if written != total {
+                return Err(format!(
+                    "verificación fallida: tamaño local {written} B, esperado {total} B"
+                ));
+            }
+        }
+        Ok(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => tokio::fs::rename(&part, local)
+            .await
+            .map_err(|e| format!("no se pudo publicar la descarga: {e}")),
+        Err(e) => {
+            // Nada de restos: el usuario no debe encontrarse un fichero a medias,
+            // ni con el nombre bueno ni con el `.part`.
+            let _ = tokio::fs::remove_file(&part).await;
+            Err(e)
         }
     }
-
-    Ok(())
 }
 
 async fn do_upload(
@@ -2285,11 +2342,25 @@ fn emit_dir_progress(
     );
 }
 
-/// Cuenta archivos y bytes de un árbol local (mismos criterios que el bucle de
-/// subida: solo archivos regulares, recursión en directorios, symlinks fuera).
-async fn count_local_tree(root: &Path) -> (u32, u64) {
-    let mut files: u32 = 0;
-    let mut bytes: u64 = 0;
+/// Recuento de un árbol antes de transferirlo: archivos regulares, bytes y
+/// **enlaces simbólicos que se van a omitir**. Los symlinks se saltan en ambas
+/// direcciones (copiarlos tal cual apuntaría a rutas inexistentes en el otro
+/// extremo, y seguirlos puede sacar la copia del árbol o meterla en un ciclo),
+/// pero omitirlos en silencio hacía creer al usuario que se había copiado todo:
+/// se cuentan para poder decírselo al terminar.
+struct TreeCount {
+    files: u32,
+    bytes: u64,
+    symlinks: u32,
+}
+
+/// Cuenta el árbol local (mismos criterios que el bucle de subida).
+async fn count_local_tree(root: &Path) -> TreeCount {
+    let mut count = TreeCount {
+        files: 0,
+        bytes: 0,
+        symlinks: 0,
+    };
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(mut read) = tokio::fs::read_dir(&dir).await else {
@@ -2299,25 +2370,32 @@ async fn count_local_tree(root: &Path) -> (u32, u64) {
             let Ok(ft) = entry.file_type().await else {
                 continue;
             };
-            if ft.is_dir() {
+            // `file_type()` de `read_dir` no sigue el enlace: un symlink nunca es
+            // `is_dir`/`is_file` aquí, ni siquiera si apunta a un directorio.
+            if ft.is_symlink() {
+                count.symlinks += 1;
+            } else if ft.is_dir() {
                 stack.push(entry.path());
             } else if ft.is_file() {
-                files += 1;
+                count.files += 1;
                 if let Ok(meta) = entry.metadata().await {
-                    bytes += meta.len();
+                    count.bytes += meta.len();
                 }
             }
         }
     }
-    (files, bytes)
+    count
 }
 
-/// Cuenta archivos y bytes de un árbol remoto recorriéndolo con `list_dir`
-/// (mismos criterios que el bucle de descarga). Hace un recorrido extra de
-/// listados; aceptable para mostrar totales de progreso de carpeta.
-async fn count_remote_tree(backend: &mut dyn FileTransfer, root: &str) -> (u32, u64) {
-    let mut files: u32 = 0;
-    let mut bytes: u64 = 0;
+/// Cuenta el árbol remoto recorriéndolo con `list_dir` (mismos criterios que el
+/// bucle de descarga). Hace un recorrido extra de listados; aceptable para
+/// mostrar totales de progreso de carpeta.
+async fn count_remote_tree(backend: &mut dyn FileTransfer, root: &str) -> TreeCount {
+    let mut count = TreeCount {
+        files: 0,
+        bytes: 0,
+        symlinks: 0,
+    };
     let mut stack = vec![root.to_string()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = backend.list_dir(&dir).await else {
@@ -2326,13 +2404,15 @@ async fn count_remote_tree(backend: &mut dyn FileTransfer, root: &str) -> (u32, 
         for e in entries {
             if e.is_dir {
                 stack.push(e.path.clone());
-            } else if !e.is_symlink {
-                files += 1;
-                bytes += e.size;
+            } else if e.is_symlink {
+                count.symlinks += 1;
+            } else {
+                count.files += 1;
+                count.bytes += e.size;
             }
         }
     }
-    (files, bytes)
+    count
 }
 
 /// Valida que el nombre de una entrada remota (el que devuelve el servidor en el
@@ -2433,9 +2513,11 @@ async fn do_download_dir(
     let mut idx: u32 = 0;
 
     // Pre-conteo del árbol remoto para mostrar archivo actual + N/total.
-    let (files_total, bytes_total) = count_remote_tree(backend, remote).await;
+    let precount = count_remote_tree(backend, remote).await;
+    let (files_total, bytes_total) = (precount.files, precount.bytes);
     let mut files_done: u32 = 0;
     let mut bytes_done: u64 = 0;
+    let mut skipped_symlinks: u32 = 0;
     emit_dir_progress(app, &summary_event, 0, bytes_total, "", 0, files_total);
 
     let mut stack = vec![(remote.to_string(), local.to_path_buf())];
@@ -2458,7 +2540,10 @@ async fn do_download_dir(
                     .await
                     .map_err(|err| err.to_string())?;
                 stack.push((e.path.clone(), local_target));
-            } else if !e.is_symlink {
+            } else if e.is_symlink {
+                // Se omite (ver `TreeCount`), pero queda contado para avisar al final.
+                skipped_symlinks += 1;
+            } else {
                 if let Ok(meta) = tokio::fs::metadata(&local_target).await {
                     match conflict_policy {
                         TransferConflictPolicy::Skip => continue,
@@ -2508,6 +2593,7 @@ async fn do_download_dir(
         serde_json::json!({
             "transferred": bytes_total, "total": bytes_total, "done": true, "kind": "dir",
             "filesDone": files_total, "filesTotal": files_total,
+            "skippedSymlinks": skipped_symlinks,
         }),
     );
     Ok(())
@@ -2530,9 +2616,11 @@ async fn do_upload_dir(
     let mut idx: u32 = 0;
 
     // Pre-conteo para conocer el total (estilo FileZilla: archivo actual + N/total).
-    let (files_total, bytes_total) = count_local_tree(local).await;
+    let precount = count_local_tree(local).await;
+    let (files_total, bytes_total) = (precount.files, precount.bytes);
     let mut files_done: u32 = 0;
     let mut bytes_done: u64 = 0;
+    let mut skipped_symlinks: u32 = 0;
     emit_dir_progress(app, &summary_event, 0, bytes_total, "", 0, files_total);
 
     let mut stack = vec![(local.to_path_buf(), remote.to_string())];
@@ -2554,7 +2642,10 @@ async fn do_upload_dir(
             let path = entry.path();
             let mut remote_target = join_remote(&rdir, &name);
             let ft = entry.file_type().await.map_err(|e| e.to_string())?;
-            if ft.is_dir() {
+            if ft.is_symlink() {
+                // Se omite (ver `TreeCount`), pero queda contado para avisar al final.
+                skipped_symlinks += 1;
+            } else if ft.is_dir() {
                 let _ = backend.mkdir(&remote_target).await;
                 stack.push((path, remote_target));
             } else if ft.is_file() {
@@ -2602,6 +2693,7 @@ async fn do_upload_dir(
         serde_json::json!({
             "transferred": bytes_total, "total": bytes_total, "done": true, "kind": "dir",
             "filesDone": files_total, "filesTotal": files_total,
+            "skippedSymlinks": skipped_symlinks,
         }),
     );
     Ok(())
@@ -2633,6 +2725,43 @@ mod tests {
         assert!(safe_entry_name("sub/dir").is_err());
         assert!(safe_entry_name("sub\\dir").is_err());
         assert!(safe_entry_name("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn part_path_es_hermano_del_destino_final() {
+        let final_path = Path::new("/home/u/Descargas/informe.pdf");
+        let p = part_path(final_path);
+        assert_eq!(p, Path::new("/home/u/Descargas/informe.pdf.rustty-part"));
+        // Mismo directorio que el destino: el rename final no cruza sistemas de
+        // ficheros (que lo haría no atómico y, con /tmp en otra partición, lento).
+        assert_eq!(p.parent(), final_path.parent());
+        // Nombres ocultos o sin extensión también funcionan.
+        assert_eq!(
+            part_path(Path::new("/tmp/.bashrc")),
+            Path::new("/tmp/.bashrc.rustty-part")
+        );
+    }
+
+    #[tokio::test]
+    async fn count_local_tree_cuenta_symlinks_aparte_de_los_ficheros() {
+        let dir = std::env::temp_dir().join(format!("rustty-count-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("a.txt"), b"hola").unwrap();
+        std::fs::write(dir.join("sub/b.txt"), b"adios!").unwrap();
+        #[cfg(unix)]
+        {
+            // Un enlace a fichero y otro a directorio: ninguno se transfiere.
+            std::os::unix::fs::symlink(dir.join("a.txt"), dir.join("enlace.txt")).unwrap();
+            std::os::unix::fs::symlink(dir.join("sub"), dir.join("enlace-dir")).unwrap();
+        }
+
+        let count = count_local_tree(&dir).await;
+        assert_eq!(count.files, 2, "solo los ficheros regulares se suben");
+        assert_eq!(count.bytes, 4 + 6);
+        #[cfg(unix)]
+        assert_eq!(count.symlinks, 2, "los enlaces se cuentan como omitidos");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

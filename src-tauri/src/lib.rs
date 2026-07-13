@@ -9,6 +9,7 @@ mod external_client;
 mod host_keys;
 mod ipc;
 mod keepass_manager;
+mod local_command;
 mod local_shell_manager;
 mod locks;
 mod notes;
@@ -25,6 +26,7 @@ use std::path::PathBuf;
 
 use credentials::CredentialStore;
 use external_client::{TelnetManager, VncManager};
+use local_command::LocalCommandRegistry;
 use local_shell_manager::LocalShellManager;
 use notes::NotesManager;
 use profiles::ProfileManager;
@@ -140,6 +142,7 @@ pub fn run() {
             app.manage(VncManager::new());
             app.manage(TelnetManager::new());
             app.manage(LocalShellManager::new());
+            app.manage(LocalCommandRegistry::new());
             app.manage(SftpManager::new());
             let profile_manager = ProfileManager::new(data_dir.clone());
             // Migración idempotente: vuelca el campo inline `notes` de los
@@ -276,6 +279,7 @@ pub fn run() {
             asbru::parse_asbru,
             asbru::asbru_decrypt,
             commands::run_local_command,
+            commands::local_command_cancel,
             commands::list_monospace_fonts,
             commands::tcp_ping,
             // ── Gestor de known_hosts

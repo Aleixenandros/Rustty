@@ -358,6 +358,21 @@ const THEME_CLASSES = [
 // PREFERENCIAS
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * Cuota de tamaño (en bytes) de cada lectura de fichero local, por operación.
+ * El backend rechaza el fichero antes de leerlo si la supera, y también si es
+ * binario: un import legítimo nunca se acerca a estos topes, y sin ellos apuntar
+ * la app a un fichero enorme la congelaba al parsearlo.
+ */
+const FILE_READ_LIMITS = Object.freeze({
+  theme:      2 * 1024 * 1024,   // JSON de tema (colores, sin binarios)
+  runbook:    1 * 1024 * 1024,   // runbook Markdown de un script (tope 50 pasos)
+  profiles:  16 * 1024 * 1024,   // backup completo: perfiles + notas + temas
+  sshConfig:  1 * 1024 * 1024,   // ~/.ssh/config y sus Include
+  importer:  16 * 1024 * 1024,   // export de otro cliente (mRemoteNG, Ásbrú…)
+  shortcuts:  512 * 1024,        // mapa de atajos
+});
+
 const DEFAULT_PREFS = {
   theme:           "dark",    // "dark" | "light" | "system"
   // Tema del terminal independiente del de UI.
@@ -404,6 +419,11 @@ const DEFAULT_PREFS = {
   // usuario). Una ruta válida se usa como cwd al abrir/reabrir la consola; si no
   // existe, el backend cae a $HOME.
   localShellCwd:   "",
+  // Comandos locales del catálogo: plazo máximo de ejecución en segundos
+  // (0 = sin límite, opción explícita del usuario) y tope de salida capturada
+  // por flujo en KiB. Al agotarse el plazo se termina el árbol de procesos.
+  localCmdTimeoutSecs: 30,     // 0 | 10 | 30 | 60 | 300 | 900
+  localCmdMaxOutputKb: 512,    // 64 | 512 | 2048 | 8192
   bell:            "none",    // "none" | "visual" | "sound"
   // Contraste mínimo del texto del terminal (xterm `minimumContrastRatio`).
   // Adapta dinámicamente los colores ANSI poco legibles contra el fondo de su
@@ -1383,7 +1403,7 @@ async function importTheme() {
 
   let data;
   try {
-    const text = await invoke("read_text_file", { path });
+    const text = await invoke("read_text_file", { path, maxBytes: FILE_READ_LIMITS.theme });
     data = JSON.parse(text);
   } catch (err) { toast(t("toast.theme_import_invalid"), "error"); return; }
 
@@ -1665,6 +1685,10 @@ function openSettingsModal() {
   if (_termCursorHv) _termCursorHv.checked = !!prefs.terminalCursorHighVis;
   const _localCwdEl = document.getElementById("pref-local-cwd");
   if (_localCwdEl) _localCwdEl.value = prefs.localShellCwd || "";
+  const _localCmdTimeout = document.getElementById("pref-localcmd-timeout");
+  if (_localCmdTimeout) _localCmdTimeout.value = String(localCmdTimeoutSecs());
+  const _localCmdOutput = document.getElementById("pref-localcmd-output");
+  if (_localCmdOutput) _localCmdOutput.value = String(localCmdMaxOutputKb());
   renderHighlightRulesEditor();
 
   // Marcar el radio + .selected correspondientes al tema de UI actual
@@ -3393,6 +3417,14 @@ function savePrefsFromModal() {
     })(),
     terminalCursorHighVis: !!document.getElementById("pref-terminal-cursor-highvis")?.checked,
     localShellCwd:   (document.getElementById("pref-local-cwd")?.value || "").trim(),
+    localCmdTimeoutSecs: (() => {
+      const v = Number(document.getElementById("pref-localcmd-timeout")?.value);
+      return LOCALCMD_TIMEOUTS.includes(v) ? v : DEFAULT_PREFS.localCmdTimeoutSecs;
+    })(),
+    localCmdMaxOutputKb: (() => {
+      const v = Number(document.getElementById("pref-localcmd-output")?.value);
+      return LOCALCMD_OUTPUT_KB.includes(v) ? v : DEFAULT_PREFS.localCmdMaxOutputKb;
+    })(),
     uiDensity:       (() => { const v = document.getElementById("pref-ui-density")?.value; return v === "compact" || v === "spacious" ? v : "comfortable"; })(),
     uiZoom:          clampUiZoom(Number(previousPrefs.uiZoom ?? 1)),
     colorBlindSafe:  !!document.getElementById("pref-color-blind-safe")?.checked,
@@ -12604,7 +12636,9 @@ async function importScriptFromMarkdown() {
   if (!path) return;
   let script = null;
   try {
-    script = scriptFromMarkdown(await invoke("read_text_file", { path }));
+    script = scriptFromMarkdown(
+      await invoke("read_text_file", { path, maxBytes: FILE_READ_LIMITS.runbook })
+    );
   } catch {
     script = null;
   }
@@ -16490,9 +16524,14 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
   const rowSide = direction === "upload" ? "local" : "remote";
   const rowName = name;
   setSftpRowProgress(panel, rowSide, rowName, 0, true);
+  // Los enlaces simbólicos no se transfieren (ni siguiéndolos ni copiándolos);
+  // el backend los cuenta y los anota aquí para poder decirlo al terminar en vez
+  // de dejar creer que se copió todo.
+  let skippedSymlinks = 0;
   const ul = await listen(eventName("sftpProgress", transferId), (/** @type {{ payload: SftpProgressEvent }} */ ev) => {
     updateTransfer(transferEl, ev.payload);
     const { transferred = 0, total = 0, done = false, current, filesDone, filesTotal } = ev.payload || {};
+    if (ev.payload?.skippedSymlinks) skippedSymlinks = ev.payload.skippedSymlinks;
     const pct = total > 0 ? Math.min(100, Math.round((transferred / total) * 100)) : (done ? 100 : 0);
     setSftpRowProgress(panel, rowSide, rowName, pct, !done);
     // Carpetas (estilo FileZilla): mostrar el archivo/subcarpeta en curso + contador.
@@ -16533,10 +16572,11 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
       appendSftpActivity(panel, {
         status: resultStatus,
         label: `${transferDirectionLabel(direction)} ${label}`,
-        detail: `${srcPath} → ${remotePath}`,
+        detail: `${srcPath} → ${remotePath}${symlinkSuffix(skippedSymlinks)}`,
         bytes: parseInt(transferEl.dataset.lastTotal || "0", 10),
         startedAt,
       });
+      notifySkippedSymlinks(panel, skippedSymlinks);
       await navigateSftpRemote(sessionId, s.sftp.cwd);
     } else {
       const localPath = await invoke("local_path_join", {
@@ -16566,10 +16606,11 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
       appendSftpActivity(panel, {
         status: resultStatus,
         label: `${transferDirectionLabel(direction)} ${label}`,
-        detail: `${srcPath} → ${localPath}`,
+        detail: `${srcPath} → ${localPath}${symlinkSuffix(skippedSymlinks)}`,
         bytes: parseInt(transferEl.dataset.lastTotal || "0", 10),
         startedAt,
       });
+      notifySkippedSymlinks(panel, skippedSymlinks);
       await navigateSftpLocal(sessionId, s.sftp.localCwd);
     }
   } catch (err) {
@@ -16598,7 +16639,7 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
     if (!canceled) {
       toast(`Fallo transferencia: ${err}`, "error", 8000, {
         category: "transfer",
-        actionLabel: "Ver log",
+        actionLabel: t("sftp.view_log"),
         onAction: () => revealSftpActivity(panel),
       });
     }
@@ -16608,6 +16649,32 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
     setSftpRowProgress(panel, rowSide, rowName, 0, false);
   }
   return "done";
+}
+
+/**
+ * Coletilla para el registro de actividad cuando la carpeta traía enlaces
+ * simbólicos. Cadena vacía si no había ninguno.
+ * @param {number} n
+ */
+function symlinkSuffix(n) {
+  return n > 0 ? ` · ${t("sftp.symlinks_skipped", { n })}` : "";
+}
+
+/**
+ * Avisa de los enlaces simbólicos que se omitieron en una transferencia de
+ * carpeta. Se saltan a propósito (copiarlos apuntaría a rutas inexistentes en el
+ * otro extremo y seguirlos podría sacar la copia del árbol o entrar en un
+ * ciclo), pero hacerlo en silencio dejaba creer que se había copiado todo.
+ * @param {HTMLElement} panel
+ * @param {number} n
+ */
+function notifySkippedSymlinks(panel, n) {
+  if (!n || n <= 0) return;
+  toast(t("sftp.symlinks_skipped", { n }), "info", 6000, {
+    category: "transfer",
+    actionLabel: t("sftp.view_log"),
+    onAction: () => revealSftpActivity(panel),
+  });
 }
 
 /**
@@ -17545,7 +17612,7 @@ async function importConnections() {
   if (!path) return; // usuario canceló
 
   try {
-    const text = await invoke("read_text_file", { path });
+    const text = await invoke("read_text_file", { path, maxBytes: FILE_READ_LIMITS.profiles });
     const data = JSON.parse(text);
 
     if (!data.profiles || !Array.isArray(data.profiles)) {
@@ -17667,7 +17734,7 @@ async function expandSshIncludes(content, homeDir, seen, depth, unsupported) {
         seen.add(file);
         let inner;
         try {
-          inner = await invoke("read_text_file", { path: file });
+          inner = await invoke("read_text_file", { path: file, maxBytes: FILE_READ_LIMITS.sshConfig });
         } catch {
           unsupported.add(`Include ${pat}`);
           continue;
@@ -17827,7 +17894,7 @@ async function importFromSshConfig() {
   let parsed, home;
   try {
     home = await invoke("local_home_dir").catch(() => null);
-    const text = await invoke("read_text_file", { path });
+    const text = await invoke("read_text_file", { path, maxBytes: FILE_READ_LIMITS.sshConfig });
     parsed = await parseSshConfig(text, home);
   } catch (err) {
     toast(`No se pudo leer ${path}: ${err}`, "error");
@@ -18288,7 +18355,10 @@ async function importWizardPickFile() {
       };
       defaultName = "Ásbrú";
     } else {
-      const text = await invoke("read_text_file", { path: importWizard.fileName });
+      const text = await invoke("read_text_file", {
+        path: importWizard.fileName,
+        maxBytes: FILE_READ_LIMITS.importer,
+      });
       ({ meta, tree } = parseMremoteng(text));
       if (meta.fullFileEncryption) {
         document.getElementById("iw-parse-error").textContent = t("import_wizard.err_full_encryption");
@@ -19972,6 +20042,28 @@ function renderLocalCommandList() {
   }).join("");
 }
 
+/** Valores admitidos por los selectores de Preferencias → Comandos. */
+const LOCALCMD_TIMEOUTS = [0, 10, 30, 60, 300, 900];
+const LOCALCMD_OUTPUT_KB = [64, 512, 2048, 8192];
+
+/** Plazo máximo de un comando local, en segundos (0 = sin límite). */
+function localCmdTimeoutSecs() {
+  const v = Number(prefs.localCmdTimeoutSecs);
+  return LOCALCMD_TIMEOUTS.includes(v) ? v : DEFAULT_PREFS.localCmdTimeoutSecs;
+}
+
+/** Tope de salida capturada por flujo, en KiB. */
+function localCmdMaxOutputKb() {
+  const v = Number(prefs.localCmdMaxOutputKb);
+  return LOCALCMD_OUTPUT_KB.includes(v) ? v : DEFAULT_PREFS.localCmdMaxOutputKb;
+}
+
+/**
+ * Ejecuta un comando local del catálogo del usuario. Mientras corre muestra un
+ * aviso con acción «Cancelar»: el backend lo acota además con un plazo máximo y
+ * un tope de salida (Preferencias → Comandos) y termina el árbol de procesos si
+ * se cancela o expira.
+ */
 async function runLocalCommand(cmd) {
   if (!cmd) return;
   if (cmd.confirm) {
@@ -19995,14 +20087,43 @@ async function runLocalCommand(cmd) {
       await invoke("plugin:opener|open_path", { path: value });
       toast(t("prefs_commands.toast_opened"), "success");
     } else {
-      const out = await invoke("run_local_command", { command: value });
-      if (out && out.code === 0) {
-        toast(t("prefs_commands.toast_ran").replace("{name}", cmd.name), "success");
+      const runId = crypto.randomUUID();
+      const timeoutSecs = localCmdTimeoutSecs();
+      // El aviso vive mientras dura el comando: da la vía de cancelación y se
+      // retira al terminar (no se registra en actividad; sí lo hace el resultado).
+      const runningToast = toast(
+        t("prefs_commands.toast_running", { name: cmd.name }),
+        "info",
+        timeoutSecs > 0 ? timeoutSecs * 1000 + 5000 : 3600000,
+        {
+          skipActivity: true,
+          actionLabel: t("prefs_commands.cancel_run"),
+          onAction: () => { invoke("local_command_cancel", { runId }).catch(() => {}); },
+        }
+      );
+      let out;
+      try {
+        out = await invoke("run_local_command", {
+          command: value,
+          runId,
+          timeoutSecs,
+          maxOutputKb: localCmdMaxOutputKb(),
+        });
+      } finally {
+        if (runningToast) dismissToast(runningToast, runningToast.dataset.category);
+      }
+      const truncated = out?.truncated ? " " + t("prefs_commands.toast_truncated") : "";
+      if (out?.canceled) {
+        toast(t("prefs_commands.toast_canceled", { name: cmd.name }), "info");
+      } else if (out?.timedOut) {
+        toast(t("prefs_commands.toast_timeout", { name: cmd.name, secs: timeoutSecs }), "error", 6000);
+      } else if (out && out.code === 0) {
+        toast(t("prefs_commands.toast_ran").replace("{name}", cmd.name) + truncated, "success");
       } else {
         const detail = (out?.stderr || out?.stdout || "").trim().slice(0, 200);
         toast(
           t("prefs_commands.toast_ran_error").replace("{code}", String(out?.code ?? "?")) +
-            (detail ? ": " + detail : ""),
+            (detail ? ": " + detail : "") + truncated,
           "error",
           6000
         );
@@ -20587,7 +20708,7 @@ async function importShortcuts() {
 
   let imported;
   try {
-    const text = await invoke("read_text_file", { path });
+    const text = await invoke("read_text_file", { path, maxBytes: FILE_READ_LIMITS.shortcuts });
     imported = normalizeShortcutMap(JSON.parse(text));
   } catch {
     toast(t("prefs_shortcuts.import_invalid"), "error");
@@ -22610,7 +22731,7 @@ function toast(message, type = "info", ms = 3500, options = {}) {
         ms,
       );
       refreshToastOverflowCounter();
-      return;
+      return existing.el;
     }
   }
 
@@ -22625,6 +22746,10 @@ function toast(message, type = "info", ms = 3500, options = {}) {
     activeCategoryToasts.set(category, { el, extra: 0, timer });
   }
   refreshToastOverflowCounter();
+  // Se devuelve el elemento para que un aviso de larga duración (p. ej. el de
+  // «comando local en curso») pueda retirarse con `dismissToast` en cuanto la
+  // operación termina, en vez de quedarse hasta agotar su temporizador.
+  return el;
 }
 
 /**

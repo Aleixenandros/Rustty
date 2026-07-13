@@ -114,6 +114,15 @@ Tipos disponibles:
 
 La confirmación está activada por defecto y los comandos de tipo shell se tratan como acciones sensibles en el modal de confirmación.
 
+### Límites de ejecución
+
+Un comando local es tu shell, pero no puede quedarse colgado indefinidamente ni llenar la memoria con su salida. En **Preferencias → Comandos** eliges los dos límites:
+
+- **Límite de tiempo**: plazo máximo de ejecución (10 s, 30 s, 1, 5 o 15 min; por defecto 30 s). Al agotarse, Rustty detiene el comando **y los procesos que haya lanzado** (el árbol completo). Puedes elegir **Sin límite** si prefieres que no se detenga nunca.
+- **Salida capturada**: cuánta salida se guarda de cada comando (64 KiB, 512 KiB, 2 MiB u 8 MiB; por defecto 512 KiB). Lo que exceda se descarta y el aviso lo indica con «(salida truncada)»; el comando sigue ejecutándose con normalidad.
+
+Mientras el comando corre aparece un aviso con la acción **Cancelar**, que lo detiene al momento junto con sus procesos hijos.
+
 ## Variables
 
 Snippets y comandos locales comparten el mismo resolutor de plantillas del cliente. Puedes usar:
