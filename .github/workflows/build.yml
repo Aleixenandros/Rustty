@@ -338,35 +338,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          $ErrorActionPreference = "Stop"
           $base = "src-tauri/target/${{ matrix.target }}/release"
+          $repo = "${{ github.repository }}"
+          $tag  = "${{ github.ref_name }}"
 
-          # --- MSI: eliminar el sufijo _en-US del nombre -------------
-          # El .sig del updater se renombra Y se resube: si solo se resubiera el
-          # .msi, el release quedaría con la firma bajo el nombre viejo y el
-          # `latest.json` (que se genera antes de este paso) apuntando a un asset
-          # que ya no existe. La URL del manifiesto la reescribe `publish_release`.
-          $msi = Get-ChildItem "$base/bundle/msi" -Filter "*_en-US.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($msi) {
-            $oldName = $msi.Name
-            $newName = $oldName -replace '_en-US\.msi$', '.msi'
-            Rename-Item -LiteralPath $msi.FullName -NewName $newName
-            # Sustituye el asset en el release draft
-            gh release delete-asset "${{ github.ref_name }}" $oldName --yes 2>$null
-            gh release upload "${{ github.ref_name }}" "$base/bundle/msi/$newName" --clobber
+          # --- MSI: quitar el sufijo _en-US del nombre ---------------
+          #
+          # Se renombra el asset **in situ** (PATCH del campo `name` por la API),
+          # NO borrando y resubiendo. Es la única forma correcta: `latest.json`
+          # referencia cada artefacto por **id numérico de asset**
+          # (`…/releases/assets/475963396`), no por nombre. Un delete+upload crea un
+          # asset **nuevo con otro id**, y el manifiesto —generado por tauri-action
+          # antes de este paso— se queda apuntando al id borrado: 404 para el
+          # updater de Windows. Un PATCH conserva el id, así que el manifiesto sigue
+          # siendo válido y no hay nada que reescribir.
+          $releaseId = gh api "repos/$repo/releases" --paginate --jq "map(select(.tag_name==`"$tag`"))[0].id"
+          if (-not $releaseId) { throw "No se encontró el release del tag $tag" }
 
-            $sig = "$base/bundle/msi/$oldName.sig"
-            if (Test-Path $sig) {
-              Rename-Item -LiteralPath $sig -NewName "$newName.sig"
-              gh release delete-asset "${{ github.ref_name }}" "$oldName.sig" --yes 2>$null
-              gh release upload "${{ github.ref_name }}" "$base/bundle/msi/$newName.sig" --clobber
+          $assets = gh api "repos/$repo/releases/$releaseId/assets" --paginate | ConvertFrom-Json
+          foreach ($a in $assets) {
+            if ($a.name -match '_en-US\.msi(\.sig)?$') {
+              $newName = $a.name -replace '_en-US\.msi', '.msi'
+              Write-Host "Renombrando asset $($a.id): $($a.name) -> $newName"
+              gh api -X PATCH "repos/$repo/releases/assets/$($a.id)" -f name="$newName" | Out-Null
             }
           }
 
           # --- Portable: sube el rustty.exe sin instalar ------------
-          $version  = "${{ github.ref_name }}".TrimStart('v')
+          $version  = $tag.TrimStart('v')
           $portable = "Rustty_${version}_x64-portable.exe"
           Copy-Item "$base/rustty.exe" "$base/$portable"
-          gh release upload "${{ github.ref_name }}" "$base/$portable" --clobber
+          gh release upload $tag "$base/$portable" --clobber
 
   publish_release:
     needs: build
@@ -375,18 +378,17 @@ jobs:
     name: Publish release
 
     steps:
-      # El job de Windows renombra el MSI (quita el sufijo `_en-US`), pero
-      # `latest.json` lo genera tauri-action ANTES de ese rename, así que su URL
-      # puede seguir apuntando al nombre viejo —un asset que ya no existe— y el
-      # updater recibiría un 404. Se reescribe aquí, ya con todos los jobs de la
-      # matriz terminados (hacerlo dentro del job de Windows se arriesga a que
-      # otro job vuelva a subir su propio `latest.json` después).
+      # Red de seguridad del updater: todo artefacto que `latest.json` anuncia debe
+      # existir de verdad en el release. Si no, el updater se comería un 404 y el
+      # usuario no se enteraría — así que preferimos **romper la publicación** aquí.
       #
-      # El campo `signature` va inline en el manifiesto y el rename no cambia el
-      # contenido del instalador, así que la firma sigue siendo válida: solo hay
-      # que corregir la URL. Si el manifiesto no apunta al MSI (p. ej. usa el
-      # instalador NSIS), no hay nada que reescribir y el paso es un no-op.
-      - name: Fix updater manifest (renamed MSI)
+      # El manifiesto referencia cada artefacto por **id numérico de asset**
+      # (`https://api.github.com/repos/…/releases/assets/475963396`), NO por nombre:
+      # por eso se comprueban ids contra los ids reales del release. Cualquier paso
+      # que borre y resuba un asset (en vez de renombrarlo con un PATCH, que conserva
+      # el id) dejaría el manifiesto apuntando al id viejo — que es exactamente el
+      # fallo que este paso cazó al estrenarse, con el rename del MSI de Windows.
+      - name: Verificar el manifiesto del updater
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -394,29 +396,28 @@ jobs:
           if ! gh release download "${GITHUB_REF_NAME}" \
                  --pattern latest.json --dir . --clobber \
                  --repo "${GITHUB_REPOSITORY}" 2>/dev/null; then
-            echo "::warning::El release no tiene latest.json; se omite el parcheo del updater."
+            echo "::warning::El release no tiene latest.json; se omite la verificación."
             exit 0
           fi
+          jq -e . latest.json > /dev/null   # debe ser JSON válido
 
-          sed -i 's/_en-US\.msi/.msi/g' latest.json
-          jq -e . latest.json > /dev/null   # el manifiesto debe seguir siendo JSON válido
+          RELEASE_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq "map(select(.tag_name==\"${GITHUB_REF_NAME}\"))[0].id")
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" --paginate \
+            --jq '.[] | "\(.id) \(.name)"' > assets.txt
+          cut -d' ' -f1 assets.txt | sort > asset_ids.txt
 
-          # Toda URL del manifiesto tiene que existir como asset del release: si
-          # no, el updater fallaría en silencio y es preferible romper aquí.
-          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
-            --json assets --jq '.assets[].name' | sort > assets.txt
           missing=0
-          while read -r name; do
-            [ -z "$name" ] && continue
-            if ! grep -qxF "$name" assets.txt; then
-              echo "::error::latest.json apunta a «$name», que no es un asset del release."
+          while read -r plat id; do
+            [ -z "$id" ] && continue
+            if grep -qxF "$id" asset_ids.txt; then
+              echo "  ✓ ${plat} → $(grep "^${id} " assets.txt | cut -d' ' -f2-)"
+            else
+              echo "::error::latest.json anuncia para «${plat}» el asset ${id}, que no existe en el release."
               missing=1
             fi
-          done < <(jq -r '.platforms[].url' latest.json | sed 's|.*/||')
+          done < <(jq -r '.platforms | to_entries[] | "\(.key) \(.value.url | split("/") | last)"' latest.json)
           [ "$missing" -eq 0 ]
-
-          gh release upload "${GITHUB_REF_NAME}" latest.json --clobber \
-            --repo "${GITHUB_REPOSITORY}"
 
       - name: Publish GitHub release
         env:
