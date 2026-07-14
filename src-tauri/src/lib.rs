@@ -18,6 +18,7 @@ mod rdp_manager;
 mod scripts;
 mod sftp_manager;
 mod ssh_manager;
+mod store_file;
 mod subst;
 mod sync;
 mod tunnel_throttle;
@@ -222,7 +223,9 @@ pub fn run() {
             // ── Perfiles de conexión
             commands::get_profiles,
             commands::save_profile,
+            commands::save_profiles,
             commands::delete_profile,
+            commands::delete_profiles,
             commands::wake_on_lan,
             commands::legacy_algorithm_catalog,
             // ── Catálogo de credenciales (master / var / secret)

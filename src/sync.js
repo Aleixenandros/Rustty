@@ -368,6 +368,11 @@ export async function applyMergedState(merged, ctx) {
     return credsById;
   };
 
+  // Los perfiles que llegan del remoto se acumulan y se guardan de una sola vez
+  // al terminar el barrido de items (ver más abajo): un `save_profile` por perfil
+  // reescribía el catálogo entero N veces por ciclo de sincronización.
+  const perfilesEntrantes = [];
+
   // Items
   for (const [key, item] of Object.entries(merged.items || {})) {
     if (key.startsWith("profile:")) {
@@ -379,14 +384,7 @@ export async function applyMergedState(merged, ctx) {
       profile.updated_at = item.updated_at;
       const existing = localProfilesById.get(id);
       if (existing && sameValue(existing, profile)) continue;
-      try {
-        await invoke("save_profile", { profile });
-        if (!localProfileIds.has(id)) addedProfiles++;
-        else updatedProfiles++;
-        noteOrigin(item);
-      } catch (err) {
-        console.error("[sync] save_profile", id, err);
-      }
+      perfilesEntrantes.push({ profile, item, isNew: !localProfileIds.has(id) });
     } else if (key === "prefs:bundle") {
       // Guardia de carrera: si el usuario tocó las prefs MIENTRAS la sync
       // estaba en vuelo (el `_prefsUpdatedAt` vivo es posterior a la foto con
@@ -521,18 +519,38 @@ export async function applyMergedState(merged, ctx) {
     }
   }
 
+  // Perfiles entrantes: una transacción para todos.
+  if (perfilesEntrantes.length) {
+    const contabilizar = (entry) => {
+      if (entry.isNew) addedProfiles++;
+      else updatedProfiles++;
+      noteOrigin(entry.item);
+    };
+    try {
+      await invoke("save_profiles", { profiles: perfilesEntrantes.map((p) => p.profile) });
+      perfilesEntrantes.forEach(contabilizar);
+    } catch (err) {
+      // El lote es atómico, así que un perfil ilegible (p. ej. escrito por una
+      // versión más nueva) tumbaría la sincronización de TODOS. Si el lote falla,
+      // se reintenta perfil a perfil para aislar al culpable y que el resto entre.
+      console.error("[sync] save_profiles, se reintenta uno a uno", err);
+      for (const entry of perfilesEntrantes) {
+        try {
+          await invoke("save_profile", { profile: entry.profile });
+          contabilizar(entry);
+        } catch (e) {
+          console.error("[sync] save_profile", entry.profile.id, e);
+        }
+      }
+    }
+  }
+
   // Tombstones
+  const perfilesABorrar = [];
   for (const key of Object.keys(merged.tombstones || {})) {
     if (key.startsWith("profile:")) {
       const id = key.slice(8);
-      if (localProfileIds.has(id)) {
-        try {
-          await invoke("delete_profile", { id });
-          deletedProfiles++;
-        } catch (err) {
-          console.error("[sync] delete_profile", id, err);
-        }
-      }
+      if (localProfileIds.has(id)) perfilesABorrar.push(id);
     } else if (key.startsWith("theme:")) {
       const id = key.slice(6);
       if (prefs.customThemes) {
@@ -564,6 +582,16 @@ export async function applyMergedState(merged, ctx) {
       } catch (err) {
         console.error("[sync] note_delete", id, err);
       }
+    }
+  }
+
+  // Perfiles borrados en el remoto: también en una sola transacción.
+  if (perfilesABorrar.length) {
+    try {
+      await invoke("delete_profiles", { ids: perfilesABorrar });
+      deletedProfiles += perfilesABorrar.length;
+    } catch (err) {
+      console.error("[sync] delete_profiles", err);
     }
   }
 

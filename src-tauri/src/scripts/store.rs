@@ -8,8 +8,12 @@
 use std::path::Path;
 
 use crate::error::AppError;
+use crate::store_file;
 
 use super::types::{RunRecord, Script};
+
+/// Nombre del store en el envelope versionado (`store_file`).
+const KIND: &str = "scripts";
 
 /// Carga la lista de scripts del disco. Lista vacía si el fichero no existe.
 ///
@@ -18,28 +22,14 @@ use super::types::{RunRecord, Script};
 /// JSON truncado sería perder trabajo del usuario que no está en ningún otro
 /// sitio (los scripts no se sincronizan).
 pub fn load(path: &Path) -> Result<Vec<Script>, AppError> {
-    let (data, _recovery) = crate::atomic_file::read_or_recover(path, false, |text| {
-        text.trim().is_empty() || serde_json::from_str::<Vec<Script>>(text).is_ok()
-    })?;
-    let Some(data) = data else {
-        return Ok(vec![]);
-    };
-    if data.trim().is_empty() {
-        return Ok(vec![]);
-    }
-    let scripts: Vec<Script> = serde_json::from_str(&data)?;
+    let (scripts, _recovery) = store_file::read::<Script>(path, KIND, false)?;
     Ok(scripts)
 }
 
 /// Guarda la lista completa de scripts de forma atómica (no privada: sin
 /// secretos). Crea el directorio padre si hace falta.
 pub fn save(path: &Path, scripts: &[Script]) -> Result<(), AppError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let data = serde_json::to_string_pretty(scripts)?;
-    crate::atomic_file::write(path, data.as_bytes(), false)?;
-    Ok(())
+    store_file::write(path, KIND, scripts, false)
 }
 
 // ─── Historial de ejecuciones (`script_runs.json`) ───────────────────────────

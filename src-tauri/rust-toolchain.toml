@@ -1,0 +1,21 @@
+# Toolchain de Rust del proyecto: FUENTE ÚNICA.
+#
+# Está fijado a propósito, no en `stable`. Con clippy bloqueante (`-D warnings`),
+# un canal flotante convierte cada versión nueva de Rust en una release rota sin
+# haber tocado una línea de código: pasó exactamente eso al etiquetar v1.54.0, con
+# 1.94 en local y 1.97 en el runner (que estrena el lint `unnecessary_sort_by`).
+#
+# Al fijarlo aquí:
+#   - `cargo` en `src-tauri/` usa esta versión en local (rustup la instala sola);
+#   - los workflows (`ci.yml`, `build.yml`) LEEN este fichero y montan el mismo
+#     toolchain, así que CI y el equipo de desarrollo no pueden divergir;
+#   - actualizar Rust pasa a ser una **decisión** —editar este fichero, pasar la
+#     batería, su propio commit— y no una sorpresa el día de publicar.
+#
+# Para subir de versión: `rustup update stable`, cambiar `channel` aquí, y correr
+# `cargo check --all-targets --locked`, `cargo test --locked` y
+# `cargo clippy --all-targets --locked -- -D warnings` antes de commitear.
+[toolchain]
+channel = "1.97.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

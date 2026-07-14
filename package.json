@@ -1,7 +1,7 @@
 {
   "name": "rustty",
   "private": true,
-  "version": "1.54.0",
+  "version": "1.55.0",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
@@ -12,6 +12,7 @@
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:i18n:ci": "node scripts/check-i18n.mjs --strict",
     "check:i18n:update": "node scripts/check-i18n.mjs --update",
+    "check:backlog": "node scripts/check-backlog.mjs",
     "dev": "vite",
     "build": "npm run sync-version && vite build",
     "preview": "vite preview",

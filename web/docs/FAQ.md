@@ -112,6 +112,14 @@ No, es deliberado. Dos ventanas de Rustty trabajando sobre el mismo fichero de c
 
 Rustty guarda siempre una copia de la última versión válida. Si al arrancar el fichero no se puede leer (un corte de luz a mitad de un guardado, por ejemplo), lo aparta con el nombre `profiles.json.corrupt-<fecha>`, **restaura la copia buena** y te avisa. El fichero dañado nunca se borra, por si quisieras rescatar algo de él a mano. Si no hubiera copia previa, te lo dice explícitamente para que no guardes cambios encima hasta decidir qué hacer.
 
+## ¿Qué es el fichero `profiles.json.v1-<fecha>.bak` que ha aparecido?
+
+Es una **copia de seguridad automática**. Cuando una versión nueva de Rustty necesita cambiar el formato interno de tus ficheros de datos (conexiones, credenciales o scripts), guarda antes una copia intacta del original con ese nombre y **no la borra nunca**. Sirve para dos cosas: recuperar tus datos si algo fuera mal durante la actualización, y volver a una versión anterior de Rustty (que no entiende el formato nuevo) restaurando esa copia sobre el fichero original. Puedes borrarla a mano si estás seguro de que ya no la necesitas.
+
+## He instalado una versión anterior y Rustty dice que no puede leer mis conexiones
+
+Es a propósito, y tus datos están intactos. Si el fichero lo escribió una versión **más reciente** que la instalada, Rustty se detiene y lo dice en vez de intentar interpretarlo: si lo hiciera, lo tomaría por un fichero dañado y acabaría escribiendo encima, perdiendo lo que hubieras hecho con la versión nueva. Tienes dos salidas: volver a instalar la versión reciente (lo más simple), o restaurar a mano la copia `profiles.json.v1-<fecha>.bak` que se guardó al actualizar.
+
 ## Cierro el portátil y al abrirlo mis sesiones parecen conectadas pero no responden
 
 Es lo que pasaba antes: la conexión moría mientras el equipo dormía y nadie se enteraba. Ahora Rustty nota que ha estado suspendido, comprueba las sesiones abiertas y te avisa de las que ya no responden. En Preferencias → Seguridad puedes pedirle además que **reconecte** las caídas (lo hace de forma escalonada, para no saturar el servidor) o que no haga nada.

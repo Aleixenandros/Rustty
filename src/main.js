@@ -4617,8 +4617,12 @@ async function handleWorkspaceMenuClick(action, wsId) {
       scheduleProfileAutoSync();
     };
     if (inUse) {
-      const toDelete = profiles.filter((p) => (p.workspace_id || "default") === cur.id);
-      Promise.all(toDelete.map((p) => invoke("delete_profile", { id: p.id }).catch(() => null)))
+      // Un único comando en lote: con N `delete_profile` concurrentes, cada uno
+      // reescribía el catálogo entero y los borrados se pisaban entre sí
+      // (resucitando perfiles ya borrados).
+      const ids = profiles.filter((p) => (p.workspace_id || "default") === cur.id).map((p) => p.id);
+      invoke("delete_profiles", { ids })
+        .catch((err) => console.error("[workspace] delete_profiles", err))
         .then(async () => {
           try { profiles = await invoke("get_profiles"); } catch {}
           finalize();
@@ -6280,8 +6284,11 @@ async function deleteWorkspaceById(wsId) {
     scheduleProfileAutoSync();
   };
   if (inUse) {
-    const toDelete = profiles.filter((p) => (p.workspace_id || "default") === ws.id);
-    Promise.all(toDelete.map((p) => invoke("delete_profile", { id: p.id }).catch(() => null)))
+    // Una sola transacción de borrado (ver `deleteWorkspace` en el menú): los
+    // borrados concurrentes se pisaban al reescribir cada uno el catálogo entero.
+    const ids = profiles.filter((p) => (p.workspace_id || "default") === ws.id).map((p) => p.id);
+    invoke("delete_profiles", { ids })
+      .catch((err) => console.error("[workspace] delete_profiles", err))
       .then(async () => {
         try { profiles = await invoke("get_profiles"); } catch {}
         finalize();
@@ -11992,18 +11999,40 @@ function notifyResize(sessionId, _terminal, { force = false } = {}) {
  * agrupar varias bajas bajo un único diálogo/aviso. Devuelve `true` si se borró.
  */
 async function deleteProfileData(profileId) {
-  const profile = profiles.find((p) => p.id === profileId);
-  if (!profile) return false;
-  await invoke("delete_profile", { id: profileId });
-  for (const c of profile.extra_credentials || []) {
-    await deleteStoredSecret(credPasswordKey(profileId, c.id));
-    await deleteStoredSecret(credPassphraseKey(profileId, c.id));
+  return (await deleteProfilesData([profileId])) > 0;
+}
+
+/**
+ * Borra varios perfiles en una única transacción de backend y limpia su rastro
+ * local. Devuelve cuántos se borraron de verdad.
+ *
+ * El catálogo se reescribe entero en cada borrado, así que hacerlo perfil a perfil
+ * multiplicaba las escrituras y —cuando los comandos salían en paralelo— dejaba que
+ * unos borrados pisaran a otros. Aquí es un solo `delete_profiles`.
+ */
+async function deleteProfilesData(profileIds) {
+  const targets = profileIds
+    .map((id) => profiles.find((p) => p.id === id))
+    .filter((p) => p);
+  if (!targets.length) return 0;
+
+  await invoke("delete_profiles", { ids: targets.map((p) => p.id) });
+
+  for (const profile of targets) {
+    // Las credenciales extra las borra también el backend; aquí se limpian las
+    // que el frontend gestiona por su cuenta (mismo keyring, claves derivadas).
+    for (const c of profile.extra_credentials || []) {
+      await deleteStoredSecret(credPasswordKey(profile.id, c.id));
+      await deleteStoredSecret(credPassphraseKey(profile.id, c.id));
+    }
+    invoke("session_snapshot_delete", { profileId: profile.id }).catch(() => {});
+    snapshotIndex.delete(profile.id);
+    sync.recordTombstone(prefs, "profiles", profile.id);
   }
-  invoke("session_snapshot_delete", { profileId }).catch(() => {});
-  snapshotIndex.delete(profileId);
-  profiles = profiles.filter((p) => p.id !== profileId);
-  sync.recordTombstone(prefs, "profiles", profileId);
-  return true;
+
+  const borrados = new Set(targets.map((p) => p.id));
+  profiles = profiles.filter((p) => !borrados.has(p.id));
+  return targets.length;
 }
 
 async function deleteProfile(profileId) {
@@ -12063,13 +12092,11 @@ async function deleteSelectedProfiles(targetId) {
   if (!confirmed) return;
 
   let ok = 0;
-  for (const id of ids) {
-    const profile = profiles.find((p) => p.id === id);
-    try {
-      if (await deleteProfileData(id)) ok++;
-    } catch (err) {
-      toast(t("toast.conn_delete_error_named", { name: profile?.name || id, err }), "error");
-    }
+  try {
+    ok = await deleteProfilesData(ids);
+  } catch (err) {
+    const primero = profiles.find((p) => ids.includes(p.id));
+    toast(t("toast.conn_delete_error_named", { name: primero?.name || ids[0], err }), "error");
   }
   sidebarSelectedConnectionIds.clear();
   savePrefs();
@@ -17973,9 +18000,12 @@ async function importConnections() {
       throw new Error("Formato de archivo no válido");
     }
 
+    // Una sola transacción: guardar perfil a perfil dejaba media importación
+    // aplicada si algo fallaba a mitad del fichero.
+    await invoke("save_profiles", { profiles: data.profiles });
+
     let added = 0, updated = 0;
     for (const profile of data.profiles) {
-      await invoke("save_profile", { profile });
       const idx = profiles.findIndex((p) => p.id === profile.id);
       if (idx >= 0) { profiles[idx] = profile; updated++; }
       else { profiles.push(profile); added++; }
@@ -18387,43 +18417,40 @@ async function importFromSshConfig() {
     updated_at: now,
   });
 
-  let added = 0, updatedCount = 0;
   const now = new Date().toISOString();
 
-  for (const { b, fields } of toCreate) {
-    const profile = buildNewProfile(b.alias, fields, now);
-    try {
-      await invoke("save_profile", { profile });
-      profiles.push(profile);
-      added++;
-    } catch (err) {
-      console.error("[ssh_config] save_profile failed for", b.alias, err);
-    }
+  const nuevos = toCreate.map(({ b, fields }) => buildNewProfile(b.alias, fields, now));
+  // Actualiza los existentes conservando id y created_at.
+  const actualizados = toUpdate.map(({ fields, prof }) => ({
+    ...prof,
+    host: fields.host,
+    port: fields.port,
+    username: fields.username,
+    auth_type: fields.auth_type,
+    key_path: fields.key_path,
+    keep_alive_secs: fields.keep_alive_secs,
+    proxy_jump: fields.proxy_jump,
+    ssh_tunnels: fields.ssh_tunnels,
+    updated_at: now,
+  }));
+
+  // Altas y actualizaciones en una sola transacción: o entra el fichero entero o
+  // no entra nada, en vez de dejar `~/.ssh/config` importado a medias.
+  try {
+    await invoke("save_profiles", { profiles: [...nuevos, ...actualizados] });
+  } catch (err) {
+    console.error("[ssh_config] save_profiles", err);
+    toast(t("import_ssh.failed", { err }), "error");
+    return;
   }
 
-  for (const { fields, prof } of toUpdate) {
-    // Actualiza el perfil existente conservando id y created_at.
-    const profile = {
-      ...prof,
-      host: fields.host,
-      port: fields.port,
-      username: fields.username,
-      auth_type: fields.auth_type,
-      key_path: fields.key_path,
-      keep_alive_secs: fields.keep_alive_secs,
-      proxy_jump: fields.proxy_jump,
-      ssh_tunnels: fields.ssh_tunnels,
-      updated_at: now,
-    };
-    try {
-      await invoke("save_profile", { profile });
-      const idx = profiles.findIndex((p) => p.id === prof.id);
-      if (idx >= 0) profiles[idx] = profile;
-      updatedCount++;
-    } catch (err) {
-      console.error("[ssh_config] save_profile update failed for", prof.name, err);
-    }
+  profiles.push(...nuevos);
+  for (const profile of actualizados) {
+    const idx = profiles.findIndex((p) => p.id === profile.id);
+    if (idx >= 0) profiles[idx] = profile;
   }
+  const added = nuevos.length;
+  const updatedCount = actualizados.length;
 
   renderConnectionList();
   scheduleProfileAutoSync();
@@ -18939,6 +18966,10 @@ async function importWizardRun() {
   progressBox?.classList.remove("hidden");
   updateProgress(0);
 
+  // Se construyen todos los perfiles y se guardan de una vez (una transacción):
+  // con un `save_profile` por conexión, un fallo a mitad dejaba el workspace nuevo
+  // con parte de las conexiones importadas y parte no.
+  const construidos = [];
   for (const { node, folder } of conns) {
     const ctype = node.connType;
     const port = Number.isFinite(node.port) && node.port > 0
@@ -18981,17 +19012,31 @@ async function importWizardRun() {
       updated_at: now,
     };
 
-    let saved = false;
-    try {
-      await invoke("save_profile", { profile });
-      profiles.push(profile);
-      imported++;
-      saved = true;
-    } catch (err) {
-      console.error("[import] save_profile failed for", node.name, err);
-    }
+    construidos.push({ node, profile });
+  }
 
-    if (saved && importPw && node.encPassword) {
+  try {
+    await invoke("save_profiles", { profiles: construidos.map((c) => c.profile) });
+    profiles.push(...construidos.map((c) => c.profile));
+    imported = construidos.length;
+  } catch (err) {
+    console.error("[import] save_profiles", err);
+    // Si no entra ninguna conexión, el workspace que se creó para alojarlas se
+    // deshace: dejarlo vacío sería un contenedor fantasma en la sidebar.
+    prefs.workspaces = prefs.workspaces.filter((w) => w.id !== wsId);
+    delete prefs.userFoldersByWorkspace[wsId];
+    if (importBtn) importBtn.disabled = false;
+    if (backBtn) backBtn.disabled = false;
+    progressBox?.classList.add("hidden");
+    toast(t("import_wizard.failed", { err }), "error");
+    return;
+  }
+
+  // Las contraseñas van después, una a una: el descifrado es lo que tarda (de ahí
+  // la barra de progreso) y cada una puede fallar por su cuenta sin invalidar la
+  // importación de los perfiles, que ya está en disco.
+  for (const { node, profile } of construidos) {
+    if (importPw && node.encPassword) {
       try {
         // El descifrado depende de la fuente: mRemoteNG (AES-GCM en WebCrypto)
         // o Ásbrú (Blowfish/MD5 en el backend).
@@ -18999,7 +19044,7 @@ async function importWizardRun() {
           ? await invoke("asbru_decrypt", { blob: node.encPassword })
           : await mrngDecryptGcm(node.encPassword, masterPw, importWizard.meta.kdfIterations);
         if (plain) {
-          await saveStoredSecret(passwordKey(id), plain, "contraseña");
+          await saveStoredSecret(passwordKey(profile.id), plain, "contraseña");
           withPw++;
         }
       } catch {

@@ -97,18 +97,50 @@ pub fn save_profile(
 /// perfiles, no se tocan.
 #[tauri::command]
 pub fn delete_profile(state: State<ProfileManager>, id: String) -> Result<(), String> {
-    // Recogemos las claves de keyring del perfil antes de borrarlo del disco.
-    let mut keyring_keys = vec![format!("password:{id}"), format!("passphrase:{id}")];
-    if let Ok(profiles) = state.load_all() {
-        if let Some(profile) = profiles.iter().find(|p| p.id == id) {
-            for cred in &profile.extra_credentials {
-                keyring_keys.push(format!("password:{id}:{}", cred.id));
-                keyring_keys.push(format!("passphrase:{id}:{}", cred.id));
-            }
+    delete_profiles(state, vec![id])
+}
+
+/// Crea o actualiza **varios** perfiles en una sola transacción.
+///
+/// Lo usan el import de otros clientes y la sincronización, que antes iban perfil
+/// a perfil: N reescrituras del catálogo entero y, si algo fallaba a mitad, una
+/// importación aplicada por la mitad.
+#[tauri::command]
+pub fn save_profiles(
+    state: State<ProfileManager>,
+    profiles: Vec<ConnectionProfile>,
+) -> Result<(), String> {
+    state.save_many(profiles).map_err(|e| e.to_string())
+}
+
+/// Elimina **varios** perfiles en una sola transacción y limpia sus secretos del
+/// keyring.
+///
+/// Es el único camino de borrado (`delete_profile` delega aquí). La UI borraba en
+/// lote con un `Promise.all` de N comandos: como cada uno reescribía el catálogo
+/// entero, dos borrados concurrentes se pisaban y **resucitaban** perfiles ya
+/// borrados. Una transacción, una escritura.
+///
+/// Solo se borran las claves derivadas del `id` de cada perfil; las credenciales
+/// maestras (`master:*`) y los secretos sueltos (`secret:*`), compartidos entre
+/// perfiles, no se tocan.
+#[tauri::command]
+pub fn delete_profiles(state: State<ProfileManager>, ids: Vec<String>) -> Result<(), String> {
+    // Los perfiles borrados llegan desde *dentro* de la transacción: sus claves de
+    // keyring se derivan de datos que sabemos que estaban ahí al borrarlos, no de
+    // una lectura previa que otro hilo podría haber invalidado.
+    let removed = state.delete_many(&ids).map_err(|e| e.to_string())?;
+
+    let mut keyring_keys = Vec::new();
+    for profile in &removed {
+        let id = &profile.id;
+        keyring_keys.push(format!("password:{id}"));
+        keyring_keys.push(format!("passphrase:{id}"));
+        for cred in &profile.extra_credentials {
+            keyring_keys.push(format!("password:{id}:{}", cred.id));
+            keyring_keys.push(format!("passphrase:{id}:{}", cred.id));
         }
     }
-
-    state.delete(&id).map_err(|e| e.to_string())?;
 
     // Borrado best-effort: una entrada inexistente no es un error real.
     for key in keyring_keys {

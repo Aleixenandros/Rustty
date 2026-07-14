@@ -11,10 +11,12 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
-use crate::atomic_file;
 use crate::error::AppError;
+use crate::locks::MutexExt;
 use crate::profiles::ConnectionProfile;
+use crate::store_file;
 use crate::subst::{InternalVar, Resolver, SubstContext};
 
 /// Servicio usado para todas las entradas de keyring de Rustty.
@@ -126,17 +128,26 @@ fn keyring_delete_value(kind: CredentialKind, id: &str) {
     }
 }
 
+/// Nombre del store en el envelope versionado (`store_file`).
+const KIND: &str = "credentials";
+
 /// Gestor del catálogo de credenciales. Persiste los metadatos en
 /// `app_data_dir/credentials.json` con permisos `0o600` (igual que
 /// `ProfileManager`). Los valores secretos se gestionan aparte en el keyring.
 pub struct CredentialStore {
     credentials_path: PathBuf,
+    /// Lock de transacción del catálogo: serializa los ciclos
+    /// leer→modificar→reescribir. Ver `ProfileManager::tx`. Aquí importa además
+    /// porque una mutación toca **dos** almacenes (catálogo y keyring) y deben
+    /// cuadrar: si el keyring falla, el catálogo no llega a escribirse.
+    tx: Mutex<()>,
 }
 
 impl CredentialStore {
     pub fn new(data_dir: PathBuf) -> Self {
         CredentialStore {
             credentials_path: data_dir.join("credentials.json"),
+            tx: Mutex::new(()),
         }
     }
 
@@ -146,47 +157,32 @@ impl CredentialStore {
     /// (cuarentena + última copia válida): un catálogo de credenciales que no
     /// parsea dejaría a los perfiles que lo referencian sin poder autenticarse.
     pub fn load_all(&self) -> Result<Vec<CredentialMeta>, AppError> {
-        let (data, _recovery) =
-            atomic_file::read_or_recover(&self.credentials_path, true, |text| {
-                serde_json::from_str::<Vec<CredentialMeta>>(text).is_ok()
-            })?;
-        let Some(data) = data else {
-            return Ok(vec![]);
-        };
-        let creds: Vec<CredentialMeta> = serde_json::from_str(&data)?;
+        let (creds, _recovery) =
+            store_file::read::<CredentialMeta>(&self.credentials_path, KIND, true)?;
         Ok(creds)
     }
 
-    /// Guarda o actualiza una credencial (upsert por id). Parte de la API
-    /// análoga a `ProfileManager`; las altas/ediciones del flujo Tauri usan
-    /// `cred_set` (que además gestiona el keyring), de ahí que pueda no tener
-    /// llamantes directos todavía.
-    #[allow(dead_code)]
-    pub fn save(&self, cred: CredentialMeta) -> Result<(), AppError> {
-        let mut creds = self.load_all()?;
-        match creds.iter().position(|c| c.id == cred.id) {
-            Some(idx) => creds[idx] = cred,
-            None => creds.push(cred),
-        }
-        self.write_all(&creds)
-    }
-
-    /// Elimina una credencial del catálogo por id.
-    pub fn delete(&self, id: &str) -> Result<(), AppError> {
-        let mut creds = self.load_all()?;
-        creds.retain(|c| c.id != id);
-        self.write_all(&creds)
+    /// Aplica una mutación del catálogo **dentro de la transacción**: carga la
+    /// lista, deja que `mutate` la modifique y la reescribe entera.
+    ///
+    /// Todas las mutaciones pasan por aquí. Si `mutate` devuelve error (nombre
+    /// duplicado, credencial en uso, keyring que no responde), el catálogo **no se
+    /// escribe**: la operación entera se queda sin efecto.
+    pub fn transact<R>(
+        &self,
+        mutate: impl FnOnce(&mut Vec<CredentialMeta>) -> Result<R, AppError>,
+    ) -> Result<R, AppError> {
+        let _tx = self.tx.lock_recover();
+        let mut catalog = self.load_all()?;
+        let out = mutate(&mut catalog)?;
+        self.write_all(&catalog)?;
+        Ok(out)
     }
 
     fn write_all(&self, creds: &[CredentialMeta]) -> Result<(), AppError> {
-        if let Some(parent) = self.credentials_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let data = serde_json::to_string_pretty(creds)?;
-        // Atómica + 0600: el catálogo de credenciales no queda a medias ni
-        // legible por otros usuarios.
-        crate::atomic_file::write(&self.credentials_path, data.as_bytes(), true)?;
-        Ok(())
+        // Atómica + 0600 + envelope versionado: el catálogo de credenciales no
+        // queda a medias ni legible por otros usuarios.
+        store_file::write(&self.credentials_path, KIND, creds, true)
     }
 }
 
@@ -402,92 +398,94 @@ pub fn cred_set(
         )));
     }
 
-    let mut catalog = store.load_all()?;
+    // Toda la operación (validar, escribir el keyring y reescribir el catálogo)
+    // ocurre dentro de la transacción del store: dos altas simultáneas con el
+    // mismo nombre no pueden colarse ambas, y si el keyring falla el catálogo no
+    // llega a tocarse.
+    store.transact(move |catalog| {
+        // Unicidad del nombre dentro del mismo kind (excluyendo la propia entrada).
+        if let Some(other) = catalog
+            .iter()
+            .find(|c| c.kind == kind && c.name == name && Some(&c.id) != id.as_ref())
+        {
+            return Err(AppError::Auth(format!(
+                "Ya existe una credencial «{}» de ese tipo (id {}).",
+                name, other.id
+            )));
+        }
 
-    // Unicidad del nombre dentro del mismo kind (excluyendo la propia entrada).
-    if let Some(other) = catalog
-        .iter()
-        .find(|c| c.kind == kind && c.name == name && Some(&c.id) != id.as_ref())
-    {
-        return Err(AppError::Auth(format!(
-            "Ya existe una credencial «{}» de ese tipo (id {}).",
-            name, other.id
-        )));
-    }
+        let now = now_iso();
 
-    let now = now_iso();
+        let meta = match id {
+            // Actualización de una credencial existente.
+            Some(existing_id) => {
+                let idx = catalog
+                    .iter()
+                    .position(|c| c.id == existing_id)
+                    .ok_or_else(|| {
+                        AppError::Auth(format!("Credencial {existing_id} no encontrada."))
+                    })?;
+                let created_at = catalog[idx].created_at.clone();
 
-    let meta = match id {
-        // Actualización de una credencial existente.
-        Some(existing_id) => {
-            let idx = catalog
-                .iter()
-                .position(|c| c.id == existing_id)
-                .ok_or_else(|| {
-                    AppError::Auth(format!("Credencial {existing_id} no encontrada."))
-                })?;
-            let created_at = catalog[idx].created_at.clone();
+                // Si cambia el kind y el anterior era secreto, limpiamos su keyring.
+                let prev_kind = catalog[idx].kind;
+                if prev_kind != kind {
+                    keyring_delete_value(prev_kind, &existing_id);
+                }
 
-            // Si cambia el kind y el anterior era secreto, limpiamos su keyring.
-            let prev_kind = catalog[idx].kind;
-            if prev_kind != kind {
-                keyring_delete_value(prev_kind, &existing_id);
+                // El valor de Master/Secret va al keyring; el de Var, al catálogo.
+                let catalog_value = match kind {
+                    CredentialKind::Var => value.clone(),
+                    CredentialKind::Master | CredentialKind::Secret => {
+                        if let Some(v) = value.as_deref() {
+                            keyring_set_value(kind, &existing_id, v)?;
+                        }
+                        None
+                    }
+                };
+
+                let meta = CredentialMeta {
+                    id: existing_id,
+                    name,
+                    kind,
+                    description,
+                    value: catalog_value,
+                    created_at,
+                    updated_at: Some(now),
+                };
+                catalog[idx] = meta.clone();
+                meta
             }
+            // Alta nueva: generamos UUID.
+            None => {
+                let new_id = uuid::Uuid::new_v4().to_string();
 
-            // El valor de Master/Secret va al keyring; el de Var, al catálogo.
-            let catalog_value = match kind {
-                CredentialKind::Var => value.clone(),
-                CredentialKind::Master | CredentialKind::Secret => {
-                    if let Some(v) = value.as_deref() {
-                        keyring_set_value(kind, &existing_id, v)?;
+                let catalog_value = match kind {
+                    CredentialKind::Var => value.clone(),
+                    CredentialKind::Master | CredentialKind::Secret => {
+                        if let Some(v) = value.as_deref() {
+                            keyring_set_value(kind, &new_id, v)?;
+                        }
+                        None
                     }
-                    None
-                }
-            };
+                };
 
-            let meta = CredentialMeta {
-                id: existing_id,
-                name,
-                kind,
-                description,
-                value: catalog_value,
-                created_at,
-                updated_at: Some(now),
-            };
-            catalog[idx] = meta.clone();
-            store.write_all(&catalog)?;
-            meta
-        }
-        // Alta nueva: generamos UUID.
-        None => {
-            let new_id = uuid::Uuid::new_v4().to_string();
+                let meta = CredentialMeta {
+                    id: new_id,
+                    name,
+                    kind,
+                    description,
+                    value: catalog_value,
+                    created_at: now.clone(),
+                    updated_at: Some(now),
+                };
+                catalog.push(meta.clone());
+                meta
+            }
+        };
 
-            let catalog_value = match kind {
-                CredentialKind::Var => value.clone(),
-                CredentialKind::Master | CredentialKind::Secret => {
-                    if let Some(v) = value.as_deref() {
-                        keyring_set_value(kind, &new_id, v)?;
-                    }
-                    None
-                }
-            };
-
-            let meta = CredentialMeta {
-                id: new_id,
-                name,
-                kind,
-                description,
-                value: catalog_value,
-                created_at: now.clone(),
-                updated_at: Some(now),
-            };
-            catalog.push(meta.clone());
-            store.write_all(&catalog)?;
-            meta
-        }
-    };
-
-    Ok(meta)
+        Ok(meta)
+    })
 }
 
 /// Aplica unos metadatos sincronizados haciendo **upsert por id** en el
@@ -503,12 +501,13 @@ pub fn cred_import(store: &CredentialStore, meta: CredentialMeta) -> Result<(), 
     };
     let imported = CredentialMeta { value, ..meta };
 
-    let mut catalog = store.load_all()?;
-    match catalog.iter().position(|c| c.id == imported.id) {
-        Some(idx) => catalog[idx] = imported,
-        None => catalog.push(imported),
-    }
-    store.write_all(&catalog)
+    store.transact(move |catalog| {
+        match catalog.iter().position(|c| c.id == imported.id) {
+            Some(idx) => catalog[idx] = imported,
+            None => catalog.push(imported),
+        }
+        Ok(())
+    })
 }
 
 /// Elimina una credencial del catálogo y su valor del keyring.
@@ -522,27 +521,35 @@ pub fn cred_delete(
     id: String,
     force: bool,
 ) -> Result<(), AppError> {
-    let catalog = store.load_all()?;
-    let Some(cred) = catalog.iter().find(|c| c.id == id) else {
-        // Idempotente: si no existe en el catálogo, intentamos limpiar keyring
-        // de ambos tipos por si quedó huérfano y salimos sin error.
-        keyring_delete_value(CredentialKind::Master, &id);
-        keyring_delete_value(CredentialKind::Secret, &id);
-        return Ok(());
-    };
-    let kind = cred.kind;
+    // La comprobación de uso y el borrado van en la misma transacción: separarlas
+    // dejaría una ventana en la que un perfil empieza a usar la credencial justo
+    // entre el «no la usa nadie» y el borrado.
+    let kind = store.transact(|catalog| {
+        let Some(idx) = catalog.iter().position(|c| c.id == id) else {
+            return Ok(None);
+        };
 
-    if !force {
-        let count = count_profiles_referencing(data_dir, &id);
-        if count > 0 {
-            return Err(AppError::Auth(format!(
-                "La credencial está en uso por {count} perfil(es). Use «force» para eliminarla de todas formas."
-            )));
+        if !force {
+            let count = count_profiles_referencing(data_dir, &id);
+            if count > 0 {
+                return Err(AppError::Auth(format!(
+                    "La credencial está en uso por {count} perfil(es). Use «force» para eliminarla de todas formas."
+                )));
+            }
+        }
+
+        Ok(Some(catalog.remove(idx).kind))
+    })?;
+
+    match kind {
+        Some(kind) => keyring_delete_value(kind, &id),
+        // Idempotente: si no estaba en el catálogo, limpiamos el keyring de ambos
+        // tipos por si quedó un valor huérfano, y salimos sin error.
+        None => {
+            keyring_delete_value(CredentialKind::Master, &id);
+            keyring_delete_value(CredentialKind::Secret, &id);
         }
     }
-
-    keyring_delete_value(kind, &id);
-    store.delete(&id)?;
     Ok(())
 }
 
@@ -553,12 +560,12 @@ fn count_profiles_referencing(data_dir: &std::path::Path, id: &str) -> usize {
     let Ok(data) = fs::read_to_string(&path) else {
         return 0;
     };
-    // Parseamos como JSON genérico para no acoplarnos a la presencia del campo
-    // `master_credential_id` (que aún no existe en `ConnectionProfile`: Fase 4).
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&data) else {
-        return 0;
-    };
-    let Some(profiles) = value.as_array() else {
+    // Los items se extraen con `store_file` (que entiende tanto el envelope como
+    // el array legado) y se miran como JSON genérico, para no acoplarse a la forma
+    // completa de `ConnectionProfile`. Dar por hecho que el fichero es un array
+    // —como se hacía— devolvería 0 en silencio en cuanto el store se versionó, y
+    // esta comprobación dejaría de proteger nada.
+    let Some(profiles) = store_file::items_value(&data) else {
         return 0;
     };
     profiles

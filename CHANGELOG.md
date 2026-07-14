@@ -2,6 +2,41 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.55.0] - 2026-07-14
+
+### Corregido
+
+- **Borrar varias conexiones a la vez ya no deja ninguna «resucitada»**. Al
+  eliminar una selección múltiple —o un espacio de trabajo con sus conexiones—,
+  cada baja se aplicaba por su cuenta y podían pisarse entre ellas: alguna
+  conexión reaparecía al recargar. Ahora el borrado se aplica de una sola vez.
+- **Importar ya no puede dejar la mitad de las conexiones dentro**. Los tres
+  caminos de importación (copia de seguridad, `~/.ssh/config` y el asistente de
+  otros clientes) guardaban conexión a conexión, así que un fallo a media
+  importación dejaba una parte aplicada y otra no, sin decir cuál. Ahora entran
+  todas o no entra ninguna, y si algo falla se avisa.
+
+### Cambiado
+
+- **Los ficheros de datos (conexiones, credenciales y scripts) declaran su
+  formato** y se pueden actualizar sin riesgo. Antes de cambiarlos a un formato
+  nuevo, Rustty guarda una copia intacta del original junto a ellos
+  (`profiles.json.v1-<fecha>.bak`), que **no se borra nunca**: es la vuelta atrás
+  si algo va mal o si instalas una versión anterior.
+- **Una versión antigua de Rustty ya no puede pisar los datos de una más nueva**:
+  si encuentra un fichero escrito por una versión posterior, se detiene y lo dice
+  en vez de tratarlo como corrupto. Antes lo habría reemplazado en silencio.
+
+### Interno
+
+- La versión del compilador de Rust queda **fijada** en el proyecto
+  (`rust-toolchain.toml`), y el CI y la publicación la leen de ahí. Actualizar
+  Rust pasa a ser una decisión deliberada: hasta ahora, una versión nueva del
+  compilador podía romper una publicación sin haber tocado una línea de código
+  (ocurrió al publicar la 1.54.0).
+- Nuevo aviso de mantenimiento (`npm run check:backlog`) que detecta tareas del
+  backlog que el código dice que ya están hechas. Avisa; no cierra nada.
+
 ## [1.54.0] - 2026-07-13
 
 ### Añadido

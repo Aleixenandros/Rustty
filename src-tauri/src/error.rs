@@ -22,6 +22,13 @@ pub enum AppError {
 
     #[error("Error de sincronización: {0}")]
     Sync(String),
+
+    /// El almacén local (perfiles, credenciales, scripts) existe y parsea, pero
+    /// esta build no sabe leerlo: normalmente porque lo escribió una versión más
+    /// reciente de Rustty. Es un error deliberado y **no** una corrupción: hay que
+    /// parar y decirlo, nunca sobrescribir datos que no entendemos.
+    #[error("{0}")]
+    Store(String),
 }
 
 impl From<std::io::Error> for AppError {

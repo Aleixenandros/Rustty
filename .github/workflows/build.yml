@@ -36,9 +36,18 @@ jobs:
           node-version: 24
           cache: npm
 
+      # La versión de Rust sale de `src-tauri/rust-toolchain.toml`, nunca del canal
+      # flotante: con clippy bloqueante en este mismo job, un Rust nuevo en el
+      # runner tumbaba la publicación sin que el código hubiera cambiado (v1.54.0).
+      - name: Leer el toolchain fijado
+        id: rust
+        shell: bash
+        run: sed -n 's/^channel = "\(.*\)"/channel=\1/p' src-tauri/rust-toolchain.toml >> "$GITHUB_OUTPUT"
+
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.rust.outputs.channel }}
           components: clippy
 
       - name: Cache Rust
@@ -149,9 +158,18 @@ jobs:
           cache: npm
 
       # ── Rust ──────────────────────────────────────────────────
+      # Mismo toolchain que el gate `verify` y que el desarrollo local: lo dicta
+      # `src-tauri/rust-toolchain.toml`. Si aquí flotara, se publicarían binarios
+      # compilados con un compilador que nadie ha verificado.
+      - name: Leer el toolchain fijado
+        id: rust
+        shell: bash
+        run: sed -n 's/^channel = "\(.*\)"/channel=\1/p' src-tauri/rust-toolchain.toml >> "$GITHUB_OUTPUT"
+
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.rust.outputs.channel }}
           targets: ${{ matrix.target }}
 
       - name: Cache Rust

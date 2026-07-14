@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use crate::atomic_file::{self, Recovery};
+use crate::atomic_file::Recovery;
 use crate::error::AppError;
 use crate::locks::MutexExt;
+use crate::store_file;
 
 /// Tipo de autenticación SSH soportado
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -241,6 +241,9 @@ pub struct ConnectionProfile {
     pub updated_at: Option<String>,
 }
 
+/// Nombre del store en el envelope versionado (`store_file`).
+const KIND: &str = "profiles";
+
 /// Gestor de perfiles de conexión.
 /// Persiste los perfiles en un archivo JSON en el directorio de datos de la app.
 pub struct ProfileManager {
@@ -248,6 +251,14 @@ pub struct ProfileManager {
     /// Resultado de la última carga: si el store estaba dañado, el frontend lo
     /// consulta al arrancar (`profiles_recovery`) para avisar al usuario.
     recovery: Mutex<Recovery>,
+    /// Lock de transacción del store. Toda mutación es un ciclo
+    /// leer→modificar→reescribir el fichero **entero**, y los comandos Tauri
+    /// corren en un pool de hilos: sin este lock, dos borrados concurrentes leen
+    /// la misma lista y el último en escribir **resucita** lo que borró el otro
+    /// (el borrado múltiple de la UI lanzaba justo eso, un `Promise.all` de N
+    /// `delete_profile`). No lo toma `load_all`: los lectores no necesitan
+    /// exclusión, porque la escritura es atómica y ven o el antes o el después.
+    tx: Mutex<()>,
 }
 
 impl ProfileManager {
@@ -255,6 +266,7 @@ impl ProfileManager {
         ProfileManager {
             profiles_path: data_dir.join("profiles.json"),
             recovery: Mutex::new(Recovery::Missing),
+            tx: Mutex::new(()),
         }
     }
 
@@ -272,15 +284,10 @@ impl ProfileManager {
     /// frontend lo lee al arrancar para avisar al usuario. Un `Lost` **no** se
     /// puede callar: el siguiente guardado escribiría encima de la nada.
     pub fn load_all(&self) -> Result<Vec<ConnectionProfile>, AppError> {
-        let (data, recovery) = atomic_file::read_or_recover(&self.profiles_path, true, |text| {
-            serde_json::from_str::<Vec<ConnectionProfile>>(text).is_ok()
-        })?;
+        let (mut profiles, recovery) =
+            store_file::read::<ConnectionProfile>(&self.profiles_path, KIND, true)?;
         *self.recovery.lock_recover() = recovery;
 
-        let Some(data) = data else {
-            return Ok(vec![]);
-        };
-        let mut profiles: Vec<ConnectionProfile> = serde_json::from_str(&data)?;
         // Migración idempotente (en memoria; se persiste al primer save): un
         // perfil KeePass antiguo trae `keepass_entry_uuid` pero `password_source`
         // por defecto `Own`. Lo reinterpretamos como `Keepass`. No tocamos los
@@ -298,32 +305,58 @@ impl ProfileManager {
         Ok(profiles)
     }
 
-    /// Guarda o actualiza un perfil (upsert por id)
+    /// Guarda o actualiza un perfil (upsert por id).
     pub fn save(&self, profile: ConnectionProfile) -> Result<(), AppError> {
+        self.save_many(vec![profile])
+    }
+
+    /// Guarda o actualiza **varios** perfiles en una sola transacción: una lectura,
+    /// una escritura, un único cambio observable. Es lo que necesitan el import de
+    /// otros clientes y la sincronización, que antes hacían N `save` sueltos —N
+    /// reescrituras del fichero entero, y una interrupción a mitad dejaba el
+    /// catálogo con media importación aplicada.
+    pub fn save_many(&self, incoming: Vec<ConnectionProfile>) -> Result<(), AppError> {
+        if incoming.is_empty() {
+            return Ok(());
+        }
+        let _tx = self.tx.lock_recover();
         let mut profiles = self.load_all()?;
-        match profiles.iter().position(|p| p.id == profile.id) {
-            Some(idx) => profiles[idx] = profile,
-            None => profiles.push(profile),
+        for profile in incoming {
+            match profiles.iter().position(|p| p.id == profile.id) {
+                Some(idx) => profiles[idx] = profile,
+                None => profiles.push(profile),
+            }
         }
         self.write_all(&profiles)
     }
 
-    /// Elimina un perfil por su id
-    pub fn delete(&self, id: &str) -> Result<(), AppError> {
-        let mut profiles = self.load_all()?;
-        profiles.retain(|p| p.id != id);
-        self.write_all(&profiles)
+    /// Elimina perfiles en una sola transacción y devuelve los que existían de
+    /// verdad. Es el **único** camino de borrado (el comando de perfil único
+    /// delega aquí con una lista de uno).
+    ///
+    /// Devolverlos no es un extra: el llamador necesita sus datos para limpiar las
+    /// claves de keyring derivadas, y leerlos *fuera* de la transacción sería
+    /// volver a abrir la carrera que este método cierra.
+    pub fn delete_many(&self, ids: &[String]) -> Result<Vec<ConnectionProfile>, AppError> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let _tx = self.tx.lock_recover();
+        let profiles = self.load_all()?;
+        let (removed, kept): (Vec<_>, Vec<_>) =
+            profiles.into_iter().partition(|p| ids.contains(&p.id));
+        if removed.is_empty() {
+            return Ok(vec![]);
+        }
+        self.write_all(&kept)?;
+        Ok(removed)
     }
 
     fn write_all(&self, profiles: &[ConnectionProfile]) -> Result<(), AppError> {
-        if let Some(parent) = self.profiles_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let data = serde_json::to_string_pretty(profiles)?;
-        // Escritura atómica + 0600: el almacén de conexiones nunca queda a
-        // medias ante un crash ni legible por otros usuarios.
-        crate::atomic_file::write(&self.profiles_path, data.as_bytes(), true)?;
-        Ok(())
+        // Escritura atómica + 0600 y envelope versionado: el almacén de conexiones
+        // nunca queda a medias ante un crash, ni legible por otros usuarios, ni sin
+        // declarar en qué formato está.
+        store_file::write(&self.profiles_path, KIND, profiles, true)
     }
 }
 
@@ -414,6 +447,94 @@ mod tests {
         std::fs::write(&path, json2).unwrap();
         let perfiles = mgr.load_all().expect("carga");
         assert_eq!(perfiles[0].password_source, PasswordSource::Own);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn perfil(id: &str) -> ConnectionProfile {
+        let json = JSON_SIN_WORKSPACE.replace("abc-123", id);
+        serde_json::from_str(&json).expect("JSON válido")
+    }
+
+    fn manager() -> (ProfileManager, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("rustty-pm-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        (ProfileManager::new(dir.clone()), dir)
+    }
+
+    #[test]
+    fn el_borrado_en_lote_no_resucita_perfiles() {
+        // El bug que cierra el lock: la UI borraba N perfiles con N comandos
+        // concurrentes; cada uno leía la lista completa y la reescribía, así que
+        // el último en escribir devolvía a la vida lo que los otros habían
+        // borrado. En una sola transacción eso no puede pasar.
+        let (mgr, dir) = manager();
+        for id in ["a", "b", "c", "d"] {
+            mgr.save(perfil(id)).expect("guarda");
+        }
+        assert_eq!(mgr.load_all().unwrap().len(), 4);
+
+        let borrados = mgr
+            .delete_many(&["a".to_string(), "c".to_string()])
+            .expect("borra en lote");
+        assert_eq!(borrados.len(), 2, "devuelve los que existían de verdad");
+
+        let quedan: Vec<String> = mgr.load_all().unwrap().into_iter().map(|p| p.id).collect();
+        assert_eq!(quedan, vec!["b".to_string(), "d".to_string()]);
+
+        // Borrar ids inexistentes no falla ni toca el store (idempotente).
+        assert!(mgr.delete_many(&["zz".to_string()]).unwrap().is_empty());
+        assert_eq!(mgr.load_all().unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn el_guardado_en_lote_es_una_sola_transaccion() {
+        let (mgr, dir) = manager();
+        mgr.save(perfil("a")).expect("guarda");
+
+        // Un lote con un perfil existente (update) y dos nuevos (insert).
+        let mut actualizado = perfil("a");
+        actualizado.name = "Renombrado".into();
+        mgr.save_many(vec![actualizado, perfil("b"), perfil("c")])
+            .expect("guarda el lote");
+
+        let perfiles = mgr.load_all().unwrap();
+        assert_eq!(perfiles.len(), 3, "no duplica el que ya existía");
+        assert_eq!(perfiles[0].name, "Renombrado");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn las_escrituras_concurrentes_no_se_pisan() {
+        // Diez hilos guardando a la vez sobre el mismo store: sin el lock de
+        // transacción, unos cuantos se perderían (todos leen la misma lista y el
+        // último gana). Con él, los diez sobreviven.
+        let (mgr, dir) = manager();
+        let mgr = std::sync::Arc::new(mgr);
+        let hilos: Vec<_> = (0..10)
+            .map(|i| {
+                let mgr = std::sync::Arc::clone(&mgr);
+                std::thread::spawn(move || mgr.save(perfil(&format!("p{i}"))).expect("guarda"))
+            })
+            .collect();
+        for h in hilos {
+            h.join().expect("hilo sin pánico");
+        }
+        assert_eq!(mgr.load_all().unwrap().len(), 10);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn el_store_se_escribe_con_envelope_versionado() {
+        let (mgr, dir) = manager();
+        mgr.save(perfil("a")).expect("guarda");
+        let texto = std::fs::read_to_string(dir.join("profiles.json")).unwrap();
+        assert_eq!(
+            crate::store_file::shape_of(&texto),
+            Some(crate::store_file::Shape::Versioned(
+                crate::store_file::CURRENT_VERSION
+            ))
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

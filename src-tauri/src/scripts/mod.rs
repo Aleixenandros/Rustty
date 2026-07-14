@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::locks::MutexExt;
 
 pub mod runner;
 pub mod store;
@@ -88,16 +89,8 @@ impl ScriptManager {
 
     /// Devuelve todos los scripts (cacheados en memoria tras la primera carga).
     pub fn get_all(&self) -> Result<Vec<Script>, String> {
-        let mut cache = self
-            .cache
-            .lock()
-            .map_err(|_| "caché de scripts corrupta".to_string())?;
-        if let Some(cached) = cache.as_ref() {
-            return Ok(cached.clone());
-        }
-        let loaded = store::load(&self.path()).map_err(|e| e.to_string())?;
-        *cache = Some(loaded.clone());
-        Ok(loaded)
+        let mut cache = self.cache.lock_recover();
+        Ok(self.cached(&mut cache)?.clone())
     }
 
     /// Devuelve un script por id (o `None`).
@@ -114,29 +107,51 @@ impl ScriptManager {
             ));
         }
         script.updated_at = chrono::Utc::now().to_rfc3339();
-        let mut scripts = self.get_all()?;
-        match scripts.iter().position(|s| s.id == script.id) {
-            Some(idx) => scripts[idx] = script,
-            None => scripts.push(script),
-        }
-        store::save(&self.path(), &scripts).map_err(|e| e.to_string())?;
-        *self
-            .cache
-            .lock()
-            .map_err(|_| "caché de scripts corrupta".to_string())? = Some(scripts);
-        Ok(())
+        self.transact(|scripts| {
+            match scripts.iter().position(|s| s.id == script.id) {
+                Some(idx) => scripts[idx] = script,
+                None => scripts.push(script),
+            }
+            Ok(())
+        })
     }
 
     /// Elimina un script por id + guardado atómico.
     pub fn delete(&self, id: &str) -> Result<(), String> {
-        let mut scripts = self.get_all()?;
-        scripts.retain(|s| s.id != id);
+        self.transact(|scripts| {
+            scripts.retain(|s| s.id != id);
+            Ok(())
+        })
+    }
+
+    /// Aplica una mutación de la lista de scripts **dentro de la transacción**:
+    /// el guard de la caché se mantiene tomado durante todo el ciclo
+    /// leer→modificar→escribir→refrescar caché.
+    ///
+    /// El mutex de la caché hace de lock de transacción (mismo papel que el `tx`
+    /// de `ProfileManager`): sin él, dos guardados concurrentes leen la misma
+    /// lista y el segundo en escribir borra el script que acaba de crear el
+    /// primero. Si el guardado falla, la caché **no** se actualiza: no puede
+    /// quedarse afirmando algo que no está en disco.
+    fn transact(&self, mutate: impl FnOnce(&mut Vec<Script>) -> Result<(), String>) -> Result<(), String> {
+        let mut cache = self.cache.lock_recover();
+        let mut scripts = self.cached(&mut cache)?.clone();
+        mutate(&mut scripts)?;
         store::save(&self.path(), &scripts).map_err(|e| e.to_string())?;
-        *self
-            .cache
-            .lock()
-            .map_err(|_| "caché de scripts corrupta".to_string())? = Some(scripts);
+        *cache = Some(scripts);
         Ok(())
+    }
+
+    /// Devuelve la lista cacheada, cargándola del disco la primera vez. Recibe el
+    /// guard ya tomado para que el llamador decida el alcance de la exclusión.
+    fn cached<'a>(
+        &self,
+        cache: &'a mut Option<Vec<Script>>,
+    ) -> Result<&'a mut Vec<Script>, String> {
+        if cache.is_none() {
+            *cache = Some(store::load(&self.path()).map_err(|e| e.to_string())?);
+        }
+        Ok(cache.as_mut().expect("acabamos de rellenar la caché"))
     }
 
     /// Devuelve un clon del `Arc` del registro (para que el fan-out se
@@ -156,32 +171,33 @@ impl ScriptManager {
             cancel_run: Arc::new(AtomicBool::new(false)),
             host_cancels: Arc::new(Mutex::new(host_cancels)),
         };
-        if let Ok(mut runs) = self.runs.lock() {
-            runs.insert(run_id.to_string(), handle.clone());
-        }
+        self.runs
+            .lock_recover()
+            .insert(run_id.to_string(), handle.clone());
         handle
     }
 
     /// Aborta el run completo (`profile_id == None`) o un host concreto.
+    ///
+    /// Los locks se toman con `lock_recover`: con un `if let Ok(…)` un mutex
+    /// envenenado convertía esto en un no-op silencioso, y el usuario se quedaba
+    /// sin poder parar un script en marcha sin saber por qué.
     pub fn abort(&self, run_id: &str, profile_id: Option<&str>) {
-        let Ok(runs) = self.runs.lock() else { return };
+        let runs = self.runs.lock_recover();
         let Some(handle) = runs.get(run_id) else {
             return;
         };
+        let flags = handle.host_cancels.lock_recover();
         match profile_id {
             Some(pid) => {
-                if let Ok(map) = handle.host_cancels.lock() {
-                    if let Some(flag) = map.get(pid) {
-                        flag.store(true, Ordering::Relaxed);
-                    }
+                if let Some(flag) = flags.get(pid) {
+                    flag.store(true, Ordering::Relaxed);
                 }
             }
             None => {
                 handle.cancel_run.store(true, Ordering::Relaxed);
-                if let Ok(map) = handle.host_cancels.lock() {
-                    for flag in map.values() {
-                        flag.store(true, Ordering::Relaxed);
-                    }
+                for flag in flags.values() {
+                    flag.store(true, Ordering::Relaxed);
                 }
             }
         }
