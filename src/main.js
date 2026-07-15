@@ -528,6 +528,9 @@ const DEFAULT_PREFS = {
   reduceMotion:    false,
   // Refuerza el anillo de foco (grosor y contraste) en la navegación por teclado.
   strongFocus:     false,
+  // Barras de desplazamiento superpuestas: el pulgar flota sobre el contenido,
+  // fino en reposo y más ancho al pasar el ratón. Off = las finas normales.
+  overlayScrollbars: false,
   // UUIDs de las últimas entradas KeePass seleccionadas (más reciente primero,
   // máx 8). Usado por el selector avanzado para sugerir entradas habituales.
   recentKeepassEntries: [],
@@ -667,6 +670,7 @@ function loadPrefs() {
   applyUiContrast(prefs.uiContrast);
   applyReduceMotion(prefs.reduceMotion);
   applyStrongFocus(prefs.strongFocus);
+  applyOverlayScrollbars(prefs.overlayScrollbars);
   if (loadZenMode()) applyZenMode(true);
 }
 
@@ -887,6 +891,10 @@ function applyReduceMotion(enabled) {
 /** Refuerza el anillo de foco (grosor y contraste) para navegación por teclado. */
 function applyStrongFocus(enabled) {
   document.body.classList.toggle("strong-focus", !!enabled);
+}
+
+function applyOverlayScrollbars(enabled) {
+  document.body.classList.toggle("overlay-scrollbars", !!enabled);
 }
 
 // ─── Export / Import de temas ─────────────────────────────────
@@ -1695,6 +1703,8 @@ function openSettingsModal() {
   if (_reduceMotion) _reduceMotion.checked = !!prefs.reduceMotion;
   const _strongFocus = document.getElementById("pref-strong-focus");
   if (_strongFocus) _strongFocus.checked = !!prefs.strongFocus;
+  const _overlayScrollbars = document.getElementById("pref-overlay-scrollbars");
+  if (_overlayScrollbars) _overlayScrollbars.checked = !!prefs.overlayScrollbars;
   const _searchAllWorkspaces = document.getElementById("pref-search-all-workspaces");
   if (_searchAllWorkspaces) _searchAllWorkspaces.checked = prefs.searchAllWorkspaces !== false;
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
@@ -3461,6 +3471,7 @@ function savePrefsFromModal() {
     })(),
     reduceMotion:    !!document.getElementById("pref-reduce-motion")?.checked,
     strongFocus:     !!document.getElementById("pref-strong-focus")?.checked,
+    overlayScrollbars: !!document.getElementById("pref-overlay-scrollbars")?.checked,
     searchAllWorkspaces: document.getElementById("pref-search-all-workspaces")?.checked ?? true,
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
@@ -3541,6 +3552,7 @@ function savePrefsFromModal() {
   applyUiContrast(prefs.uiContrast);
   applyReduceMotion(prefs.reduceMotion);
   applyStrongFocus(prefs.strongFocus);
+  applyOverlayScrollbars(prefs.overlayScrollbars);
   applyPrefsToAllTerminals();
   renderConnectionList();
   closeSettingsModal();
@@ -15167,7 +15179,7 @@ function renderSftpAutocompletePopup(input, items, parent, sep) {
   input._sftpAcIndex = -1;
   popup.innerHTML = items.map((e, i) => `
     <div class="sftp-ac-item" data-ac-idx="${i}">
-      <span class="sftp-ac-icon">${e.is_dir ? "📁" : "📄"}</span>
+      <span class="sftp-ac-icon">${sftpFileIconSvg(e)}</span>
       <span class="sftp-ac-name">${escHtml(e.name)}${e.is_dir ? "/" : ""}</span>
     </div>
   `).join("");
@@ -15808,7 +15820,7 @@ function renderSftpFiles(sessionId, side, entries) {
          data-is-dir="${e.is_dir}"
          data-is-symlink="${e.is_symlink}"
          data-permissions="${e.permissions ?? ""}">
-      <span class="sftp-icon">${sftpFileIconChar(e)}</span>
+      <span class="sftp-icon">${sftpFileIconSvg(e)}</span>
       <span class="sftp-name">${escHtml(e.name)}</span>
       <span class="sftp-perms" title="${escHtml(permsTip)}">${escHtml(permsText)}</span>
       <span class="sftp-size">${e.is_dir ? "" : formatSize(e.size)}</span>
@@ -16149,7 +16161,7 @@ function renderSftpSearchResults(sessionId, side, base, results, limitHit) {
          data-name="${escHtml(e.name)}"
          data-is-dir="${e.is_dir}"
          data-is-symlink="${e.is_symlink}">
-      <span class="sftp-icon">${sftpFileIconChar(e)}</span>
+      <span class="sftp-icon">${sftpFileIconSvg(e)}</span>
       <span class="sftp-name" title="${escHtml(rel)}">${escHtml(rel)}</span>
       <span class="sftp-size">${e.is_dir ? "" : formatSize(e.size)}</span>
       <span class="sftp-modified">${formatTime(e.modified)}</span>
@@ -17677,7 +17689,7 @@ function joinRemote(base, name) {
 
 /**
  * Devuelve la clase CSS para colorear el icono según el tipo de fichero.
- * El glifo lo da sftpFileIconChar(); aquí solo decidimos el tinte.
+ * El icono lo da sftpFileIconSvg(); aquí solo decidimos el tinte.
  */
 function sftpFileIconClass(entry) {
   if (entry.is_dir) return "ftype-dir";
@@ -17698,25 +17710,35 @@ function sftpFileIconClass(entry) {
 }
 
 /**
- * Glifo del icono. Mantiene los emoji originales para directorio/symlink
- * (forma reconocible) y usa caracteres planos por categoría para
- * fichero. Acompañado por el color de sftpFileIconClass.
+ * Envoltorio SVG monocromo de trazo (estilo Lucide). Usa `currentColor`,
+ * así que hereda el tinte por tipo de `sftpFileIconClass` (los emoji que
+ * usaba antes ignoraban ese `color:`).
  */
-function sftpFileIconChar(entry) {
-  if (entry.is_dir) return "📁";
-  if (entry.is_symlink) return "🔗";
+const _sftpSvg = (paths) =>
+  `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+
+/** Iconos de tipo de fichero del panel SFTP (por clase `ftype-*`). */
+const SFTP_TYPE_SVG = {
+  "ftype-dir":     _sftpSvg(`<path d="M4 20a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2z"/>`),
+  "ftype-link":    _sftpSvg(`<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" x2="16" y1="12" y2="12"/>`),
+  "ftype-image":   _sftpSvg(`<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.8"/><path d="M21 15l-5-5L5 21"/>`),
+  "ftype-video":   _sftpSvg(`<rect x="2.5" y="4" width="19" height="16" rx="2"/><line x1="7.5" x2="7.5" y1="4" y2="20"/><line x1="16.5" x2="16.5" y1="4" y2="20"/><line x1="2.5" x2="21.5" y1="12" y2="12"/>`),
+  "ftype-audio":   _sftpSvg(`<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>`),
+  "ftype-archive": _sftpSvg(`<rect x="2" y="4" width="20" height="5" rx="1"/><path d="M4 9v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9"/><line x1="10" x2="14" y1="13" y2="13"/>`),
+  "ftype-doc":     _sftpSvg(`<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>`),
+  "ftype-text":    _sftpSvg(`<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><line x1="9" x2="15" y1="13" y2="13"/><line x1="9" x2="15" y1="17" y2="17"/>`),
+  "ftype-code":    _sftpSvg(`<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>`),
+  "ftype-exec":    _sftpSvg(`<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>`),
+  file:            _sftpSvg(`<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>`),
+};
+
+/**
+ * Icono SVG del fichero. La forma distingue el tipo (más accesible que
+ * depender solo del color) y el tinte lo pone la clase `ftype-*`.
+ */
+function sftpFileIconSvg(entry) {
   const cls = sftpFileIconClass(entry);
-  switch (cls) {
-    case "ftype-image":   return "🖼";
-    case "ftype-video":   return "🎬";
-    case "ftype-audio":   return "🎵";
-    case "ftype-archive": return "📦";
-    case "ftype-doc":     return "📕";
-    case "ftype-text":    return "📝";
-    case "ftype-code":    return "⟨/⟩";
-    case "ftype-exec":    return "▶";
-    default:              return "📄";
-  }
+  return SFTP_TYPE_SVG[cls] || SFTP_TYPE_SVG.file;
 }
 
 /**

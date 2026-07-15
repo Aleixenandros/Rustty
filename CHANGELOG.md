@@ -2,6 +2,28 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.56.0] - 2026-07-15
+
+### Añadido
+
+- **Barras de desplazamiento superpuestas** (Preferencias → Apariencia): una
+  opción nueva para que el pulgar de las barras flote sobre el contenido, fino en
+  reposo y más ancho al pasar el ratón. Viene desactivada; con ella apagada se
+  mantienen las barras finas de siempre.
+
+### Cambiado
+
+- **Los iconos de tipo de fichero del panel SFTP son ahora vectoriales**.
+  Carpetas, imágenes, vídeo, audio, comprimidos, documentos, código y demás se
+  dibujan con iconos de trazo que siguen el color de cada tipo y el tema activo,
+  en lugar de emojis. Se distinguen por su forma, no solo por el color, y se ven
+  igual en cualquier sistema.
+
+### Interno
+
+- Puesta al día de dependencias: TypeScript 7, `tauri-plugin-log`, `socket2`,
+  `tauri-plugin-single-instance` y la acción `setup-node` del CI.
+
 ## [1.55.0] - 2026-07-14
 
 ### Corregido

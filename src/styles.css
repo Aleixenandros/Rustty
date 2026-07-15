@@ -4169,6 +4169,28 @@ input[type="checkbox"] {
 
 ::-webkit-scrollbar-thumb:hover { background: var(--surface2); }
 
+/* ─── Barras de desplazamiento superpuestas (opt-in) ─────────────
+   `prefs.overlayScrollbars`. Estilo "overlay": el pulgar flota sobre el
+   contenido (borde transparente + background-clip), fino en reposo y más
+   ancho al pasar el ratón. Aditivo: si está desactivado se usan las finas
+   normales de arriba. La reducción de movimiento anula la transición por la
+   regla global `*`. */
+body.overlay-scrollbars ::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+body.overlay-scrollbars ::-webkit-scrollbar-thumb {
+  background: var(--surface1);
+  border: 4px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+  transition: border-width var(--motion-fast) var(--motion-ease);
+}
+body.overlay-scrollbars ::-webkit-scrollbar-thumb:hover {
+  background: var(--surface2);
+  border-width: 3px;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    ÁRBOL DE CARPETAS
 ════════════════════════════════════════════════════════════════ */
@@ -8027,6 +8049,11 @@ body.density-spacious .theme-option { min-height: 104px; padding: 12px 12px 14px
 .sftp-row.ftype-exec    .sftp-icon { color: var(--green); }
 .sftp-row.ftype-link    .sftp-icon { color: var(--sky); }
 .sftp-row.ftype-dir     .sftp-icon { color: var(--yellow); }
+
+/* Los iconos de tipo de fichero son SVG de trazo (currentColor): heredan el
+   tinte de arriba y se centran en su celda. */
+.sftp-icon svg,
+.sftp-ac-icon svg { vertical-align: middle; }
 
 /* ─── Sidebar modo "rail" — slice estético #11 ──────────────────
    Estado intermedio entre expandida y oculta: solo iconos, ~56 px
