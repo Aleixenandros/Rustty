@@ -4743,6 +4743,20 @@ body.overlay-scrollbars ::-webkit-scrollbar-thumb:hover {
 
 .row-icon-svg.filled { fill: currentColor; }
 
+/* Aspa/lápiz genéricos de botones de cierre y acción (sprite `#ctx-icons`).
+   Sustituyen a los glifos ✕ / ✎ en modales, paneles y toolbars. */
+.icon-x-svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: middle;
+  pointer-events: none;
+}
+
 #connection-list.compact .conn-item-actions .row-icon-svg {
   width: 11px;
   height: 11px;
@@ -5322,7 +5336,8 @@ body.overlay-scrollbars ::-webkit-scrollbar-thumb:hover {
 
 /* Aviso con icono SVG (en lugar de emoji): alinea el triángulo con la primera
    línea del texto. Solo aplica a los hints que incluyen .hint-warn-icon. */
-.form-hint.warning:has(.hint-warn-icon) {
+.form-hint.warning:has(.hint-warn-icon),
+.cred-warning:has(.hint-warn-icon) {
   display: flex;
   align-items: flex-start;
   gap: 6px;
@@ -7849,6 +7864,18 @@ html[data-contrast="max"] ::selection {
 /* ─── Motion helpers ──────────────────────────────────────────── */
 .motion-fade-in {
   animation: motion-fade-in var(--motion-normal) var(--motion-ease-out);
+}
+
+/* Fundido dashboard ⇄ terminal (pref `viewFade` → clase `view-fade` en body).
+   El dashboard se anima solo al re-mostrarse (display: none → block); el
+   contenedor de terminales lleva la clase one-shot `view-fade-run` que pone
+   renderView únicamente al cruzar de vista. `body.reduce-motion *` lo anula. */
+body.view-fade #welcome-screen:not(.hidden) {
+  animation: motion-fade-in var(--motion-normal) var(--motion-ease-out);
+}
+
+body.view-fade #terminals-container.view-fade-run {
+  animation: motion-fade-in var(--motion-fast) var(--motion-ease-out);
 }
 
 .motion-rise-in {

@@ -609,7 +609,7 @@ export const DICTIONARIES = {
       legacy_cat_hostkey: "Claves de host",
       agent_forwarding: "Reenviar agente SSH (Agent forwarding)",
       agent_forwarding_hint: "Reusa el socket del agente local ($SSH_AUTH_SOCK) para autenticar saltos desde el host remoto.",
-      agent_forwarding_warning: "⚠️ Habilítalo solo en hosts de confianza: un servidor comprometido puede usar tu agente (y tus claves) para saltar a otros equipos.",
+      agent_forwarding_warning: "Habilítalo solo en hosts de confianza: un servidor comprometido puede usar tu agente (y tus claves) para saltar a otros equipos.",
       agent_forwarding_confirm_title: "Activar reenvío del agente SSH",
       agent_forwarding_confirm_message: "El reenvío del agente comparte tu agente SSH local con el host remoto. Si ese host está comprometido, podría usar tus claves para saltar a otros equipos. Actívalo solo en hosts de confianza. ¿Quieres habilitarlo en este perfil?",
       agent_forwarding_confirm_submit: "Sí, activar",
@@ -835,6 +835,8 @@ export const DICTIONARIES = {
       contrast_hint: "Refuerza el contraste del texto, los bordes, el foco y la selección sin obligar a cambiar de tema. Afecta a toda la interfaz.",
       reduce_motion: "Reducir movimiento",
       reduce_motion_hint: "Desactiva animaciones, transiciones largas y spinners decorativos. Se respeta también la preferencia del sistema operativo.",
+      view_fade: "Fundido al cambiar de vista",
+      view_fade_hint: "Transición breve entre el panel de inicio y el terminal al abrir o cerrar sesiones. «Reducir movimiento» también la desactiva.",
       strong_focus: "Foco visible reforzado",
       strong_focus_hint: "Aumenta el grosor y el contraste del anillo de foco en la navegación por teclado.",
       overlay_scrollbars: "Barras de desplazamiento superpuestas",
@@ -912,7 +914,7 @@ export const DICTIONARIES = {
     prefs_session_logs: {
       title: "Logs de sesión",
       hint: "Las sesiones con grabación activa vuelcan la salida del shell a ficheros de log. Define una retención para que no se acumulen indefinidamente.",
-      warning: "⚠️ Los logs pueden contener información sensible (comandos ejecutados y su salida). Guárdalos y bórralos con cuidado.",
+      warning: "Los logs pueden contener información sensible (comandos ejecutados y su salida). Guárdalos y bórralos con cuidado.",
       max_age: "Edad máxima (días)",
       max_total: "Tamaño máximo total (MB)",
       no_limit: "Sin límite",
@@ -940,7 +942,7 @@ export const DICTIONARIES = {
       hint_html:
         "Define contraseñas o tokens maestros y variables de texto reutilizables entre perfiles. Refiérelos en los campos de un perfil (host, usuario, contraseña…) con <code>${master:nombre}</code> o <code>${var:nombre}</code>. Las maestras se guardan cifradas en el keyring y nunca se muestran; las variables son texto plano.",
       warn_shared:
-        "⚠️ Reutilizar una misma credencial en varios hosts implica que, si se compromete, quedan afectados todos a la vez.",
+        "Reutilizar una misma credencial en varios hosts implica que, si se compromete, quedan afectados todos a la vez.",
       warn_distinct:
         "Nota: esto NO es la passphrase de sincronización ni la contraseña maestra de KeePass. Son conceptos distintos.",
       list_label: "Credenciales",
@@ -2054,7 +2056,7 @@ export const DICTIONARIES = {
       legacy_cat_hostkey: "Host keys",
       agent_forwarding: "Forward SSH agent",
       agent_forwarding_hint: "Reuses the local agent socket ($SSH_AUTH_SOCK) to authenticate hops from the remote host.",
-      agent_forwarding_warning: "⚠️ Enable it only on trusted hosts: a compromised server can use your agent (and your keys) to hop to other machines.",
+      agent_forwarding_warning: "Enable it only on trusted hosts: a compromised server can use your agent (and your keys) to hop to other machines.",
       agent_forwarding_confirm_title: "Enable SSH agent forwarding",
       agent_forwarding_confirm_message: "Agent forwarding shares your local SSH agent with the remote host. If that host is compromised, it could use your keys to hop to other machines. Enable it only on trusted hosts. Do you want to enable it for this profile?",
       agent_forwarding_confirm_submit: "Yes, enable",
@@ -2280,6 +2282,8 @@ export const DICTIONARIES = {
       contrast_hint: "Strengthens the contrast of text, borders, focus and selection without changing theme. Affects the whole interface.",
       reduce_motion: "Reduce motion",
       reduce_motion_hint: "Disables animations, long transitions and decorative spinners. The operating-system preference is honored too.",
+      view_fade: "Fade when switching views",
+      view_fade_hint: "Brief transition between the start panel and the terminal when opening or closing sessions. \"Reduce motion\" also disables it.",
       strong_focus: "Reinforced focus ring",
       strong_focus_hint: "Increases the thickness and contrast of the focus ring during keyboard navigation.",
       overlay_scrollbars: "Overlay scrollbars",
@@ -2357,7 +2361,7 @@ export const DICTIONARIES = {
     prefs_session_logs: {
       title: "Session logs",
       hint: "Sessions with recording enabled dump the shell output to log files. Set a retention policy so they don't pile up indefinitely.",
-      warning: "⚠️ Logs may contain sensitive information (executed commands and their output). Store and delete them with care.",
+      warning: "Logs may contain sensitive information (executed commands and their output). Store and delete them with care.",
       max_age: "Maximum age (days)",
       max_total: "Maximum total size (MB)",
       no_limit: "No limit",
@@ -2385,7 +2389,7 @@ export const DICTIONARIES = {
       hint_html:
         "Define master passwords or tokens and reusable text variables shared across profiles. Reference them in a profile's fields (host, user, password…) with <code>${master:name}</code> or <code>${var:name}</code>. Master credentials are stored encrypted in the keyring and never shown; variables are plain text.",
       warn_shared:
-        "⚠️ Reusing the same credential across several hosts means that, if it is compromised, all of them are affected at once.",
+        "Reusing the same credential across several hosts means that, if it is compromised, all of them are affected at once.",
       warn_distinct:
         "Note: this is NOT the sync passphrase nor the KeePass master password. They are different concepts.",
       list_label: "Credentials",
@@ -3499,7 +3503,7 @@ export const DICTIONARIES = {
       legacy_cat_hostkey: "Clés d'hôte",
       agent_forwarding: "Transférer l'agent SSH",
       agent_forwarding_hint: "Réutilise la socket d'agent locale ($SSH_AUTH_SOCK) pour authentifier les sauts depuis l'hôte distant.",
-      agent_forwarding_warning: "⚠️ Ne l'activez que sur des hôtes de confiance : un serveur compromis peut utiliser votre agent (et vos clés) pour rebondir vers d'autres machines.",
+      agent_forwarding_warning: "Ne l'activez que sur des hôtes de confiance : un serveur compromis peut utiliser votre agent (et vos clés) pour rebondir vers d'autres machines.",
       agent_forwarding_confirm_title: "Activer le transfert de l'agent SSH",
       agent_forwarding_confirm_message: "Le transfert de l'agent partage votre agent SSH local avec l'hôte distant. Si cet hôte est compromis, il pourrait utiliser vos clés pour rebondir vers d'autres machines. Ne l'activez que sur des hôtes de confiance. Voulez-vous l'activer pour ce profil ?",
       agent_forwarding_confirm_submit: "Oui, activer",
@@ -3725,6 +3729,8 @@ export const DICTIONARIES = {
       contrast_hint: "Renforce le contraste du texte, des bordures, du focus et de la sélection sans changer de thème. Affecte toute l'interface.",
       reduce_motion: "Réduire les animations",
       reduce_motion_hint: "Désactive les animations, les transitions longues et les spinners décoratifs. La préférence du système d'exploitation est aussi respectée.",
+      view_fade: "Fondu au changement de vue",
+      view_fade_hint: "Transition brève entre le panneau d'accueil et le terminal à l'ouverture ou la fermeture de sessions. « Réduire les animations » la désactive aussi.",
       strong_focus: "Focus visible renforcé",
       strong_focus_hint: "Augmente l'épaisseur et le contraste de l'anneau de focus lors de la navigation au clavier.",
       overlay_scrollbars: "Barres de défilement superposées",
@@ -3802,7 +3808,7 @@ export const DICTIONARIES = {
     prefs_session_logs: {
       title: "Journaux de session",
       hint: "Les sessions avec enregistrement actif déversent la sortie du shell dans des fichiers journaux. Définissez une rétention pour qu'ils ne s'accumulent pas indéfiniment.",
-      warning: "⚠️ Les journaux peuvent contenir des informations sensibles (commandes exécutées et leur sortie). Conservez-les et supprimez-les avec précaution.",
+      warning: "Les journaux peuvent contenir des informations sensibles (commandes exécutées et leur sortie). Conservez-les et supprimez-les avec précaution.",
       max_age: "Âge maximal (jours)",
       max_total: "Taille totale maximale (Mo)",
       no_limit: "Sans limite",
@@ -3830,7 +3836,7 @@ export const DICTIONARIES = {
       hint_html:
         "Définissez des mots de passe ou jetons maîtres et des variables texte réutilisables entre profils. Référencez-les dans les champs d'un profil (hôte, utilisateur, mot de passe…) avec <code>${master:nom}</code> ou <code>${var:nom}</code>. Les identifiants maîtres sont stockés chiffrés dans le trousseau et jamais affichés ; les variables sont du texte brut.",
       warn_shared:
-        "⚠️ Réutiliser un même identifiant sur plusieurs hôtes implique que, s'il est compromis, tous sont affectés à la fois.",
+        "Réutiliser un même identifiant sur plusieurs hôtes implique que, s'il est compromis, tous sont affectés à la fois.",
       warn_distinct:
         "Remarque : ce n'est PAS la phrase secrète de synchronisation ni le mot de passe maître de KeePass. Ce sont des concepts différents.",
       list_label: "Identifiants",
@@ -4944,7 +4950,7 @@ export const DICTIONARIES = {
       legacy_cat_hostkey: "Chaves de host",
       agent_forwarding: "Reencaminhar agente SSH",
       agent_forwarding_hint: "Reutiliza o socket do agente local ($SSH_AUTH_SOCK) para autenticar saltos a partir do host remoto.",
-      agent_forwarding_warning: "⚠️ Ative apenas em hosts de confiança: um servidor comprometido pode usar o seu agente (e as suas chaves) para saltar para outras máquinas.",
+      agent_forwarding_warning: "Ative apenas em hosts de confiança: um servidor comprometido pode usar o seu agente (e as suas chaves) para saltar para outras máquinas.",
       agent_forwarding_confirm_title: "Ativar reencaminhamento do agente SSH",
       agent_forwarding_confirm_message: "O reencaminhamento do agente partilha o seu agente SSH local com o host remoto. Se esse host estiver comprometido, poderá usar as suas chaves para saltar para outras máquinas. Ative apenas em hosts de confiança. Quer ativá-lo neste perfil?",
       agent_forwarding_confirm_submit: "Sim, ativar",
@@ -5170,6 +5176,8 @@ export const DICTIONARIES = {
       contrast_hint: "Reforça o contraste do texto, das bordas, do foco e da seleção sem mudar de tema. Afeta toda a interface.",
       reduce_motion: "Reduzir movimento",
       reduce_motion_hint: "Desativa animações, transições longas e spinners decorativos. A preferência do sistema operativo também é respeitada.",
+      view_fade: "Fundido ao mudar de vista",
+      view_fade_hint: "Transição breve entre o painel inicial e o terminal ao abrir ou fechar sessões. «Reduzir movimento» também a desativa.",
       strong_focus: "Foco visível reforçado",
       strong_focus_hint: "Aumenta a espessura e o contraste do anel de foco na navegação por teclado.",
       overlay_scrollbars: "Barras de deslocamento sobrepostas",
@@ -5247,7 +5255,7 @@ export const DICTIONARIES = {
     prefs_session_logs: {
       title: "Registos de sessão",
       hint: "As sessões com gravação ativa despejam a saída da shell para ficheiros de registo. Defina uma retenção para que não se acumulem indefinidamente.",
-      warning: "⚠️ Os registos podem conter informação sensível (comandos executados e a sua saída). Guarde-os e apague-os com cuidado.",
+      warning: "Os registos podem conter informação sensível (comandos executados e a sua saída). Guarde-os e apague-os com cuidado.",
       max_age: "Idade máxima (dias)",
       max_total: "Tamanho total máximo (MB)",
       no_limit: "Sem limite",
@@ -5275,7 +5283,7 @@ export const DICTIONARIES = {
       hint_html:
         "Define palavras-passe ou tokens mestres e variáveis de texto reutilizáveis entre perfis. Referencia-os nos campos de um perfil (host, utilizador, palavra-passe…) com <code>${master:nome}</code> ou <code>${var:nome}</code>. As credenciais mestras são guardadas cifradas no keyring e nunca são mostradas; as variáveis são texto simples.",
       warn_shared:
-        "⚠️ Reutilizar a mesma credencial em vários hosts implica que, se for comprometida, todos ficam afetados ao mesmo tempo.",
+        "Reutilizar a mesma credencial em vários hosts implica que, se for comprometida, todos ficam afetados ao mesmo tempo.",
       warn_distinct:
         "Nota: isto NÃO é a frase-passe de sincronização nem a palavra-passe mestra do KeePass. São conceitos distintos.",
       list_label: "Credenciais",
@@ -6389,7 +6397,7 @@ export const DICTIONARIES = {
       legacy_cat_hostkey: "Host-Schlüssel",
       agent_forwarding: "SSH-Agent weiterleiten",
       agent_forwarding_hint: "Verwendet den lokalen Agent-Socket ($SSH_AUTH_SOCK), um Sprünge vom Remote-Host zu authentifizieren.",
-      agent_forwarding_warning: "⚠️ Nur bei vertrauenswürdigen Hosts aktivieren: Ein kompromittierter Server kann deinen Agent (und deine Schlüssel) nutzen, um zu anderen Rechnern zu springen.",
+      agent_forwarding_warning: "Nur bei vertrauenswürdigen Hosts aktivieren: Ein kompromittierter Server kann deinen Agent (und deine Schlüssel) nutzen, um zu anderen Rechnern zu springen.",
       agent_forwarding_confirm_title: "SSH-Agent-Weiterleitung aktivieren",
       agent_forwarding_confirm_message: "Die Agent-Weiterleitung teilt deinen lokalen SSH-Agent mit dem Remote-Host. Ist dieser Host kompromittiert, könnte er deine Schlüssel nutzen, um zu anderen Rechnern zu springen. Nur bei vertrauenswürdigen Hosts aktivieren. Möchtest du sie für dieses Profil aktivieren?",
       agent_forwarding_confirm_submit: "Ja, aktivieren",
@@ -6615,6 +6623,8 @@ export const DICTIONARIES = {
       contrast_hint: "Verstärkt den Kontrast von Text, Rändern, Fokus und Auswahl, ohne das Thema zu wechseln. Betrifft die gesamte Oberfläche.",
       reduce_motion: "Bewegung reduzieren",
       reduce_motion_hint: "Deaktiviert Animationen, lange Übergänge und dekorative Spinner. Die Einstellung des Betriebssystems wird ebenfalls berücksichtigt.",
+      view_fade: "Überblenden beim Ansichtswechsel",
+      view_fade_hint: "Kurze Überblendung zwischen Startbereich und Terminal beim Öffnen oder Schließen von Sitzungen. „Bewegung reduzieren“ deaktiviert sie ebenfalls.",
       strong_focus: "Verstärkter Fokusrahmen",
       strong_focus_hint: "Erhöht Dicke und Kontrast des Fokusrahmens bei der Tastaturnavigation.",
       overlay_scrollbars: "Überlagernde Bildlaufleisten",
@@ -6692,7 +6702,7 @@ export const DICTIONARIES = {
     prefs_session_logs: {
       title: "Sitzungsprotokolle",
       hint: "Sitzungen mit aktiver Aufzeichnung schreiben die Shell-Ausgabe in Protokolldateien. Lege eine Aufbewahrung fest, damit sie sich nicht unbegrenzt ansammeln.",
-      warning: "⚠️ Protokolle können vertrauliche Informationen enthalten (ausgeführte Befehle und deren Ausgabe). Bewahre sie sorgfältig auf und lösche sie mit Bedacht.",
+      warning: "Protokolle können vertrauliche Informationen enthalten (ausgeführte Befehle und deren Ausgabe). Bewahre sie sorgfältig auf und lösche sie mit Bedacht.",
       max_age: "Maximales Alter (Tage)",
       max_total: "Maximale Gesamtgröße (MB)",
       no_limit: "Kein Limit",
@@ -6720,7 +6730,7 @@ export const DICTIONARIES = {
       hint_html:
         "Definiere profilübergreifend wiederverwendbare Master-Passwörter oder -Tokens und Textvariablen. Verweise in den Feldern eines Profils (Host, Benutzer, Passwort…) mit <code>${master:name}</code> oder <code>${var:name}</code> darauf. Master-Anmeldedaten werden verschlüsselt im Schlüsselbund gespeichert und nie angezeigt; Variablen sind Klartext.",
       warn_shared:
-        "⚠️ Dieselben Anmeldedaten für mehrere Hosts zu verwenden bedeutet, dass bei einer Kompromittierung alle gleichzeitig betroffen sind.",
+        "Dieselben Anmeldedaten für mehrere Hosts zu verwenden bedeutet, dass bei einer Kompromittierung alle gleichzeitig betroffen sind.",
       warn_distinct:
         "Hinweis: Dies ist NICHT die Sync-Passphrase und auch nicht das KeePass-Masterpasswort. Das sind unterschiedliche Konzepte.",
       list_label: "Anmeldedaten",

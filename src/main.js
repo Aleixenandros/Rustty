@@ -528,6 +528,9 @@ const DEFAULT_PREFS = {
   reduceMotion:    false,
   // Refuerza el anillo de foco (grosor y contraste) en la navegación por teclado.
   strongFocus:     false,
+  // Fundido corto al pasar del panel de inicio al terminal (y a la inversa).
+  // «Reducir movimiento» (arriba) también lo anula.
+  viewFade:        true,
   // Barras de desplazamiento superpuestas: el pulgar flota sobre el contenido,
   // fino en reposo y más ancho al pasar el ratón. Off = las finas normales.
   overlayScrollbars: false,
@@ -670,6 +673,7 @@ function loadPrefs() {
   applyUiContrast(prefs.uiContrast);
   applyReduceMotion(prefs.reduceMotion);
   applyStrongFocus(prefs.strongFocus);
+  applyViewFade(prefs.viewFade !== false);
   applyOverlayScrollbars(prefs.overlayScrollbars);
   if (loadZenMode()) applyZenMode(true);
 }
@@ -893,6 +897,11 @@ function applyStrongFocus(enabled) {
   document.body.classList.toggle("strong-focus", !!enabled);
 }
 
+/** Fundido corto dashboard ⇄ terminal al abrir/cerrar sesiones. */
+function applyViewFade(enabled) {
+  document.body.classList.toggle("view-fade", !!enabled);
+}
+
 function applyOverlayScrollbars(enabled) {
   document.body.classList.toggle("overlay-scrollbars", !!enabled);
 }
@@ -1095,6 +1104,17 @@ function renderThemePreviewHtml(theme) {
   const term = theme.terminal || {};
   const base = escHtml(ui.base || term.background || "#222");
   const mantle = escHtml(ui.mantle || ui.base || "#1a1a1a");
+  return `
+    <div class="theme-preview" style="background:${base}">
+      <div class="theme-preview-sidebar" style="background:${mantle}"></div>
+      <div class="theme-preview-main" style="background:${base}">
+        ${renderThemeTermLinesHtml(term, ui)}
+      </div>
+    </div>`;
+}
+
+/** Pseudo-líneas del mini terminal (prompt + comando con selección + salida). */
+function renderThemeTermLinesHtml(term, ui = {}) {
   const fg = escHtml(term.foreground || ui.text || "#cdd6f4");
   const green = escHtml(term.green || "#a6e3a1");
   const blue = escHtml(term.cyan || term.blue || "#89b4fa");
@@ -1102,17 +1122,27 @@ function renderThemePreviewHtml(theme) {
   const accent = escHtml(term.yellow || term.peach || "#f9e2af");
   const selBg = escHtml(term.selectionBackground || ui.surface1 || "rgba(255,255,255,0.18)");
   const selFg = escHtml(term.selectionForeground || term.foreground || "#1e1e2e");
-  return `
-    <div class="theme-preview" style="background:${base}">
-      <div class="theme-preview-sidebar" style="background:${mantle}"></div>
-      <div class="theme-preview-main" style="background:${base}">
-        <div class="theme-preview-term" style="color:${fg}">
-          <span class="tp-line"><span style="color:${green}">~</span><span style="color:${dim}">$</span> <span style="color:${blue}">ls</span> <span style="background:${selBg};color:${selFg}">-la</span></span>
-          <span class="tp-line" style="color:${accent}">drwx</span>
-          <span class="tp-line" style="color:${dim}">total 12</span>
-        </div>
-      </div>
-    </div>`;
+  return `<div class="theme-preview-term" style="color:${fg}">
+    <span class="tp-line"><span style="color:${green}">~</span><span style="color:${dim}">$</span> <span style="color:${blue}">ls</span> <span style="background:${selBg};color:${selFg}">-la</span></span>
+    <span class="tp-line" style="color:${accent}">drwx</span>
+    <span class="tp-line" style="color:${dim}">total 12</span>
+  </div>`;
+}
+
+/**
+ * Inyecta el mini terminal real en las options estáticas de `index.html`
+ * (los 12 temas base), que aún llevaban el mock de sidebar + main coloreado.
+ * Las meta-options («system», «inherit») conservan el mock a propósito: no
+ * representan una paleta concreta. Los temas bundled/custom ya llegan con el
+ * preview real desde `renderThemePreviewHtml`.
+ */
+function upgradeStaticThemePreviews() {
+  document.querySelectorAll(".theme-picker .theme-option").forEach((opt) => {
+    const term = TERMINAL_THEMES[opt.dataset.theme];
+    const main = opt.querySelector(".theme-preview-main");
+    if (!term || !main || main.querySelector(".theme-preview-term")) return;
+    main.innerHTML = renderThemeTermLinesHtml(term);
+  });
 }
 
 function updateThemePickerButton(picker, value) {
@@ -1198,6 +1228,7 @@ function setThemePickerOpen(root, open) {
 }
 
 function enhanceThemePickers() {
+  upgradeStaticThemePreviews();
   document.querySelectorAll(".theme-picker").forEach((root) => {
     if (root.classList.contains("enhanced")) return;
     const picker = root.dataset.for || "ui";
@@ -1703,6 +1734,8 @@ function openSettingsModal() {
   if (_reduceMotion) _reduceMotion.checked = !!prefs.reduceMotion;
   const _strongFocus = document.getElementById("pref-strong-focus");
   if (_strongFocus) _strongFocus.checked = !!prefs.strongFocus;
+  const _viewFade = document.getElementById("pref-view-fade");
+  if (_viewFade) _viewFade.checked = prefs.viewFade !== false;
   const _overlayScrollbars = document.getElementById("pref-overlay-scrollbars");
   if (_overlayScrollbars) _overlayScrollbars.checked = !!prefs.overlayScrollbars;
   const _searchAllWorkspaces = document.getElementById("pref-search-all-workspaces");
@@ -3471,6 +3504,7 @@ function savePrefsFromModal() {
     })(),
     reduceMotion:    !!document.getElementById("pref-reduce-motion")?.checked,
     strongFocus:     !!document.getElementById("pref-strong-focus")?.checked,
+    viewFade:        document.getElementById("pref-view-fade")?.checked ?? true,
     overlayScrollbars: !!document.getElementById("pref-overlay-scrollbars")?.checked,
     searchAllWorkspaces: document.getElementById("pref-search-all-workspaces")?.checked ?? true,
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
@@ -3552,6 +3586,7 @@ function savePrefsFromModal() {
   applyUiContrast(prefs.uiContrast);
   applyReduceMotion(prefs.reduceMotion);
   applyStrongFocus(prefs.strongFocus);
+  applyViewFade(prefs.viewFade !== false);
   applyOverlayScrollbars(prefs.overlayScrollbars);
   applyPrefsToAllTerminals();
   renderConnectionList();
@@ -6980,7 +7015,7 @@ function addExtraCredRow(cred = null, { focus = true } = {}) {
   removeBtn.className = "btn-icon extra-cred-remove";
   removeBtn.title = t("modal_conn.remove_user");
   removeBtn.setAttribute("aria-label", t("modal_conn.remove_user"));
-  removeBtn.textContent = "✕";
+  removeBtn.innerHTML = '<svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg>';
   removeBtn.addEventListener("click", () => {
     destroyRowSelects(row);
     row.remove();
@@ -9876,7 +9911,7 @@ function renderHighlightRulesEditor() {
         </select>
       </td>
       <td><input type="checkbox" class="hl-bold"${rule.bold ? " checked" : ""} /></td>
-      <td><button type="button" class="btn-icon-sm danger hl-delete" title="Eliminar">✕</button></td>
+      <td><button type="button" class="btn-icon-sm danger hl-delete" title="Eliminar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button></td>
     </tr>`).join("");
 }
 
@@ -10727,10 +10762,31 @@ function updateStatusBar() {
   updateStatusBarOverflow();
 }
 
+// Última vista pintada (true = dashboard). Permite disparar el fundido solo al
+// cruzar dashboard ⇄ terminal, no al cambiar de pestaña o de layout.
+let _viewShowedDashboard = true;
+
+/** Fundido one-shot del contenedor de terminales al venir del dashboard. */
+function runTerminalViewFade(container) {
+  if (!document.body.classList.contains("view-fade")) return;
+  container.classList.remove("view-fade-run");
+  void container.offsetWidth; // reinicia la animación si aún estaba en curso
+  container.classList.add("view-fade-run");
+  container.addEventListener("animationend", function h(e) {
+    if (e.target !== container) return; // animationend burbujea desde los hijos
+    container.classList.remove("view-fade-run");
+    container.removeEventListener("animationend", h);
+  });
+}
+
 function renderView() {
   const container = document.getElementById("terminals-container");
   const welcome   = document.getElementById("welcome-screen");
   const layoutBar = document.getElementById("view-layout-bar");
+  const showsDashboard = viewSelection.length === 0;
+  const crossesView = showsDashboard !== _viewShowedDashboard;
+  _viewShowedDashboard = showsDashboard;
+  if (crossesView && !showsDashboard) runTerminalViewFade(container);
 
   // Desatar todas las panes (se conservan en memoria para no destruir xterm)
   sessions.forEach((s) => {
@@ -11426,7 +11482,7 @@ function buildConnectionLogPanel(sessionId) {
   panel.innerHTML = `
     <div class="connection-log-head">
       <span>Diagnóstico de conexión</span>
-      <button type="button" class="connection-log-close" aria-label="${t("toast.close")}">✕</button>
+      <button type="button" class="connection-log-close" aria-label="${t("toast.close")}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>
     <div class="connection-log-list"></div>
   `;
@@ -14506,7 +14562,7 @@ function buildTunnelPanel(sessionId) {
         <div class="tunnel-title">Túneles SSH</div>
         <div class="tunnel-subtitle">Port forwarding sobre la sesión activa</div>
       </div>
-      <button class="tunnel-close" type="button" title="Cerrar panel">✕</button>
+      <button class="tunnel-close" type="button" title="Cerrar panel"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>
     <form class="tunnel-form">
       <select name="type" title="Tipo de túnel">
@@ -14677,7 +14733,7 @@ function renderTunnelList(sessionId) {
         <small>${escHtml(describeTunnel(tun))}</small>
       </span>
       <span class="tunnel-traffic">↑ ${formatSize(tun.bytesUp || 0)} · ↓ ${formatSize(tun.bytesDown || 0)}</span>
-      <button type="button" class="tunnel-stop" title="Cerrar túnel">✕</button>
+      <button type="button" class="tunnel-stop" title="Cerrar túnel"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>`).join("");
   list.querySelectorAll(".tunnel-stop").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -15529,13 +15585,13 @@ function buildSftpPanel(sessionId) {
     <div class="sftp-resize-handle" title="Redimensionar panel SFTP"></div>
     <div class="sftp-header">
       <span class="sftp-header-title">SFTP</span>
-      <button class="sftp-nav-btn sftp-close-btn" data-sftp-act="close" title="Cerrar panel SFTP" aria-label="Cerrar panel SFTP">✕</button>
+      <button class="sftp-nav-btn sftp-close-btn" data-sftp-act="close" title="Cerrar panel SFTP" aria-label="Cerrar panel SFTP"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>
     <div class="sftp-side sftp-side-local" data-side="local">
       <div class="sftp-side-title">Local</div>
       <div class="sftp-toolbar">
-        <button class="sftp-nav-btn" data-sftp-nav="up" data-side="local" title="Directorio padre">↑</button>
-        <button class="sftp-nav-btn" data-sftp-nav="home" data-side="local" title="Inicio">⌂</button>
+        <button class="sftp-nav-btn" data-sftp-nav="up" data-side="local" title="Directorio padre"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
+        <button class="sftp-nav-btn" data-sftp-nav="home" data-side="local" title="Inicio"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="local" title="Refrescar">⟳</button>
         <input class="sftp-path" data-side="local" type="text" spellcheck="false" />
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="local" title="Nueva carpeta" aria-label="Nueva carpeta">${SFTP_ICON_FOLDER_PLUS}</button>
@@ -15563,8 +15619,8 @@ function buildSftpPanel(sessionId) {
     </div>
 
     <div class="sftp-divider">
-      <button class="sftp-xfer-btn" data-sftp-xfer="download" title="Descargar selección al local">⇨</button>
-      <button class="sftp-xfer-btn" data-sftp-xfer="upload" title="Subir selección al remoto">⇦</button>
+      <button class="sftp-xfer-btn" data-sftp-xfer="download" title="Descargar selección al local"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></button>
+      <button class="sftp-xfer-btn" data-sftp-xfer="upload" title="Subir selección al remoto"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-left"/></svg></button>
     </div>
 
     <div class="sftp-side sftp-side-remote" data-side="remote">
@@ -15573,8 +15629,8 @@ function buildSftpPanel(sessionId) {
         <span class="sftp-sudo-badge hidden" data-sftp-sudo-badge title="Sesión SFTP con privilegios elevados (sudo)">sudo</span>
       </div>
       <div class="sftp-toolbar">
-        <button class="sftp-nav-btn" data-sftp-nav="up" data-side="remote" title="Directorio padre">↑</button>
-        <button class="sftp-nav-btn" data-sftp-nav="home" data-side="remote" title="Inicio">⌂</button>
+        <button class="sftp-nav-btn" data-sftp-nav="up" data-side="remote" title="Directorio padre"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
+        <button class="sftp-nav-btn" data-sftp-nav="home" data-side="remote" title="Inicio"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="remote" title="Refrescar">⟳</button>
         <button class="sftp-nav-btn sftp-follow-btn" data-sftp-nav="follow"
                 title="Seguir el cwd del terminal (OSC 7)">CWD</button>
@@ -15826,8 +15882,8 @@ function renderSftpFiles(sessionId, side, entries) {
       <span class="sftp-size">${e.is_dir ? "" : formatSize(e.size)}</span>
       <span class="sftp-modified">${formatTime(e.modified)}</span>
       <span class="sftp-row-actions">
-        <button class="sftp-row-btn" data-op="rename" title="Renombrar (F2)">✎</button>
-        <button class="sftp-row-btn danger" data-op="delete" title="Eliminar">✕</button>
+        <button class="sftp-row-btn" data-op="rename" title="Renombrar (F2)"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-edit"/></svg></button>
+        <button class="sftp-row-btn danger" data-op="delete" title="Eliminar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
       </span>
       <div class="sftp-row-progress" aria-hidden="true"><span class="sftp-row-progress-bar"></span></div>
     </div>
@@ -17440,7 +17496,7 @@ function addTransfer(panel, label, transferId, detail = "") {
       <button class="sftp-transfer-pause hidden" title="Pausar">⏸</button>
       <button class="sftp-transfer-resume hidden" title="Reanudar">▶</button>
       <button class="sftp-transfer-retry hidden" title="Reintentar">↻</button>
-      <button class="sftp-transfer-close" title="Descartar / cancelar">✕</button>
+      <button class="sftp-transfer-close" title="Descartar / cancelar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>
   `;
   el.querySelector(".sftp-transfer-pause").addEventListener("click", () => {
@@ -21402,12 +21458,12 @@ function buildTerminalSearchBar(sessionId) {
   bar.innerHTML = `
     <input type="search" class="terminal-search-input" placeholder="Buscar…" spellcheck="false" />
     <span class="terminal-search-summary"></span>
-    <button class="terminal-search-btn" data-search="prev" title="Anterior (Shift+Enter)">↑</button>
-    <button class="terminal-search-btn" data-search="next" title="Siguiente (Enter)">↓</button>
+    <button class="terminal-search-btn" data-search="prev" title="Anterior (Shift+Enter)"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
+    <button class="terminal-search-btn" data-search="next" title="Siguiente (Enter)"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-down"/></svg></button>
     <label class="terminal-search-toggle" title="Coincidir mayúsculas/minúsculas">
       <input type="checkbox" data-search-opt="case" /> Aa
     </label>
-    <button class="terminal-search-btn" data-search="close" title="Cerrar (Esc)">✕</button>
+    <button class="terminal-search-btn" data-search="close" title="Cerrar (Esc)"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
   `;
   const input = bar.querySelector(".terminal-search-input");
   const search = (dir) => runTerminalSearch(sessionId, dir);

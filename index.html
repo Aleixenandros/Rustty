@@ -172,7 +172,7 @@
           </button>
           <div id="tab-scroll">
             <button id="home-tab" class="tab tab-home active" type="button" title="Inicio">
-              <span class="tab-home-icon" aria-hidden="true">⌂</span>
+              <span class="tab-home-icon" aria-hidden="true"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></span>
               <span class="tab-name">Inicio</span>
             </button>
             <div id="tabs-container" role="tablist" aria-label="Sesiones abiertas"></div>
@@ -378,6 +378,8 @@
         <symbol id="ci-broadcast" viewBox="0 0 16 16"><path d="M2.5 4.3h8.7M9 2.2l2.2 2.1L9 6.4"/><path d="M2.5 8h8.7M9 5.9 11.2 8 9 10.1"/><path d="M2.5 11.7h8.7M9 9.6l2.2 2.1L9 13.8"/></symbol>
         <symbol id="ci-search" viewBox="0 0 16 16"><circle cx="7.2" cy="7.2" r="4.4"/><path d="M10.5 10.5 14 14"/></symbol>
         <symbol id="ci-arrow-right" viewBox="0 0 16 16"><path d="M3 8h9.5M9.3 4.8 12.5 8l-3.2 3.2"/></symbol>
+        <symbol id="ci-arrow-left" viewBox="0 0 16 16"><path d="M13 8H3.5M6.7 4.8 3.5 8l3.2 3.2"/></symbol>
+        <symbol id="ci-home" viewBox="0 0 16 16"><path d="M2.8 7.8 8 3.2l5.2 4.6"/><path d="M4.4 7.4v5.4h7.2V7.4"/></symbol>
         <symbol id="ci-ban" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.2"/><path d="M4.3 4.3l7.4 7.4"/></symbol>
         <symbol id="ci-script" viewBox="0 0 16 16"><path d="M4.2 2.6h5.2l2.8 2.8v7.2a.8.8 0 0 1-.8.8H4.2a.8.8 0 0 1-.8-.8V3.4a.8.8 0 0 1 .8-.8z"/><path d="M9.1 2.7v3h3"/><path d="M6.6 8l2.9 1.9-2.9 1.9z"/></symbol>
       </defs>
@@ -431,7 +433,7 @@
           <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="blue"   style="--folder-tint:var(--blue)"   title="Azul"></button>
           <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="mauve"  style="--folder-tint:var(--mauve)"  title="Malva"></button>
           <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="pink"   style="--folder-tint:var(--pink)"   title="Rosa"></button>
-          <button class="ctx-swatch ctx-swatch-clear" data-ctx="set-folder-color" data-color-id="none" data-i18n-title="ctx.folder_color_clear" title="Quitar color">✕</button>
+          <button class="ctx-swatch ctx-swatch-clear" data-ctx="set-folder-color" data-color-id="none" data-i18n-title="ctx.folder_color_clear" title="Quitar color"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
       </div>
       <button class="ctx-item danger ctx-folder-only hidden" data-ctx="delete-folder">
@@ -660,7 +662,7 @@
       <div id="modal-connection" role="dialog" aria-modal="true">
         <div class="modal-header">
           <h2 id="modal-title" data-i18n="modal_conn.title_new">Nueva conexión</h2>
-          <button class="btn-icon modal-close" id="btn-modal-close" data-i18n-aria-label="modal_conn.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon modal-close" id="btn-modal-close" data-i18n-aria-label="modal_conn.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
 
         <nav class="modal-tabs" role="tablist" aria-label="Secciones de la conexión">
@@ -841,7 +843,7 @@
                 data-i18n-aria-label="modal_conn.keepass_clear"
                 title="Limpiar selección"
                 aria-label="Limpiar selección"
-              >✕</button>
+              ><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
               <div
                 id="keepass-picker-list"
                 class="keepass-picker-list hidden"
@@ -940,8 +942,13 @@
               <p class="form-hint" data-i18n="modal_conn.agent_forwarding_hint">
                 Reusa el socket del agente local ($SSH_AUTH_SOCK) para autenticar saltos desde el host remoto.
               </p>
-              <p class="form-hint warning" data-i18n="modal_conn.agent_forwarding_warning">
-                ⚠️ Habilítalo solo en hosts de confianza: un servidor comprometido puede usar tu agente (y tus claves) para saltar a otros equipos.
+              <p class="form-hint warning">
+                <svg class="hint-warn-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                  <path d="M8 2 L15 14 H1 Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                  <line x1="8" y1="6.3" x2="8" y2="9.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                  <circle cx="8" cy="11.8" r="0.95" fill="currentColor"/>
+                </svg>
+                <span data-i18n="modal_conn.agent_forwarding_warning">Habilítalo solo en hosts de confianza: un servidor comprometido puede usar tu agente (y tus claves) para saltar a otros equipos.</span>
               </p>
             </div>
 
@@ -1038,7 +1045,7 @@
             <h2>Actividad</h2>
             <p>Transferencias, conexiones, sync y avisos guardados</p>
           </div>
-          <button type="button" class="btn-icon" id="btn-activity-close" aria-label="Cerrar">✕</button>
+          <button type="button" class="btn-icon" id="btn-activity-close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <div class="activity-center-toolbar">
           <button type="button" class="activity-filter active" data-activity-filter="all">Todo</button>
@@ -1059,7 +1066,7 @@
       <div id="global-tunnels-modal" role="dialog" aria-modal="true" aria-labelledby="global-tunnels-title">
         <div class="modal-header">
           <h2 id="global-tunnels-title">Túneles SSH</h2>
-          <button class="btn-icon" id="btn-global-tunnels-close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-global-tunnels-close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
 
         <div class="global-tunnels-body">
@@ -1124,7 +1131,7 @@
       <div id="known-hosts-modal" role="dialog" aria-modal="true" aria-labelledby="known-hosts-title">
         <div class="modal-header">
           <h2 id="known-hosts-title" data-i18n="modal_known_hosts.title">Claves de host conocidas</h2>
-          <button class="btn-icon" id="btn-known-hosts-close" data-i18n-aria-label="modal_known_hosts.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-known-hosts-close" data-i18n-aria-label="modal_known_hosts.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <div class="global-tunnels-body">
           <p class="prefs-panel-hint" data-i18n="modal_known_hosts.hint">
@@ -1144,7 +1151,7 @@
       <div id="scripts-modal" role="dialog" aria-modal="true" aria-labelledby="scripts-title">
         <div class="modal-header">
           <h2 id="scripts-title" data-i18n="scripts.title">Scripts</h2>
-          <button class="btn-icon" id="btn-scripts-close" data-i18n-aria-label="scripts.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-scripts-close" data-i18n-aria-label="scripts.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <div class="global-tunnels-body">
           <!-- Vista 1: lista de scripts guardados -->
@@ -1243,7 +1250,7 @@
       <div id="script-run-modal" role="dialog" aria-modal="true" aria-labelledby="script-run-title">
         <div class="modal-header">
           <h2 id="script-run-title" data-i18n="scripts.run_title">Ejecutar script</h2>
-          <button class="btn-icon" id="btn-script-run-close" data-i18n-aria-label="scripts.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-script-run-close" data-i18n-aria-label="scripts.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <div class="global-tunnels-body">
           <!-- Fase 1: opciones + previsualización -->
@@ -1330,7 +1337,7 @@
       <div id="script-pick-modal" role="dialog" aria-modal="true" aria-labelledby="script-pick-title">
         <div class="modal-header">
           <h2 id="script-pick-title" data-i18n="scripts.pick_title">Ejecutar script</h2>
-          <button class="btn-icon" id="btn-script-pick-close" data-i18n-aria-label="scripts.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-script-pick-close" data-i18n-aria-label="scripts.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <div class="global-tunnels-body">
           <p class="prefs-panel-hint" id="script-pick-target"></p>
@@ -1360,7 +1367,7 @@
       <div id="cred-edit-modal" role="dialog" aria-modal="true" aria-labelledby="cred-edit-title">
         <div class="modal-header">
           <h2 id="cred-edit-title" data-i18n="modal_credential_edit.title_new">Nueva credencial maestra</h2>
-          <button class="btn-icon" id="btn-cred-edit-close" data-i18n-aria-label="modal_credential_edit.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-cred-edit-close" data-i18n-aria-label="modal_credential_edit.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <form id="cred-edit-form" autocomplete="off">
           <div class="form-group" id="cred-edit-kind-group">
@@ -1411,7 +1418,7 @@
       <div id="snippet-edit-modal" role="dialog" aria-modal="true" aria-labelledby="snippet-edit-title">
         <div class="modal-header">
           <h2 id="snippet-edit-title" data-i18n="modal_snippet.title_new">Nuevo snippet</h2>
-          <button class="btn-icon" id="btn-snippet-edit-close" data-i18n-aria-label="modal_snippet.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-snippet-edit-close" data-i18n-aria-label="modal_snippet.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <form id="snippet-edit-form" autocomplete="off">
           <div class="form-group">
@@ -1456,7 +1463,7 @@
       <div id="localcmd-edit-modal" role="dialog" aria-modal="true" aria-labelledby="localcmd-edit-title">
         <div class="modal-header">
           <h2 id="localcmd-edit-title" data-i18n="modal_localcmd.title_new">Nuevo comando local</h2>
-          <button class="btn-icon" id="btn-localcmd-edit-close" data-i18n-aria-label="modal_localcmd.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-localcmd-edit-close" data-i18n-aria-label="modal_localcmd.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <form id="localcmd-edit-form" autocomplete="off">
           <div class="form-group">
@@ -1513,7 +1520,7 @@
       <div id="credential-modal" role="dialog" aria-modal="true" aria-labelledby="credential-modal-title">
         <div class="modal-header">
           <h2 id="credential-modal-title" data-i18n="modal_credential.password_title">Contraseña requerida</h2>
-          <button class="btn-icon" id="btn-credential-close" data-i18n-aria-label="modal_credential.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-credential-close" data-i18n-aria-label="modal_credential.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
 
         <form id="credential-modal-form" autocomplete="off">
@@ -1543,7 +1550,7 @@
       <div id="ask-modal" role="dialog" aria-modal="true" aria-labelledby="ask-modal-title">
         <div class="modal-header">
           <h2 id="ask-modal-title" data-i18n="modal_ask.title">Datos para conectar</h2>
-          <button class="btn-icon" id="btn-ask-close" data-i18n-aria-label="modal_ask.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-ask-close" data-i18n-aria-label="modal_ask.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <form id="ask-modal-form" autocomplete="off">
           <p class="credential-message" data-i18n="modal_ask.message">Este perfil requiere algunos datos antes de conectar.</p>
@@ -1563,7 +1570,7 @@
       <div id="dup-modal" role="dialog" aria-modal="true" aria-labelledby="dup-modal-title">
         <div class="modal-header">
           <h2 id="dup-modal-title" data-i18n="modal_dup.title">Duplicar sesión con cambios</h2>
-          <button class="btn-icon" id="btn-dup-close" data-i18n-aria-label="modal_dup.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-dup-close" data-i18n-aria-label="modal_dup.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <form id="dup-modal-form" autocomplete="off">
           <p class="credential-message" id="dup-modal-message"></p>
@@ -1611,7 +1618,7 @@
       <div id="import-wizard-modal" role="dialog" aria-modal="true" aria-labelledby="import-wizard-title">
         <div class="modal-header">
           <h2 id="import-wizard-title" data-i18n="import_wizard.title">Importar conexiones</h2>
-          <button class="btn-icon" id="btn-import-wizard-close" data-i18n-aria-label="import_wizard.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-import-wizard-close" data-i18n-aria-label="import_wizard.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
 
         <ol class="iw-steps" id="iw-steps">
@@ -1697,7 +1704,7 @@
       <div id="modal-prefs" role="dialog" aria-modal="true">
         <div class="modal-header">
           <h2 data-i18n="modal_prefs.title">Preferencias</h2>
-          <button class="btn-icon" id="btn-prefs-close" data-i18n-aria-label="modal_prefs.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-prefs-close" data-i18n-aria-label="modal_prefs.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
 
         <div class="prefs-layout">
@@ -1740,7 +1747,7 @@
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_shortcuts">Atajos</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="data">
-              <span class="prefs-nav-icon">⇅</span>
+              <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v13"/><path d="M4 7l3-3 3 3"/><path d="M17 20V7"/><path d="M14 17l3 3 3-3"/></svg></span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_data">Copias de seguridad</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="system">
@@ -2162,6 +2169,14 @@
 
               <div class="settings-row">
                 <label class="checkbox-label">
+                  <input type="checkbox" id="pref-view-fade" />
+                  <span data-i18n="prefs_appearance.view_fade">Fundido al cambiar de vista</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_appearance.view_fade_hint">Transición breve entre el panel de inicio y el terminal al abrir o cerrar sesiones. «Reducir movimiento» también la desactiva.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
                   <input type="checkbox" id="pref-strong-focus" />
                   <span data-i18n="prefs_appearance.strong_focus">Foco visible reforzado</span>
                 </label>
@@ -2335,8 +2350,13 @@
               </p>
 
               <div class="cred-warnings">
-                <p class="cred-warning" data-i18n="prefs_credentials.warn_shared">
-                  ⚠️ Reutilizar una misma credencial en varios hosts implica que, si se compromete, quedan afectados todos a la vez.
+                <p class="cred-warning">
+                  <svg class="hint-warn-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                    <path d="M8 2 L15 14 H1 Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                    <line x1="8" y1="6.3" x2="8" y2="9.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    <circle cx="8" cy="11.8" r="0.95" fill="currentColor"/>
+                  </svg>
+                  <span data-i18n="prefs_credentials.warn_shared">Reutilizar una misma credencial en varios hosts implica que, si se compromete, quedan afectados todos a la vez.</span>
                 </p>
                 <p class="cred-warning" data-i18n="prefs_credentials.warn_distinct">
                   Nota: esto NO es la passphrase de sincronización ni la contraseña maestra de KeePass. Son conceptos distintos.
@@ -2504,8 +2524,13 @@
               <p class="prefs-panel-hint" data-i18n="prefs_session_logs.hint">
                 Las sesiones con grabación activa vuelcan la salida del shell a ficheros de log. Define una retención para que no se acumulen indefinidamente.
               </p>
-              <p class="form-hint warning" data-i18n="prefs_session_logs.warning">
-                ⚠️ Los logs pueden contener información sensible (comandos ejecutados y su salida). Guárdalos y bórralos con cuidado.
+              <p class="form-hint warning">
+                <svg class="hint-warn-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                  <path d="M8 2 L15 14 H1 Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                  <line x1="8" y1="6.3" x2="8" y2="9.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                  <circle cx="8" cy="11.8" r="0.95" fill="currentColor"/>
+                </svg>
+                <span data-i18n="prefs_session_logs.warning">Los logs pueden contener información sensible (comandos ejecutados y su salida). Guárdalos y bórralos con cuidado.</span>
               </p>
 
               <p class="settings-hint" id="session-logs-stats" data-i18n="prefs_session_logs.stats_loading">Calculando…</p>
@@ -2914,7 +2939,7 @@
               <path d="M2.7 9a6.3 6.3 0 1 0 1.4-3.9M2.7 4.2v2.6h2.6"/>
             </svg>
           </button>
-          <button class="btn-icon" id="cmd-editor-close" data-i18n-aria-label="cmd_editor.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="cmd-editor-close" data-i18n-aria-label="cmd_editor.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <div class="cmd-editor-body">
           <p class="cmd-editor-hint" data-i18n="cmd_editor.hint">Redacta el comando. Ctrl+Enter para insertar, Esc para cerrar.</p>
@@ -3022,7 +3047,7 @@
       <div id="modal-keepass" role="dialog" aria-modal="true">
         <div class="modal-header">
           <h2 data-i18n="modal_kp.title">Desbloquear KeePass</h2>
-          <button class="btn-icon" id="btn-keepass-close" data-i18n-aria-label="modal_kp.close" aria-label="Cerrar">✕</button>
+          <button class="btn-icon" id="btn-keepass-close" data-i18n-aria-label="modal_kp.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <form id="form-keepass-unlock" autocomplete="off">
           <div class="form-row">
