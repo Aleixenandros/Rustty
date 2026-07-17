@@ -11,6 +11,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 // web); las confirmaciones usan confirmThemed para respetar el tema de la app.
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { readText as readClipboardText, writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
+import { isPermissionGranted as notifPermissionGranted, requestPermission as requestNotifPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import * as sync from "./sync.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -423,6 +424,10 @@ const DEFAULT_PREFS = {
   terminalLigatures: false,
   cursorStyle:     "block",   // "block" | "bar" | "underline"
   cursorBlink:     true,
+  // Aviso de fin de comando largo (OSC 133 C→D). Opt-in: sin marcas OSC 133
+  // del shell no hace nada. El umbral es la duración mínima para avisar.
+  cmdDoneNotify:      false,
+  cmdDoneNotifySecs:  15,
   scrollback:      5000,
   // Directorio inicial de las consolas locales nuevas. "" = $HOME (o el dir del
   // usuario). Una ruta válida se usa como cwd al abrir/reabrir la consola; si no
@@ -1741,6 +1746,10 @@ function openSettingsModal() {
   const _searchAllWorkspaces = document.getElementById("pref-search-all-workspaces");
   if (_searchAllWorkspaces) _searchAllWorkspaces.checked = prefs.searchAllWorkspaces !== false;
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
+  const _cmdNotify = document.getElementById("pref-cmd-notify");
+  if (_cmdNotify) _cmdNotify.checked = !!prefs.cmdDoneNotify;
+  const _cmdNotifySecs = document.getElementById("pref-cmd-notify-secs");
+  if (_cmdNotifySecs) _cmdNotifySecs.value = String(Math.max(1, Number(prefs.cmdDoneNotifySecs) || 15));
   const _ligEl = document.getElementById("pref-terminal-ligatures");
   if (_ligEl) _ligEl.checked = !!prefs.terminalLigatures;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
@@ -3478,6 +3487,8 @@ function savePrefsFromModal() {
     })(),
     cursorStyle:     document.getElementById("pref-cursor-style").value,
     cursorBlink:     document.getElementById("pref-cursor-blink").checked,
+    cmdDoneNotify:   !!document.getElementById("pref-cmd-notify")?.checked,
+    cmdDoneNotifySecs: Math.min(3600, Math.max(1, Number(document.getElementById("pref-cmd-notify-secs")?.value) || 15)),
     terminalLigatures: !!document.getElementById("pref-terminal-ligatures")?.checked,
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     bell:            document.getElementById("pref-bell").value,
@@ -11399,8 +11410,19 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     // segura del prompt.
     if (kind === "C") {
       sessionObj._inCommandOutput = true;
+      // Inicio de salida = el comando ya está corriendo: arranca el cronómetro
+      // del aviso de comando largo.
+      sessionObj._cmdStartTs = Date.now();
     } else if (kind === "D" || kind === "A" || kind === "B") {
       sessionObj._inCommandOutput = false;
+      if (kind === "D" && sessionObj._cmdStartTs) {
+        // `D` o `D;<exit>`: fin de comando. Un prompt nuevo (A/B) sin D previo
+        // (Ctrl+C en el prompt, redraws) simplemente descarta el cronómetro.
+        const durationMs = Date.now() - sessionObj._cmdStartTs;
+        const rawCode = data.length > 2 ? Number(data.slice(2)) : NaN;
+        notifyCommandFinished(sessionObj, durationMs, Number.isFinite(rawCode) ? rawCode : null);
+      }
+      sessionObj._cmdStartTs = null;
     }
     if (kind === "A") {
       try {
@@ -17839,6 +17861,54 @@ function formatDuration(seconds) {
   if (mins < 60) return `${mins}m ${secs}s`;
   const hours = Math.floor(mins / 60);
   return `${hours}h ${mins % 60}m`;
+}
+
+/* ── Aviso de fin de comando largo (OSC 133) ──────────────────────────────
+   Router mínimo por foco: sesión a la vista → nada (la está mirando); app con
+   foco pero sesión oculta → toast; app en segundo plano → notificación del
+   SO. Solo duración y exit code: nunca se captura la salida del comando. */
+
+/** Nombre visible de la sesión para los avisos (alias de tab o perfil). */
+function sessionNotifyName(sessionObj) {
+  if (sessionObj.name) return sessionObj.name;
+  const p = profiles.find((x) => x.id === sessionObj.profileId);
+  return p?.name || p?.host || sessionObj.id;
+}
+
+function notifyCommandFinished(sessionObj, durationMs, exitCode) {
+  if (!prefs.cmdDoneNotify || sessionObj.private) return;
+  const minSecs = Math.max(1, Number(prefs.cmdDoneNotifySecs) || 15);
+  if (durationMs < minSecs * 1000) return;
+  const name = sessionNotifyName(sessionObj);
+  const dur = formatDuration(durationMs / 1000);
+  const ok = exitCode == null || exitCode === 0;
+  const body = ok
+    ? t("notify.cmd_done", { name, dur })
+    : t("notify.cmd_done_err", { name, dur, code: exitCode });
+  const appFocused = document.hasFocus();
+  if (appFocused && viewSelection.includes(sessionObj.id)) return;
+  if (appFocused) {
+    toast(body, ok ? "success" : "error");
+    return;
+  }
+  sendSystemNotification(t("notify.cmd_done_title"), body);
+}
+
+// Permiso de notificaciones del SO, cacheado tras la primera consulta.
+let _notifGranted = null;
+
+async function sendSystemNotification(title, body) {
+  try {
+    if (_notifGranted === null) {
+      _notifGranted = await notifPermissionGranted();
+      if (!_notifGranted) _notifGranted = (await requestNotifPermission()) === "granted";
+    }
+    if (_notifGranted) sendNotification({ title, body });
+    else toast(body, "info"); // sin permiso: al menos que quede el toast al volver
+  } catch (err) {
+    console.debug("[notify]", err);
+    toast(body, "info");
+  }
 }
 
 function formatTime(secs) {

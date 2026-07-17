@@ -18,6 +18,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+# Notificaciones nativas del SO (aviso de fin de comando largo con la app en
+# segundo plano). El contenido lo compone el frontend; nunca lleva secretos.
+tauri-plugin-notification = "2"
 # Persistencia automática de tamaño y posición de la ventana entre ejecuciones
 tauri-plugin-window-state = "2"
 # Logs técnicos de diagnóstico a fichero con rotación acotada (no contenido de

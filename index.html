@@ -1865,6 +1865,22 @@
               </div>
 
               <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-cmd-notify" />
+                  <span data-i18n="prefs_terminal.cmd_notify">Avisar cuando termine un comando largo</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.cmd_notify_hint">Usa las marcas OSC 133 del shell (bash/zsh/fish modernos). Con la sesión a la vista no avisa; con la app activa muestra un toast; en segundo plano, una notificación del sistema. Solo duración y código de salida: nunca se captura la salida del comando.</p>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-cmd-notify-secs" data-i18n="prefs_terminal.cmd_notify_secs">Duración mínima para avisar</label>
+                <div class="settings-control">
+                  <input type="number" id="pref-cmd-notify-secs" min="1" max="3600" step="1" />
+                  <span class="settings-unit" data-i18n="prefs_terminal.unit_seconds">segundos</span>
+                </div>
+              </div>
+
+              <div class="settings-row">
                 <label for="pref-local-cwd" data-i18n="prefs_terminal.local_cwd">Carpeta inicial de la consola local</label>
                 <div class="settings-control">
                   <input type="text" id="pref-local-cwd" placeholder="$HOME" data-i18n-placeholder="prefs_terminal.local_cwd_placeholder" />
