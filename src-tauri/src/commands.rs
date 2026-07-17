@@ -191,6 +191,97 @@ fn parse_mac_address(input: &str) -> Result<[u8; 6], String> {
     Ok(out)
 }
 
+// ─── Comprobación masiva de salud (DNS/TCP) ───────────────────────────────────
+
+/// Objetivo de la comprobación de salud. El `id` es opaco: el frontend lo usa
+/// para casar cada resultado con su perfil.
+#[derive(Debug, serde::Deserialize)]
+pub struct HealthTarget {
+    pub id: String,
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct HealthResult {
+    pub id: String,
+    pub dns_ok: bool,
+    pub tcp_ok: bool,
+    pub latency_ms: Option<u64>,
+    pub error: Option<String>,
+}
+
+const HEALTH_MAX_TARGETS: usize = 500;
+const HEALTH_MAX_PARALLEL: usize = 8;
+const HEALTH_TCP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// Comprobación masiva de salud de hosts: resolución DNS + conexión TCP, en
+/// lotes de `HEALTH_MAX_PARALLEL` hilos. **Nunca autentica**: un barrido no
+/// debe poder provocar bloqueos de cuenta. Con más de `HEALTH_MAX_TARGETS`
+/// objetivos se rechaza entero (no se poda en silencio).
+#[tauri::command]
+pub fn hosts_health_check(targets: Vec<HealthTarget>) -> Result<Vec<HealthResult>, String> {
+    if targets.len() > HEALTH_MAX_TARGETS {
+        return Err(format!(
+            "demasiados objetivos ({} > {HEALTH_MAX_TARGETS})",
+            targets.len()
+        ));
+    }
+    let mut out = Vec::with_capacity(targets.len());
+    for chunk in targets.chunks(HEALTH_MAX_PARALLEL) {
+        let chunk_results: Vec<HealthResult> = std::thread::scope(|scope| {
+            let handles: Vec<_> = chunk
+                .iter()
+                .map(|t| scope.spawn(move || health_check_one(t)))
+                .collect();
+            chunk
+                .iter()
+                .zip(handles)
+                .map(|(t, h)| {
+                    h.join().unwrap_or_else(|_| HealthResult {
+                        id: t.id.clone(),
+                        dns_ok: false,
+                        tcp_ok: false,
+                        latency_ms: None,
+                        error: Some("panic".into()),
+                    })
+                })
+                .collect()
+        });
+        out.extend(chunk_results);
+    }
+    Ok(out)
+}
+
+fn health_check_one(t: &HealthTarget) -> HealthResult {
+    use std::net::{TcpStream, ToSocketAddrs};
+    let fail = |dns_ok: bool, error: String| HealthResult {
+        id: t.id.clone(),
+        dns_ok,
+        tcp_ok: false,
+        latency_ms: None,
+        error: Some(error),
+    };
+    let addrs: Vec<_> = match (t.host.as_str(), t.port).to_socket_addrs() {
+        Ok(a) => a.collect(),
+        Err(e) => return fail(false, format!("DNS: {e}")),
+    };
+    let Some(addr) = addrs.first() else {
+        return fail(false, "DNS: 0 addrs".into());
+    };
+    let started = std::time::Instant::now();
+    match TcpStream::connect_timeout(addr, HEALTH_TCP_TIMEOUT) {
+        Ok(_) => HealthResult {
+            id: t.id.clone(),
+            dns_ok: true,
+            tcp_ok: true,
+            latency_ms: Some(started.elapsed().as_millis().min(u64::MAX as u128) as u64),
+            error: None,
+        },
+        Err(e) => fail(true, e.to_string()),
+    }
+}
+
 // ─── Comandos SSH ─────────────────────────────────────────────────────────────
 
 /// Overrides puntuales de «Duplicar sesión con cambios»: se aplican sobre la

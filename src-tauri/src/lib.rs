@@ -228,6 +228,7 @@ pub fn run() {
             commands::delete_profile,
             commands::delete_profiles,
             commands::wake_on_lan,
+            commands::hosts_health_check,
             commands::legacy_algorithm_catalog,
             // ── Catálogo de credenciales (master / var / secret)
             commands::master_cred_list,

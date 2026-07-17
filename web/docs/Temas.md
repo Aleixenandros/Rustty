@@ -6,7 +6,7 @@ Rustty separa el tema de la interfaz del tema del terminal. Puedes usar una UI c
 
 Rustty incluye una biblioteca amplia de temas listos para usar. Además de los temas base iniciales (Catppuccin, Dracula, Nord, Solarized, Gruvbox, Tokyo Night, Monokai, Tango, xterm clásico y VS Code Dark+), carga un pack ampliado desde `bundled-themes.json` con variantes claras, oscuras y de alto contraste.
 
-En **Preferencias → Apariencia** puedes buscar por nombre, filtrar por **Todos / Oscuros / Claros / Alto contraste** y restablecer el tema al sistema. El tema activo aparece marcado con un check.
+En **Preferencias → Apariencia** puedes buscar por nombre, filtrar por **Todos / Oscuros / Claros / Alto contraste** y restablecer el tema al sistema. El tema activo aparece marcado con un check. Cada tema se previsualiza con un **mini terminal real**: prompt, comando con selección y salida pintados con la paleta exacta de ese tema, para comparar de un vistazo sin aplicarlo.
 
 ## Accesibilidad
 
@@ -15,6 +15,7 @@ En **Preferencias → Apariencia** hay un bloque **Accesibilidad** que ajusta la
 - **Contraste de la interfaz** (Normal / Alto / Máximo): refuerza el contraste del texto, los bordes, el foco y la selección en toda la aplicación. Acerca los colores de texto más tenues al color principal sin cambiar el tema activo.
 - **Modo daltónico**: diferencia los indicadores de estado también por forma, no solo por color. Los puntos de estado usan círculo / cuadrado / diamante; los avisos emergentes añaden un icono por severidad (éxito, error, información, aviso); y las barras de transferencia SFTP marcan el estado final (correcto / error / omitido) con una trama distinta.
 - **Reducir movimiento**: desactiva animaciones, transiciones largas y efectos decorativos. Se respeta también la preferencia equivalente del sistema operativo. La campana visual del terminal pasa entonces a un realce estable, sin parpadeo.
+- **Fundido al cambiar de vista**: transición breve entre el panel de inicio y el terminal al abrir o cerrar sesiones. Activada por defecto, con su propio interruptor; «Reducir movimiento» también la anula.
 - **Foco visible reforzado**: aumenta el grosor y el contraste del anillo de foco en la navegación por teclado.
 - **Barras de desplazamiento superpuestas**: sustituye las barras finas normales por unas superpuestas cuyo pulgar flota sobre el contenido, fino en reposo y más ancho al pasar el ratón. Desactivada por defecto.
 - **Contraste mínimo del terminal** (Sin ajuste / AA 4.5:1 / AAA 7:1): adapta los colores ANSI poco legibles para que el texto alcance un contraste mínimo con su fondo. Útil con temas de bajo contraste.

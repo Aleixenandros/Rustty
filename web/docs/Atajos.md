@@ -51,7 +51,7 @@ La búsqueda en el buffer abre una barra flotante con next/prev y un toggle de *
 
 El pegado en el terminal (`Ctrl+Alt+V`) pide confirmación con una previsualización cuando el texto es **multilínea**, **muy largo** o trae **caracteres de control**. Se configura en **Preferencias → Terminal** y puede desactivarse por perfil desde sus opciones avanzadas.
 
-La paleta (`Ctrl+Shift+P`) busca acciones, perfiles, snippets y comandos locales. `Ctrl+K` se mantiene reservado para buscar conexiones en la sidebar.
+La paleta (`Ctrl+Shift+P`) busca acciones, perfiles, snippets, comandos locales, **scripts** y **notas de conexión**, e incluye acciones contextuales según lo que tengas delante: abrir/cerrar el panel SFTP, la nota de la conexión activa, los túneles SSH o la comprobación de salud. Además aprende de tu uso: sin texto escrito, lo reciente y frecuente aparece primero; en cuanto escribes, manda la coincidencia del texto. `Ctrl+K` se mantiene reservado para buscar conexiones en la sidebar.
 
 `Ctrl+P` pega la contraseña del perfil de la sesión activa. Si el **modo broadcast** está replicando la entrada en varias panes, el comportamiento lo decide **Preferencias → Seguridad**: difundir la contraseña a todas las panes (por defecto), pegarla solo en la pane activa o preguntar en cada pegado. Rustty nunca bloquea el pegado.
 

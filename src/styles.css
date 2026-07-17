@@ -2982,6 +2982,7 @@ body.reduce-motion.terminal-bell-visual::after {
    #credential-modal-overlay; la clase global .hidden (display:none !important)
    los oculta. Sin esto, el modal se renderizaba en el flujo del documento, al
    pie de la pantalla, en vez de superpuesto y centrado. ── */
+#health-overlay,
 #known-hosts-overlay,
 #cred-edit-overlay,
 #ask-modal-overlay,
@@ -3000,6 +3001,7 @@ body.reduce-motion.terminal-bell-visual::after {
   backdrop-filter: blur(4px);
 }
 
+#health-modal,
 #known-hosts-modal,
 #cred-edit-modal,
 #ask-modal,
@@ -3017,6 +3019,62 @@ body.reduce-motion.terminal-bell-visual::after {
   display: flex;
   flex-direction: column;
 }
+
+/* Comprobación de salud (DNS/TCP): filas de resultado con badges por prueba. */
+.health-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.health-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--surface0);
+  font-size: 12px;
+}
+.health-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 38%;
+}
+.health-target {
+  color: var(--subtext0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.health-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--subtext0);
+  white-space: nowrap;
+}
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid transparent;
+}
+.health-badge.ok {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+}
+.health-badge.fail {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
+}
+.health-latency { color: var(--subtext0); }
 
 #cred-edit-form,
 #ask-modal-form,

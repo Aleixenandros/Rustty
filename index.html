@@ -1512,6 +1512,23 @@
     <!-- ══════════════════════════════════════════════════════
          PALETA: búsqueda global (perfiles, snippets, comandos, acciones)
     ══════════════════════════════════════════════════════ -->
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Comprobación de salud (DNS/TCP)
+    ══════════════════════════════════════════════════════ -->
+    <div id="health-overlay" class="hidden">
+      <div id="health-modal" role="dialog" aria-modal="true" aria-labelledby="health-title">
+        <div class="modal-header">
+          <h2 id="health-title" data-i18n="health.title">Comprobación de salud</h2>
+          <button class="btn-icon" id="btn-health-close" data-i18n-aria-label="health.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+        </div>
+        <div class="global-tunnels-body">
+          <p class="prefs-panel-hint"><span id="health-scope"></span></p>
+          <p class="prefs-panel-hint" data-i18n="health.hint">Solo resolución DNS y conexión TCP con tiempo límite; nunca se intenta iniciar sesión.</p>
+          <div id="health-list" class="health-list"></div>
+        </div>
+      </div>
+    </div>
+
     <div id="command-palette-overlay" class="hidden">
       <div id="command-palette-modal" role="dialog" aria-modal="true" data-i18n-aria-label="palette.title" aria-label="Paleta de comandos">
         <input id="command-palette-input" type="text" autocomplete="off" spellcheck="false"

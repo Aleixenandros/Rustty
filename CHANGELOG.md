@@ -2,6 +2,47 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.57.0] - 2026-07-18
+
+### Añadido
+
+- **La paleta de comandos ahora lo encuentra todo**: además de acciones,
+  perfiles, snippets y comandos locales, busca y lanza **scripts** (se ejecutan
+  directamente), abre **notas de conexión**, los túneles SSH y el panel SFTP o
+  la nota de la sesión activa cuando aplican. Y aprende del uso: mientras no
+  escribes, lo reciente y frecuente aparece primero; al escribir, manda la
+  coincidencia del texto.
+- **Aviso de fin de comando largo** (opcional, apagado por defecto): con las
+  marcas semánticas del shell (bash/zsh/fish modernos), Rustty avisa cuando un
+  comando supera la duración elegida — en silencio si estás mirando la sesión,
+  con un toast si estás en otra pestaña y con una notificación del sistema si
+  la app está en segundo plano. El umbral es global y cada perfil puede afinar
+  el suyo. Solo viajan la duración y el código de salida, nunca la salida del
+  comando; las sesiones privadas no avisan.
+- **Comprobación de salud de conexiones**: un barrido rápido (resolución de
+  nombre + conexión TCP con tiempo límite) sobre los favoritos o el workspace
+  actual, desde la paleta o el menú de workspaces, con la latencia de cada
+  host. Nunca intenta iniciar sesión, así que no puede provocar bloqueos de
+  cuenta.
+- **Fundido al cambiar de vista** entre el panel de inicio y el terminal, con
+  su propio interruptor en Apariencia; «Reducir movimiento» también lo anula.
+
+### Cambiado
+
+- **La barra lateral de iconos se reorganiza**: Nueva conexión y Consola local
+  suben arriba como acciones de creación, y Preferencias baja abajo del todo
+  con el color destacado que antes llevaba Nueva conexión.
+- **Los avisos de fin de transferencia siguen el mismo criterio por foco** que
+  los de comandos largos, con textos en los cinco idiomas y, por primera vez,
+  interruptor y umbral propios en Preferencias → FTP/SFTP.
+- **La galería de temas previsualiza cada tema con un mini terminal real**
+  — prompt, comando con selección y salida pintados con la paleta exacta —
+  también en los temas base, que aún mostraban un mosaico de colores.
+- **Casi todo el chrome es ya vectorial**: cierres de ventana y panel, botones
+  de fila de la barra lateral, toolbars del panel SFTP, búsqueda del terminal,
+  breadcrumb de ruta, barra de layouts y los avisos de los formularios pasan de
+  glifos y emojis a iconos SVG coherentes con el tema activo.
+
 ## [1.56.0] - 2026-07-15
 
 ### Añadido

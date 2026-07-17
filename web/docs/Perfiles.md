@@ -49,6 +49,14 @@ El borrado también opera sobre el lote: si eliminas una conexión que forma par
 
 Cada conexión incluye un botón **estrella** (☆/★) en la sidebar, también accesible desde su menú contextual. Las favoritas se listan completas en la vista **Favoritos** del popover ≡, sin importar a qué workspace pertenezcan, y forman parte del bundle de sincronización junto al resto de preferencias.
 
+## Comprobación de salud
+
+Desde la paleta de comandos (`Ctrl+Shift+P` → «Comprobar salud de los favoritos» / «del workspace») o desde el menú de workspaces puedes lanzar un barrido rápido sobre un grupo de conexiones: **resolución DNS + conexión TCP** con tiempo límite, en paralelo acotado. El resultado muestra por conexión si el nombre resuelve, si el puerto acepta conexión y la latencia; el detalle del error aparece al pasar el ratón. **Nunca se intenta iniciar sesión**: un barrido no puede provocar bloqueos de cuenta.
+
+## Aviso de fin de comando largo
+
+Si tu shell remoto emite las marcas semánticas **OSC 133** (bash, zsh y fish modernos), Rustty puede avisarte cuando termina un comando que superó cierta duración — útil para builds, copias o migraciones que dejas corriendo mientras haces otra cosa. El aviso elige el canal según dónde estés mirando: con la sesión a la vista no interrumpe; con la app activa y la sesión oculta muestra un toast; con la app en segundo plano envía una **notificación del sistema**. Solo viajan la duración y el código de salida — nunca la salida del comando — y las sesiones privadas no avisan. Se activa (está apagado por defecto) y se ajusta el umbral en **Preferencias → Terminal**; cada perfil puede definir su propio umbral en sus opciones avanzadas.
+
 ## Tipos soportados
 
 - **SSH**: sesión interactiva con terminal, SFTP integrado y autenticación por contraseña, clave pública o agente SSH.
@@ -113,6 +121,7 @@ El toggle **CWD** vive ahora en la toolbar del panel SFTP, no en el formulario d
 En el formulario de perfil, la sección **Opciones avanzadas** expone toggles SSH adicionales:
 
 - **Keep-alive (segundos)**: 0 deshabilita; cualquier valor mayor envía un paquete keepalive al servidor cada N segundos para evitar caídas por NAT.
+- **Aviso de comando largo (segundos)**: umbral propio de este perfil para el aviso de fin de comando largo (ver abajo). Vacío = usar el umbral global de **Preferencias → Terminal**.
 - **Permitir cifrados / kex / MAC antiguos**: extiende la negociación con algoritmos legacy (`aes-cbc`, `3des-cbc`, `dh-sha1`, `hmac-sha1`, `ssh-rsa`) para conectar con servidores antiguos. Al activarlo se despliega una lista de casillas, agrupadas por categoría (Cifrados, Intercambio de claves, MAC y Claves de host), para elegir exactamente qué algoritmos ofrecer; por defecto se ofrecen todos. ⚠️ Reduce la seguridad: úsalo sólo cuando lo necesites.
 - **Reenviar agente SSH**: reusa `$SSH_AUTH_SOCK` (sólo Unix) para autenticar saltos desde el host remoto sin copiar las claves. ⚠️ Al activarlo Rustty pide confirmación: un host comprometido podría usar tu agente para saltar a otros equipos, así que habilítalo solo en hosts de confianza.
 - **Reenviar X11**: solicita el canal X11 con cookie sintética `MIT-MAGIC-COOKIE-1` y lo redirige a `localhost:6000+display`. Requiere un X server local.

@@ -151,12 +151,14 @@ Para escribir un marcador literal sin resolver, usa el escape `$${...}`.
 
 Pulsa `Ctrl+Shift+P` para abrir la paleta global. Desde ahí puedes buscar y lanzar:
 
-- Acciones de la app, como **Nueva conexión**, **Nueva conexión desde plantilla**, **Abrir consola local** o **Abrir preferencias**.
+- Acciones de la app, como **Nueva conexión**, **Nueva conexión desde plantilla**, **Abrir consola local** o **Abrir preferencias**, más acciones contextuales (panel SFTP y nota de la conexión activa, túneles, comprobación de salud).
 - Perfiles guardados.
 - Snippets.
 - Comandos locales.
+- **Scripts**: se ejecutan directamente con su objetivo guardado.
+- **Notas de conexión**: abren su editor.
 
-La búsqueda acepta coincidencias parciales y subsecuencias. Usa `↑`/`↓` para moverte, `Enter` para ejecutar la opción activa y `Esc` para cerrar.
+La búsqueda acepta coincidencias parciales y subsecuencias, y el orden aprende de tu uso: sin texto escrito, lo reciente y frecuente va primero; con texto, manda la coincidencia. Usa `↑`/`↓` para moverte, `Enter` para ejecutar la opción activa y `Esc` para cerrar.
 
 ## Grabación e historial
 

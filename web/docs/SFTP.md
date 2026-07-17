@@ -72,6 +72,10 @@ Justo debajo de la vista dividida hay dos secciones siempre visibles:
 
 Si una transferencia falla o se cancela, el detalle muestra los bytes realmente transferidos junto al total del fichero, no solo el tamaño esperado.
 
+### Aviso al terminar
+
+Al terminar una transferencia, Rustty avisa según dónde estés mirando: si la sesión está a la vista no interrumpe; si la app está activa pero la sesión oculta, muestra un toast; y si la app está en segundo plano, envía una **notificación del sistema**. Los errores avisan siempre; los éxitos, solo si la transferencia fue larga (umbral configurable) o de más de 10 MiB. Se ajusta —o se desactiva— en **Preferencias → FTP/SFTP**.
+
 ## Rendimiento (pipelining)
 
 Las descargas y subidas mantienen varias peticiones SFTP simultáneamente en vuelo con chunks de 256 KiB. Eso elimina el techo de velocidad `chunk × RTT` típico de los clientes SFTP en serie: con un RTT de 12-15 ms y buffer de 64 KiB el techo era de ~5 MB/s; con varios MiB de datos en vuelo a la vez, la transferencia satura el ancho de banda real de la conexión.

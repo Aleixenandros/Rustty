@@ -4501,6 +4501,7 @@ function renderWorkspaceSwitcher() {
   menu.innerHTML = `${items}
     <div class="ws-sep"></div>
     <button class="ws-item" data-ws-action="new"><span>＋ ${escHtml(t("sidebar.workspace_new"))}</span></button>
+    <button class="ws-item" data-ws-action="health"><span><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg> ${escHtml(t("health.workspace_action"))}</span></button>
     <button class="ws-item" data-ws-action="rename"><span><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg> ${escHtml(t("sidebar.workspace_rename"))}</span></button>
     <button class="ws-item danger" data-ws-action="delete" ${canDelete ? "" : "disabled"}><span><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg> ${escHtml(t("sidebar.workspace_delete"))}</span></button>`;
 }
@@ -4619,6 +4620,11 @@ function updateRailActiveState() {
 }
 
 async function handleWorkspaceMenuClick(action, wsId) {
+  if (action === "health") {
+    toggleWorkspaceMenu(false);
+    runHealthCheck(profiles.filter(profileBelongsToActiveWorkspace), t("health.scope_workspace"));
+    return;
+  }
   if (action === "select" && wsId) {
     if (wsId !== getActiveWorkspaceId()) {
       prefs.activeWorkspaceId = wsId;
@@ -20809,6 +20815,7 @@ const PALETTE_ICONS = {
   tunnel: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h13l-2.5-2.5M20 15H7l2.5 2.5"/></svg>',
   script: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v4h4"/><path d="M10 12l4 2.5-4 2.5z"/></svg>',
   note: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4a1 1 0 0 1 1-1h9l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1z"/><path d="M9 10h6M9 14h6"/></svg>',
+  health: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5-6 4 12 2.5-6h5"/></svg>',
 };
 
 let _paletteItems = [];
@@ -20867,6 +20874,11 @@ function buildPaletteSources() {
   }
   add("action:tunnels", { kind: "action", title: t("palette.action_tunnels"), icon: PALETTE_ICONS.tunnel, run: () => openGlobalTunnelsModal() });
   add("action:scripts", { kind: "action", title: t("palette.action_scripts"), icon: PALETTE_ICONS.script, run: () => openScriptsModal() });
+  const healthFavs = profiles.filter((p) => isFavoriteProfile(p.id) && p.host);
+  if (healthFavs.length) {
+    add("action:health-favorites", { kind: "action", title: t("palette.action_health_favorites"), icon: PALETTE_ICONS.health, run: () => runHealthCheck(healthFavs, t("health.scope_favorites")) });
+  }
+  add("action:health-workspace", { kind: "action", title: t("palette.action_health_workspace"), icon: PALETTE_ICONS.health, run: () => runHealthCheck(profiles.filter(profileBelongsToActiveWorkspace), t("health.scope_workspace")) });
   for (const p of profiles) {
     const sub = `${p.username ? p.username + "@" : ""}${p.host || ""}`;
     add(`profile:${p.id}`, { kind: "profile", title: p.name || p.host || "", sub, icon: PALETTE_ICONS.profile, run: () => connectProfile(p.id) });
@@ -21014,8 +21026,71 @@ function paletteInputKeydown(e) {
   else if (e.key === "Escape") { e.preventDefault(); closeCommandPalette(); }
 }
 
+/* ── Comprobación masiva de salud (DNS/TCP) ──────────────────────────────
+   Barrido manual sobre favoritos o el workspace activo: resolución DNS +
+   conexión TCP en el backend (`hosts_health_check`, concurrencia acotada).
+   Nunca autentica: un barrido no puede provocar bloqueos de cuenta. */
+
+let _healthRunning = false;
+
+function closeHealthModal() {
+  document.getElementById("health-overlay")?.classList.add("hidden");
+}
+
+function healthBadge(ok, label) {
+  const icon = ok
+    ? '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 6.5 12 13 4.5"/></svg>'
+    : '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+  return `<span class="health-badge ${ok ? "ok" : "fail"}">${icon} ${escHtml(label)}</span>`;
+}
+
+async function runHealthCheck(list, scopeLabel) {
+  const targets = list
+    .filter((p) => p.host)
+    .map((p) => ({ id: p.id, host: p.host, port: Number(p.port) || 22 }));
+  if (!targets.length) {
+    toast(t("health.no_targets"), "warning");
+    return;
+  }
+  if (_healthRunning) return;
+  const overlay = document.getElementById("health-overlay");
+  const listEl = document.getElementById("health-list");
+  if (!overlay || !listEl) return;
+  const scopeEl = document.getElementById("health-scope");
+  if (scopeEl) scopeEl.textContent = `${scopeLabel} · ${targets.length}`;
+  const byId = new Map(list.map((p) => [p.id, p]));
+  listEl.innerHTML = targets.map((tg) => `
+    <div class="health-row" data-health-id="${escHtml(tg.id)}">
+      <span class="health-name">${escHtml(byId.get(tg.id)?.name || tg.host)}</span>
+      <span class="health-target">${escHtml(`${tg.host}:${tg.port}`)}</span>
+      <span class="health-status">${escHtml(t("health.checking"))}</span>
+    </div>`).join("");
+  overlay.classList.remove("hidden");
+  _healthRunning = true;
+  try {
+    const results = await invoke("hosts_health_check", { targets });
+    for (const r of results || []) {
+      const row = listEl.querySelector(`[data-health-id="${CSS.escape(r.id)}"]`);
+      const status = row?.querySelector(".health-status");
+      if (!status) continue;
+      const lat = r.tcp_ok && r.latency_ms != null ? `<span class="health-latency">· ${Number(r.latency_ms)} ms</span>` : "";
+      status.innerHTML = `${healthBadge(r.dns_ok, "DNS")} ${healthBadge(r.tcp_ok, "TCP")} ${lat}`;
+      if (!r.tcp_ok && r.error) status.title = r.error;
+    }
+  } catch (err) {
+    toast(`${err}`, "error");
+    closeHealthModal();
+  } finally {
+    _healthRunning = false;
+  }
+}
+
 /** Cablea los listeners de snippets, comandos locales, plantilla y paleta. */
 function initCommandsAndPalette() {
+  document.getElementById("btn-health-close")?.addEventListener("click", closeHealthModal);
+  document.getElementById("health-overlay")?.addEventListener("mousedown", (e) => {
+    if (e.target.id === "health-overlay") closeHealthModal();
+  });
   document.getElementById("btn-snippet-add")?.addEventListener("click", () => openSnippetEditor(null));
   document.getElementById("snippet-list")?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-snippet-action]");
