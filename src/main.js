@@ -405,6 +405,11 @@ const DEFAULT_PREFS = {
   //   "ask"    → preguntar en cada pegado
   pastePasswordBroadcast: "all", // "all" | "active" | "ask"
   sftpConflictPolicy: "ask",   // "ask" | "overwrite" | "skip" | "rename"
+  // Aviso de fin de transferencia SFTP por el router de notificaciones.
+  // On por defecto (era el comportamiento existente); ahora desactivable y
+  // con umbral de duración configurable (los errores avisan siempre).
+  transferDoneNotify:     true,
+  transferDoneNotifySecs: 5,
   sftpVerifySize:  false,
   // Máximo de peticiones SFTP simultáneas (handles en vuelo) por transferencia
   // en cada sesión. Conservador por defecto: servidores como Hetzner Storage Box
@@ -1718,6 +1723,10 @@ function openSettingsModal() {
   const pastePwBcastEl = document.getElementById("pref-paste-password-broadcast");
   if (pastePwBcastEl) pastePwBcastEl.value = normalizePastePasswordBroadcast(prefs.pastePasswordBroadcast);
   document.getElementById("pref-sftp-conflict-policy").value = normalizeSftpConflictPolicy(prefs.sftpConflictPolicy);
+  const _xferNotify = document.getElementById("pref-transfer-notify");
+  if (_xferNotify) _xferNotify.checked = prefs.transferDoneNotify !== false;
+  const _xferNotifySecs = document.getElementById("pref-transfer-notify-secs");
+  if (_xferNotifySecs) _xferNotifySecs.value = String(Math.max(1, Number(prefs.transferDoneNotifySecs) || 5));
   document.getElementById("pref-sftp-verify-size").checked = !!prefs.sftpVerifySize;
   const maxConcEl = document.getElementById("pref-sftp-max-concurrent");
   if (maxConcEl) maxConcEl.value = sftpMaxConcurrent();
@@ -3466,6 +3475,8 @@ function savePrefsFromModal() {
     pastePasswordBroadcast: normalizePastePasswordBroadcast(
       document.getElementById("pref-paste-password-broadcast")?.value,
     ),
+    transferDoneNotify: document.getElementById("pref-transfer-notify")?.checked ?? true,
+    transferDoneNotifySecs: Math.min(3600, Math.max(1, Number(document.getElementById("pref-transfer-notify-secs")?.value) || 5)),
     sftpConflictPolicy: normalizeSftpConflictPolicy(
       document.getElementById("pref-sftp-conflict-policy")?.value,
     ),
@@ -6906,6 +6917,8 @@ function openEditConnectionModal(profileId) {
 
   populateFolderSelect(profile.group || "", profile.workspace_id || getActiveWorkspaceId());
   document.getElementById("f-keep-alive").value = profile.keep_alive_secs ?? "";
+  const _fCmdNotifySecs = document.getElementById("f-cmd-notify-secs");
+  if (_fCmdNotifySecs) _fCmdNotifySecs.value = profile.cmd_notify_secs ?? "";
   document.getElementById("f-allow-legacy").checked = !!profile.allow_legacy_algorithms;
   applyLegacyAlgorithmsUI(profile.legacy_algorithms ?? null);
   document.getElementById("f-agent-forwarding").checked = !!profile.agent_forwarding;
@@ -8338,6 +8351,7 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     master_credential_id: masterCredentialId,
     follow_cwd: true,
     keep_alive_secs: keepAliveFromInput(document.getElementById("f-keep-alive").value),
+    cmd_notify_secs: keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     legacy_algorithms: collectLegacyAlgorithms(),
     agent_forwarding: document.getElementById("f-agent-forwarding").checked,
@@ -8558,6 +8572,7 @@ async function saveAndClose(shouldConnect) {
     extra_credentials:   extraCredentials,
     follow_cwd:          true,
     keep_alive_secs:     keepAliveFromInput(document.getElementById("f-keep-alive").value),
+    cmd_notify_secs:     keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     legacy_algorithms:   collectLegacyAlgorithms(),
     agent_forwarding:    document.getElementById("f-agent-forwarding").checked,
@@ -17498,6 +17513,14 @@ async function closeSftpPanel(sessionId) {
   }
 }
 
+/** Sesión propietaria de un panel SFTP (para el router de notificaciones). */
+function sessionIdForSftpPanel(panel) {
+  for (const [id, s] of sessions) {
+    if (s.sftp?.panel === panel) return id;
+  }
+  return null;
+}
+
 function addTransfer(panel, label, transferId, detail = "") {
   const wrap = panel.querySelector(".sftp-transfers-wrap");
   wrap.classList.remove("hidden");
@@ -17509,6 +17532,8 @@ function addTransfer(panel, label, transferId, detail = "") {
   el.dataset.label = label;
   el.dataset.startedAt = String(Date.now());
   el.dataset.lastTotal = "0";
+  const ownerSession = sessionIdForSftpPanel(panel);
+  if (ownerSession) el.dataset.sessionId = ownerSession;
   el.innerHTML = `
     <div class="sftp-transfer-label">${escHtml(label)}</div>
     <div class="sftp-transfer-text">0 B / ?</div>
@@ -17689,33 +17714,26 @@ function markTransferCanceled(el, detail) {
   el.querySelector(".sftp-transfer-text").textContent = "cancelado";
 }
 
-const SFTP_NOTIFY_MIN_MS = 5000;
 const SFTP_NOTIFY_MIN_BYTES = 10 * 1024 * 1024;
 
+/**
+ * Aviso de fin de transferencia por el router común (antes: `new Notification`
+ * de la API web, sin supresión por foco y con umbral fijo). Errores siempre;
+ * éxitos solo si la transferencia fue larga (umbral configurable) o grande.
+ */
 function maybeNotifyTransfer(el, success, errorDetail = "") {
-  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (prefs.transferDoneNotify === false) return;
   const startedAt = parseInt(el.dataset.startedAt || "0", 10);
   const total = parseInt(el.dataset.lastTotal || "0", 10);
   const elapsed = Date.now() - (startedAt || Date.now());
-  // Solo notifica para errores siempre, o transferencias largas/grandes.
-  if (success && elapsed < SFTP_NOTIFY_MIN_MS && total < SFTP_NOTIFY_MIN_BYTES) return;
-  const label = el.dataset.label || "Transferencia SFTP";
+  const minSecs = Math.max(1, Number(prefs.transferDoneNotifySecs) || 5);
+  if (success && elapsed < minSecs * 1000 && total < SFTP_NOTIFY_MIN_BYTES) return;
+  const label = el.dataset.label || "SFTP";
+  const dur = formatDuration(elapsed / 1000);
   const body = success
-    ? `${label} completada en ${(elapsed / 1000).toFixed(1)} s`
-    : `${label} falló: ${errorDetail}`;
-  const send = () => {
-    try {
-      new Notification("Rustty SFTP", {
-        body,
-        silent: success,
-      });
-    } catch {}
-  };
-  if (Notification.permission === "granted") {
-    send();
-  } else if (Notification.permission !== "denied") {
-    Notification.requestPermission().then((p) => { if (p === "granted") send(); }).catch(() => {});
-  }
+    ? t("notify.transfer_done", { label, dur })
+    : t("notify.transfer_err", { label, detail: errorDetail });
+  routeSessionNotification(el.dataset.sessionId || null, t("notify.transfer_title"), body, success ? "success" : "error");
 }
 
 function updateTransfersVisibility(panel) {
@@ -17875,9 +17893,27 @@ function sessionNotifyName(sessionObj) {
   return p?.name || p?.host || sessionObj.id;
 }
 
+/**
+ * Router común de notificaciones ligadas a una sesión (fin de comando largo,
+ * transferencias SFTP): sesión a la vista con la app enfocada → silencio (el
+ * usuario lo está viendo); app enfocada con la sesión oculta → toast; app en
+ * segundo plano → notificación del SO.
+ */
+function routeSessionNotification(sessionId, title, body, kind = "info") {
+  const appFocused = document.hasFocus();
+  if (appFocused && sessionId && viewSelection.includes(sessionId)) return;
+  if (appFocused) {
+    toast(body, kind);
+    return;
+  }
+  sendSystemNotification(title, body);
+}
+
 function notifyCommandFinished(sessionObj, durationMs, exitCode) {
   if (!prefs.cmdDoneNotify || sessionObj.private) return;
-  const minSecs = Math.max(1, Number(prefs.cmdDoneNotifySecs) || 15);
+  // El perfil puede afinar el umbral; sin valor propio rige el global.
+  const profileSecs = profiles.find((x) => x.id === sessionObj.profileId)?.cmd_notify_secs;
+  const minSecs = Math.max(1, Number(profileSecs) || Number(prefs.cmdDoneNotifySecs) || 15);
   if (durationMs < minSecs * 1000) return;
   const name = sessionNotifyName(sessionObj);
   const dur = formatDuration(durationMs / 1000);
@@ -17885,13 +17921,7 @@ function notifyCommandFinished(sessionObj, durationMs, exitCode) {
   const body = ok
     ? t("notify.cmd_done", { name, dur })
     : t("notify.cmd_done_err", { name, dur, code: exitCode });
-  const appFocused = document.hasFocus();
-  if (appFocused && viewSelection.includes(sessionObj.id)) return;
-  if (appFocused) {
-    toast(body, ok ? "success" : "error");
-    return;
-  }
-  sendSystemNotification(t("notify.cmd_done_title"), body);
+  routeSessionNotification(sessionObj.id, t("notify.cmd_done_title"), body, ok ? "success" : "error");
 }
 
 // Permiso de notificaciones del SO, cacheado tras la primera consulta.

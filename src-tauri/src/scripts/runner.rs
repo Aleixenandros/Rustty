@@ -1627,6 +1627,7 @@ mod tests {
             extra_credentials: vec![],
             follow_cwd: true,
             keep_alive_secs: None,
+            cmd_notify_secs: None,
             allow_legacy_algorithms: false,
             legacy_algorithms: None,
             agent_forwarding: false,

@@ -174,6 +174,10 @@ pub struct ConnectionProfile {
     /// `None` o `0` deshabilita el keepalive. Útil contra caídas por NAT.
     #[serde(default)]
     pub keep_alive_secs: Option<u32>,
+    /// Umbral en segundos, propio de este perfil, del aviso de fin de comando
+    /// largo (OSC 133). `None` = usar el umbral global de Preferencias.
+    #[serde(default)]
+    pub cmd_notify_secs: Option<u32>,
     /// Si true, extiende las listas de algoritmos preferidos con variantes
     /// legacy (aes-cbc, 3des-cbc, dh-sha1, hmac-sha1, ssh-rsa) para poder
     /// conectar con servidores antiguos. Reduce la seguridad. Actúa como
