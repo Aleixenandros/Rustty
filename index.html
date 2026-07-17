@@ -30,6 +30,19 @@
       <!-- ── Rail vertical de iconos ── -->
       <aside id="rail" aria-label="Navegación">
         <div class="rail-section rail-top">
+          <button class="rail-btn" id="rail-btn-new" data-rail-action="new-connection" data-i18n-title="sidebar.new_conn_title" data-tooltip="Nueva conexión" data-tooltip-pos="right" aria-label="Nueva conexión">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M9 3.5v11M3.5 9h11"/>
+            </svg>
+          </button>
+          <button class="rail-btn" id="rail-btn-local" data-rail-action="local-shell" data-i18n-title="sidebar.local_shell_title" data-tooltip="Consola local" data-tooltip-pos="right" aria-label="Consola local">
+            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 4.5h12v9h-12z"/>
+              <path d="M5.5 8 7.5 10 5.5 12"/>
+              <path d="M9 12h3.5"/>
+            </svg>
+          </button>
+          <div class="rail-sep" role="separator" aria-hidden="true"></div>
           <button class="rail-btn" data-rail-view="profiles" data-i18n-title="rail.view_profiles" data-tooltip="Perfiles" data-tooltip-pos="right" aria-label="Perfiles">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
               <path d="M2 5.5a1.5 1.5 0 0 1 1.5-1.5h3l1.5 1.8h6.5A1.5 1.5 0 0 1 16 7.3v6.2A1.5 1.5 0 0 1 14.5 15h-11A1.5 1.5 0 0 1 2 13.5z"/>
@@ -57,12 +70,6 @@
               <path d="M3 4.5h12M3 9h12M3 13.5h8"/>
             </svg>
           </button>
-          <button class="rail-btn" id="rail-btn-settings" data-rail-action="settings" data-i18n-title="sidebar.prefs_title" data-tooltip="Preferencias" data-tooltip-pos="right" aria-label="Preferencias">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-              <circle cx="12" cy="12" r="3"/>
-            </svg>
-          </button>
         </div>
         <div class="rail-section rail-bottom">
           <button class="rail-btn rail-btn-danger" id="rail-btn-disconnect-all" data-rail-action="disconnect-all" data-i18n-title="rail.disconnect_all" data-tooltip="Desconectar todo" data-tooltip-pos="right" aria-label="Desconectar todo">
@@ -71,16 +78,11 @@
               <path d="M5.2 5.2a5 5 0 1 0 7.6 0"/>
             </svg>
           </button>
-          <button class="rail-btn" id="rail-btn-local" data-rail-action="local-shell" data-i18n-title="sidebar.local_shell_title" data-tooltip="Consola local" data-tooltip-pos="right" aria-label="Consola local">
-            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 4.5h12v9h-12z"/>
-              <path d="M5.5 8 7.5 10 5.5 12"/>
-              <path d="M9 12h3.5"/>
-            </svg>
-          </button>
-          <button class="rail-btn rail-btn-primary" id="rail-btn-new" data-rail-action="new-connection" data-i18n-title="sidebar.new_conn_title" data-tooltip="Nueva conexión" data-tooltip-pos="right" aria-label="Nueva conexión">
-            <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <path d="M9 3.5v11M3.5 9h11"/>
+          <div class="rail-sep" role="separator" aria-hidden="true"></div>
+          <button class="rail-btn rail-btn-primary" id="rail-btn-settings" data-rail-action="settings" data-i18n-title="sidebar.prefs_title" data-tooltip="Preferencias" data-tooltip-pos="right" aria-label="Preferencias">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              <circle cx="12" cy="12" r="3"/>
             </svg>
           </button>
         </div>
@@ -200,7 +202,7 @@
             </span>
             <span class="status-sep"></span>
             <span class="status-cwd hidden" id="status-cwd-wrap" title="Directorio remoto actual (OSC 7)">
-              <span class="status-cwd-icon" aria-hidden="true">📂</span>
+              <span class="status-cwd-icon" aria-hidden="true"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-folder"/></svg></span>
               <span id="status-cwd" class="mono">—</span>
             </span>
             <span class="status-sep status-cwd-sep hidden"></span>
@@ -251,11 +253,11 @@
             </div>
           </div>
           <div id="view-layout-bar" class="hidden">
-            <button data-layout="columns" data-i18n-title="view_layout.columns" title="Dividir en columnas">⫴</button>
-            <button data-layout="rows" data-i18n-title="view_layout.rows" title="Dividir en filas">☰</button>
-            <button data-layout="grid" data-i18n-title="view_layout.grid" title="Distribuir en rejilla">⊞</button>
+            <button data-layout="columns" data-i18n-title="view_layout.columns" title="Dividir en columnas"><svg class="vlb-icon" aria-hidden="true"><use href="#ci-columns"/></svg></button>
+            <button data-layout="rows" data-i18n-title="view_layout.rows" title="Dividir en filas"><svg class="vlb-icon" aria-hidden="true"><use href="#ci-rows"/></svg></button>
+            <button data-layout="grid" data-i18n-title="view_layout.grid" title="Distribuir en rejilla"><svg class="vlb-icon" aria-hidden="true"><use href="#ci-grid"/></svg></button>
             <div class="view-layout-sep"></div>
-            <button data-action="broadcast" data-i18n-title="view_layout.broadcast" title="Replicar entrada en todas las panes (Broadcast Input)">⇶</button>
+            <button data-action="broadcast" data-i18n-title="view_layout.broadcast" title="Replicar entrada en todas las panes (Broadcast Input)"><svg class="vlb-icon" aria-hidden="true"><use href="#ci-broadcast"/></svg></button>
           </div>
           <div id="welcome-screen">
             <div class="dashboard-shell">
@@ -264,7 +266,7 @@
                 <div class="dashboard-title">Rustty</div>
                 <div id="dashboard-workspace-chip" class="dashboard-workspace-chip" aria-live="polite"></div>
                 <div class="dashboard-search-wrap">
-                  <span class="dashboard-search-icon" aria-hidden="true">⌕</span>
+                  <span class="dashboard-search-icon" aria-hidden="true"><svg viewBox="0 0 16 16" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><use href="#ci-search"/></svg></span>
                   <input id="dashboard-search" type="search" autocomplete="off" spellcheck="false" placeholder="Buscar perfil, host o usuario…" />
                   <span class="dashboard-search-kbd">Ctrl K</span>
                 </div>
@@ -373,6 +375,8 @@
         <symbol id="ci-view-add" viewBox="0 0 16 16"><path d="M3.5 3.8h9v8.4h-9z"/><path d="M8 6.2v3.6M6.2 8h3.6"/></symbol>
         <symbol id="ci-view-remove" viewBox="0 0 16 16"><path d="M3.5 3.8h9v8.4h-9z"/><path d="M6.2 8h3.6"/></symbol>
         <symbol id="ci-view-solo" viewBox="0 0 16 16"><path d="M3.5 3.8h9v8.4h-9z"/><path d="M8 3.8v4.4H3.5"/></symbol>
+        <symbol id="ci-broadcast" viewBox="0 0 16 16"><path d="M2.5 4.3h8.7M9 2.2l2.2 2.1L9 6.4"/><path d="M2.5 8h8.7M9 5.9 11.2 8 9 10.1"/><path d="M2.5 11.7h8.7M9 9.6l2.2 2.1L9 13.8"/></symbol>
+        <symbol id="ci-search" viewBox="0 0 16 16"><circle cx="7.2" cy="7.2" r="4.4"/><path d="M10.5 10.5 14 14"/></symbol>
         <symbol id="ci-arrow-right" viewBox="0 0 16 16"><path d="M3 8h9.5M9.3 4.8 12.5 8l-3.2 3.2"/></symbol>
         <symbol id="ci-ban" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.2"/><path d="M4.3 4.3l7.4 7.4"/></symbol>
         <symbol id="ci-script" viewBox="0 0 16 16"><path d="M4.2 2.6h5.2l2.8 2.8v7.2a.8.8 0 0 1-.8.8H4.2a.8.8 0 0 1-.8-.8V3.4a.8.8 0 0 1 .8-.8z"/><path d="M9.1 2.7v3h3"/><path d="M6.6 8l2.9 1.9-2.9 1.9z"/></symbol>
@@ -1494,10 +1498,11 @@
          PALETA: búsqueda global (perfiles, snippets, comandos, acciones)
     ══════════════════════════════════════════════════════ -->
     <div id="command-palette-overlay" class="hidden">
-      <div id="command-palette-modal" role="dialog" aria-modal="true" aria-label="Paleta de comandos">
+      <div id="command-palette-modal" role="dialog" aria-modal="true" data-i18n-aria-label="palette.title" aria-label="Paleta de comandos">
         <input id="command-palette-input" type="text" autocomplete="off" spellcheck="false"
+               role="combobox" aria-expanded="false" aria-controls="command-palette-list" aria-autocomplete="list"
                data-i18n-placeholder="palette.placeholder" placeholder="Buscar perfiles, snippets, comandos…" />
-        <div id="command-palette-list" role="listbox"></div>
+        <div id="command-palette-list" role="listbox" data-i18n-aria-label="palette.title" aria-label="Paleta de comandos"></div>
       </div>
     </div>
 
@@ -1703,7 +1708,7 @@
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_terminal">Terminal</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="appearance">
-              <span class="prefs-nav-icon">◐</span>
+              <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/></svg></span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_appearance">Apariencia</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="transfer">
@@ -1715,7 +1720,7 @@
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_language">Idioma</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="keepass">
-              <span class="prefs-nav-icon">⚿</span>
+              <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="15.5" cy="8.5" r="3.5"/><path d="M13 11 4.5 19.5"/><path d="M7 17l2 2M9.5 14.5l2 2"/></svg></span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_keepass">KeePass</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="credentials">
@@ -2860,7 +2865,7 @@
 
                 <div class="about-links">
                   <a href="#" id="about-link-site" class="about-link" data-url="https://rustty.es">
-                    <span class="about-link-icon">🌐</span>
+                    <span class="about-link-icon" aria-hidden="true"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2.2 2 9.8 0 12M8 2c-2 2.2-2 9.8 0 12"/></svg></span>
                     <span data-i18n="prefs_about.website">Página del proyecto</span>
                     <span class="about-link-url">rustty.es</span>
                   </a>

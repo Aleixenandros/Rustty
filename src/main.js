@@ -4381,7 +4381,7 @@ function renderFavoritesTree() {
   if (favs.length === 0) {
     return `
       <div class="empty-state empty-state--rich">
-        <div class="empty-state__icon" aria-hidden="true">★</div>
+        <div class="empty-state__icon" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" aria-hidden="true"><use href="#ci-star"/></svg></div>
         <div class="empty-state__title">${escHtml(t("sidebar.favorites_empty"))}</div>
         <p class="empty-state__hint">${escHtml(t("sidebar.favorites_empty_hint"))}</p>
       </div>`;
@@ -4444,8 +4444,8 @@ function renderWorkspaceSwitcher() {
   menu.innerHTML = `${items}
     <div class="ws-sep"></div>
     <button class="ws-item" data-ws-action="new"><span>＋ ${escHtml(t("sidebar.workspace_new"))}</span></button>
-    <button class="ws-item" data-ws-action="rename"><span>✎ ${escHtml(t("sidebar.workspace_rename"))}</span></button>
-    <button class="ws-item danger" data-ws-action="delete" ${canDelete ? "" : "disabled"}><span>✕ ${escHtml(t("sidebar.workspace_delete"))}</span></button>`;
+    <button class="ws-item" data-ws-action="rename"><span><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg> ${escHtml(t("sidebar.workspace_rename"))}</span></button>
+    <button class="ws-item danger" data-ws-action="delete" ${canDelete ? "" : "disabled"}><span><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg> ${escHtml(t("sidebar.workspace_delete"))}</span></button>`;
 }
 
 /**
@@ -5491,9 +5491,9 @@ function renderConnectionItem(p, depth) {
         <div class="conn-item-host">${escHtml(p.username)}@${escHtml(p.host)}:${p.port}</div>
       </div>
       <div class="conn-item-actions">
-        <button class="btn-icon-sm conn-fav${isFavoriteProfile(p.id) ? " on" : ""}" data-action="toggle-favorite" data-id="${p.id}" title="${escHtml(t("ctx.toggle_favorite"))}">${isFavoriteProfile(p.id) ? "★" : "☆"}</button>
-        <button class="btn-icon-sm" data-action="edit" data-id="${p.id}" title="Editar">✎</button>
-        <button class="btn-icon-sm danger" data-action="delete" data-id="${p.id}" title="Eliminar">✕</button>
+        <button class="btn-icon-sm conn-fav${isFavoriteProfile(p.id) ? " on" : ""}" data-action="toggle-favorite" data-id="${p.id}" title="${escHtml(t("ctx.toggle_favorite"))}"><svg class="row-icon-svg${isFavoriteProfile(p.id) ? " filled" : ""}" aria-hidden="true"><use href="#ci-star"/></svg></button>
+        <button class="btn-icon-sm" data-action="edit" data-id="${p.id}" title="Editar"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></button>
+        <button class="btn-icon-sm danger" data-action="delete" data-id="${p.id}" title="Eliminar"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
       </div>
     </div>`;
 }
@@ -20649,28 +20649,87 @@ const PALETTE_ICONS = {
   profile: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M2 18h20"/></svg>',
   snippet: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 9 12 4 17"/><line x1="12" y1="17" x2="20" y2="17"/></svg>',
   localcmd: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>',
+  sftp: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  tunnel: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h13l-2.5-2.5M20 15H7l2.5 2.5"/></svg>',
+  script: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v4h4"/><path d="M10 12l4 2.5-4 2.5z"/></svg>',
+  note: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4a1 1 0 0 1 1-1h9l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1z"/><path d="M9 10h6M9 14h6"/></svg>',
 };
 
 let _paletteItems = [];
 let _paletteFiltered = [];
 let _paletteActive = 0;
 
+/* Frecuencia + recencia de uso de la paleta, persistidas en localStorage.
+   `id` estable por entrada (action:…, profile:<id>, script:<id>, …). */
+const PALETTE_USAGE_KEY = "rustty.paletteUsage";
+const PALETTE_USAGE_MAX = 100;
+
+function loadPaletteUsage() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PALETTE_USAGE_KEY));
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function bumpPaletteUsage(id) {
+  if (!id) return;
+  const usage = loadPaletteUsage();
+  const prev = usage[id];
+  usage[id] = { n: (prev?.n || 0) + 1, ts: Date.now() };
+  const ids = Object.keys(usage);
+  if (ids.length > PALETTE_USAGE_MAX) {
+    ids.sort((a, b) => (usage[a].ts || 0) - (usage[b].ts || 0));
+    for (const old of ids.slice(0, ids.length - PALETTE_USAGE_MAX)) delete usage[old];
+  }
+  try { localStorage.setItem(PALETTE_USAGE_KEY, JSON.stringify(usage)); } catch { /* cuota llena: se pierde el ranking, no la función */ }
+}
+
+/** Frecencia: usos ponderados por antigüedad del último uso. */
+function paletteFrecency(entry) {
+  if (!entry?.n) return 0;
+  const age = Date.now() - (entry.ts || 0);
+  const weight = age < 3600e3 ? 4 : age < 86400e3 ? 2 : age < 7 * 86400e3 ? 1.5 : 1;
+  return entry.n * weight;
+}
+
 /** Construye la lista plana de entradas de la paleta. */
 function buildPaletteSources() {
   const items = [];
-  items.push({ kind: "action", title: t("palette.action_new_connection"), icon: PALETTE_ICONS.action, run: () => openNewConnectionModal() });
-  items.push({ kind: "action", title: t("palette.action_new_template"), icon: PALETTE_ICONS.template, run: () => openNewConnectionFromTemplate() });
-  items.push({ kind: "action", title: t("palette.action_local_shell"), icon: PALETTE_ICONS.action, run: () => openLocalShell() });
-  items.push({ kind: "action", title: t("palette.action_preferences"), icon: PALETTE_ICONS.action, run: () => openSettingsModal() });
+  const add = (id, item) => items.push({ id, ...item });
+  add("action:new-connection", { kind: "action", title: t("palette.action_new_connection"), icon: PALETTE_ICONS.action, run: () => openNewConnectionModal() });
+  add("action:new-template", { kind: "action", title: t("palette.action_new_template"), icon: PALETTE_ICONS.template, run: () => openNewConnectionFromTemplate() });
+  add("action:local-shell", { kind: "action", title: t("palette.action_local_shell"), icon: PALETTE_ICONS.action, run: () => openLocalShell() });
+  add("action:preferences", { kind: "action", title: t("palette.action_preferences"), icon: PALETTE_ICONS.action, run: () => openSettingsModal() });
+  // Acciones contextuales: solo cuando aplican a la sesión/perfil activos.
+  if (activeSftpSession()) {
+    add("action:toggle-sftp", { kind: "action", title: t("palette.action_toggle_sftp"), icon: PALETTE_ICONS.sftp, run: () => toggleActiveSftpPanel() });
+  }
+  if ((activeSessionId && sessions.get(activeSessionId)?.profileId) || activeProfileId()) {
+    add("action:session-note", { kind: "action", title: t("palette.action_session_note"), icon: PALETTE_ICONS.note, run: () => openActiveSessionNote() });
+  }
+  add("action:tunnels", { kind: "action", title: t("palette.action_tunnels"), icon: PALETTE_ICONS.tunnel, run: () => openGlobalTunnelsModal() });
+  add("action:scripts", { kind: "action", title: t("palette.action_scripts"), icon: PALETTE_ICONS.script, run: () => openScriptsModal() });
   for (const p of profiles) {
     const sub = `${p.username ? p.username + "@" : ""}${p.host || ""}`;
-    items.push({ kind: "profile", title: p.name || p.host || "", sub, icon: PALETTE_ICONS.profile, run: () => connectProfile(p.id) });
+    add(`profile:${p.id}`, { kind: "profile", title: p.name || p.host || "", sub, icon: PALETTE_ICONS.profile, run: () => connectProfile(p.id) });
   }
   for (const s of loadSnippets()) {
-    items.push({ kind: "snippet", title: s.name, sub: [s.group, s.description].filter(Boolean).join(" · "), icon: PALETTE_ICONS.snippet, run: () => runSnippet(s) });
+    add(`snippet:${s.id}`, { kind: "snippet", title: s.name, sub: [s.group, s.description].filter(Boolean).join(" · "), icon: PALETTE_ICONS.snippet, run: () => runSnippet(s) });
   }
   for (const c of loadLocalCommands()) {
-    items.push({ kind: "localcmd", title: c.name, sub: [localCommandTypeLabel(c.type), c.description].filter(Boolean).join(" · "), icon: PALETTE_ICONS.localcmd, run: () => runLocalCommand(c) });
+    add(`localcmd:${c.id}`, { kind: "localcmd", title: c.name, sub: [localCommandTypeLabel(c.type), c.description].filter(Boolean).join(" · "), icon: PALETTE_ICONS.localcmd, run: () => runLocalCommand(c) });
+  }
+  for (const s of scriptsCache) {
+    const n = s.steps?.length || 0;
+    const steps = n === 1 ? t("scripts.list_steps_one") : t("scripts.list_steps", { n });
+    add(`script:${s.id}`, { kind: "script", title: s.name, sub: [steps, s.description].filter(Boolean).join(" · "), icon: PALETTE_ICONS.script, run: () => beginScriptRun(s) });
+  }
+  for (const [pid, summary] of notesIndex) {
+    const p = profiles.find((x) => x.id === pid);
+    if (!p) continue;
+    add(`note:${pid}`, { kind: "note", title: summary.title || p.name || p.host || "", sub: p.name || p.host || "", icon: PALETTE_ICONS.note, run: () => openNoteEditor(pid) });
   }
   return items;
 }
@@ -20691,18 +20750,38 @@ function paletteScore(q, text) {
   return 200 - needle.length;
 }
 
+/** Refleja la opción activa en el input (`aria-activedescendant`). */
+function paletteSyncActiveDescendant() {
+  const input = document.getElementById("command-palette-input");
+  if (!input) return;
+  if (_paletteFiltered.length) input.setAttribute("aria-activedescendant", `palette-opt-${_paletteActive}`);
+  else input.removeAttribute("aria-activedescendant");
+}
+
 function renderPaletteResults(query) {
   const list = document.getElementById("command-palette-list");
   if (!list) return;
   const q = (query || "").trim();
+  const usage = loadPaletteUsage();
   let results;
   if (!q) {
-    results = _paletteItems.slice(0, 50);
-  } else {
+    // Sin consulta: los usados recientemente/con frecuencia primero,
+    // el resto en su orden natural (estable).
     results = _paletteItems
-      .map((it) => ({ it, score: Math.max(paletteScore(q, it.title), paletteScore(q, it.sub || "") - 50) }))
+      .map((it, i) => ({ it, i, f: paletteFrecency(usage[it.id]) }))
+      .sort((a, b) => (b.f - a.f) || (a.i - b.i))
+      .slice(0, 50)
+      .map((x) => x.it);
+  } else {
+    // Con consulta manda el texto; la frecencia solo desempata (tope +20).
+    results = _paletteItems
+      .map((it) => ({
+        it,
+        score: Math.max(paletteScore(q, it.title), paletteScore(q, it.sub || "") - 50),
+        f: Math.min(paletteFrecency(usage[it.id]), 20),
+      }))
       .filter((x) => x.score > -1)
-      .sort((a, b) => b.score - a.score)
+      .sort((a, b) => (b.score + b.f) - (a.score + a.f))
       .slice(0, 50)
       .map((x) => x.it);
   }
@@ -20710,10 +20789,11 @@ function renderPaletteResults(query) {
   if (_paletteActive >= results.length) _paletteActive = 0;
   if (!results.length) {
     list.innerHTML = `<div class="palette-empty">${escHtml(t("palette.empty"))}</div>`;
+    paletteSyncActiveDescendant();
     return;
   }
   list.innerHTML = results.map((it, i) => `
-    <div class="palette-item${i === _paletteActive ? " active" : ""}" data-palette-idx="${i}" role="option">
+    <div class="palette-item${i === _paletteActive ? " active" : ""}" id="palette-opt-${i}" data-palette-idx="${i}" role="option" aria-selected="${i === _paletteActive}">
       <span class="palette-item-icon">${it.icon || ""}</span>
       <span class="palette-item-body">
         <span class="palette-item-title">${escHtml(it.title)}</span>
@@ -20721,6 +20801,7 @@ function renderPaletteResults(query) {
       </span>
       <span class="palette-item-kind">${escHtml(t("palette.kind_" + it.kind))}</span>
     </div>`).join("");
+  paletteSyncActiveDescendant();
 }
 
 function openCommandPalette() {
@@ -20730,13 +20811,24 @@ function openCommandPalette() {
   _paletteItems = buildPaletteSources();
   _paletteActive = 0;
   input.value = "";
+  input.setAttribute("aria-expanded", "true");
   overlay.classList.remove("hidden");
   renderPaletteResults("");
   setTimeout(() => input.focus(), 0);
+  // Scripts y notas viven en el backend: refresco perezoso sin bloquear la
+  // apertura, re-renderizando con la consulta que haya escrita si sigue abierta.
+  Promise.allSettled([loadScripts(), refreshNotesIndex()]).then(() => {
+    if (overlay.classList.contains("hidden")) return;
+    _paletteItems = buildPaletteSources();
+    renderPaletteResults(input.value);
+  });
 }
 
 function closeCommandPalette() {
   document.getElementById("command-palette-overlay")?.classList.add("hidden");
+  const input = document.getElementById("command-palette-input");
+  input?.setAttribute("aria-expanded", "false");
+  input?.removeAttribute("aria-activedescendant");
 }
 
 function paletteMoveActive(delta) {
@@ -20745,13 +20837,16 @@ function paletteMoveActive(delta) {
   const list = document.getElementById("command-palette-list");
   list?.querySelectorAll(".palette-item").forEach((el, i) => {
     el.classList.toggle("active", i === _paletteActive);
+    el.setAttribute("aria-selected", String(i === _paletteActive));
     if (i === _paletteActive) el.scrollIntoView({ block: "nearest" });
   });
+  paletteSyncActiveDescendant();
 }
 
 function executePaletteIndex(i) {
   const item = _paletteFiltered[i];
   if (!item) return;
+  bumpPaletteUsage(item.id);
   closeCommandPalette();
   try { item.run(); } catch (err) { console.error("[palette]", err); }
 }
