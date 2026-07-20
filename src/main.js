@@ -7917,6 +7917,16 @@ function credPassphraseKey(profileId, credId) {
   return `passphrase:${profileId}:${credId}`;
 }
 
+// Claves de keyring de las credenciales del catálogo (master/secret), espejo
+// de `credentials::keyring_key` en el backend.
+function masterCredKey(id) {
+  return `master:${id}`;
+}
+
+function secretCredKey(id) {
+  return `secret:${id}`;
+}
+
 async function getStoredSecret(key) {
   return invoke("keyring_get", {
     service: KEYRING_SERVICE,
@@ -9149,6 +9159,11 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
       // lo tenga habilitado (el backend aplica el override sobre su copia local).
       sessionLogOverride: isPrivate ? false : null,
       overrides: overrides || null,
+      // Tamaño real ya medido por el fitAddon.fit() de createTerminalTab: pide
+      // el PTY con este tamaño desde el principio (si no, el remoto formatea
+      // lo que imprima nada más abrir la shell para un 80x24 fijo).
+      cols: session.terminal.cols,
+      rows: session.terminal.rows,
     });
     if (session._closing) {
       // Se cerró durante el connect: el backend ya registró la sesión, así que
@@ -10325,6 +10340,8 @@ async function reconnectSshInPlace(s) {
       // sesión aunque el perfil la tenga habilitada.
       sessionLogOverride: s.private ? false : null,
       overrides: s._overrides || null,
+      cols: s.terminal.cols,
+      rows: s.terminal.rows,
     });
     updateTabStatus(oldSessionId, "connecting");
   } catch (err) {
@@ -14244,6 +14261,17 @@ function openCredEditModal(cred = null) {
 
   overlay.classList.remove("hidden");
   nameInput.focus();
+
+  // Secreto/maestra en edición: el valor vive en el keyring, no en el
+  // catálogo, así que hay que pedirlo aparte (igual que la contraseña de un
+  // perfil). El guard evita pisar el campo si el usuario cierra o cambia de
+  // credencial mientras la petición está en vuelo.
+  if (cred && cred.kind !== "var") {
+    const key = cred.kind === "master" ? masterCredKey(cred.id) : secretCredKey(cred.id);
+    getStoredSecret(key).then((value) => {
+      if (_credEditId === cred.id && value) valueInput.value = value;
+    });
+  }
 }
 
 /**

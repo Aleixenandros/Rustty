@@ -260,6 +260,14 @@ pub struct SessionSpec {
     pub app_handle: AppHandle,
     /// Canal binario del caudal del terminal (lo crea el frontend antes del invoke).
     pub on_data: Channel<Response>,
+    /// Tamaño real del terminal en el momento de conectar (`terminal.cols/rows`
+    /// de xterm.js, ya medido por `fitAddon.fit()` antes del invoke). Se pide
+    /// como tamaño **inicial** del PTY: sin esto, `request_pty` usaba un 80x24
+    /// fijo y cualquier salida remota impresa antes de que llegara el primer
+    /// resize (MOTD, banners, comandos lanzados en el arranque de la shell)
+    /// se formateaba para un terminal mucho más estrecho del real.
+    pub cols: u32,
+    pub rows: u32,
 }
 
 pub struct SshManager {
@@ -956,7 +964,12 @@ async fn run_session(
         passphrase,
         app_handle,
         on_data,
+        cols,
+        rows,
     } = spec;
+    // Defensivo: un pane aún no medido podría mandar 0. `request_pty` con 0
+    // columnas dejaría al shell remoto sin poder formatear nada.
+    let (cols, rows) = if cols == 0 || rows == 0 { (80, 24) } else { (cols, rows) };
     // Si está activado el log de sesión, abrimos el fichero en modo append.
     let mut log_file = match &log_path {
         Some(p) => open_session_log(p).await,
@@ -1308,7 +1321,7 @@ async fn run_session(
     }
 
     if let Err(e) = channel
-        .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
+        .request_pty(true, "xterm-256color", cols, rows, 0, 0, &[])
         .await
     {
         return SessionExit::Fatal(AppError::Ssh(format!("No se pudo solicitar PTY: {e}")));

@@ -370,6 +370,12 @@ pub fn ssh_connect(
     // Overrides puntuales (usuario/puerto/bastion/auth) de «Duplicar sesión
     // con cambios». No se persisten en el perfil.
     overrides: Option<ConnectOverrides>,
+    // Tamaño real del terminal (`terminal.cols/rows`) en el momento de
+    // conectar, para pedir el PTY con ese tamaño desde el principio en vez de
+    // un 80x24 fijo. `None`/ausente (llamadores antiguos) cae al valor de
+    // siempre; `ssh_manager` también defiende contra 0.
+    cols: Option<u32>,
+    rows: Option<u32>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
@@ -402,6 +408,8 @@ pub fn ssh_connect(
                 passphrase,
                 app_handle,
                 on_data,
+                cols: cols.unwrap_or(80),
+                rows: rows.unwrap_or(24),
             },
             data_dir.0.clone(),
         )
