@@ -2,6 +2,17 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.58.1] - 2026-07-20
+
+### Corregido
+
+- **Los enlaces del terminal vuelven a comportarse como enlaces normales**.
+  Tanto las URLs impresas como texto como los enlaces OSC 8 —incluidos los que
+  ocupan varias líneas— se abren con un clic izquierdo en el navegador del
+  sistema. El clic ya no muestra el diálogo interno con «OK», y los botones del
+  ratón sobre un enlace no se reenvían al terminal como caracteres o secuencias
+  de control.
+
 ## [1.58.0] - 2026-07-20
 
 ### Corregido

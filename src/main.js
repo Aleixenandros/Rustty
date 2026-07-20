@@ -11261,7 +11261,14 @@ function openExternalUrl(url) {
  * El callback de WebLinksAddon no es async, así que la confirmación se
  * resuelve con una IIFE async desacoplada.
  */
-function handleTerminalLink(_event, uri) {
+function handleTerminalLink(event, uri) {
+  // xterm llama a `activate` también con el botón derecho. Un enlace se abre
+  // únicamente con el clic principal; el resto de botones no deben abrirlo ni
+  // acabar convertidos en secuencias de ratón dentro del PTY.
+  if (event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+
   let parsed;
   try {
     parsed = new URL(uri);
@@ -11327,6 +11334,20 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   // Crear pestaña
   createTab(sessionId, profile, initialStatus, { sftp, private: isPrivate });
 
+  // xterm tiene dos proveedores de enlaces: WebLinksAddon para URLs impresas
+  // como texto y el proveedor OSC 8 integrado. Sin `linkHandler`, los OSC 8
+  // usan window.open() y un confirm nativo, algo que no abre correctamente el
+  // navegador desde el WebView de Tauri. Ambos proveedores comparten aquí el
+  // mismo abridor y el mismo estado de hover.
+  let terminalLinkHovered = false;
+  const terminalLinkOptions = {
+    activate: handleTerminalLink,
+    hover: () => { terminalLinkHovered = true; },
+    leave: () => { terminalLinkHovered = false; },
+    // El propio handler valida el esquema antes de delegarlo al sistema.
+    allowNonHttpProtocols: true,
+  };
+
   const terminal = new Terminal({
     cursorBlink: prefs.cursorBlink,
     cursorStyle: prefs.cursorStyle,
@@ -11340,6 +11361,7 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     cursorWidth: terminalCursorWidth(),
     theme: terminalThemeForCursor(),
     allowProposedApi: true,
+    linkHandler: terminalLinkOptions,
     // Desplazamiento con la rueda: el default de xterm (1) avanza muy pocas
     // líneas por muesca y se siente "atrancado". Subimos la sensibilidad para
     // que el scroll acompañe mejor a la velocidad real del ratón; el modo
@@ -11356,9 +11378,19 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   const fitAddon = new FitAddon();
   const searchAddon = new SearchAddon();
   terminal.loadAddon(fitAddon);
-  terminal.loadAddon(new WebLinksAddon(handleTerminalLink));
+  terminal.loadAddon(new WebLinksAddon(handleTerminalLink, terminalLinkOptions));
   terminal.loadAddon(searchAddon);
   terminal.open(xtermDiv);
+  // Cuando una aplicación remota activa el seguimiento de ratón, xterm envía
+  // los botones al PTY. Sobre un enlace dejamos que el Linkifier (registrado
+  // antes en este mismo elemento) procese el gesto y detenemos después su
+  // propagación, evitando que el clic escriba secuencias de control remotas.
+  const terminalScreen = terminal.element?.querySelector(".xterm-screen");
+  const stopHoveredLinkMouseReport = (event) => {
+    if (terminalLinkHovered) event.stopPropagation();
+  };
+  terminalScreen?.addEventListener("mousedown", stopHoveredLinkMouseReport);
+  terminalScreen?.addEventListener("mouseup", stopHoveredLinkMouseReport);
   // Renderer WebGL: el backend DOM por defecto de xterm es muy costoso al pintar
   // salidas masivas (un `cat` de un log grande puede saturar el hilo de UI). El
   // addon WebGL descarga el pintado a la GPU y sube el techo de rendimiento de
@@ -11504,6 +11536,12 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   // El portapapeles externo se lee vía plugin Tauri para no depender de las
   // restricciones de activación de `navigator.clipboard` en el WebView.
   xtermDiv.addEventListener("contextmenu", (e) => {
+    // El botón derecho sobre un enlace no lo activa ni pega el portapapeles.
+    if (terminalLinkHovered) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (prefs.rightClickPaste) {
       e.preventDefault();
       e.stopPropagation();
