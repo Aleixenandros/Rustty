@@ -2,6 +2,24 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.58.0] - 2026-07-20
+
+### Corregido
+
+- **Editar una credencial maestra o secreta ya muestra su valor guardado**.
+  El campo aparecía vacío pese al icono de «ver valor», porque el catálogo de
+  credenciales nunca guarda el secreto — solo vive en el keyring del sistema —
+  y el editor no llegaba a pedirlo. Ahora lo recupera al abrir el editor, igual
+  que ya hacía el formulario de conexión con la contraseña de un perfil.
+
+### Cambiado
+
+- **Las sesiones SSH piden el tamaño real del terminal desde el primer
+  instante**, en vez de un 80×24 fijo que solo se corregía tras la primera
+  redimensión. Reduce los casos en los que un banner, un `motd` o un comando
+  lanzado nada más abrir la shell llega formateado para un terminal mucho más
+  estrecho del real.
+
 ## [1.57.0] - 2026-07-18
 
 ### Añadido

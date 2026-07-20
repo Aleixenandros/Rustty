@@ -96,6 +96,12 @@ Sí. En el panel **⇄** puedes marcar **Guardar** para persistir el túnel, o *
 
 Hasta la 1.2.x el camino SFTP era serie con buffer de 64 KiB, así que el techo de velocidad era `chunk_size / RTT` (~5 MB/s con 12-15 ms de latencia). Desde la **1.3.0** Rustty mantiene **varias peticiones SFTP en vuelo** con chunks de 256 KiB, lo que satura el ancho de banda real en lugar de quedarse limitado por la latencia. El número de peticiones en paralelo es **configurable** en **Preferencias → FTP/SFTP** (`sftpMaxConcurrent`, 4 por defecto); súbelo para más velocidad o bájalo para servidores con límite de handles (p. ej. Hetzner Storage Box).
 
+## Una URL larga aparece partida en varias líneas y no puedo hacer clic ni copiarla entera
+
+Depende de **quién** partió la línea. Si el terminal la envuelve visualmente porque no cabe en el ancho de la ventana (salto "blando"), Rustty la trata como una sola URL: se puede pulsar entera y copiarla selecciona el texto seguido, sin saltos de línea de por medio. El problema aparece cuando es el **programa remoto** quien decide insertar saltos de línea reales dentro de la URL —algunas herramientas de CLI, sobre todo flujos de login OAuth, envuelven las URLs largas "a mano" antes de imprimirlas—. En ese caso son líneas de verdad distintas para cualquier terminal, Rustty incluido: no hay forma de reconstruir la URL original a partir de fragmentos separados por saltos reales. Si te lo encuentras, la salida suele traer la URL completa igualmente (aunque partida); cópiala a mano uniendo los fragmentos, o usa la opción del programa para abrir el navegador automáticamente si la ofrece.
+
+Desde la **1.58.0**, además, Rustty pide el tamaño real de tu ventana para el pseudo-terminal remoto desde el primer instante de la conexión (antes usaba un 80×24 fijo hasta el primer redimensionado). Esto reduce los casos en los que un programa lanzado nada más conectar —un banner, un `motd`, un script de arranque— formatea su salida pensando en un terminal mucho más estrecho del real.
+
 ## ¿Por qué la sidebar cambia sola al moverme entre pestañas?
 
 Es intencional: cuando activas una pestaña asociada a un perfil, Rustty abre su workspace/carpeta en la sidebar y marca esa conexión. Así puedes ubicar rápidamente qué perfil corresponde a la sesión activa.
