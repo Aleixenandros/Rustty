@@ -926,7 +926,7 @@ pub fn decrypt(passphrase: &str, ciphertext: &[u8]) -> Result<Vec<u8>, AppError>
 
 // ─── OAuth 2.0 + PKCE ────────────────────────────────────────────────
 
-const KEYRING_SERVICE: &str = "rustty";
+use crate::keyring_scope::SERVICE as KEYRING_SERVICE;
 const OAUTH_CALLBACK_PATH: &str = "/oauth/callback";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

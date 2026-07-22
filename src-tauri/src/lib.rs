@@ -9,6 +9,7 @@ mod external_client;
 mod host_keys;
 mod ipc;
 mod keepass_manager;
+mod keyring_scope;
 mod local_command;
 mod local_shell_manager;
 mod locks;

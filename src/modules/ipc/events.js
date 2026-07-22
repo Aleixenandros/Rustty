@@ -140,9 +140,11 @@ export function eventName(kind, suffix) {
 
 /**
  * @typedef {object} RdpClosedEvent
- * @property {"cert-changed"|"error"|null} code Motivo del cierre: `null` =
- *   cierre limpio; `"cert-changed"` = el certificado del servidor no coincide
- *   con el recordado por el cliente (TOFU); `"error"` = cualquier otro fallo.
+ * @property {"cert-changed"|"no-password"|"error"|null} code Motivo del cierre:
+ *   `null` = cierre limpio; `"cert-changed"` = el certificado del servidor no
+ *   coincide con el recordado por el cliente (TOFU); `"no-password"` = el
+ *   cliente pidió credenciales que nadie podía teclear (perfil sin contraseña
+ *   guardada); `"error"` = cualquier otro fallo.
  * @property {string|null} detail Cola de salida del cliente externo (solo
  *   Linux) con las líneas de error, para diagnóstico.
  */

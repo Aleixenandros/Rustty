@@ -2,6 +2,32 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.59.0] - 2026-07-22
+
+### Corregido
+
+- **Las conexiones RDP vuelven a funcionar en Linux con FreeRDP 3**. La sesión
+  moría nada más empezar con un volcado de `tcgetattr()`/`tcsetattr()` y un
+  `ERRCONNECT_CONNECT_CANCELLED`: la versión 3 del cliente exige un terminal
+  real para leer la contraseña y ya no la acepta por la tubería que usaba
+  Rustty. Ahora se le entrega por el mecanismo que sí soporta, sin que el
+  secreto pase por la línea de comandos, por el entorno ni por el disco. De
+  paso, se le indica siempre el dominio —vacío incluido—, porque su ausencia
+  disparaba otra pregunta imposible de contestar.
+- **Un fallo de RDP por falta de contraseña se explica en una frase**, en vez
+  de enseñar el volcado del cliente: si el perfil no la trae guardada, el aviso
+  dice justamente eso y qué hacer.
+
+### Cambiado
+
+- **El acceso al gestor de credenciales del sistema queda acotado a lo que
+  Rustty gestiona**. Las peticiones que llegan desde la interfaz ya no pueden
+  nombrar un servicio ajeno ni una entrada fuera de las categorías propias de
+  la aplicación (contraseñas y passphrases de perfiles, credenciales del
+  catálogo y secretos de la sincronización). Es una barrera preventiva: ante un
+  fallo futuro en la capa visual, el daño no alcanza a las credenciales que
+  otras aplicaciones guardan en el mismo llavero.
+
 ## [1.58.1] - 2026-07-20
 
 ### Corregido

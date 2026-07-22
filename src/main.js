@@ -9269,6 +9269,8 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
     const info = /** @type {{code?: string|null, detail?: string|null}} */ (event?.payload) || {};
     if (info.code === "cert-changed") {
       toast(t("toast.rdp_cert_changed", { name: profile.name }), "error", 12000);
+    } else if (info.code === "no-password") {
+      toast(t("toast.rdp_no_password", { name: profile.name }), "error", 12000);
     } else if (info.code) {
       const detail = info.detail ? `\n${info.detail}` : "";
       toast(t("toast.rdp_failed", { name: profile.name }) + detail, "error", 10000);

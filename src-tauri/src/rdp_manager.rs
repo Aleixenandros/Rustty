@@ -36,8 +36,10 @@ struct SpawnedRdpClient {
 
 /// Payload de `rdp-closed-{id}`: motivo del cierre para la UI.
 /// `code = None` es un cierre limpio; `"cert-changed"` el certificado del
-/// servidor cambió respecto al recordado por el cliente; `"error"` cualquier
-/// otra terminación con fallo (el detalle lleva la cola de salida del cliente).
+/// servidor cambió respecto al recordado por el cliente; `"no-password"` el
+/// cliente se quedó esperando unas credenciales que nadie podía teclear;
+/// `"error"` cualquier otra terminación con fallo (el detalle lleva la cola de
+/// salida del cliente).
 #[derive(Clone, serde::Serialize)]
 struct RdpClosePayload {
     code: Option<&'static str>,
@@ -232,6 +234,8 @@ fn close_payload(
         .unwrap_or_default();
     let code = if is_cert_changed(&tail) {
         "cert-changed"
+    } else if is_credential_prompt_failure(&tail) {
+        "no-password"
     } else {
         "error"
     };
@@ -252,6 +256,21 @@ fn is_cert_changed(tail: &str) -> bool {
         || lower.contains("not trusted")
         || lower.contains("identification has changed");
     cert && changed
+}
+
+/// El cliente abortó porque necesitaba que alguien tecleara una credencial y no
+/// había terminal donde hacerlo. Le pasa a FreeRDP cuando el perfil no trae
+/// contraseña: intenta leerla por el terminal, el `tcgetattr` falla sobre la
+/// tubería («Inappropriate ioctl for device», con la errata `termianl` del
+/// propio FreeRDP) y cancela la conexión. Sin traducirlo, la UI enseñaría ese
+/// volcado en vez de decir lo único accionable: guarda la contraseña en el
+/// perfil.
+fn is_credential_prompt_failure(tail: &str) -> bool {
+    let lower = tail.to_lowercase();
+    let sin_terminal = lower.contains("termianl_nonblock")
+        || lower.contains("terminal_nonblock")
+        || (lower.contains("passphrase") && lower.contains("tcgetattr"));
+    sin_terminal && lower.contains("errconnect_connect_cancelled")
 }
 
 /// Extrae las líneas útiles de la cola de salida del cliente: las marcadas
@@ -294,6 +313,67 @@ fn extract_error_detail(tail: &str) -> Option<String> {
         None
     } else {
         Some(detail)
+    }
+}
+
+// ─── Contraseña para FreeRDP 3 (`FREERDP_ASKPASS`) ──────────────────────────
+
+/// Descriptor con el que el cliente hereda la contraseña. El 3 es el primero
+/// libre tras stdin/stdout/stderr, que `std` ya ha colocado cuando corre
+/// nuestro `pre_exec`.
+#[cfg(target_os = "linux")]
+const ASKPASS_FD: std::os::fd::RawFd = 3;
+
+/// Orden que FreeRDP 3 ejecuta (a través del shell) cuando necesita la
+/// contraseña: se queda con la primera línea que el programa escriba en stdout.
+/// La nuestra sale del `memfd` heredado, reabierto por `/proc/self/fd` para que
+/// el offset arranque en cero en cada invocación.
+#[cfg(target_os = "linux")]
+const ASKPASS_COMMAND: &str = "/bin/sh -c \"cat /proc/self/fd/3\"";
+
+/// Deja `secret` en un fichero anónimo en memoria (`memfd`) para pasárselo al
+/// cliente como descriptor heredado: ni disco, ni argv, ni entorno.
+#[cfg(target_os = "linux")]
+fn secret_memfd(secret: &str) -> std::io::Result<std::fs::File> {
+    use std::io::Write;
+    use std::os::fd::FromRawFd;
+
+    // MFD_CLOEXEC: por defecto el fd no sobrevive al exec; es `pre_exec` quien
+    // lo coloca a propósito en `ASKPASS_FD`.
+    let fd = unsafe { libc::memfd_create(c"rustty-rdp-pass".as_ptr(), libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `memfd_create` acaba de devolver este descriptor y nadie más lo
+    // posee, así que `File` puede adueñarse de él.
+    let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    // Sin salto de línea final: el helper escribe el secreto tal cual.
+    file.write_all(secret.as_bytes())?;
+    Ok(file)
+}
+
+/// Programa el `dup2` que deja `file` en `ASKPASS_FD` dentro del hijo.
+#[cfg(target_os = "linux")]
+fn inherit_secret_fd(cmd: &mut std::process::Command, file: &std::fs::File) {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
+
+    let raw = file.as_raw_fd();
+    // SAFETY: entre `fork` y `exec` el closure solo llama a `dup2`/`fcntl`,
+    // ambas async-signal-safe, sin asignar memoria ni tomar cerrojos.
+    unsafe {
+        cmd.pre_exec(move || {
+            if raw == ASKPASS_FD {
+                // Ya está en su sitio; solo hay que quitarle el FD_CLOEXEC.
+                if libc::fcntl(ASKPASS_FD, libc::F_SETFD, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            } else if libc::dup2(raw, ASKPASS_FD) < 0 {
+                // `dup2` deja el destino sin FD_CLOEXEC: sobrevive al exec.
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
     }
 }
 
@@ -347,7 +427,7 @@ fn acquire_windows_credential(
         None => username.to_string(),
     };
 
-    let entry = keyring::Entry::new_with_target(&target, "rustty", &user)
+    let entry = keyring::Entry::new_with_target(&target, crate::keyring_scope::SERVICE, &user)
         .map_err(|e| format!("credencial TERMSRV: {e}"))?;
 
     let mut guards = guards.lock_recover();
@@ -396,7 +476,7 @@ fn release_windows_credential(guards: &Mutex<HashMap<String, CredGuard>>, host: 
         map.remove(host);
         if delete {
             let target = format!("TERMSRV/{host}");
-            if let Ok(entry) = keyring::Entry::new_with_target(&target, "rustty", "") {
+            if let Ok(entry) = keyring::Entry::new_with_target(&target, crate::keyring_scope::SERVICE, "") {
                 let _ = entry.delete_credential();
             }
         }
@@ -434,9 +514,10 @@ fn spawn_rdp_client(
             "Cliente RDP no encontrado. Instala xfreerdp:\n  sudo dnf install freerdp  # Fedora\n  sudo apt install freerdp2-x11  # Debian/Ubuntu".to_string()
         })?;
 
-    // La contraseña se entrega por stdin, nunca por argv: un `/p:<pass>` o
-    // `-p <pass>` queda visible en `ps` / `/proc/<pid>/cmdline` mientras dura
-    // la sesión (el propio `man rdesktop` lo advierte).
+    // La contraseña se entrega por stdin o por un descriptor heredado, nunca
+    // por argv: un `/p:<pass>` o `-p <pass>` queda visible en `ps` /
+    // `/proc/<pid>/cmdline` mientras dura la sesión (el propio `man rdesktop`
+    // lo advierte).
     let secret = password.filter(|p| !p.is_empty());
 
     let mut cmd = std::process::Command::new(binary);
@@ -454,11 +535,13 @@ fn spawn_rdp_client(
     } else {
         cmd.arg(format!("/v:{host}:{port}"));
         cmd.arg(format!("/u:{username}"));
-        if let Some(d) = domain.filter(|d| !d.is_empty()) {
-            cmd.arg(format!("/d:{d}"));
-        }
+        // El dominio va **siempre**, vacío incluido: si el argumento falta,
+        // FreeRDP lo pregunta por el terminal —no por el askpass— y sin tty esa
+        // pregunta aborta la conexión antes de llegar a pedir la contraseña.
+        cmd.arg(format!("/d:{}", domain.map(str::trim).unwrap_or("")));
         if secret.is_some() {
-            cmd.arg("/from-stdin"); // lee la contraseña de stdin
+            // Solo lo entiende FreeRDP 2; la 3 usa `FREERDP_ASKPASS` (abajo).
+            cmd.arg("/from-stdin");
         }
         cmd.arg("+clipboard");
         // TOFU en vez de `/cert:ignore`: xfreerdp recuerda el certificado del
@@ -474,6 +557,23 @@ fn spawn_rdp_client(
         cmd.stdin(std::process::Stdio::piped());
     }
 
+    // FreeRDP 3 dejó de aceptar la contraseña por una tubería: `/from-stdin`
+    // exige que stdin sea un terminal —hace `tcgetattr`/`tcsetattr` para apagar
+    // el eco— y sobre un pipe falla («Inappropriate ioctl for device») y cancela
+    // la conexión: `nla_client_setup_identity: ERRCONNECT_CONNECT_CANCELLED`.
+    // La vía que sí soporta es `FREERDP_ASKPASS`, un programa que escribe la
+    // contraseña por stdout; el nuestro es un `cat` del `memfd` heredado, así el
+    // secreto sigue sin pasar por argv, entorno ni disco. Si el `memfd` falla
+    // queda el `/from-stdin` de arriba, que es lo que entiende FreeRDP 2.
+    let askpass_secret = match secret {
+        Some(pass) if binary != "rdesktop" => secret_memfd(pass).ok(),
+        _ => None,
+    };
+    if let Some(file) = &askpass_secret {
+        inherit_secret_fd(&mut cmd, file);
+        cmd.env("FREERDP_ASKPASS", ASKPASS_COMMAND);
+    }
+
     // Capturamos stdout+stderr: si el cliente muere al arrancar (certificado
     // cambiado, NLA rechazado, argumento no soportado…) esa salida es el único
     // diagnóstico disponible y viaja al frontend en `rdp-closed-*`. Antes se
@@ -484,6 +584,11 @@ fn spawn_rdp_client(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Error al lanzar {binary}: {e}"))?;
+
+    // El `memfd` tenía que seguir abierto durante el `spawn`; el hijo ya tiene
+    // su copia en `ASKPASS_FD`, así que aquí sobra y el secreto deja de estar
+    // alcanzable desde el proceso de Rustty.
+    drop(askpass_secret);
 
     if let Some(pass) = secret {
         if let Some(mut stdin) = child.stdin.take() {
@@ -800,6 +905,55 @@ The certificate for host.example.com:3389 has changed\n";
         ));
         assert!(!is_cert_changed(FREERDP_CONNECT_FAIL));
         assert!(!is_cert_changed(""));
+    }
+
+    // Cola real de un FreeRDP 3.30 al que no se le pudo dar la contraseña:
+    // intenta preguntarla por el terminal y, sin tty, cancela la conexión.
+    const FREERDP_NO_PASSWORD: &str = "\
+[20:06:58:790] [1910704:001d27b3] [ERROR][com.freerdp.utils.passphrase] - [set_termianl_nonblock]: tcgetattr() failed with Inappropriate ioctl for device\n\
+[20:06:58:790] [1910704:001d27b3] [ERROR][com.freerdp.utils.passphrase] - [set_termianl_nonblock]: tcsetattr(TCSANOW) failed with Inappropriate ioctl for device\n\
+[20:06:58:790] [1910704:001d27b3] [ERROR][com.freerdp.core] - [nla_client_setup_identity]: ERRCONNECT_CONNECT_CANCELLED [0x0002000B]\n\
+[20:06:58:790] [1910704:001d27b3] [ERROR][com.freerdp.core.transport] - [transport_connect_nla]: NLA begin failed\n";
+
+    #[test]
+    fn falta_de_credencial_no_se_confunde_con_otros_fallos() {
+        let status = std::process::Command::new("false").status().unwrap();
+        let tail = Arc::new(Mutex::new(FREERDP_NO_PASSWORD.to_string()));
+        assert_eq!(close_payload(Some(status), Some(&tail)).code, Some("no-password"));
+
+        // Un fallo de red o un certificado cambiado siguen con su propio código.
+        assert!(!is_credential_prompt_failure(FREERDP_CONNECT_FAIL));
+        assert!(!is_credential_prompt_failure(""));
+        // El `tcsetattr` suelto que FreeRDP escribe al salir, sin cancelación
+        // de por medio, no basta: eso sale también en conexiones que fueron bien.
+        assert!(!is_credential_prompt_failure(
+            "[ERROR][com.freerdp.utils.passphrase] - [set_termianl_nonblock]: tcsetattr(TCSANOW) failed"
+        ));
+    }
+
+    /// El contrato con FreeRDP 3: la orden de `FREERDP_ASKPASS`, ejecutada como
+    /// la ejecuta él (por el shell, sin stdin útil), imprime la contraseña que
+    /// dejamos en el `memfd` heredado. Si alguien cambia el descriptor, la orden
+    /// o el `pre_exec`, esto se cae aquí y no en una conexión real.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn askpass_lee_la_contrasena_del_fd_heredado() {
+        let secret = "contraseña con espacios y ñ";
+        let file = secret_memfd(secret).expect("memfd_create");
+
+        let mut cmd = std::process::Command::new("/bin/sh");
+        cmd.arg("-c").arg(ASKPASS_COMMAND);
+        cmd.stdin(std::process::Stdio::null());
+        inherit_secret_fd(&mut cmd, &file);
+
+        let out = cmd.output().expect("ejecutar el helper de askpass");
+        assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), secret);
+
+        // Reabrirlo por `/proc/self/fd` deja el offset a cero: una segunda
+        // petición de FreeRDP obtiene la misma contraseña, no una cadena vacía.
+        let out = cmd.output().expect("segunda invocación");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), secret);
     }
 
     #[test]

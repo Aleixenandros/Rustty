@@ -15,7 +15,7 @@ use crate::host_keys;
 use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
 use crate::ssh_manager::{authenticate_handle, legacy_preferred, parse_jump_spec};
 
-const KEYRING_SERVICE: &str = "rustty";
+use crate::keyring_scope::SERVICE as KEYRING_SERVICE;
 
 #[derive(Debug)]
 enum CliCommand {

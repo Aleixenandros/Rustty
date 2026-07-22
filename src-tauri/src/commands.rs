@@ -11,6 +11,7 @@ use crate::credentials::{self, CredentialKind, CredentialMeta, CredentialStore};
 use crate::external_client::{TelnetManager, VncManager};
 use crate::host_keys::fingerprint_sha256;
 use crate::keepass_manager;
+use crate::keyring_scope;
 use crate::local_command::{self, LocalCommandOutput, LocalCommandRegistry};
 use crate::local_shell_manager::LocalShellManager;
 use crate::notes::{NoteDoc, NoteSummary, NotesManager};
@@ -144,7 +145,7 @@ pub fn delete_profiles(state: State<ProfileManager>, ids: Vec<String>) -> Result
 
     // Borrado best-effort: una entrada inexistente no es un error real.
     for key in keyring_keys {
-        if let Ok(entry) = keyring::Entry::new("rustty", &key) {
+        if let Ok(entry) = keyring::Entry::new(keyring_scope::SERVICE, &key) {
             match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => {}
                 Err(e) => log::warn!("keyring: no se pudo borrar {key}: {e}"),
@@ -617,7 +618,7 @@ pub fn get_profile_password(
     }
 
     // 2) keyring (si el usuario guardó la contraseña al crear el perfil)
-    let entry = keyring::Entry::new("rustty", &keyring_key).map_err(|e| e.to_string())?;
+    let entry = keyring::Entry::new(keyring_scope::SERVICE, &keyring_key).map_err(|e| e.to_string())?;
     match entry.get_password() {
         Ok(p) => Ok(Some(p)),
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -1292,17 +1293,18 @@ pub fn local_path_join(base: String, name: String) -> Result<String, String> {
 // ─── Comandos de keyring ──────────────────────────────────────────────────────
 
 /// Guarda una contraseña/passphrase en el gestor de credenciales del SO.
-/// `service` identifica la aplicación, `key` identifica la entrada concreta.
+/// `service` y `key` los manda el renderer, así que pasan por la allowlist de
+/// [`crate::keyring_scope`]: servicio fijo y namespace conocido.
 #[tauri::command]
 pub fn keyring_set(service: String, key: String, secret: String) -> Result<(), String> {
-    let entry = keyring::Entry::new(&service, &key).map_err(|e| e.to_string())?;
+    let entry = keyring_scope::entry(&service, &key)?;
     entry.set_password(&secret).map_err(|e| e.to_string())
 }
 
 /// Recupera una contraseña del keyring. Devuelve None si no existe entrada.
 #[tauri::command]
 pub fn keyring_get(service: String, key: String) -> Result<Option<String>, String> {
-    let entry = keyring::Entry::new(&service, &key).map_err(|e| e.to_string())?;
+    let entry = keyring_scope::entry(&service, &key)?;
     match entry.get_password() {
         Ok(p) => {
             #[cfg(target_os = "linux")]
@@ -1321,7 +1323,7 @@ pub fn keyring_get(service: String, key: String) -> Result<Option<String>, Strin
 /// Elimina una entrada del keyring
 #[tauri::command]
 pub fn keyring_delete(service: String, key: String) -> Result<(), String> {
-    let entry = keyring::Entry::new(&service, &key).map_err(|e| e.to_string())?;
+    let entry = keyring_scope::entry(&service, &key)?;
     entry.delete_credential().map_err(|e| e.to_string())
 }
 
@@ -2346,7 +2348,7 @@ pub fn template_asks(
     }
 
     // Leemos la contraseña guardada en el keyring (si la hay) para escanearla.
-    let stored = keyring::Entry::new("rustty", &format!("password:{}", profile.id))
+    let stored = keyring::Entry::new(keyring_scope::SERVICE, &format!("password:{}", profile.id))
         .ok()
         .and_then(|e| e.get_password().ok());
     let Some(pw) = stored else {
@@ -2597,7 +2599,7 @@ fn resolve_connection_credentials(
     // Contraseña propia guardada en el keyring (solo origen Own sin KeePass);
     // los orígenes Master/KeePass los resuelve `resolve_profile_password`.
     let stored_pw = if matches!(profile.password_source, PasswordSource::Own) && !has_keepass {
-        keyring::Entry::new("rustty", &format!("password:{}", profile.id))
+        keyring::Entry::new(keyring_scope::SERVICE, &format!("password:{}", profile.id))
             .ok()
             .and_then(|e| e.get_password().ok())
     } else {
@@ -2606,7 +2608,7 @@ fn resolve_connection_credentials(
     let password = resolve_profile_password(profile, store, stored_pw, Some(params.clone()))?;
 
     let passphrase = if profile.auth_type == AuthType::PublicKey {
-        keyring::Entry::new("rustty", &format!("passphrase:{}", profile.id))
+        keyring::Entry::new(keyring_scope::SERVICE, &format!("passphrase:{}", profile.id))
             .ok()
             .and_then(|e| e.get_password().ok())
     } else {

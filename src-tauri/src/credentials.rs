@@ -19,8 +19,7 @@ use crate::profiles::ConnectionProfile;
 use crate::store_file;
 use crate::subst::{InternalVar, Resolver, SubstContext};
 
-/// Servicio usado para todas las entradas de keyring de Rustty.
-const KEYRING_SERVICE: &str = "rustty";
+use crate::keyring_scope::SERVICE as KEYRING_SERVICE;
 
 /// Tipo de credencial del catálogo.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
