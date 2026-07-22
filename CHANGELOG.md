@@ -2,6 +2,32 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.60.0] - 2026-07-22
+
+### Añadido
+
+- **La ventana del escritorio remoto ya no está clavada a un tamaño**. Las
+  sesiones RDP abren en una ventana redimensionable: se puede maximizar y
+  arrastrar, y el escritorio remoto sigue el tamaño. También se puede pedir
+  pantalla completa o que ocupe el área de trabajo del monitor. El valor por
+  defecto está en Preferencias → Sistema y cada perfil puede llevar el suyo. Los
+  servidores anteriores a Windows 8 / Server 2012 no admiten ese ajuste: para
+  ellos queda la opción «Tamaño fijo», que es el comportamiento de siempre.
+- **Una sesión RDP, VNC o Telnet cerrada ofrece reconectar**, además de cerrar
+  la pestaña. La reconexión reutiliza la misma pestaña, así que conserva su
+  sitio en la barra y el panel dividido donde estuviera.
+- **Atrás, adelante y ruta en migas en el panel de ficheros**. Cada lado (local
+  y remoto) lleva su propio historial, independiente del otro. La ruta se
+  muestra como segmentos clicables: pulsa cualquiera para ir a esa carpeta, o
+  `Ctrl+L` para escribirla a mano con el autocompletado de siempre. Refrescar no
+  llena el historial de repeticiones, y una carpeta que deja de existir se
+  retira de él en vez de hacer que Atrás falle una y otra vez.
+
+### Cambiado
+
+- Actualizadas las dependencias de `tokio`, `serde`, `async-trait`,
+  `tauri-plugin-dialog`, `vite` y `eslint-plugin-jsdoc`.
+
 ## [1.59.0] - 2026-07-22
 
 ### Corregido

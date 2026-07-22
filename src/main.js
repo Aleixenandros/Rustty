@@ -30,6 +30,16 @@ import {
   applyTranslations,
 } from "./i18n.js";
 import { renderMarkdownMinimal, toggleTaskInBody } from "./modules/markdown.js";
+import {
+  canGoBack as canGoBackPath,
+  canGoForward as canGoForwardPath,
+  createPathHistory,
+  dropPath,
+  goBack as goBackPath,
+  goForward as goForwardPath,
+  pathSegments,
+  pushPath,
+} from "./modules/path-history.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
@@ -15802,10 +15812,15 @@ function buildSftpPanel(sessionId) {
     <div class="sftp-side sftp-side-local" data-side="local">
       <div class="sftp-side-title">Local</div>
       <div class="sftp-toolbar">
+        <button class="sftp-nav-btn" data-sftp-nav="back" data-side="local" title="${escHtml(t("sftp_nav.back"))}" aria-label="${escHtml(t("sftp_nav.back"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-left"/></svg></button>
+        <button class="sftp-nav-btn" data-sftp-nav="forward" data-side="local" title="${escHtml(t("sftp_nav.forward"))}" aria-label="${escHtml(t("sftp_nav.forward"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="up" data-side="local" title="Directorio padre"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="home" data-side="local" title="Inicio"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="local" title="Refrescar">⟳</button>
-        <input class="sftp-path" data-side="local" type="text" spellcheck="false" />
+        <div class="sftp-path-wrap" data-side="local">
+          <nav class="sftp-breadcrumb" data-side="local" aria-label="${escHtml(t("sftp_nav.breadcrumb_label"))}"></nav>
+          <input class="sftp-path hidden" data-side="local" type="text" spellcheck="false" />
+        </div>
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="local" title="Nueva carpeta" aria-label="Nueva carpeta">${SFTP_ICON_FOLDER_PLUS}</button>
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="local" title="Nuevo archivo" aria-label="Nuevo archivo">${SFTP_ICON_FILE_PLUS}</button>
         <button class="sftp-nav-btn sftp-search-toggle" data-sftp-act="search-toggle" data-side="local" title="${escHtml(t("sftp_search.toggle_title"))}" aria-label="${escHtml(t("sftp_search.toggle_title"))}" aria-expanded="false">${SFTP_ICON_SEARCH}</button>
@@ -15841,6 +15856,8 @@ function buildSftpPanel(sessionId) {
         <span class="sftp-sudo-badge hidden" data-sftp-sudo-badge title="Sesión SFTP con privilegios elevados (sudo)">sudo</span>
       </div>
       <div class="sftp-toolbar">
+        <button class="sftp-nav-btn" data-sftp-nav="back" data-side="remote" title="${escHtml(t("sftp_nav.back"))}" aria-label="${escHtml(t("sftp_nav.back"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-left"/></svg></button>
+        <button class="sftp-nav-btn" data-sftp-nav="forward" data-side="remote" title="${escHtml(t("sftp_nav.forward"))}" aria-label="${escHtml(t("sftp_nav.forward"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="up" data-side="remote" title="Directorio padre"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="home" data-side="remote" title="Inicio"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="remote" title="Refrescar">⟳</button>
@@ -15848,7 +15865,10 @@ function buildSftpPanel(sessionId) {
                 title="Seguir el cwd del terminal (OSC 7)">CWD</button>
         <button class="sftp-nav-btn sftp-sudo-btn" data-sftp-nav="sudo"
                 title="Reconectar SFTP elevado (sudo -n sftp-server). Requiere NOPASSWD en /etc/sudoers">sudo</button>
-        <input class="sftp-path" data-side="remote" type="text" spellcheck="false" />
+        <div class="sftp-path-wrap" data-side="remote">
+          <nav class="sftp-breadcrumb" data-side="remote" aria-label="${escHtml(t("sftp_nav.breadcrumb_label"))}"></nav>
+          <input class="sftp-path hidden" data-side="remote" type="text" spellcheck="false" />
+        </div>
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="remote" title="Nueva carpeta" aria-label="Nueva carpeta">${SFTP_ICON_FOLDER_PLUS}</button>
         <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="remote" title="Nuevo archivo" aria-label="Nuevo archivo">${SFTP_ICON_FILE_PLUS}</button>
         <button class="sftp-nav-btn sftp-search-toggle" data-sftp-act="search-toggle" data-side="remote" title="${escHtml(t("sftp_search.toggle_title"))}" aria-label="${escHtml(t("sftp_search.toggle_title"))}" aria-expanded="false">${SFTP_ICON_SEARCH}</button>
@@ -15908,6 +15928,10 @@ function buildSftpPanel(sessionId) {
       }
       if (nav === "sudo") {
         toggleSftpElevated(sessionId);
+        return;
+      }
+      if (nav === "back" || nav === "forward") {
+        navigateSftpHistory(sessionId, side, nav);
         return;
       }
       if (side === "local") {
@@ -15972,6 +15996,45 @@ function buildSftpPanel(sessionId) {
 
   panel.querySelectorAll(".sftp-path").forEach((input) => {
     setupSftpPathAutocomplete(panel, input, sessionId);
+    // Al salir del input sin confirmar, vuelven las migas: dejarlo abierto
+    // escondería la ruta navegable sin que el usuario haya pedido editarla.
+    input.addEventListener("blur", () => {
+      // Diferido: si el foco se fue a una sugerencia del autocompletado, esa
+      // interacción todavía necesita el input en pie.
+      setTimeout(() => {
+        if (document.activeElement !== input) {
+          toggleSftpPathEditor(sessionId, input.dataset.side, false);
+        }
+      }, 150);
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        toggleSftpPathEditor(sessionId, input.dataset.side, false);
+      }
+    });
+  });
+
+  // Migas: cada segmento abre su propia ruta. Ctrl+L (o un clic en el hueco de
+  // la barra) pasa al input editable, como en cualquier explorador.
+  panel.querySelectorAll(".sftp-breadcrumb").forEach((nav) => {
+    nav.addEventListener("click", (e) => {
+      const crumb = e.target.closest(".sftp-crumb");
+      if (!crumb) {
+        toggleSftpPathEditor(sessionId, nav.dataset.side, true);
+        return;
+      }
+      const path = crumb.dataset.path;
+      if (nav.dataset.side === "local") navigateSftpLocal(sessionId, path);
+      else navigateSftpRemote(sessionId, path);
+    });
+  });
+
+  panel.addEventListener("keydown", (e) => {
+    if (!e.ctrlKey || e.key.toLowerCase() !== "l" || e.shiftKey || e.altKey) return;
+    // El lado que edita es aquel donde está el foco; sin foco claro, el remoto.
+    const side = e.target.closest?.("[data-side]")?.dataset.side || "remote";
+    e.preventDefault();
+    toggleSftpPathEditor(sessionId, side, true);
   });
 
   panel.querySelectorAll(".sftp-xfer-btn").forEach((btn) => {
@@ -16001,7 +16064,12 @@ function localParentPath(p) {
   return p.slice(0, idx) || "/";
 }
 
-async function navigateSftpRemote(sessionId, path) {
+/**
+ * Abre `path` en el lado remoto. `record: false` lo usa la propia navegación por
+ * historial: volver Atrás no debe apilar una entrada nueva, o el botón Adelante
+ * nunca llegaría a activarse.
+ */
+async function navigateSftpRemote(sessionId, path, { record = true } = {}) {
   const s = sessions.get(sessionId);
   if (!s?.sftp?.sftpSessionId) return;
   const panel = s.sftp.panel;
@@ -16015,7 +16083,8 @@ async function navigateSftpRemote(sessionId, path) {
       path,
     });
     s.sftp.cwd = path;
-    panel.querySelector('.sftp-path[data-side="remote"]').value = path;
+    recordSftpPath(s, "remote", path, record);
+    setSftpPathDisplay(sessionId, "remote", path);
     resetSftpSearch(sessionId, "remote");
     renderSftpFiles(sessionId, "remote", entries);
     clearSftpStatus(panel);
@@ -16037,13 +16106,16 @@ async function navigateSftpRemote(sessionId, path) {
       detail: `${path}: ${msg}`,
     });
     filesDiv.innerHTML = `<div class="sftp-empty error">Error: ${escHtml(msg)}</div>`;
+    // Si no se puede listar, esa ruta no debe quedar en el historial: el botón
+    // Atrás volvería a estrellarse contra ella una y otra vez.
+    forgetSftpPath(sessionId, "remote", path);
   }
 }
 
 // Alias para preservar llamadas antiguas.
 const navigateSftp = navigateSftpRemote;
 
-async function navigateSftpLocal(sessionId, path) {
+async function navigateSftpLocal(sessionId, path, { record = true } = {}) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
   const panel = s.sftp.panel;
@@ -16052,7 +16124,8 @@ async function navigateSftpLocal(sessionId, path) {
   try {
     const entries = await invoke("local_list_dir", { path });
     s.sftp.localCwd = path;
-    panel.querySelector('.sftp-path[data-side="local"]').value = path;
+    recordSftpPath(s, "local", path, record);
+    setSftpPathDisplay(sessionId, "local", path);
     resetSftpSearch(sessionId, "local");
     renderSftpFiles(sessionId, "local", entries);
   } catch (err) {
@@ -16062,6 +16135,90 @@ async function navigateSftpLocal(sessionId, path) {
       detail: `${path}: ${String(err)}`,
     });
     filesDiv.innerHTML = `<div class="sftp-empty error">Error: ${escHtml(String(err))}</div>`;
+    forgetSftpPath(sessionId, "local", path);
+  }
+}
+
+// ─── Historial y migas de navegación del panel SFTP ─────────────────────────
+
+/** Historial del lado pedido, creándolo la primera vez. */
+function sftpHistory(s, side) {
+  s.sftp.history = s.sftp.history || { local: createPathHistory(), remote: createPathHistory() };
+  return s.sftp.history[side];
+}
+
+/** Apunta una ruta recién abierta y refresca los botones Atrás/Adelante. */
+function recordSftpPath(s, side, path, record) {
+  if (record) s.sftp.history[side] = pushPath(sftpHistory(s, side), path);
+  updateSftpNavButtons(s.sftp.panel, s, side);
+}
+
+/** Saca del historial una ruta que falló al abrirse. */
+function forgetSftpPath(sessionId, side, path) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  s.sftp.history[side] = dropPath(sftpHistory(s, side), path);
+  updateSftpNavButtons(s.sftp.panel, s, side);
+}
+
+/** Activa o desactiva los botones según haya sitio a donde ir. */
+function updateSftpNavButtons(panel, s, side) {
+  const h = sftpHistory(s, side);
+  const back = panel.querySelector(`[data-sftp-nav="back"][data-side="${side}"]`);
+  const fwd = panel.querySelector(`[data-sftp-nav="forward"][data-side="${side}"]`);
+  if (back) back.disabled = !canGoBackPath(h);
+  if (fwd) fwd.disabled = !canGoForwardPath(h);
+}
+
+/** Va un paso atrás o adelante en el historial del lado pedido. */
+function navigateSftpHistory(sessionId, side, direction) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const move = direction === "back" ? goBackPath : goForwardPath;
+  const { history, path } = move(sftpHistory(s, side));
+  if (!path) return;
+  s.sftp.history[side] = history;
+  // `record: false`: este movimiento navega **por** el historial, no lo amplía.
+  if (side === "local") navigateSftpLocal(sessionId, path, { record: false });
+  else navigateSftpRemote(sessionId, path, { record: false });
+}
+
+/**
+ * Pinta la ruta actual como migas clicables y mantiene sincronizado el input
+ * editable que hay debajo (el que se muestra con Ctrl+L).
+ */
+function setSftpPathDisplay(sessionId, side, path) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const panel = s.sftp.panel;
+  const input = panel.querySelector(`.sftp-path[data-side="${side}"]`);
+  if (input) input.value = path;
+  const nav = panel.querySelector(`.sftp-breadcrumb[data-side="${side}"]`);
+  if (!nav) return;
+  nav.innerHTML = pathSegments(path)
+    .map(
+      (seg) =>
+        `<button type="button" class="sftp-crumb" data-side="${side}" data-path="${escHtml(seg.path)}">${escHtml(seg.label)}</button>`
+    )
+    .join('<span class="sftp-crumb-sep" aria-hidden="true">/</span>');
+}
+
+/**
+ * Alterna entre las migas y el input editable. Ctrl+L es el atajo que usan los
+ * exploradores y los navegadores para lo mismo: «déjame escribir la ruta».
+ */
+function toggleSftpPathEditor(sessionId, side, editing) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const panel = s.sftp.panel;
+  const input = panel.querySelector(`.sftp-path[data-side="${side}"]`);
+  const nav = panel.querySelector(`.sftp-breadcrumb[data-side="${side}"]`);
+  if (!input || !nav) return;
+  input.classList.toggle("hidden", !editing);
+  nav.classList.toggle("hidden", editing);
+  if (editing) {
+    input.focus();
+    input.select();
   }
 }
 

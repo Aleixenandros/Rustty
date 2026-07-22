@@ -1493,6 +1493,11 @@ export const DICTIONARIES = {
       symlinks_skipped: "{n} enlaces simbólicos omitidos (no se copian)",
       view_log: "Ver log",
     },
+    sftp_nav: {
+      back: "Atrás",
+      forward: "Adelante",
+      breadcrumb_label: "Ruta actual",
+    },
     sftp_search: {
       placeholder: "Buscar por nombre…",
       recursive: "Recursiva",
@@ -2982,6 +2987,11 @@ export const DICTIONARIES = {
     sftp: {
       symlinks_skipped: "{n} symbolic links skipped (not copied)",
       view_log: "View log",
+    },
+    sftp_nav: {
+      back: "Back",
+      forward: "Forward",
+      breadcrumb_label: "Current path",
     },
     sftp_search: {
       placeholder: "Search by name…",
@@ -4473,6 +4483,11 @@ export const DICTIONARIES = {
       symlinks_skipped: "{n} liens symboliques ignorés (non copiés)",
       view_log: "Voir le journal",
     },
+    sftp_nav: {
+      back: "Précédent",
+      forward: "Suivant",
+      breadcrumb_label: "Chemin actuel",
+    },
     sftp_search: {
       placeholder: "Rechercher par nom…",
       recursive: "Récursive",
@@ -5963,6 +5978,11 @@ export const DICTIONARIES = {
       symlinks_skipped: "{n} ligações simbólicas ignoradas (não são copiadas)",
       view_log: "Ver registo",
     },
+    sftp_nav: {
+      back: "Anterior",
+      forward: "Seguinte",
+      breadcrumb_label: "Caminho atual",
+    },
     sftp_search: {
       placeholder: "Procurar por nome…",
       recursive: "Recursiva",
@@ -7452,6 +7472,11 @@ export const DICTIONARIES = {
     sftp: {
       symlinks_skipped: "{n} symbolische Links übersprungen (werden nicht kopiert)",
       view_log: "Protokoll ansehen",
+    },
+    sftp_nav: {
+      back: "Zurück",
+      forward: "Vorwärts",
+      breadcrumb_label: "Aktueller Pfad",
     },
     sftp_search: {
       placeholder: "Nach Name suchen…",

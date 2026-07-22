@@ -6637,6 +6637,69 @@ body.sftp-panel-resizing {
   transform: scaleX(-1);
 }
 
+/* Contenedor de la ruta: las migas y el input editable ocupan el mismo hueco y
+   se alternan (Ctrl+L o clic en el fondo de la barra). */
+.sftp-path-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.sftp-breadcrumb {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--base);
+  border: 1px solid var(--surface0);
+  border-radius: 4px;
+  padding: 3px 6px;
+  cursor: text;
+}
+
+.sftp-breadcrumb::-webkit-scrollbar {
+  display: none;
+}
+
+.sftp-crumb {
+  flex: 0 0 auto;
+  background: none;
+  border: 0;
+  color: var(--subtext1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sftp-crumb:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+.sftp-crumb:focus-visible {
+  outline: 1px solid var(--blue);
+  outline-offset: -1px;
+}
+
+/* El último segmento es la carpeta actual: se destaca sin depender del color. */
+.sftp-crumb:last-child {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sftp-crumb-sep {
+  flex: 0 0 auto;
+  color: var(--overlay0);
+  font-size: 11px;
+  user-select: none;
+}
+
 .sftp-path {
   flex: 1;
   background: var(--base);

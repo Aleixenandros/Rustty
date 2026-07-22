@@ -15,12 +15,19 @@ El panel tiene una **cabecera superior común** a ambos lados con el botón de c
 
 Cada columna tiene su propia toolbar con:
 
-- Ruta editable.
+- ← / → atrás y adelante en el historial de esa columna.
 - ↑ subir un nivel.
 - ⌂ ir al home.
 - ⟳ refrescar.
+- La ruta actual, como migas clicables.
 - Nueva carpeta (icono de carpeta con «+»).
 - Nuevo archivo (icono de documento con «+»).
+
+### Historial y migas
+
+Cada lado lleva **su propio historial**: atrás y adelante en el panel local no mueven el remoto, ni al revés. Refrescar la carpeta actual no añade entradas, y si una carpeta deja de existir (un USB desconectado, permisos retirados) se retira del historial para que el botón Atrás no vuelva a estrellarse contra ella.
+
+La ruta se muestra como **migas clicables**: pulsa cualquier segmento para ir a esa carpeta. Para escribir una ruta a mano, pulsa **Ctrl+L** o haz clic en el hueco de la barra: aparece el campo de texto con su autocompletado. `Esc` o quitar el foco devuelven las migas.
 
 Puedes elegir en qué lado se muestra el panel remoto (izquierda o derecha) desde **Preferencias → FTP/SFTP**; el local queda en el lado opuesto.
 

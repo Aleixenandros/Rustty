@@ -76,6 +76,8 @@ La cabecera de la barra lateral tiene dos iconos junto al logo:
 
 Con una conexión seleccionada, **F2** la renombra al vuelo (lo mismo está disponible desde su menú contextual con **Renombrar conexión**). En el panel SFTP, **F2** renombra el archivo o carpeta seleccionados. F2 es contextual y no aparece en la lista de atajos configurables.
 
+En el panel SFTP, **Ctrl+L** convierte las migas de la ruta en un campo de texto editable con autocompletado, como en un explorador de ficheros; `Esc` devuelve las migas. También es contextual y no configurable.
+
 Dentro del buscador, `Esc` limpia el texto y restablece la lista; un segundo `Esc` cierra el popover. Cerrar el popover por cualquier otra vía (clic fuera, volver a pulsar la lupa…) también descarta el filtro para que la lista no se quede "enganchada". La combinación es reasignable desde **Preferencias → Atajos** como `clear_sidebar_search`.
 
 ## Captura de nuevos atajos

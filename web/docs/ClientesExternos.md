@@ -15,9 +15,15 @@ Al abrir un perfil RDP, VNC o Telnet, Rustty:
 
 Si el sistema delega la apertura en un manejador de URL (`rdp://` o `vnc://`), el ciclo de vida real puede depender del sistema operativo o del cliente registrado. El botón **Desconectar** cierra lo que Rustty haya lanzado y quita la pestaña de estado.
 
+Cuando la sesión termina, la pestaña ofrece **Reconectar** además de cerrarla. La reconexión reutiliza la misma pestaña, así que conserva su sitio en la barra y el panel dividido donde estuviera.
+
 ## Protocolos
 
 - **RDP**: usa el cliente de escritorio remoto del sistema. En Linux prueba `xfreerdp3`, `xfreerdp` y `rdesktop`; en Windows abre `mstsc.exe` o el manejador `rdp://`; en macOS abre el cliente registrado para `rdp://`. Al usar `xfreerdp` en Linux, Rustty aplica verificación de certificado basada en TOFU (`/cert:tofu`) en vez de ignorar la verificación en silencio, de modo que el cliente recuerda el certificado del servidor y advierte al usuario si cambia de forma inesperada. Si el cliente externo muere nada más arrancar (por ejemplo porque ese certificado cambió), Rustty muestra el **motivo real del fallo** con instrucciones, no un simple «sesión cerrada».
+
+  **Ventana del escritorio remoto.** Puedes elegir cómo abre la ventana el cliente: *ventana redimensionable* (por defecto), *pantalla completa*, *área de trabajo* o *tamaño fijo*. El valor por defecto está en **Preferencias → Sistema** y cada perfil RDP puede llevar el suyo propio, que manda sobre el global.
+
+  La ventana redimensionable y la pantalla completa piden **resolución dinámica**: puedes maximizar o arrastrar la ventana y el escritorio remoto sigue el tamaño. Eso necesita un servidor Windows 8 / Server 2012 o superior; contra servidores más antiguos usa *tamaño fijo*, que es el comportamiento clásico. Con `xfreerdp`, **Ctrl+Alt+Intro** alterna pantalla completa en cualquier momento.
 - **VNC**: abre un visor VNC externo. En Linux prueba TigerVNC / `vncviewer`; en macOS usa Pantalla compartida mediante `vnc://`; en Windows prueba `vncviewer.exe`, `tvnviewer.exe` o el manejador `vnc://`.
 - **Telnet**: abre el comando `telnet` en un emulador de terminal del sistema. Telnet no cifra el tráfico, así que conviene reservarlo para equipos antiguos, redes controladas o tareas puntuales.
 
@@ -49,7 +55,9 @@ En macOS, VNC usa la app nativa de **Pantalla compartida**. RDP requiere un clie
 
 RDP comparte el flujo normal de credenciales de Rustty: contraseña propia, credencial maestra o KeePass, siempre sin guardar secretos en `profiles.json`.
 
-En **Windows**, la contraseña del perfil se entrega al Escritorio remoto dejándola como credencial `TERMSRV/<host>` en el Gestor de credenciales justo antes de conectar (por la API nativa del sistema, nunca por línea de comandos), así `mstsc` entra directo sin volver a pedirla. Al cerrar la última sesión de ese host, Rustty retira la credencial; si ya existía una guardada por ti antes de usar Rustty, no se borra. En **Linux**, `xfreerdp`/`rdesktop` reciben la contraseña por entrada estándar, nunca como argumento visible.
+En **Windows**, la contraseña del perfil se entrega al Escritorio remoto dejándola como credencial `TERMSRV/<host>` en el Gestor de credenciales justo antes de conectar (por la API nativa del sistema, nunca por línea de comandos), así `mstsc` entra directo sin volver a pedirla. Al cerrar la última sesión de ese host, Rustty retira la credencial; si ya existía una guardada por ti antes de usar Rustty, no se borra. En **Linux**, la contraseña nunca viaja como argumento visible en `ps`. Con FreeRDP 3 se entrega por su mecanismo `FREERDP_ASKPASS`, leyéndola de un fichero anónimo en memoria que el cliente hereda: no toca el disco ni el entorno del proceso. Con FreeRDP 2 y `rdesktop` se entrega por entrada estándar.
+
+Si un perfil RDP **no** tiene contraseña guardada, FreeRDP 3 no puede pedírtela (necesitaría un terminal, y no lo hay). En ese caso Rustty avisa de que hace falta guardarla en el perfil, en vez de mostrar el volcado de errores del cliente.
 
 VNC y Telnet no reciben contraseñas desde Rustty. El visor VNC o el cliente Telnet piden sus credenciales si las necesitan. Rustty guarda y sincroniza los metadatos del perfil (host, puerto, nombre, workspace, notas, etc.), pero no inyecta secretos en esos clientes externos.
 
