@@ -1064,6 +1064,71 @@ The certificate for host.example.com:3389 has changed\n";
         ));
     }
 
+    /// **Test de integración**: lanza el cliente RDP de verdad, por el mismo
+    /// camino que una conexión real, contra un servidor que habla lo justo del
+    /// protocolo, y comprueba que llega a autenticarse. Es el test que le habría
+    /// puesto nombre al fallo de FreeRDP 3 sin esperar a que lo sufriera nadie:
+    /// con `/from-stdin` sobre una tubería, aquí no llegaría ningún NTLMSSP.
+    ///
+    /// Ignorado por defecto porque necesita cosas que la máquina puede no tener:
+    /// `xfreerdp` instalado y un servidor X (en CI, `xvfb-run`). Se ejecuta con
+    /// `cargo test --locked -- --ignored rdp_client_real`.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita xfreerdp y un display; se corre con --ignored"]
+    #[test]
+    fn rdp_client_real_llega_a_autenticarse() {
+        use crate::rdp_fixture;
+
+        let server = rdp_fixture::start().expect("levantar el servidor de pruebas");
+        let addr = server.addr;
+
+        let mut spawned = spawn_rdp_client(
+            &addr.ip().to_string(),
+            addr.port(),
+            "usuario",
+            None,
+            Some("contraseña de prueba"),
+            RdpDisplay::default(),
+            false,
+        )
+        .expect("lanzar el cliente RDP");
+
+        // 20 s: el handshake local tarda milisegundos, pero un runner cargado y
+        // el arranque de X11 pueden estirarse.
+        let credssp = server.wait_for_credssp(std::time::Duration::from_secs(20));
+        let _ = spawned.child.kill();
+        let _ = spawned.child.wait();
+
+        let tail = spawned
+            .output_tail
+            .as_ref()
+            .map(|t| t.lock_recover().clone())
+            .unwrap_or_default();
+
+        let credssp = credssp.unwrap_or_else(|| {
+            panic!("el cliente no llegó a la fase NLA. Salida del cliente:\n{tail}")
+        });
+        assert!(
+            rdp_fixture::contains_ntlmssp(&credssp),
+            "se esperaba un mensaje NTLM del cliente. Salida:\n{tail}"
+        );
+
+        // La aserción que caza de verdad la regresión. El NTLM «negotiate» de
+        // arriba lo manda el cliente **antes** de necesitar la contraseña, así
+        // que por sí solo no prueba nada: con el fallo de v1.59.0 también
+        // llegaba, y solo después se cancelaba la conexión. Lo inequívoco es
+        // que el cliente no haya intentado preguntar la credencial por el
+        // terminal; si lo intenta, deja su rastro en el módulo `passphrase`
+        // (mensaje no localizado, a diferencia del texto del `errno`).
+        assert!(
+            !tail.contains("com.freerdp.utils.passphrase"),
+            "el cliente intentó pedir la credencial por el terminal en vez de \
+             recibirla por FREERDP_ASKPASS. Salida:\n{tail}"
+        );
+        // Y la contraseña no puede acabar en la cola que viaja a la interfaz.
+        assert!(!tail.contains("contraseña de prueba"));
+    }
+
     /// El contrato con FreeRDP 3: la orden de `FREERDP_ASKPASS`, ejecutada como
     /// la ejecuta él (por el shell, sin stdin útil), imprime la contraseña que
     /// dejamos en el `memfd` heredado. Si alguien cambia el descriptor, la orden

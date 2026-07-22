@@ -15,6 +15,8 @@ mod local_shell_manager;
 mod locks;
 mod notes;
 mod profiles;
+#[cfg(all(test, target_os = "linux"))]
+mod rdp_fixture;
 mod rdp_manager;
 mod scripts;
 mod sftp_manager;

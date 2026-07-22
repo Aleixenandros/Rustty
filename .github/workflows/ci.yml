@@ -232,3 +232,71 @@ jobs:
       - name: cargo check
         working-directory: src-tauri
         run: cargo check --locked
+
+  # ── Integración con clientes reales ───────────────────────────────────
+  # Los tests marcados `#[ignore]` necesitan binarios y un display que la
+  # batería normal no exige, así que corren aquí y solo aquí.
+  #
+  # Por qué existe este job: en v1.59.0 **toda** conexión RDP en Linux estaba
+  # rota con FreeRDP 3 —cambió cómo lee la contraseña— y el CI seguía en verde,
+  # porque ningún test ejecutaba un cliente contra algo que hablara el
+  # protocolo. Lo encontró el usuario, no la batería. Este job cierra ese hueco:
+  # levanta un servidor RDP mínimo (`rdp_fixture.rs`) y comprueba que el cliente
+  # de verdad llega a autenticarse.
+  integration-linux:
+    runs-on: ubuntu-latest
+    name: Integración · Linux
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Leer el toolchain fijado
+        id: rust
+        shell: bash
+        run: sed -n 's/^channel = "\(.*\)"/channel=\1/p' src-tauri/rust-toolchain.toml >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.channel }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libdbus-1-dev \
+            libssl-dev \
+            pkg-config
+
+      # El nombre del paquete cambia entre releases de Ubuntu y la rama mayor de
+      # FreeRDP importa (la 3 es la que rompió la entrega de la contraseña), así
+      # que se prueban ambos y se deja la versión en el log.
+      - name: Install RDP client + Xvfb
+        run: |
+          sudo apt-get install -y xvfb
+          sudo apt-get install -y freerdp3-x11 || sudo apt-get install -y freerdp2-x11
+          for bin in xfreerdp3 xfreerdp; do
+            if command -v "$bin" >/dev/null; then
+              echo "Cliente RDP: $bin"
+              "$bin" /version || true
+              exit 0
+            fi
+          done
+          echo "::error::no se instaló ningún cliente xfreerdp"
+          exit 1
+
+      # `--lib` a propósito: `--ignored` sobre los doctests intentaría compilar
+      # los fragmentos marcados `ignore` de `ipc.rs`, que son ilustrativos y no
+      # compilan sueltos. Los tests de integración viven en la librería.
+      # xvfb-run da el display que xfreerdp exige antes incluso de conectar.
+      - name: cargo test (--ignored)
+        working-directory: src-tauri
+        run: xvfb-run -a cargo test --locked --lib -- --ignored

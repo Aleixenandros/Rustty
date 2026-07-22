@@ -103,3 +103,14 @@ tauri-plugin-single-instance = "2.4.2"
 # cierra con `taskkill /T`, que no necesita dependencias.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Solo para el fixture del test de integración de RDP (`rdp_integration`, que
+# corre con `--ignored`): un servidor que habla lo justo del protocolo —X.224 +
+# TLS— para que el cliente real llegue a pedir credenciales. `rcgen` emite el
+# certificado autofirmado al vuelo, así no hay ninguna clave privada guardada en
+# el repositorio. `rustls` ya está en el árbol por `russh`; aquí se declara para
+# poder usarlo directo, fijando el proveedor `ring` en vez de depender del que
+# esté instalado por defecto.
+[dev-dependencies]
+rcgen = { version = "0.14.8", default-features = false, features = ["pem", "ring"] }
+rustls = { version = "0.23.42", default-features = false, features = ["ring", "std"] }
