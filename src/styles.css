@@ -6091,6 +6091,14 @@ body.overlay-scrollbars ::-webkit-scrollbar-thumb:hover {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
 }
 
+/* Botonera del panel externo: reconectar (solo con la sesión caída) y cerrar. */
+.rdp-status-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 .rdp-status-icon {
   font-size: 52px;
   line-height: 1;

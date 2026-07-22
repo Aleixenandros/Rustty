@@ -1641,6 +1641,7 @@ mod tests {
             session_log_dir: None,
             disable_paste_confirm: false,
             ssh_tunnels: vec![],
+            rdp_display: None,
             created_at: "2026-07-04T10:00:00Z".into(),
             updated_at: None,
         }

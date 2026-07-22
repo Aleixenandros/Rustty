@@ -237,6 +237,10 @@ pub struct ConnectionProfile {
     /// el frontend los levanta al establecer la sesión interactiva.
     #[serde(default)]
     pub ssh_tunnels: Vec<SshTunnelProfile>,
+    /// Cómo abre la ventana el cliente RDP de este perfil. `None` = usar la
+    /// preferencia global; ver `rdp_manager::RdpDisplay` para los valores.
+    #[serde(default)]
+    pub rdp_display: Option<String>,
     /// Timestamp ISO 8601 de creación
     pub created_at: String,
     /// Timestamp ISO 8601 de la última modificación. Usado por la

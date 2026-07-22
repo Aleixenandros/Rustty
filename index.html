@@ -716,6 +716,19 @@
             <input id="f-domain" type="text" data-i18n-placeholder="modal_conn.domain_ph" placeholder="WORKGROUP" />
           </div>
 
+          <!-- Cómo abre la ventana el cliente RDP. Vacío = preferencia global. -->
+          <div class="form-row hidden" id="field-rdp-display" data-modal-pane="general">
+            <label for="f-rdp-display" data-i18n="modal_conn.rdp_display">Ventana del escritorio remoto</label>
+            <select id="f-rdp-display">
+              <option value="" data-i18n="modal_conn.rdp_display_inherit">Usar la preferencia global</option>
+              <option value="window" data-i18n="rdp_display.window">Ventana redimensionable</option>
+              <option value="fullscreen" data-i18n="rdp_display.fullscreen">Pantalla completa</option>
+              <option value="workarea" data-i18n="rdp_display.workarea">Área de trabajo</option>
+              <option value="fixed" data-i18n="rdp_display.fixed">Tamaño fijo (servidores antiguos)</option>
+            </select>
+            <p class="form-hint" data-i18n="modal_conn.rdp_display_hint">La ventana redimensionable y la pantalla completa necesitan Windows 8 / Server 2012 o superior.</p>
+          </div>
+
           <!-- Selector de perfil contenedor (workspace). Solo visible si hay >1. -->
           <div class="form-row hidden" id="field-workspace" data-modal-pane="general">
             <label for="f-workspace" data-i18n="modal_conn.workspace">Perfil</label>
@@ -2905,6 +2918,17 @@
                 </label>
                 <p class="settings-hint" data-i18n="prefs_system.autostart_hint">Añade Rustty a los programas que se lanzan automáticamente al iniciar sesión.</p>
               </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-rdp-display" data-i18n="prefs_system.rdp_display">Ventana del escritorio remoto (RDP)</label>
+                <select id="pref-rdp-display">
+                  <option value="window" data-i18n="rdp_display.window">Ventana redimensionable</option>
+                  <option value="fullscreen" data-i18n="rdp_display.fullscreen">Pantalla completa</option>
+                  <option value="workarea" data-i18n="rdp_display.workarea">Área de trabajo</option>
+                  <option value="fixed" data-i18n="rdp_display.fixed">Tamaño fijo (servidores antiguos)</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="prefs_system.rdp_display_hint">Valor por defecto de las sesiones RDP; cada perfil puede llevar el suyo. La ventana redimensionable deja maximizar y arrastrar, y el escritorio remoto sigue el tamaño: necesita Windows 8 / Server 2012 o superior. «Tamaño fijo» es el comportamiento anterior, para servidores que no lo admiten.</p>
 
               <div class="settings-row">
                 <label class="checkbox-label">

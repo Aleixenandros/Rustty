@@ -57,6 +57,94 @@ struct CredGuard {
     delete_on_close: bool,
 }
 
+/// Cómo abre la ventana el cliente RDP.
+///
+/// El modo por defecto (`Window`) pide **resolución dinámica**: la ventana se
+/// puede maximizar y arrastrar, y el escritorio remoto sigue el tamaño. Necesita
+/// que el servidor hable el canal Display Control (Windows 8 / Server 2012 en
+/// adelante); `Fixed` existe justo para los que no, y deja la ventana clavada al
+/// tamaño con el que arrancó, que es lo que Rustty hacía siempre hasta ahora.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RdpDisplay {
+    /// Ventana redimensionable de 1280×800 con resolución dinámica.
+    #[default]
+    Window,
+    /// Arranca ocupando el monitor entero (Ctrl+Alt+Intro vuelve a ventana).
+    Fullscreen,
+    /// Ventana que ocupa el área de trabajo: el monitor menos las barras.
+    WorkArea,
+    /// Ventana de tamaño fijo, sin resolución dinámica.
+    Fixed,
+}
+
+impl RdpDisplay {
+    /// Líneas del fichero `.rdp` que expresan este modo para mstsc.
+    /// `screen mode id:i:2` es pantalla completa, `1` ventana. `dynamic
+    /// resolution` es el equivalente de `/dynamic-resolution` en el cliente de
+    /// Windows: la sesión sigue el tamaño de la ventana al redimensionarla.
+    #[cfg(target_os = "windows")]
+    fn rdp_file_lines(self, width: u32, height: u32) -> String {
+        match self {
+            Self::Fullscreen => "screen mode id:i:2\r\ndynamic resolution:i:1\r\n".to_string(),
+            // mstsc no tiene «área de trabajo»: la ventana maximizada con
+            // resolución dinámica es lo más parecido.
+            Self::WorkArea => {
+                "screen mode id:i:1\r\ndynamic resolution:i:1\r\nmaximizewindow:i:1\r\n"
+                    .to_string()
+            }
+            Self::Window => format!(
+                "screen mode id:i:1\r\ndynamic resolution:i:1\r\ndesktopwidth:i:{width}\r\ndesktopheight:i:{height}\r\n"
+            ),
+            Self::Fixed => format!(
+                "screen mode id:i:1\r\ndynamic resolution:i:0\r\ndesktopwidth:i:{width}\r\ndesktopheight:i:{height}\r\n"
+            ),
+        }
+    }
+
+    /// Traduce el valor que llega del perfil o de las preferencias. Cualquier
+    /// cosa que no se reconozca cae en el modo por defecto: un valor viejo o
+    /// corrupto en `profiles.json` no debe impedir conectar.
+    pub fn parse(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            Some("fullscreen") => Self::Fullscreen,
+            Some("workarea") => Self::WorkArea,
+            Some("fixed") => Self::Fixed,
+            _ => Self::Window,
+        }
+    }
+
+    /// Argumentos de tamaño para xfreerdp, en orden.
+    fn freerdp_args(self, width: u32, height: u32) -> Vec<String> {
+        match self {
+            // `/dynamic-resolution` es lo que hace la ventana redimensionable:
+            // sin él xfreerdp la clava al tamaño con el que negoció la sesión.
+            Self::Window => vec![
+                "/dynamic-resolution".into(),
+                format!("/w:{width}"),
+                format!("/h:{height}"),
+            ],
+            Self::Fullscreen => vec!["/f".into(), "/dynamic-resolution".into()],
+            Self::WorkArea => vec!["/workarea".into(), "/dynamic-resolution".into()],
+            Self::Fixed => vec![format!("/w:{width}"), format!("/h:{height}")],
+        }
+    }
+
+    /// Equivalente para rdesktop, el cliente de respaldo. No tiene resolución
+    /// dinámica, así que `Window` y `Fixed` acaban en la misma geometría fija.
+    fn rdesktop_args(self, width: u32, height: u32) -> Vec<String> {
+        match self {
+            Self::Fullscreen => vec!["-f".into()],
+            Self::WorkArea => vec!["-g".into(), "workarea".into()],
+            Self::Window | Self::Fixed => vec!["-g".into(), format!("{width}x{height}")],
+        }
+    }
+}
+
+/// Tamaño con el que arranca una ventana RDP cuando el modo no lo deriva del
+/// monitor. Es el que Rustty ha usado siempre.
+const DEFAULT_RDP_WIDTH: u32 = 1280;
+const DEFAULT_RDP_HEIGHT: u32 = 800;
+
 /// A dónde y con qué credencial se conecta una sesión RDP.
 ///
 /// Agrupa los siete parámetros que `launch` recibía sueltos (clippy:
@@ -70,6 +158,9 @@ pub struct RdpTarget<'a> {
     pub username: &'a str,
     pub domain: Option<&'a str>,
     pub password: Option<&'a str>,
+    /// Cómo abre la ventana el cliente. Lo resuelve el llamador (perfil sobre
+    /// preferencia global); aquí llega ya decidido.
+    pub display: RdpDisplay,
 }
 
 /// Gestor de sesiones RDP.
@@ -98,6 +189,7 @@ impl RdpManager {
             username,
             domain,
             password,
+            display,
         } = target;
         // Windows: mstsc no acepta la contraseña ni por argv ni por el .rdp;
         // la vía (la de mRemoteNG / Royal TS) es dejarla en el Gestor de
@@ -117,7 +209,15 @@ impl RdpManager {
             }
         }
 
-        let spawned = match spawn_rdp_client(host, port, username, domain, password, cred_host.is_some()) {
+        let spawned = match spawn_rdp_client(
+            host,
+            port,
+            username,
+            domain,
+            password,
+            display,
+            cred_host.is_some(),
+        ) {
             Ok(s) => s,
             Err(e) => {
                 if let Some(h) = cred_host.take() {
@@ -497,6 +597,7 @@ fn spawn_rdp_client(
     username: &str,
     domain: Option<&str>,
     password: Option<&str>,
+    display: RdpDisplay,
     _cred_injected: bool,
 ) -> Result<SpawnedRdpClient, String> {
     // Detectar qué binario está disponible
@@ -529,7 +630,7 @@ fn spawn_rdp_client(
         if secret.is_some() {
             cmd.arg("-p").arg("-"); // lee la contraseña de stdin
         }
-        cmd.arg("-g").arg("1280x800");
+        cmd.args(display.rdesktop_args(DEFAULT_RDP_WIDTH, DEFAULT_RDP_HEIGHT));
         cmd.arg("-r").arg("clipboard:CLIPBOARD");
         cmd.arg(format!("{host}:{port}"));
     } else {
@@ -548,9 +649,8 @@ fn spawn_rdp_client(
         // host y avisa si cambia (coherente con el TOFU de host keys de SSH),
         // en vez de aceptar cualquier certificado en silencio.
         cmd.arg("/cert:tofu");
-        // Arrancar en ventana normal (sin fullscreen forzado)
-        cmd.arg("/w:1280");
-        cmd.arg("/h:800");
+        // Tamaño y comportamiento de la ventana según el modo elegido.
+        cmd.args(display.freerdp_args(DEFAULT_RDP_WIDTH, DEFAULT_RDP_HEIGHT));
     }
 
     if secret.is_some() {
@@ -628,9 +728,10 @@ fn spawn_rdp_client(
     username: &str,
     domain: Option<&str>,
     _password: Option<&str>, // mstsc no acepta contraseñas por línea de comandos
+    display: RdpDisplay,
     cred_injected: bool,
 ) -> Result<SpawnedRdpClient, String> {
-    let rdp_path = write_windows_rdp_file(host, port, username, domain, cred_injected)?;
+    let rdp_path = write_windows_rdp_file(host, port, username, domain, display, cred_injected)?;
     let mut errors = Vec::new();
 
     if let Some(mstsc) = resolve_mstsc_path() {
@@ -688,11 +789,13 @@ fn write_windows_rdp_file(
     port: u16,
     username: &str,
     domain: Option<&str>,
+    display: RdpDisplay,
     cred_injected: bool,
 ) -> Result<PathBuf, String> {
     let domain = domain.unwrap_or("").trim();
     let mut rdp_content =
         format!("full address:s:{host}:{port}\r\nusername:s:{username}\r\n");
+    rdp_content.push_str(&display.rdp_file_lines(DEFAULT_RDP_WIDTH, DEFAULT_RDP_HEIGHT));
     if !cred_injected {
         // Sin credencial inyectada, que mstsc pida la contraseña una sola vez.
         // Con ella, esta línea sobra: forzaría el segundo prompt que motivó
@@ -832,6 +935,7 @@ fn spawn_rdp_client(
     username: &str,
     _domain: Option<&str>,
     _password: Option<&str>,
+    _display: RdpDisplay,
     _cred_injected: bool,
 ) -> Result<SpawnedRdpClient, String> {
     // Codificamos el usuario (igual que la variante Windows): un `DOMINIO\usuario`,
@@ -914,6 +1018,35 @@ The certificate for host.example.com:3389 has changed\n";
 [20:06:58:790] [1910704:001d27b3] [ERROR][com.freerdp.utils.passphrase] - [set_termianl_nonblock]: tcsetattr(TCSANOW) failed with Inappropriate ioctl for device\n\
 [20:06:58:790] [1910704:001d27b3] [ERROR][com.freerdp.core] - [nla_client_setup_identity]: ERRCONNECT_CONNECT_CANCELLED [0x0002000B]\n\
 [20:06:58:790] [1910704:001d27b3] [ERROR][com.freerdp.core.transport] - [transport_connect_nla]: NLA begin failed\n";
+
+    #[test]
+    fn modo_de_pantalla_por_defecto_deja_la_ventana_redimensionable() {
+        // Lo que arregla el reporte: sin `/dynamic-resolution` xfreerdp clava la
+        // ventana y no deja maximizar ni ir a pantalla completa.
+        let args = RdpDisplay::default().freerdp_args(1280, 800);
+        assert!(args.contains(&"/dynamic-resolution".to_string()));
+        assert!(args.contains(&"/w:1280".to_string()));
+        assert!(args.contains(&"/h:800".to_string()));
+
+        // El modo heredado sigue disponible para servidores sin Display Control.
+        let fijo = RdpDisplay::Fixed.freerdp_args(1280, 800);
+        assert!(!fijo.contains(&"/dynamic-resolution".to_string()));
+        assert_eq!(fijo, vec!["/w:1280".to_string(), "/h:800".to_string()]);
+
+        assert!(RdpDisplay::Fullscreen.freerdp_args(1280, 800).contains(&"/f".to_string()));
+        assert!(RdpDisplay::WorkArea.freerdp_args(1280, 800).contains(&"/workarea".to_string()));
+    }
+
+    #[test]
+    fn modo_de_pantalla_desconocido_cae_en_el_por_defecto() {
+        assert_eq!(RdpDisplay::parse(Some("fullscreen")), RdpDisplay::Fullscreen);
+        assert_eq!(RdpDisplay::parse(Some(" workarea ")), RdpDisplay::WorkArea);
+        assert_eq!(RdpDisplay::parse(Some("fixed")), RdpDisplay::Fixed);
+        // Un perfil viejo, un valor a medio escribir o basura: se conecta igual.
+        assert_eq!(RdpDisplay::parse(None), RdpDisplay::Window);
+        assert_eq!(RdpDisplay::parse(Some("")), RdpDisplay::Window);
+        assert_eq!(RdpDisplay::parse(Some("maximizado")), RdpDisplay::Window);
+    }
 
     #[test]
     fn falta_de_credencial_no_se_confunde_con_otros_fallos() {

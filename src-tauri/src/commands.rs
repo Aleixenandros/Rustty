@@ -704,6 +704,9 @@ pub fn rdp_connect(
     password: Option<String>,
     ask_answers: Option<std::collections::HashMap<String, String>>,
     credential_id: Option<String>,
+    // Modo de pantalla ya resuelto por el frontend (ajuste del perfil sobre la
+    // preferencia global). Ausente = el modo por defecto.
+    display: Option<String>,
     // El frontend preasigna el `session_id` para registrar el listener de cierre
     // (`rdp-closed-{id}`) antes de lanzar el proceso y no perder un cierre
     // inmediato.
@@ -730,6 +733,15 @@ pub fn rdp_connect(
             username: &profile.username,
             domain: profile.domain.as_deref(),
             password: password.as_deref(),
+            // El ajuste del perfil manda; si no trae ninguno vale lo que haya
+            // resuelto el frontend con la preferencia global.
+            display: crate::rdp_manager::RdpDisplay::parse(
+                profile
+                    .rdp_display
+                    .as_deref()
+                    .filter(|v| !v.trim().is_empty())
+                    .or(display.as_deref()),
+            ),
         },
         app_handle,
     )?;

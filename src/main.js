@@ -394,6 +394,11 @@ const DEFAULT_PREFS = {
   // presente ya en esa primera conexión. La política vive en el backend
   // (`host_keys`): esta pref solo la fija con `set_host_key_policy`.
   strictHostKey:   true,
+  // Cómo abre la ventana el cliente RDP por defecto: "window" (redimensionable,
+  // la resolución sigue al tamaño), "fullscreen", "workarea" o "fixed" (el
+  // tamaño clavado de siempre, para servidores sin Display Control). Cada perfil
+  // puede llevar su propio `rdp_display` y entonces manda el del perfil.
+  rdpDisplay:      "window",
   // Captura la pantalla de cada sesión SSH (no privada) en disco para poder
   // restaurarla luego con «Conectar y restaurar pantalla anterior». Solo es la
   // salida visual; puede contener datos sensibles. Excluido de sync.
@@ -1763,6 +1768,7 @@ function openSettingsModal() {
   if (_ligEl) _ligEl.checked = !!prefs.terminalLigatures;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
   document.getElementById("pref-bell").value                = prefs.bell;
+  document.getElementById("pref-rdp-display").value         = prefs.rdpDisplay || "window";
   const _termContrast = document.getElementById("pref-terminal-min-contrast");
   if (_termContrast) _termContrast.value = ["aa", "aaa"].includes(prefs.terminalMinContrast) ? prefs.terminalMinContrast : "off";
   const _termCursorHv = document.getElementById("pref-terminal-cursor-highvis");
@@ -3503,6 +3509,7 @@ function savePrefsFromModal() {
     terminalLigatures: !!document.getElementById("pref-terminal-ligatures")?.checked,
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     bell:            document.getElementById("pref-bell").value,
+    rdpDisplay:      document.getElementById("pref-rdp-display").value,
     terminalMinContrast: (() => {
       const v = document.getElementById("pref-terminal-min-contrast")?.value;
       return v === "aa" || v === "aaa" ? v : "off";
@@ -6909,6 +6916,7 @@ function openEditConnectionModal(profileId) {
   const connType = profile.connection_type || "ssh";
   document.getElementById("f-conn-type").value  = connType;
   document.getElementById("f-domain").value     = profile.domain || "";
+  document.getElementById("f-rdp-display").value = profile.rdp_display || "";
   document.getElementById("f-notes").value      = profile.notes || "";
   document.getElementById("f-auth-type").value  = profile.auth_type;
   document.getElementById("f-key-path").value   = profile.key_path || "";
@@ -7857,6 +7865,7 @@ function updateConnTypeFields(type, adjustPort = false) {
   const isFileTransfer = isFileTransferConnectionType(type);
   const isPasswordOnly = isExternal || isFileTransfer;
   document.getElementById("field-domain").classList.toggle("hidden", !isRdp);
+  document.getElementById("field-rdp-display").classList.toggle("hidden", !isRdp);
   document.getElementById("field-auth-type").classList.toggle("hidden", isPasswordOnly);
   document.getElementById("field-key-path").classList.add("hidden");
   document.getElementById("field-passphrase").classList.add("hidden");
@@ -8356,6 +8365,7 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     username: document.getElementById("f-user").value.trim(),
     connection_type: connType,
     domain: document.getElementById("f-domain").value.trim() || null,
+    rdp_display: document.getElementById("f-rdp-display").value || null,
     auth_type: authType,
     key_path: document.getElementById("f-key-path").value || null,
     group: readFolderValue(),
@@ -8576,6 +8586,7 @@ async function saveAndClose(shouldConnect) {
     username:            document.getElementById("f-user").value.trim(),
     connection_type:     connType,
     domain:              document.getElementById("f-domain").value.trim() || null,
+    rdp_display:         document.getElementById("f-rdp-display").value || null,
     auth_type:           authType,
     key_path:            keyPath,
     group,
@@ -9190,17 +9201,20 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
 // CONEXIÓN RDP
 // ═══════════════════════════════════════════════════════════════
 
-async function connectRdp(profileId, { passwordOverride = null, credId = null } = {}) {
+async function connectRdp(profileId, { passwordOverride = null, credId = null, reuse = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
   // Si ya hay una sesión activa para este perfil con la misma identidad,
-  // traerla al frente.
-  for (const [sid, s] of sessions) {
-    if (s.profileId === profileId && s.type === "rdp" && s.status !== "closed"
-        && (s.credentialId || null) === (credId || null)) {
-      setActiveTab(sid);
-      return;
+  // traerla al frente. Al reconectar en la propia pestaña no aplica: la sesión
+  // que buscaríamos es justo la que estamos relanzando.
+  if (!reuse) {
+    for (const [sid, s] of sessions) {
+      if (s.profileId === profileId && s.type === "rdp" && s.status !== "closed"
+          && (s.credentialId || null) === (credId || null)) {
+        setActiveTab(sid);
+        return;
+      }
     }
   }
 
@@ -9235,8 +9249,9 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
   // Preasignamos el sessionId (como SFTP) para registrar el listener de cierre
   // ANTES de lanzar el proceso: si xfreerdp/mstsc muere en los primeros ms, el
   // evento `rdp-closed-*` no se pierde (si no, la pestaña quedaría «conectada»).
-  const sessionId = `rdp-${crypto.randomUUID()}`;
-  const sessionObj = {
+  // Al reconectar reusamos el id de la sesión muerta y su pestaña sigue en pie.
+  const sessionId = reuse || `rdp-${crypto.randomUUID()}`;
+  const sessionObj = sessions.get(sessionId) || {
     profileId,
     id: sessionId,
     type: "rdp",
@@ -9247,22 +9262,25 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
     terminal: null,
     fitAddon: null,
   };
-  sessions.set(sessionId, sessionObj);
-  createRdpTab(sessionId, profile, "connecting");
+  if (reuse) {
+    // Los listeners del intento anterior apuntan al mismo evento: sin soltarlos
+    // cada reconexión duplicaría los avisos de cierre.
+    for (const ul of sessionObj.unlisteners) { try { ul(); } catch {} }
+    sessionObj.unlisteners = [];
+    sessionObj.status = "connecting";
+    updateTabStatus(sessionId, "connecting");
+  } else {
+    sessions.set(sessionId, sessionObj);
+    createRdpTab(sessionId, profile, "connecting");
+  }
 
   // Escuchar el cierre del proceso externo (antes del invoke).
   const unlisten = await listen(eventName("rdpClosed", sessionId), (event) => {
     sessionObj.status = "closed";
     updateTabStatus(sessionId, "error");
     renderConnectionList();
-    // Actualizar el texto del panel RDP
-    const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
-    if (pane) {
-      const label = pane.querySelector(".rdp-status-label");
-      if (label) label.textContent = "Sesión cerrada";
-      const btn = pane.querySelector(".rdp-disconnect-btn");
-      if (btn) btn.textContent = "Cerrar pestaña";
-    }
+    // El panel pasa a ofrecer reconectar además de cerrar la pestaña.
+    setExternalPaneState(sessionId, "closed", connectionProtocolMeta("rdp").label);
     // El backend adjunta el motivo del cierre (ver RdpClosedEvent en
     // modules/ipc/events.js): sin código es un cierre limpio; con código,
     // el proceso externo murió con error y el detalle explica por qué.
@@ -9286,6 +9304,9 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
       profileId,
       password: password || null,
       credentialId: credId || null,
+      // Solo el valor global: el del perfil lo lee el backend, que es quien
+      // decide cuál manda.
+      display: prefs.rdpDisplay || null,
     });
 
     // Si el proceso ya se cerró durante el lanzamiento, no lo marcamos conectado.
@@ -9297,14 +9318,23 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
     sessionObj.status = "connected";
     updateTabStatus(sessionId, "connected");
     if (!sessionObj.private) recordRecentConnection(profileId);
+    setExternalPaneState(sessionId, "open", connectionProtocolMeta("rdp").label);
 
     renderConnectionList();
     setActiveTab(sessionId);
     toast(t("toast.rdp_started", { name: profile.name }), "success");
   } catch (err) {
     for (const ul of sessionObj.unlisteners) { try { ul(); } catch {} }
-    sessions.delete(sessionId);
-    removeTab(sessionId);
+    if (reuse) {
+      // La pestaña se queda: el reintento falló, pero el usuario puede volver a
+      // pulsar Reconectar sin perder el sitio.
+      sessionObj.status = "closed";
+      updateTabStatus(sessionId, "error");
+      setExternalPaneState(sessionId, "closed", connectionProtocolMeta("rdp").label);
+    } else {
+      sessions.delete(sessionId);
+      removeTab(sessionId);
+    }
     toast(`Error RDP: ${err}`, "error");
   }
 }
@@ -9316,16 +9346,19 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null } 
  * @param {string} profileId
  * @param {"vnc"|"telnet"} kind
  */
-async function connectExternalNoAuth(profileId, kind, { credId = null } = {}) {
+async function connectExternalNoAuth(profileId, kind, { credId = null, reuse = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
-  // Reusar una sesión activa del mismo perfil, tipo e identidad.
-  for (const [sid, s] of sessions) {
-    if (s.profileId === profileId && s.type === kind && s.status !== "closed"
-        && (s.credentialId || null) === (credId || null)) {
-      setActiveTab(sid);
-      return;
+  // Reusar una sesión activa del mismo perfil, tipo e identidad. Al reconectar
+  // en la propia pestaña no aplica: la que encontraríamos es la que relanzamos.
+  if (!reuse) {
+    for (const [sid, s] of sessions) {
+      if (s.profileId === profileId && s.type === kind && s.status !== "closed"
+          && (s.credentialId || null) === (credId || null)) {
+        setActiveTab(sid);
+        return;
+      }
     }
   }
 
@@ -9335,8 +9368,9 @@ async function connectExternalNoAuth(profileId, kind, { credId = null } = {}) {
 
   // sessionId preasignado + listener de cierre antes del invoke (como SFTP/RDP):
   // así un `*-closed-*` inmediato no deja la pestaña colgada en «conectada».
-  const sessionId = `${kind}-${crypto.randomUUID()}`;
-  const sessionObj = {
+  // Al reconectar reusamos el id de la sesión muerta: su pestaña sigue en pie.
+  const sessionId = reuse || `${kind}-${crypto.randomUUID()}`;
+  const sessionObj = sessions.get(sessionId) || {
     profileId,
     id: sessionId,
     type: kind,
@@ -9346,20 +9380,23 @@ async function connectExternalNoAuth(profileId, kind, { credId = null } = {}) {
     terminal: null,
     fitAddon: null,
   };
-  sessions.set(sessionId, sessionObj);
-  createExternalTab(sessionId, profile, "connecting", kind);
+  if (reuse) {
+    // Los listeners del intento anterior apuntan al mismo evento: sin soltarlos
+    // cada reconexión duplicaría los avisos de cierre.
+    for (const ul of sessionObj.unlisteners) { try { ul(); } catch {} }
+    sessionObj.unlisteners = [];
+    sessionObj.status = "connecting";
+    updateTabStatus(sessionId, "connecting");
+  } else {
+    sessions.set(sessionId, sessionObj);
+    createExternalTab(sessionId, profile, "connecting", kind);
+  }
 
   const unlisten = await listen(eventName(closedEvent, sessionId), () => {
     sessionObj.status = "closed";
     updateTabStatus(sessionId, "error");
     renderConnectionList();
-    const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
-    if (pane) {
-      const label = pane.querySelector(".rdp-status-label");
-      if (label) label.textContent = t("external.session_closed");
-      const btn = pane.querySelector(".rdp-disconnect-btn");
-      if (btn) btn.textContent = t("external.close_tab");
-    }
+    setExternalPaneState(sessionId, "closed", meta.label);
     toast(t("external.toast_closed", { proto: meta.label, name: profile.name }), "info");
   });
   sessionObj.unlisteners.push(unlisten);
@@ -9379,14 +9416,22 @@ async function connectExternalNoAuth(profileId, kind, { credId = null } = {}) {
     sessionObj.status = "connected";
     updateTabStatus(sessionId, "connected");
     if (!sessionObj.private) recordRecentConnection(profileId);
+    setExternalPaneState(sessionId, "open", meta.label);
 
     renderConnectionList();
     setActiveTab(sessionId);
     toast(t("external.toast_started", { proto: meta.label, name: profile.name }), "success");
   } catch (err) {
     for (const ul of sessionObj.unlisteners) { try { ul(); } catch {} }
-    sessions.delete(sessionId);
-    removeTab(sessionId);
+    if (reuse) {
+      // La pestaña se queda: el usuario puede volver a pulsar Reconectar.
+      sessionObj.status = "closed";
+      updateTabStatus(sessionId, "error");
+      setExternalPaneState(sessionId, "closed", meta.label);
+    } else {
+      sessions.delete(sessionId);
+      removeTab(sessionId);
+    }
     toast(t("external.toast_error", { proto: meta.label, err: String(err) }), "error");
   }
 }
@@ -9515,12 +9560,20 @@ function createExternalTab(sessionId, profile, initialStatus, kind = "rdp") {
         <div class="rdp-status-host">${hostLine}</div>
         <div class="rdp-status-label">${escHtml(t("external.session_open", { proto: meta.label }))}</div>
       </div>
-      <button class="btn-secondary rdp-disconnect-btn" data-session="${sessionId}">
-        ${escHtml(t("external.disconnect"))}
-      </button>
+      <div class="rdp-status-actions">
+        <button class="btn-primary rdp-reconnect-btn hidden" data-session="${sessionId}">
+          ${escHtml(t("external.reconnect"))}
+        </button>
+        <button class="btn-secondary rdp-disconnect-btn" data-session="${sessionId}">
+          ${escHtml(t("external.disconnect"))}
+        </button>
+      </div>
     </div>`;
   pane.querySelector(".rdp-disconnect-btn").addEventListener("click", (e) =>
     closeExternalSession(e.target.dataset.session, kind)
+  );
+  pane.querySelector(".rdp-reconnect-btn").addEventListener("click", (e) =>
+    reconnectExternalSession(e.target.dataset.session)
   );
   document.getElementById("terminals-container").appendChild(pane);
 
@@ -9539,6 +9592,54 @@ function createExternalTab(sessionId, profile, initialStatus, kind = "rdp") {
 /** Compatibilidad histórica: pestaña de sesión RDP. */
 function createRdpTab(sessionId, profile, initialStatus) {
   return createExternalTab(sessionId, profile, initialStatus, "rdp");
+}
+
+/**
+ * Pone el panel de una sesión externa (RDP/VNC/Telnet) en uno de sus tres
+ * estados visibles. Único sitio que decide qué texto y qué botones se ven, para
+ * que el cierre, la reconexión y el arranque no se contradigan entre sí.
+ * @param {string} sessionId
+ * @param {"connecting"|"open"|"closed"} state
+ * @param {string} protoLabel Nombre del protocolo para el texto de estado.
+ */
+function setExternalPaneState(sessionId, state, protoLabel) {
+  const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
+  if (!pane) return;
+  const label = pane.querySelector(".rdp-status-label");
+  const closeBtn = pane.querySelector(".rdp-disconnect-btn");
+  const reconnectBtn = pane.querySelector(".rdp-reconnect-btn");
+  if (label) {
+    label.textContent =
+      state === "closed"
+        ? t("external.session_closed")
+        : state === "connecting"
+          ? t("external.session_connecting", { proto: protoLabel })
+          : t("external.session_open", { proto: protoLabel });
+  }
+  if (closeBtn) {
+    // Cerrada la sesión ya no hay proceso que cortar: el botón pasa a retirar
+    // la pestaña, que es lo único que queda por hacer.
+    closeBtn.textContent = state === "closed" ? t("external.close_tab") : t("external.disconnect");
+  }
+  // Reconectar solo tiene sentido con la sesión muerta; durante el reintento se
+  // esconde para no lanzar dos procesos con un doble clic.
+  if (reconnectBtn) reconnectBtn.classList.toggle("hidden", state !== "closed");
+}
+
+/**
+ * Relanza una sesión externa cerrada **en su misma pestaña**: conserva el
+ * `sessionId`, así que el pane, su posición en la barra y el split donde
+ * estuviera siguen donde estaban. Delega en el mismo camino de conexión que usó
+ * la primera vez, con la misma identidad.
+ */
+async function reconnectExternalSession(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s || s.status !== "closed") return;
+  const kind = s.type === "vnc" || s.type === "telnet" ? s.type : "rdp";
+  setExternalPaneState(sessionId, "connecting", connectionProtocolMeta(kind).label);
+  const opts = { credId: s.credentialId || null, reuse: sessionId };
+  if (kind === "rdp") await connectRdp(s.profileId, opts);
+  else await connectExternalNoAuth(s.profileId, kind, opts);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -20507,6 +20608,7 @@ function applyTemplateDefaultsToForm(d) {
   if (d.port != null) setVal("f-port", d.port);
   if (d.username != null) setVal("f-user", d.username);
   if (d.domain != null) setVal("f-domain", d.domain);
+  if (d.rdp_display != null) setVal("f-rdp-display", d.rdp_display);
   if (d.auth_type) {
     const at = document.getElementById("f-auth-type");
     if (at) { at.value = d.auth_type; updateAuthFields(d.auth_type); }
