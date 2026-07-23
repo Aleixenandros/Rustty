@@ -48,6 +48,7 @@ import { formatTime, formatRelativeTimeShort } from "./modules/datetime.js";
 import { formatAccelerator } from "./modules/platform.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
+import { defaultHighlightRules, compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
@@ -145,17 +146,11 @@ const activityItems = loadActivityHistory();
 const KEYRING_SERVICE = "rustty";
 const RECENT_CONNECTIONS_STORAGE_KEY = "rustty-recent-connections";
 
-const DEFAULT_HIGHLIGHT_RULES = [
-  { pattern: "ERROR|ERR|FATAL|FAIL|FAILED|EXCEPTION", color: "red", bold: true },
-  { pattern: "WARN|WARNING|DEPRECATED", color: "yellow", bold: true },
-  { pattern: "INFO|NOTICE", color: "cyan", bold: false },
-  { pattern: "SUCCESS|OK|DONE", color: "green", bold: false },
-  { pattern: "DEBUG|TRACE", color: "magenta", bold: false },
-];
+/* El resaltado de la salida del terminal (reglas por defecto, colores SGR,
+   `defaultHighlightRules`, `compileHighlightRules`, `applyHighlightRules`) vive
+   ahora en `modules/terminal/highlight.js` (con tests); la caché por snapshot
+   se queda aquí, más abajo. */
 
-function defaultHighlightRules() {
-  return DEFAULT_HIGHLIGHT_RULES.map((rule) => ({ ...rule }));
-}
 // Salida de terminal: xterm procesa `write()` de forma asíncrona, pero si le
 // empujamos cientos de chunks seguidos (p. ej. `cat` sobre logs grandes) la
 // WebView puede quedar ocupada durante segundos. Esta cola deja respirar al
@@ -10080,57 +10075,19 @@ function readHighlightRulesFromEditor() {
 }
 
 // Tabla nombre-color → código SGR para foreground brillante (90–97).
-const HIGHLIGHT_COLORS = {
-  red:     "91",
-  yellow:  "93",
-  green:   "92",
-  blue:    "94",
-  magenta: "95",
-  cyan:    "96",
-  white:   "97",
-};
-
 let _compiledHighlightRules = null;
 let _compiledHighlightRulesSnapshot = null;
 
-function compileHighlightRules() {
+// Compila (con caché por snapshot de `prefs.highlightRules`) las reglas activas.
+// El compilado puro vive en `modules/terminal/highlight.js`; aquí solo la caché
+// que evita recompilar las regex por cada chunk del terminal caliente.
+function currentCompiledHighlightRules() {
   const raw = Array.isArray(prefs.highlightRules) ? prefs.highlightRules : [];
   const snapshot = JSON.stringify(raw);
   if (_compiledHighlightRulesSnapshot === snapshot) return _compiledHighlightRules;
-  const compiled = [];
-  for (const rule of raw) {
-    if (!rule?.pattern) continue;
-    const color = HIGHLIGHT_COLORS[rule.color] || HIGHLIGHT_COLORS.yellow;
-    const bold = rule.bold ? "1;" : "";
-    try {
-      compiled.push({
-        re: new RegExp(rule.pattern, "g"),
-        prefix: `\x1b[${bold}${color}m`,
-        suffix: "\x1b[0m",
-      });
-    } catch {
-      // patrón inválido → ignorar la regla
-    }
-  }
-  _compiledHighlightRules = compiled;
+  _compiledHighlightRules = compileHighlightRules(raw);
   _compiledHighlightRulesSnapshot = snapshot;
-  return compiled;
-}
-
-/**
- * Aplica las reglas `prefs.highlightRules` envolviendo cada coincidencia con
- * códigos SGR. Se hace por chunk (no por línea), así que matches que crucen
- * un límite de chunk no se resaltan — limitación aceptable para reglas
- * típicas como `ERROR`, `WARN`, IPs, etc.
- */
-function applyHighlightRules(text) {
-  const rules = compileHighlightRules();
-  if (!rules.length) return text;
-  let out = text;
-  for (const r of rules) {
-    out = out.replace(r.re, (m) => `${r.prefix}${m}${r.suffix}`);
-  }
-  return out;
+  return _compiledHighlightRules;
 }
 
 function filterSuppressedTerminalOutput(sessionObj, text) {
@@ -11884,7 +11841,7 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     const text = decoder.decode(channelBytesToU8(payload));
     const filtered = filterSuppressedTerminalOutput(s, text);
     if (filtered) {
-      enqueueTerminalOutput(s, applyHighlightRules(filtered));
+      enqueueTerminalOutput(s, applyHighlightRules(filtered, currentCompiledHighlightRules()));
       markTabActivity(sessionId);
       captureScreenChunk(s, filtered);
     }
