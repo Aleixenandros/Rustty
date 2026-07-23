@@ -46,6 +46,7 @@ import { clampUiZoom } from "./modules/num.js";
 import { baseSlugifyThemeId } from "./modules/text.js";
 import { formatTime, formatRelativeTimeShort } from "./modules/datetime.js";
 import { formatAccelerator } from "./modules/platform.js";
+import { comboFromEvent } from "./modules/shortcuts/combo.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
@@ -21543,39 +21544,9 @@ const SHORTCUT_PRESETS = {
   },
 };
 
-// Mapa de códigos "extraños" a etiqueta legible. Las teclas KeyA → A,
-// DigitN → N se tratan fuera del map. NumpadAdd/-Subtract/-0 se
-// normalizan a =/-/0 para que Ctrl+= también dispare con el numpad.
-const CODE_LABEL_MAP = {
-  Comma: ",", Period: ".", Semicolon: ";", Quote: "'",
-  Minus: "-", Equal: "=", Slash: "/", Backslash: "\\",
-  BracketLeft: "[", BracketRight: "]", Backquote: "`",
-  NumpadAdd: "=", NumpadSubtract: "-", NumpadMultiply: "*", NumpadDivide: "/",
-  NumpadDecimal: ".", NumpadEnter: "Enter", Numpad0: "0", Numpad1: "1",
-  Numpad2: "2", Numpad3: "3", Numpad4: "4", Numpad5: "5", Numpad6: "6",
-  Numpad7: "7", Numpad8: "8", Numpad9: "9",
-};
-
-function keyLabelFromCode(code) {
-  if (code.startsWith("Key")) return code.slice(3);
-  if (code.startsWith("Digit")) return code.slice(5);
-  if (CODE_LABEL_MAP[code]) return CODE_LABEL_MAP[code];
-  return code; // "Tab", "Escape", "F1", "ArrowLeft", "Space", ...
-}
-
-const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta", "OS"]);
-
-/** Devuelve el accelerator canónico del evento, o null si es solo modificador. */
-function comboFromEvent(e) {
-  if (MODIFIER_KEYS.has(e.key)) return null;
-  const parts = [];
-  if (e.ctrlKey)  parts.push("Ctrl");
-  if (e.altKey)   parts.push("Alt");
-  if (e.shiftKey) parts.push("Shift");
-  if (e.metaKey)  parts.push("Meta");
-  parts.push(keyLabelFromCode(e.code));
-  return parts.join("+");
-}
+/* `CODE_LABEL_MAP`, `MODIFIER_KEYS`, `keyLabelFromCode` y `comboFromEvent` viven
+   ahora en `modules/shortcuts/combo.js` (con tests); es el núcleo puro del
+   dominio de atajos. `comboFromEvent` se importa arriba. */
 
 function getShortcut(id) {
   const override = prefs.shortcuts?.[id];
