@@ -2466,6 +2466,143 @@ mod tests {
         assert!(bastion.known_hosts_path().exists());
     }
 
+    /// Servidor TCP de eco de una sola conexión, para hacer de destino de un
+    /// túnel local. Devuelve el puerto en el que escucha; la tarea muere sola
+    /// cuando esa conexión se cierra.
+    #[cfg(target_os = "linux")]
+    async fn spawn_echo_server() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind del eco");
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                loop {
+                    match sock.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            if sock.write_all(&buf[..n]).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        port
+    }
+
+    /// Conecta y autentica por clave pública contra el fixture, por el mismo
+    /// camino que una sesión real, y devuelve el handle listo para abrir canales.
+    #[cfg(target_os = "linux")]
+    async fn connect_and_auth(
+        server: &crate::ssh_fixture::FakeSshServer,
+    ) -> client::Handle<host_keys::KnownHostsClient> {
+        let addr = format!("127.0.0.1:{}", server.port);
+        let (handler, failure) = host_keys::client_with_known_hosts(
+            "127.0.0.1".to_string(),
+            server.port,
+            server.known_hosts_path(),
+        );
+        let mut handle = russh_connect_addr(test_client_config(), &addr, handler)
+            .await
+            .unwrap_or_else(|e| {
+                panic!("no conectó: {e}. {:?}", host_keys::take_failure(&failure))
+            });
+        let key_path = server.user_key.to_string_lossy().into_owned();
+        let auth = authenticate_handle(
+            &mut handle,
+            &AuthType::PublicKey,
+            &server.username,
+            None,
+            None,
+            Some(&key_path),
+        )
+        .await
+        .expect("autenticación");
+        assert!(matches!(auth, AuthResult::Success), "auth: {auth:?}");
+        handle
+    }
+
+    /// **Integración**: túnel **local** (L) —y con ello el corazón del dinámico
+    /// (D)—. Sobre una sesión SSH viva abre un canal `direct-tcpip` hacia un
+    /// servicio TCP real (un eco) y comprueba que los bytes van y **vuelven** por
+    /// el forward, que es exactamente lo que hace `open_tunnel_channel` por cada
+    /// conexión aceptada en el listener local. Un fallo aquí (p. ej. tras subir
+    /// russh) lo caza el CI y no el usuario.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_tunel_local_reenvia_bytes_por_direct_tcpip() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+
+        let echo_port = spawn_echo_server().await;
+        let handle = connect_and_auth(&server).await;
+
+        // El primitivo del túnel local: canal direct-tcpip hacia el destino.
+        let channel = handle
+            .channel_open_direct_tcpip("127.0.0.1".to_string(), echo_port as u32, "127.0.0.1".to_string(), 0)
+            .await
+            .expect("abrir direct-tcpip hacia el eco");
+        let mut stream = channel.into_stream();
+
+        let enviado = b"ping por el tunel\n";
+        stream.write_all(enviado).await.expect("escribir por el tunel");
+        stream.flush().await.expect("flush del tunel");
+        let mut recibido = vec![0u8; enviado.len()];
+        stream
+            .read_exact(&mut recibido)
+            .await
+            .expect("leer el eco por el tunel");
+
+        assert_eq!(&recibido, enviado, "el eco a través del túnel no coincide");
+    }
+
+    /// **Integración**: túnel **remoto** (R). Sobre una sesión viva negocia un
+    /// `tcpip_forward` contra el `sshd` real —lo que hace `start_tunnel_runtime`
+    /// para el tipo Remote— y comprueba que el servidor **asigna** un puerto
+    /// (petición aceptada) y que luego se **cancela** limpio con
+    /// `cancel_tcpip_forward`. El bombeo de vuelta del canal `forwarded-tcpip`
+    /// depende del `AppHandle` de Tauri y queda fuera de este test; aquí se cubre
+    /// la negociación real del forward, que es la parte que habla con el servidor.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_tunel_remoto_negocia_y_cancela_el_forward() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+
+        let handle = connect_and_auth(&server).await;
+
+        // Puerto 0: que el servidor asigne uno libre y nos lo devuelva.
+        let asignado = handle
+            .tcpip_forward("127.0.0.1".to_string(), 0)
+            .await
+            .expect("el servidor debió aceptar el tcpip-forward");
+        assert!(
+            asignado > 0,
+            "el servidor debió asignar un puerto libre, devolvió {asignado}"
+        );
+
+        // Y se cancela sin error (el servidor deja de escuchar ese puerto).
+        handle
+            .cancel_tcpip_forward("127.0.0.1".to_string(), asignado)
+            .await
+            .expect("cancelar el tcpip-forward");
+    }
+
     /// El log de sesión guarda salida del terminal: debe nacer privado (0600) y
     /// no heredar un `umask` permisivo. Y si ya existía con permisos laxos (log
     /// creado por una versión anterior), abrirlo lo endurece.
