@@ -47,6 +47,27 @@ impl FakeSshServer {
     pub fn host_key_line_for(&self, other_pubkey: &str) -> String {
         format!("[127.0.0.1]:{} {}", self.port, other_pubkey)
     }
+
+    /// Línea de `known_hosts` para este host con una clave pública **de otro
+    /// algoritmo** (p. ej. `rsa` cuando el servidor usa ed25519), generada al
+    /// vuelo. Es lo que distingue el caso «cambió el algoritmo de la host key»
+    /// (rama `Ok(false)` con entradas previas) del «misma familia, otra clave»
+    /// (rama `KeyChanged`): russh solo compara claves del mismo algoritmo.
+    pub fn foreign_algo_host_line(&self, algo: &str) -> std::io::Result<String> {
+        let key = self.dir.join(format!("foreign_{algo}"));
+        let status = Command::new("ssh-keygen")
+            .args(["-t", algo, "-N", "", "-q", "-f"])
+            .arg(&key)
+            .status()?;
+        if !status.success() {
+            return Err(std::io::Error::other(format!("ssh-keygen -t {algo} falló")));
+        }
+        // El `.pub` es «tipo base64 comentario»; el comentario sobra en una
+        // línea de known_hosts.
+        let pubtext = std::fs::read_to_string(key.with_extension("pub"))?;
+        let two: Vec<&str> = pubtext.split_whitespace().take(2).collect();
+        Ok(self.host_key_line_for(&two.join(" ")))
+    }
 }
 
 /// Localiza el binario `sshd`. No suele estar en el `PATH` de un usuario normal.

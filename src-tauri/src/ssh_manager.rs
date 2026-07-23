@@ -2332,6 +2332,140 @@ mod tests {
         );
     }
 
+    /// **Integración**: el otro camino de «host key cambiada», el que faltaba.
+    /// Si lo recordado es de **otro algoritmo** que el que ofrece el servidor
+    /// (p. ej. teníamos una RSA y ahora llega una ed25519), russh no lo detecta
+    /// como `KeyChanged` —solo compara claves del mismo algoritmo—, así que se
+    /// llega a la rama `Ok(false)`; `check_server_key` debe mirar si había
+    /// entradas previas y avisar del cambio en vez de aprender la nueva. Sin esa
+    /// comprobación, un servidor que rota de RSA a ed25519 (o un intermediario
+    /// que presenta otro tipo de clave) pasaría por primera conexión.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_host_key_de_otro_algoritmo_se_rechaza() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+
+        // El servidor usa ed25519 (lo genera el fixture); sembramos una entrada
+        // RSA para el mismo host:puerto. Distinto algoritmo → rama `Ok(false)`.
+        let known_hosts = server.known_hosts_path();
+        let rsa_line = server
+            .foreign_algo_host_line("rsa")
+            .expect("generar una host key RSA de siembra");
+        std::fs::write(&known_hosts, format!("{rsa_line}\n")).expect("sembrar known_hosts");
+
+        let addr = format!("127.0.0.1:{}", server.port);
+        let (handler, failure) =
+            host_keys::client_with_known_hosts("127.0.0.1".to_string(), server.port, known_hosts.clone());
+        let result = russh_connect_addr(test_client_config(), &addr, handler).await;
+
+        assert!(
+            result.is_err(),
+            "un cambio de algoritmo de host key con entrada previa debió rechazarse"
+        );
+        let msg = host_keys::take_failure(&failure).unwrap_or_default();
+        assert!(
+            msg.contains("cambiado"),
+            "el aviso debía hablar de host key cambiada, salió: {msg:?}"
+        );
+        // Y no debió aprender la clave nueva: el known_hosts sigue con solo la RSA.
+        let recorded = std::fs::read_to_string(&known_hosts).unwrap();
+        assert!(
+            !recorded.contains("ssh-ed25519"),
+            "no debió añadir la ed25519 del servidor. Contenido:\n{recorded}"
+        );
+    }
+
+    /// **Integración**: ProxyJump real. Levanta dos `sshd` —bastión y destino—,
+    /// autentica el bastión, abre un canal `direct-tcpip` hacia el destino y
+    /// establece SSH sobre él, exactamente como hace `cli::connect_handle` con
+    /// `profile.proxy_jump`. Cubre que el salto a través del bastión y el TOFU
+    /// del destino (con su known_hosts aislado) funcionan contra servidores
+    /// auténticos, no solo en la lógica de parseo.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_proxy_jump_a_traves_de_un_bastion_real() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let (Some(bastion), Some(target)) = (
+            ssh_fixture::start().expect("arrancar bastión"),
+            ssh_fixture::start().expect("arrancar destino"),
+        ) else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+
+        // 1) Conectar y autenticar contra el bastión.
+        let bastion_addr = format!("127.0.0.1:{}", bastion.port);
+        let (b_handler, b_failure) = host_keys::client_with_known_hosts(
+            "127.0.0.1".to_string(),
+            bastion.port,
+            bastion.known_hosts_path(),
+        );
+        let mut b_handle = russh_connect_addr(test_client_config(), &bastion_addr, b_handler)
+            .await
+            .unwrap_or_else(|e| {
+                panic!("bastión no conectó: {e}. {:?}", host_keys::take_failure(&b_failure))
+            });
+        let b_key = bastion.user_key.to_string_lossy().into_owned();
+        let b_auth = authenticate_handle(
+            &mut b_handle,
+            &AuthType::PublicKey,
+            &bastion.username,
+            None,
+            None,
+            Some(&b_key),
+        )
+        .await
+        .expect("auth bastión");
+        assert!(matches!(b_auth, AuthResult::Success), "auth bastión: {b_auth:?}");
+
+        // 2) Abrir direct-tcpip hacia el destino a través del bastión.
+        let channel = b_handle
+            .channel_open_direct_tcpip("127.0.0.1".to_string(), target.port as u32, "127.0.0.1".to_string(), 0)
+            .await
+            .expect("abrir direct-tcpip hacia el destino");
+        let stream = channel.into_stream();
+
+        // 3) Establecer SSH con el destino SOBRE ese canal, con su propio TOFU.
+        let (t_handler, t_failure) = host_keys::client_with_known_hosts(
+            "127.0.0.1".to_string(),
+            target.port,
+            target.known_hosts_path(),
+        );
+        let mut t_handle = client::connect_stream(test_client_config(), stream, t_handler)
+            .await
+            .unwrap_or_else(|e| {
+                panic!("destino no conectó por el bastión: {e}. {:?}", host_keys::take_failure(&t_failure))
+            });
+        let t_key = target.user_key.to_string_lossy().into_owned();
+        let t_auth = authenticate_handle(
+            &mut t_handle,
+            &AuthType::PublicKey,
+            &target.username,
+            None,
+            None,
+            Some(&t_key),
+        )
+        .await
+        .expect("auth destino");
+        assert!(matches!(t_auth, AuthResult::Success), "auth destino: {t_auth:?}");
+
+        // El destino aprendió su host key en SU known_hosts, distinto del bastión.
+        assert!(target.known_hosts_path().exists());
+        assert!(bastion.known_hosts_path().exists());
+    }
+
     /// El log de sesión guarda salida del terminal: debe nacer privado (0600) y
     /// no heredar un `umask` permisivo. Y si ya existía con permisos laxos (log
     /// creado por una versión anterior), abrirlo lo endurece.
