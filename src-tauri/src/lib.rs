@@ -5,6 +5,7 @@ pub mod cli;
 mod commands;
 mod credentials;
 mod error;
+mod ftps_certs;
 mod external_client;
 mod host_keys;
 mod ipc;
@@ -164,6 +165,8 @@ pub fn run() {
             // nueva al usuario (evento `ssh-hostkey-prompt`). Sin este registro
             // —caso de la CLI— cae al prompt por stdin.
             host_keys::register_app(app.handle().clone());
+            // Igual para la confirmación de certificados FTPS (`ftps-cert-prompt`).
+            ftps_certs::register_app(app.handle().clone());
             // Si es la build portable de Windows, los datos viajan junto al
             // .exe en `.conf/com.rustty.app/`. Si no, ruta estándar (identifier).
             let data_dir = resolve_data_dir();
@@ -333,6 +336,8 @@ pub fn run() {
             commands::remove_known_host_line,
             commands::set_host_key_policy,
             commands::ssh_hostkey_response,
+            commands::set_ftps_cert_policy,
+            commands::ftps_cert_response,
             commands::profiles_recovery,
             // ── Sincronización en la nube
             commands::sync_get_config,

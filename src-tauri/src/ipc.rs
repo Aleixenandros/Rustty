@@ -108,6 +108,15 @@ pub const TRAY_ACTION: &str = "tray-action";
 /// Payload: `{ promptId, host, port, fingerprint, keyType, viaJump }`.
 pub const HOST_KEY_PROMPT: &str = "ssh-hostkey-prompt";
 
+/// Evento global (sin sufijo): un servidor **FTPS** presenta un certificado TLS
+/// **desconocido** (típicamente autofirmado de un NAS/servidor interno) y el modo
+/// estricto exige confirmar su huella antes de guardarla (TOFU, mismo patrón que
+/// las host keys SSH). La respuesta vuelve por el comando `ftps_cert_response`
+/// con el `promptId` del payload.
+///
+/// Payload: `{ promptId, host, port, fingerprint }`.
+pub const FTPS_CERT_PROMPT: &str = "ftps-cert-prompt";
+
 #[cfg(test)]
 mod tests {
     use super::*;

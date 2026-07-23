@@ -2864,6 +2864,20 @@ pub fn ssh_hostkey_response(prompt_id: String, accept: bool) -> bool {
     crate::host_keys::resolve_prompt(&prompt_id, accept)
 }
 
+/// Fija la política de primera conexión FTPS: `true` (default) exige confirmar la
+/// huella de un certificado nuevo antes de guardarla; `false` es TOFU automático.
+#[tauri::command]
+pub fn set_ftps_cert_policy(strict: bool) {
+    crate::ftps_certs::set_strict_first_connect(strict);
+}
+
+/// Respuesta del usuario a una confirmación de certificado FTPS (`ftps-cert-prompt`).
+/// Devuelve `false` si el `prompt_id` ya había caducado o se respondió antes.
+#[tauri::command]
+pub fn ftps_cert_response(prompt_id: String, accept: bool) -> bool {
+    crate::ftps_certs::resolve_prompt(&prompt_id, accept)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

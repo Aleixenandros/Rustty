@@ -73,6 +73,13 @@ export const EVENT = Object.freeze({
    * respuesta vuelve por el comando `ssh_hostkey_response` con el `promptId`.
    */
   hostKeyPrompt: "ssh-hostkey-prompt",
+  /**
+   * `ftps-cert-prompt` → {@link FtpsCertPromptEvent}
+   *
+   * Igual que `hostKeyPrompt` pero para el certificado TLS de un servidor FTPS
+   * desconocido (TOFU). La respuesta vuelve por el comando `ftps_cert_response`.
+   */
+  ftpsCertPrompt: "ftps-cert-prompt",
 });
 
 /**
@@ -85,6 +92,16 @@ export const EVENT = Object.freeze({
  * @property {string} fingerprint Huella SHA256 de la clave presentada.
  * @property {string} keyType Algoritmo (`ssh-ed25519`, `rsa-sha2-512`…).
  * @property {boolean} viaJump `true` si la clave es de un bastión ProxyJump.
+ */
+
+/**
+ * Payload de `ftps-cert-prompt`: un servidor FTPS presenta un certificado TLS
+ * desconocido (autofirmado) y el modo estricto exige confirmar su huella.
+ * @typedef {object} FtpsCertPromptEvent
+ * @property {string} promptId Identificador con el que responder.
+ * @property {string} host
+ * @property {number} port
+ * @property {string} fingerprint Huella SHA-256 del certificado presentado.
  */
 
 /**

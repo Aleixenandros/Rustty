@@ -405,6 +405,11 @@ const DEFAULT_PREFS = {
   // presente ya en esa primera conexión. La política vive en el backend
   // (`host_keys`): esta pref solo la fija con `set_host_key_policy`.
   strictHostKey:   true,
+  // Primera conexión FTPS: igual que `strictHostKey` pero para el certificado
+  // TLS del servidor (TOFU por huella). Activo (default) pide confirmar la huella
+  // de un certificado nuevo; desactivado la aprende en silencio. La política vive
+  // en el backend (`ftps_certs`); esta pref la fija con `set_ftps_cert_policy`.
+  strictFtpsCert:  true,
   // Cómo abre la ventana el cliente RDP por defecto: "window" (redimensionable,
   // la resolución sigue al tamaño), "fullscreen", "workarea" o "fixed" (el
   // tamaño clavado de siempre, para servidores sin Display Control). Cada perfil
@@ -1730,6 +1735,8 @@ function openSettingsModal() {
   if (confirmRiskyPasteEl) confirmRiskyPasteEl.checked = prefs.confirmRiskyPaste !== false;
   const strictHostKeyEl = document.getElementById("pref-strict-host-key");
   if (strictHostKeyEl) strictHostKeyEl.checked = prefs.strictHostKey !== false;
+  const strictFtpsCertEl = document.getElementById("pref-strict-ftps-cert");
+  if (strictFtpsCertEl) strictFtpsCertEl.checked = prefs.strictFtpsCert !== false;
   const onWakeEl = document.getElementById("pref-on-wake");
   if (onWakeEl) onWakeEl.value = prefs.onWakeAction || "check";
   const shareHistEl = document.getElementById("pref-share-command-history");
@@ -3486,6 +3493,7 @@ function savePrefsFromModal() {
     rightClickPaste: document.getElementById("pref-right-click-paste").checked,
     confirmRiskyPaste: document.getElementById("pref-confirm-risky-paste")?.checked ?? true,
     strictHostKey:     document.getElementById("pref-strict-host-key")?.checked ?? true,
+    strictFtpsCert:    document.getElementById("pref-strict-ftps-cert")?.checked ?? true,
     onWakeAction:      document.getElementById("pref-on-wake")?.value || "check",
     shareCommandHistory: !!document.getElementById("pref-share-command-history")?.checked,
     captureScreen: document.getElementById("pref-capture-screen")?.checked ?? true,
@@ -3589,6 +3597,7 @@ function savePrefsFromModal() {
   startKeepassAutoLock();
   // La política de primera conexión la aplica el backend en cada handshake.
   applyHostKeyPolicy();
+  applyFtpsCertPolicy();
   // Aplicar la preferencia de autostart al SO (enable/disable la entrada del SO).
   applyAutostartSetting(prefs.autostart, prefs.autostartMinimized)
     .catch((e) => console.error("[autostart] apply", e));
@@ -3902,7 +3911,9 @@ async function init() {
   // La política de primera conexión y su diálogo deben estar listos antes de que
   // el usuario pueda conectar a nada.
   applyHostKeyPolicy();
+  applyFtpsCertPolicy();
   await initHostKeyPrompt().catch((e) => console.error("[hostkey] init", e));
+  await initFtpsCertPrompt().catch((e) => console.error("[ftpscert] init", e));
   initWakeWatcher();
   await populateSyncTab().catch((e) => console.error("[sync] populate", e));
   if (_syncConfigCache?.enabled && _syncConfigCache.backend !== "none") {
@@ -4962,6 +4973,44 @@ function initWakeWatcher() {
 function applyHostKeyPolicy() {
   invoke("set_host_key_policy", { strict: prefs.strictHostKey !== false })
     .catch((e) => console.error("[hostkey] set policy", e));
+}
+
+/** Igual para el certificado TLS de un servidor FTPS (TOFU por huella). */
+function applyFtpsCertPolicy() {
+  invoke("set_ftps_cert_policy", { strict: prefs.strictFtpsCert !== false })
+    .catch((e) => console.error("[ftpscert] set policy", e));
+}
+
+/**
+ * Atiende `ftps-cert-prompt`: un servidor FTPS presentó un certificado TLS que
+ * no conocemos (típicamente autofirmado) y el backend espera —con plazo— a que
+ * el usuario decida. Listener global, como el de host keys.
+ */
+async function initFtpsCertPrompt() {
+  await listen(
+    EVENT.ftpsCertPrompt,
+    async (/** @type {{ payload: FtpsCertPromptEvent }} */ event) => {
+      const p = event.payload || {};
+      const accept = await confirmThemed({
+        title: t("modal_ftpscert.title"),
+        message: [
+          t("modal_ftpscert.intro", { host: p.host, port: p.port }),
+          "",
+          t("modal_ftpscert.fingerprint", { fingerprint: p.fingerprint }),
+          "",
+          t("modal_ftpscert.advice"),
+        ].join("\n"),
+        submitLabel: t("modal_ftpscert.accept"),
+        danger: true,
+      });
+      try {
+        await invoke("ftps_cert_response", { promptId: p.promptId, accept });
+      } catch (e) {
+        console.error("[ftpscert] response", e);
+      }
+      if (!accept) toast(t("toast.ftpscert_rejected", { host: p.host }), "warning");
+    }
+  );
 }
 
 /**
@@ -9522,6 +9571,11 @@ async function connectFileTransferProfile(profileId, { passwordOverride = null, 
     renderConnectionList();
     setActiveTab(sessionId);
     toast(`${profile.connection_type.toUpperCase()} conectado: ${profile.name}`, "success");
+    // FTP plano: credenciales y datos viajan sin cifrar. Aviso no bloqueante
+    // (FTPS no lo dispara). Sugiere FTPS, que ya acepta certificados por huella.
+    if (profile.connection_type === "ftp") {
+      toast(t("toast.ftp_plaintext_warning", { name: profile.name }), "warning", 9000);
+    }
   } catch (err) {
     sessions.delete(sessionId);
     removeTab(sessionId);

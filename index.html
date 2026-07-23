@@ -2566,6 +2566,14 @@
 
               <div class="settings-row">
                 <label class="checkbox-label">
+                  <input type="checkbox" id="pref-strict-ftps-cert" />
+                  <span data-i18n="prefs_security.strict_ftps_cert">Confirmar el certificado FTPS en la primera conexión</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_security.strict_ftps_cert_hint">Los servidores FTPS con certificado autofirmado (un NAS, un equipo interno) se aceptan por huella igual que las claves SSH: la primera vez se muestra la huella del certificado y se pide confirmación; después, un cambio de certificado se rechaza. Si lo desactivas, la primera huella se recuerda automáticamente.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
                   <input type="checkbox" id="pref-confirm-risky-paste" />
                   <span data-i18n="prefs_terminal.confirm_risky_paste">Confirmar pegados peligrosos</span>
                 </label>

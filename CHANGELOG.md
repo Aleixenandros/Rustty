@@ -2,6 +2,22 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.61.0] - 2026-07-23
+
+### Añadido
+
+- **FTPS con certificado autofirmado, por huella (TOFU)**. Un NAS o un servidor
+  interno con certificado propio ya se puede usar: antes eran inconectables
+  porque Rustty exigía una cadena hasta una CA pública. Ahora se aceptan igual
+  que las claves SSH — la primera vez se muestra la huella SHA-256 del
+  certificado y se pide confirmarla; una vez guardada se acepta en silencio, y si
+  el certificado cambia más adelante la conexión se rechaza con un aviso. No es un
+  «ignorar certificado» global: cada huella se guarda por servidor, y la firma del
+  handshake TLS se sigue comprobando. La confirmación se puede desactivar en
+  Preferencias → Seguridad (entonces la primera huella se aprende sola).
+- **Aviso al conectar por FTP plano**: recuerda que el usuario, la contraseña y
+  los archivos viajan sin cifrar, y sugiere FTPS.
+
 ## [1.60.0] - 2026-07-22
 
 ### Añadido

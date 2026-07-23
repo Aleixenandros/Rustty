@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use suppaftp::list::{File as FtpListFile, ListParser};
 use suppaftp::types::FileType as FtpTransferType;
 use suppaftp::{rustls, FtpStream, RustlsConnector, RustlsFtpStream};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use russh::client::{self, AuthResult};
@@ -732,7 +732,11 @@ async fn connect_and_open_backend(
                     profile.port
                 ),
             );
-            match connect_ftp(profile, password) {
+            // Store de huellas FTPS en el directorio de datos de la app.
+            let cert_store = crate::ftps_certs::CertStore::file_in(
+                &app_handle.state::<crate::DataDir>().0,
+            );
+            match connect_ftp(profile, password, cert_store) {
                 Ok(ftp) => {
                     emit_sftp_log(
                         app_handle,
@@ -1143,7 +1147,11 @@ enum FtpConnection {
 }
 
 impl FtpConnection {
-    fn connect(profile: &ConnectionProfile, password: Option<&str>) -> Result<Self, String> {
+    fn connect(
+        profile: &ConnectionProfile,
+        password: Option<&str>,
+        ftps_cert_store: PathBuf,
+    ) -> Result<Self, String> {
         let addr = format!("{}:{}", profile.host, profile.port);
         let username = if profile.username.trim().is_empty() {
             "anonymous"
@@ -1157,10 +1165,18 @@ impl FtpConnection {
         });
 
         if profile.connection_type == "ftps" {
-            let root_store =
-                rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            // Verificación TOFU por huella (NAS/servidor interno con certificado
+            // autofirmado), en vez de exigir una cadena hasta una CA raíz: el
+            // certificado se recuerda por host y un cambio se rechaza. La firma
+            // del handshake sí se sigue comprobando; ver `ftps_certs`.
+            let verifier = crate::ftps_certs::TofuServerCertVerifier::new(
+                profile.host.clone(),
+                profile.port,
+                ftps_cert_store,
+            );
             let config = rustls::ClientConfig::builder()
-                .with_root_certificates(root_store)
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(verifier))
                 .with_no_client_auth();
             let connector = RustlsConnector::from(Arc::new(config));
             let mut ftp = RustlsFtpStream::connect(addr.as_str())
@@ -1374,8 +1390,9 @@ impl FtpConnection {
 fn connect_ftp(
     profile: &ConnectionProfile,
     password: Option<&str>,
+    ftps_cert_store: PathBuf,
 ) -> Result<FtpConnection, String> {
-    FtpConnection::connect(profile, password)
+    FtpConnection::connect(profile, password, ftps_cert_store)
 }
 
 #[async_trait(?Send)]

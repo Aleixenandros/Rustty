@@ -103,6 +103,14 @@ El botón **sudo** reconecta el SFTP usando `sudo sftp-server` en el servidor re
 
 Si el servidor no permite esa elevación, desactiva **sudo** y usa SFTP normal. Esta opción solo existe para SFTP sobre SSH; no aparece en perfiles FTP/FTPS.
 
+## Seguridad de FTP y FTPS
+
+**FTPS con certificado autofirmado.** Un NAS o un servidor interno rara vez tiene un certificado firmado por una CA pública. Antes esos servidores eran inconectables (Rustty exigía una cadena hasta una CA raíz); ahora se aceptan por **huella**, con el mismo modelo *Trust On First Use* que las claves SSH: la primera vez que conectas se muestra la huella SHA-256 del certificado y se pide confirmarla; una vez guardada, se acepta en silencio, y si el certificado **cambia** más adelante la conexión se rechaza con un aviso. No es un «ignorar certificado» global: cada huella se guarda por servidor.
+
+Puedes desactivar la confirmación en **Preferencias → Seguridad** («Confirmar el certificado FTPS en la primera conexión»); entonces la primera huella se recuerda automáticamente. Sigue avisando si cambia después. La firma del handshake TLS se comprueba siempre; lo único que este modo relaja es la exigencia de una CA raíz.
+
+**FTP plano.** El FTP sin cifrar transmite el usuario, la contraseña y los archivos **en claro**. Al conectar por FTP (no FTPS), Rustty muestra un aviso recordándolo y sugiriendo FTPS si el servidor lo admite.
+
 ## Cerrar el panel con una transferencia en curso
 
 Si intentas cerrar la pestaña o pulsas `Ctrl+W` con una transferencia activa, Rustty pregunta antes de continuar y cancela las transferencias en curso si confirmas. El mismo aviso aparece para sesiones SSH vivas: evita perder progreso por error.
