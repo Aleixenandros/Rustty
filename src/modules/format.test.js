@@ -5,6 +5,8 @@ import {
   formatDuration,
   formatSftpPermissions,
   formatSftpPermissionsOctal,
+  formatOctalMode,
+  formatSteppedNumber,
 } from "./format.js";
 
 describe("formatSize", () => {
@@ -99,5 +101,45 @@ describe("formatSftpPermissionsOctal", () => {
   it("NaN cae a 0 por el enmascarado de bits (0000)", () => {
     // Mismo motivo que en la variante simbólica: `NaN & 0o777` es 0.
     expect(formatSftpPermissionsOctal(NaN)).toBe("0000");
+  });
+});
+
+describe("formatOctalMode", () => {
+  it("da tres dígitos octales sin el cero de cabeza", () => {
+    expect(formatOctalMode(0o750)).toBe("750");
+    expect(formatOctalMode(0o644)).toBe("644");
+    expect(formatOctalMode(0o7)).toBe("007");
+    expect(formatOctalMode(0o000)).toBe("000");
+  });
+
+  it("enmascara a 0o777, descartando bits altos", () => {
+    expect(formatOctalMode(0o4755)).toBe("755");
+  });
+
+  it("filtra el no finito ANTES de enmascarar, así que NaN sí da «»", () => {
+    // A diferencia de formatSftpPermissionsOctal, aquí el guard va antes de la
+    // máscara: el NaN no llega a colapsar a 0.
+    expect(formatOctalMode(NaN)).toBe("");
+    expect(formatOctalMode(Infinity)).toBe("");
+  });
+});
+
+describe("formatSteppedNumber", () => {
+  it("fija los decimales pero quita los ceros de cola", () => {
+    expect(formatSteppedNumber(3.14, 2)).toBe("3.14");
+    expect(formatSteppedNumber(3.1, 2)).toBe("3.1");
+    expect(formatSteppedNumber(3.0, 2)).toBe("3");
+    expect(formatSteppedNumber(3.14, 3)).toBe("3.14");
+  });
+
+  it("redondea a entero cuando la precisión es 0", () => {
+    expect(formatSteppedNumber(2.6, 0)).toBe("3");
+    expect(formatSteppedNumber(2.4, 0)).toBe("2");
+    expect(formatSteppedNumber(100, 0)).toBe("100");
+  });
+
+  it("un valor entero con precisión pierde la parte decimal entera", () => {
+    expect(formatSteppedNumber(10, 1)).toBe("10");
+    expect(formatSteppedNumber(0, 2)).toBe("0");
   });
 });

@@ -40,7 +40,7 @@ import {
   pathSegments,
   pushPath,
 } from "./modules/path-history.js";
-import { formatSize, formatDuration, formatSftpPermissions, formatSftpPermissionsOctal } from "./modules/format.js";
+import { formatSize, formatDuration, formatSftpPermissions, formatSftpPermissionsOctal, formatOctalMode, formatSteppedNumber } from "./modules/format.js";
 import { escHtml } from "./modules/html.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
@@ -17816,10 +17816,7 @@ function localNameFromPath(path) {
   return String(path || "").split(/[\\/]/).filter(Boolean).pop() || "archivo";
 }
 
-function formatOctalMode(mode) {
-  if (!Number.isFinite(mode)) return "";
-  return (mode & 0o777).toString(8).padStart(3, "0");
-}
+/* `formatOctalMode` vive ahora en `modules/format.js` (con tests). */
 
 function parseOctalMode(input) {
   const value = String(input || "").trim();
@@ -23378,11 +23375,7 @@ function getStepPrecision(stepValue) {
   return decimal ? decimal.length : 0;
 }
 
-function formatSteppedNumber(value, precision) {
-  return precision > 0
-    ? value.toFixed(precision).replace(/\.?0+$/, "")
-    : String(Math.round(value));
-}
+/* `formatSteppedNumber` vive ahora en `modules/format.js` (con tests). */
 
 // ═══════════════════════════════════════════════════════════════
 // DROPDOWN PERSONALIZADO

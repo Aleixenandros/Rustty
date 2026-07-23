@@ -76,3 +76,31 @@ export function formatSftpPermissionsOctal(mode) {
   if (!Number.isFinite(m)) return "";
   return "0" + m.toString(8).padStart(3, "0");
 }
+
+/**
+ * Modo de permisos a octal de tres dígitos **sin** cero de cabeza (`"750"`),
+ * para el valor inicial del editor de permisos SFTP. Emparentada con
+ * {@link formatSftpPermissionsOctal} pero distinta a propósito: aquella devuelve
+ * cuatro caracteres (`"0750"`) para el tooltip, y aquí el guard de finitud va
+ * **antes** del enmascarado, así que un modo no finito sí devuelve `""`.
+ * @param {number} mode
+ * @returns {string}
+ */
+export function formatOctalMode(mode) {
+  if (!Number.isFinite(mode)) return "";
+  return (mode & 0o777).toString(8).padStart(3, "0");
+}
+
+/**
+ * Número a texto con un número fijo de decimales pero **sin ceros finales**
+ * (`3.140` → `"3.14"`, `3.0` → `"3"`), o redondeado a entero si `precision` es 0.
+ * Para inputs numéricos con paso configurable, donde los ceros de cola sobran.
+ * @param {number} value
+ * @param {number} precision
+ * @returns {string}
+ */
+export function formatSteppedNumber(value, precision) {
+  return precision > 0
+    ? value.toFixed(precision).replace(/\.?0+$/, "")
+    : String(Math.round(value));
+}
