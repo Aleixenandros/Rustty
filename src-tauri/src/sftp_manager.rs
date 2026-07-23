@@ -1174,10 +1174,19 @@ impl FtpConnection {
                 profile.port,
                 ftps_cert_store,
             );
-            let config = rustls::ClientConfig::builder()
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(verifier))
-                .with_no_client_auth();
+            // Proveedor criptográfico explícito (`ring`, el mismo que usa el
+            // verificador TOFU): el árbol de dependencias trae también `aws-lc-rs`
+            // (vía `reqwest` del updater de Tauri), así que `builder()` a secas no
+            // puede autodeterminar el proveedor de proceso y entra en pánico al
+            // conectar. Fijarlo aquí lo hace determinista.
+            let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .map_err(|e| format!("No se pudo inicializar TLS FTPS: {e}"))?
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(verifier))
+            .with_no_client_auth();
             let connector = RustlsConnector::from(Arc::new(config));
             let mut ftp = RustlsFtpStream::connect(addr.as_str())
                 .map_err(|e| format!("No se puede conectar FTPS a {addr}: {e}"))?
@@ -2722,6 +2731,126 @@ mod tests {
         assert_eq!(
             part_path(Path::new("/tmp/.bashrc")),
             Path::new("/tmp/.bashrc.rustty-part")
+        );
+    }
+
+    /// Perfil FTP mínimo apuntando al fixture (usuario anónimo). El resto de
+    /// campos caen por sus defaults de serde, como el helper de `profiles.rs`.
+    #[cfg(target_os = "linux")]
+    fn ftp_profile(port: u16) -> ConnectionProfile {
+        let json = format!(
+            r#"{{
+                "id": "ftp-test",
+                "name": "FTP de prueba",
+                "host": "127.0.0.1",
+                "port": {port},
+                "username": "",
+                "connection_type": "ftp",
+                "domain": null,
+                "auth_type": "password",
+                "key_path": null,
+                "group": null,
+                "created_at": "2026-05-08T12:00:00Z"
+            }}"#
+        );
+        serde_json::from_str(&json).expect("perfil FTP válido")
+    }
+
+    /// **Integración**: recorre el CRUD del backend FTP contra un servidor
+    /// `libunftp` real por el camino de producción (`connect_ftp` →
+    /// `FtpConnection`): login anónimo, `pwd`, crear carpeta (MKD), subir un
+    /// fichero (STOR), listarlo por el canal de datos PASV (LIST), consultar su
+    /// tamaño (SIZE), renombrarlo (RNFR/RNTO) y borrarlo (DELE/RMD). Cada escritura
+    /// se cruza contra el **sistema de ficheros** del servidor, así que un fallo
+    /// del protocolo —o una regresión al subir `suppaftp`— lo caza el CI.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor FTP efímero; se corre con --ignored"]
+    #[test]
+    fn ftp_crud_completo_por_el_camino_real() {
+        let server = crate::ftp_fixture::start().expect("arrancar el servidor FTP");
+        let profile = ftp_profile(server.port);
+        let cert_store = server.root.join("ftps_certs.json"); // no se usa en FTP plano
+
+        let mut conn =
+            connect_ftp(&profile, None, cert_store).expect("conectar y autenticar FTP anónimo");
+
+        // Recién conectados, el directorio de trabajo es la raíz.
+        assert_eq!(conn.pwd().expect("pwd"), "/");
+
+        // MKD + STOR (fichero vacío) por el camino real.
+        conn.mkdir("carpeta").expect("crear carpeta");
+        conn.create_file("carpeta/hola.txt").expect("crear fichero");
+
+        // La escritura llegó de verdad al disco del servidor.
+        let en_disco = server.root.join("carpeta/hola.txt");
+        assert!(en_disco.exists(), "el STOR debió crear el fichero en el servidor");
+
+        // LIST por el canal de datos PASV lo muestra; SIZE da 0 (vacío).
+        let listado = conn.list("carpeta").expect("listar la carpeta").join("\n");
+        assert!(
+            listado.contains("hola.txt"),
+            "el listado debía incluir el fichero, salió:\n{listado}"
+        );
+        assert_eq!(conn.size("carpeta/hola.txt").expect("size"), 0);
+
+        // RNFR/RNTO y DELE, cruzados otra vez contra el disco del servidor.
+        conn.rename("carpeta/hola.txt", "carpeta/adios.txt")
+            .expect("renombrar");
+        assert!(!en_disco.exists(), "tras renombrar, el nombre viejo no existe");
+        assert!(server.root.join("carpeta/adios.txt").exists(), "el nombre nuevo existe");
+
+        conn.remove("carpeta/adios.txt", false).expect("borrar fichero");
+        assert!(
+            !server.root.join("carpeta/adios.txt").exists(),
+            "tras DELE el fichero no existe en el servidor"
+        );
+
+        conn.quit();
+    }
+
+    /// **Integración**: TOFU de certificados **FTPS** contra un servidor real con
+    /// TLS explícito y certificado autofirmado (la feature de v1.61.0). Recorre
+    /// las tres ramas de `ftps_certs::decide` por el camino de producción
+    /// (`connect_ftp` con `connection_type = "ftps"`): (1) primera conexión →
+    /// aprende la huella y la persiste; (2) reconexión con la huella recordada →
+    /// se reconoce y conecta; (3) huella cambiada → se **rechaza**, como el TOFU
+    /// de host keys SSH pero por el camino FTPS.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor FTPS efímero; se corre con --ignored"]
+    #[test]
+    fn ftps_tofu_aprende_reconoce_y_rechaza_el_cambio() {
+        // Aprendizaje automático: sin esto, la primera conexión pediría confirmar
+        // la huella por un prompt que en un test no existe.
+        crate::ftps_certs::set_strict_first_connect(false);
+
+        let server = crate::ftp_fixture::start_ftps().expect("arrancar el servidor FTPS");
+        let mut profile = ftp_profile(server.port);
+        profile.connection_type = "ftps".to_string();
+        let store = server.root.join("ftps_known_certs.json");
+
+        // 1) Primera conexión: aprende la huella (TOFU) y la persiste.
+        assert!(!store.exists(), "el almacén de huellas debe empezar sin existir");
+        let mut conn =
+            connect_ftp(&profile, None, store.clone()).expect("primera conexión FTPS autofirmada");
+        assert_eq!(conn.pwd().expect("pwd"), "/");
+        conn.quit();
+        assert!(store.exists(), "el TOFU debió guardar la huella del certificado");
+
+        // 2) Reconexión con la huella ya recordada: Decision::Trusted.
+        let mut conn2 = connect_ftp(&profile, None, store.clone())
+            .expect("reconexión FTPS con la huella ya aprendida");
+        assert_eq!(conn2.pwd().expect("pwd"), "/");
+        conn2.quit();
+
+        // 3) Huella cambiada: sembramos otra distinta y la conexión debe rechazarse
+        //    (Decision::Changed), sin aprender la nueva en silencio.
+        crate::ftps_certs::CertStore::new(store.clone())
+            .insert("127.0.0.1", server.port, "AA:BB:CC:DD:EE:FF")
+            .expect("sembrar una huella falsa");
+        let cambiado = connect_ftp(&profile, None, store.clone());
+        assert!(
+            cambiado.is_err(),
+            "una huella FTPS cambiada debió rechazar la conexión"
         );
     }
 

@@ -113,3 +113,11 @@ libc = "0.2"
 [dev-dependencies]
 rcgen = { version = "0.14.8", default-features = false, features = ["pem", "ring"] }
 rustls = { version = "0.23.42", default-features = false, features = ["ring", "std"] }
+# Solo para el fixture del test de integración de FTP (`ftp_fixture`, que corre
+# con `--ignored`): un servidor FTP efímero de verdad contra el que ejercitar el
+# cliente `suppaftp` por el camino real. `default-features = false` + `ring` evita
+# arrastrar `aws-lc` (toolchain C), Prometheus y proxy-protocol; alinea el
+# proveedor TLS con el `rustls-ring` del cliente. Dev-only: no entra en el binario
+# ni en la cadena de suministro de release.
+libunftp = { version = "0.23.0", default-features = false, features = ["ring"] }
+unftp-sbe-fs = "0.4.0"

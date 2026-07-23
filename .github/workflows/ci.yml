@@ -243,7 +243,12 @@ jobs:
   # protocolo. Lo encontró el usuario, no la batería. Este job cierra ese hueco:
   # levanta un servidor RDP mínimo (`rdp_fixture.rs`) y comprueba que el cliente
   # de verdad llega a autenticarse. También un `sshd` real (`ssh_fixture.rs`)
-  # para el flujo TOFU de host keys por el camino de conexión de Rustty.
+  # para el flujo TOFU de host keys, ProxyJump y túneles por el camino de
+  # conexión de Rustty; y un servidor FTP/FTPS efímero (`ftp_fixture.rs`, con
+  # `libunftp` como dev-dependency, sin paquetes del sistema) para el CRUD del
+  # panel y el TOFU de certificados FTPS. Ese último fixture ya se ganó el
+  # sueldo: destapó que el cliente FTPS entraba en pánico al elegir proveedor
+  # criptográfico de rustls, con la feature recién publicada en v1.61.0.
   integration-linux:
     runs-on: ubuntu-latest
     name: Integración · Linux
