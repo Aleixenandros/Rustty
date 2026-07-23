@@ -40,7 +40,8 @@ import {
   pathSegments,
   pushPath,
 } from "./modules/path-history.js";
-import { formatSize, formatDuration } from "./modules/format.js";
+import { formatSize, formatDuration, formatSftpPermissions, formatSftpPermissionsOctal } from "./modules/format.js";
+import { escHtml } from "./modules/html.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
@@ -18224,34 +18225,9 @@ function sftpFileIconSvg(entry) {
   return SFTP_TYPE_SVG[cls] || SFTP_TYPE_SVG.file;
 }
 
-/**
- * Permisos POSIX en formato compacto "rwxr-x---". Si no hay modo
- * (carpeta sin info, Windows local) devuelve cadena vacía.
- */
-function formatSftpPermissions(mode) {
-  if (mode == null) return "";
-  const m = Number(mode) & 0o777;
-  if (!Number.isFinite(m)) return "";
-  const parts = [m >> 6, (m >> 3) & 7, m & 7];
-  return parts.map((p) => (
-    (p & 4 ? "r" : "-") +
-    (p & 2 ? "w" : "-") +
-    (p & 1 ? "x" : "-")
-  )).join("");
-}
-
-/**
- * Permisos en formato octal "0750" para el tooltip.
- */
-function formatSftpPermissionsOctal(mode) {
-  if (mode == null) return "";
-  const m = Number(mode) & 0o777;
-  if (!Number.isFinite(m)) return "";
-  return "0" + m.toString(8).padStart(3, "0");
-}
-
-/* `formatSize` y `formatDuration` viven ahora en `modules/format.js` (con
-   tests); se importan arriba. Primer paso del troceo de este god-file. */
+/* `formatSize`, `formatDuration`, `formatSftpPermissions` y
+   `formatSftpPermissionsOctal` viven ahora en `modules/format.js` (con tests);
+   se importan arriba. Parte del troceo de este god-file. */
 
 /* ── Aviso de fin de comando largo (OSC 133) ──────────────────────────────
    Router mínimo por foco: sesión a la vista → nada (la está mirando); app con
@@ -23802,11 +23778,7 @@ async function exportSessionHistory(sessionId) {
 // UTILIDADES
 // ═══════════════════════════════════════════════════════════════
 
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+/* `escHtml` vive ahora en `modules/html.js` (con tests); se importa arriba. */
 
 const TOAST_VISIBLE_LIMIT = 3;
 

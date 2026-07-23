@@ -1,6 +1,11 @@
 // @ts-check
 import { describe, it, expect } from "vitest";
-import { formatSize, formatDuration } from "./format.js";
+import {
+  formatSize,
+  formatDuration,
+  formatSftpPermissions,
+  formatSftpPermissionsOctal,
+} from "./format.js";
 
 describe("formatSize", () => {
   it("muestra bytes sin unidad de escala por debajo de 1 KiB", () => {
@@ -46,5 +51,53 @@ describe("formatDuration", () => {
     expect(formatDuration(-1)).toBe("?");
     expect(formatDuration(Infinity)).toBe("?");
     expect(formatDuration(NaN)).toBe("?");
+  });
+});
+
+describe("formatSftpPermissions", () => {
+  it("traduce los 9 bits rwx al estilo de ls", () => {
+    expect(formatSftpPermissions(0o755)).toBe("rwxr-xr-x");
+    expect(formatSftpPermissions(0o644)).toBe("rw-r--r--");
+    expect(formatSftpPermissions(0o750)).toBe("rwxr-x---");
+    expect(formatSftpPermissions(0o000)).toBe("---------");
+    expect(formatSftpPermissions(0o777)).toBe("rwxrwxrwx");
+  });
+
+  it("enmascara a 0o777, ignorando setuid/setgid/sticky y el tipo", () => {
+    expect(formatSftpPermissions(0o4755)).toBe("rwxr-xr-x");
+    expect(formatSftpPermissions(0o104644)).toBe("rw-r--r--");
+  });
+
+  it("devuelve «» para un modo nulo o indefinido", () => {
+    expect(formatSftpPermissions(null)).toBe("");
+    expect(formatSftpPermissions(undefined)).toBe("");
+  });
+
+  it("NaN cae a 0 por el enmascarado de bits (---------)", () => {
+    // `NaN & 0o777` es 0 en JS: el guard de finitud tras la máscara nunca salta.
+    expect(formatSftpPermissions(NaN)).toBe("---------");
+  });
+});
+
+describe("formatSftpPermissionsOctal", () => {
+  it("da los tres dígitos octales con el cero de cabeza", () => {
+    expect(formatSftpPermissionsOctal(0o755)).toBe("0755");
+    expect(formatSftpPermissionsOctal(0o644)).toBe("0644");
+    expect(formatSftpPermissionsOctal(0o7)).toBe("0007");
+    expect(formatSftpPermissionsOctal(0o000)).toBe("0000");
+  });
+
+  it("enmascara a 0o777 igual que la variante simbólica", () => {
+    expect(formatSftpPermissionsOctal(0o4755)).toBe("0755");
+  });
+
+  it("devuelve «» para un modo nulo o indefinido", () => {
+    expect(formatSftpPermissionsOctal(null)).toBe("");
+    expect(formatSftpPermissionsOctal(undefined)).toBe("");
+  });
+
+  it("NaN cae a 0 por el enmascarado de bits (0000)", () => {
+    // Mismo motivo que en la variante simbólica: `NaN & 0o777` es 0.
+    expect(formatSftpPermissionsOctal(NaN)).toBe("0000");
   });
 });

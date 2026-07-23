@@ -43,3 +43,36 @@ export function formatDuration(seconds) {
   const hours = Math.floor(mins / 60);
   return `${hours}h ${mins % 60}m`;
 }
+
+/**
+ * Permisos SFTP (los 9 bits `rwx` de usuario/grupo/otros) a texto estilo `ls`
+ * (`rwxr-x---`). Enmascara a `0o777`, así que ignora setuid/setgid/sticky y el
+ * tipo de fichero. Devuelve `""` si el modo es nulo o no finito.
+ * @param {number|null|undefined} mode
+ * @returns {string}
+ */
+export function formatSftpPermissions(mode) {
+  if (mode == null) return "";
+  const m = Number(mode) & 0o777;
+  if (!Number.isFinite(m)) return "";
+  const parts = [m >> 6, (m >> 3) & 7, m & 7];
+  return parts.map((p) => (
+    (p & 4 ? "r" : "-") +
+    (p & 2 ? "w" : "-") +
+    (p & 1 ? "x" : "-")
+  )).join("");
+}
+
+/**
+ * Permisos SFTP en formato octal `"0750"` para el tooltip. Mismo enmascarado a
+ * `0o777` que {@link formatSftpPermissions}. Devuelve `""` si el modo es nulo o
+ * no finito.
+ * @param {number|null|undefined} mode
+ * @returns {string}
+ */
+export function formatSftpPermissionsOctal(mode) {
+  if (mode == null) return "";
+  const m = Number(mode) & 0o777;
+  if (!Number.isFinite(m)) return "";
+  return "0" + m.toString(8).padStart(3, "0");
+}
