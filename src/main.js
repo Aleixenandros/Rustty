@@ -47,6 +47,7 @@ import { baseSlugifyThemeId } from "./modules/text.js";
 import { formatTime, formatRelativeTimeShort } from "./modules/datetime.js";
 import { formatAccelerator } from "./modules/platform.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
+import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
@@ -951,29 +952,15 @@ function applyOverlayScrollbars(enabled) {
 //     ui: { base: "#...", text: "#...", blue: "#...", ... }
 //   }
 
-const THEME_FORMAT_VERSION = 2;
+/* `THEME_FORMAT_VERSION`, `UI_THEME_TOKENS`, `TERMINAL_THEME_TOKENS`,
+   `pickThemeTokens`, `buildThemeDocument` y `normalizeThemeDocument` viven ahora
+   en `modules/themes/document.js` (con tests); se importan arriba. */
 const BASE_THEME_IDS = new Set(Object.keys(TERMINAL_THEMES));
 const BUNDLED_THEME_PACKS = [
   "/themes/bundled-themes.json",
 ];
 const BUNDLED_THEME_IDS = new Set();
 let uiThemePreview = null;
-
-const UI_THEME_TOKENS = [
-  "base", "mantle", "crust",
-  "surface0", "surface1", "surface2",
-  "overlay0", "overlay1",
-  "text", "subtext0", "subtext1",
-  "blue", "red", "green", "yellow",
-  "mauve", "peach", "teal", "sky", "lavender",
-];
-
-const TERMINAL_THEME_TOKENS = [
-  "background", "foreground", "cursor", "cursorAccent", "selectionBackground",
-  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
-  "brightBlack", "brightRed", "brightGreen", "brightYellow",
-  "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
-];
 
 /* `baseSlugifyThemeId` vive ahora en `modules/text.js` (con tests); la unicidad
    frente a los temas existentes la añade `uniqueThemeId`, más abajo. */
@@ -996,16 +983,6 @@ function uniqueThemeId(baseId) {
   return `${slug}-${i}`;
 }
 
-function pickThemeTokens(source, keys) {
-  if (!source || typeof source !== "object") return {};
-  const out = {};
-  for (const key of keys) {
-    const value = source[key];
-    if (typeof value === "string" && value.trim()) out[key] = value.trim();
-  }
-  return out;
-}
-
 function gatherActiveUiTokens() {
   const cs = getComputedStyle(document.documentElement);
   return Object.fromEntries(
@@ -1014,38 +991,9 @@ function gatherActiveUiTokens() {
   );
 }
 
-function normalizeThemeDocument(data) {
-  if (!data || data.formatVersion !== THEME_FORMAT_VERSION) {
-    throw new Error("unsupported_theme_format");
-  }
-  const name = String(data.name || "").trim().slice(0, 60);
-  if (!name) throw new Error("theme_name_required");
-
-  const ui = pickThemeTokens(data.ui, UI_THEME_TOKENS);
-  const terminal = pickThemeTokens(data.terminal, TERMINAL_THEME_TOKENS);
-  if (!ui.base || !ui.text || !terminal.background || !terminal.foreground) {
-    throw new Error("theme_required_tokens_missing");
-  }
-
-  return {
-    formatVersion: THEME_FORMAT_VERSION,
-    id: slugifyThemeId(data.id || name),
-    name,
-    ui,
-    terminal,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-function buildThemeDocument({ id, name, ui, terminal }) {
-  return {
-    formatVersion: THEME_FORMAT_VERSION,
-    id,
-    name,
-    ui: pickThemeTokens(ui, UI_THEME_TOKENS),
-    terminal: pickThemeTokens(terminal, TERMINAL_THEME_TOKENS),
-  };
-}
+/* `normalizeThemeDocument` y `buildThemeDocument` viven en
+   `modules/themes/document.js`; al importar un tema se le inyecta el
+   `slugifyThemeId` con unicidad (ver el call site de importación). */
 
 function getRuntimeThemeStyleElement(source) {
   const id = source === "bundled"
@@ -1501,7 +1449,7 @@ async function importTheme() {
   prefs.customThemes = prefs.customThemes || [];
   for (const doc of themeDocs) {
     try {
-      const theme = normalizeThemeDocument(doc);
+      const theme = normalizeThemeDocument(doc, { slugify: slugifyThemeId });
       prefs.customThemes.push(theme);
       registerCustomTheme(theme);
       importedThemes.push(theme);
