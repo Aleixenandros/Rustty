@@ -2219,6 +2219,119 @@ fn generate_x11_cookie() -> String {
 mod tests {
     use super::*;
 
+    /// Config de cliente mínima para los tests de integración: los tiempos por
+    /// defecto valen, no hace falta afinar algoritmos contra un OpenSSH moderno.
+    #[cfg(target_os = "linux")]
+    fn test_client_config() -> Arc<client::Config> {
+        Arc::new(client::Config::default())
+    }
+
+    /// Los tests de integración SSH comparten dos recursos globales: la política
+    /// TOFU de `host_keys` (un `AtomicBool`) y, de hecho, el rango de puertos
+    /// efímeros —dos `sshd` arrancando a la vez pueden pedir el mismo puerto y
+    /// uno morir—. Se serializan con este lock en vez de exigir `--test-threads=1`
+    /// a toda la batería. Es un `Mutex` de tokio (no de `std`) porque el guard
+    /// cruza los `await` del test; además no envenena si un test paniquea.
+    #[cfg(target_os = "linux")]
+    static SSH_IT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// **Integración**: conecta y autentica por clave pública contra un `sshd`
+    /// real, por el mismo camino que una sesión de Rustty
+    /// (`russh_connect_addr` + `authenticate_handle`), y comprueba que la
+    /// primera conexión **aprende** la host key (TOFU) en un `known_hosts`
+    /// aislado, sin tocar el del usuario.
+    ///
+    /// Ignorado por defecto: necesita `sshd` y `ssh-keygen` en la máquina. Se
+    /// corre con `cargo test --lib -- --ignored ssh_`.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_primera_conexion_aprende_la_host_key() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        // TOFU automático: sin esto, el modo estricto (default) pediría confirmar
+        // la huella por un prompt que en un test no existe.
+        host_keys::set_strict_first_connect(false);
+
+        let known_hosts = server.known_hosts_path();
+        assert!(!known_hosts.exists(), "el known_hosts debe empezar sin existir");
+
+        let addr = format!("127.0.0.1:{}", server.port);
+        let (handler, failure) =
+            host_keys::client_with_known_hosts("127.0.0.1".to_string(), server.port, known_hosts.clone());
+        let mut handle = russh_connect_addr(test_client_config(), &addr, handler)
+            .await
+            .unwrap_or_else(|e| {
+                panic!("no conectó: {e}. host_keys: {:?}", host_keys::take_failure(&failure))
+            });
+
+        let key_path = server.user_key.to_string_lossy().into_owned();
+        let result = authenticate_handle(
+            &mut handle,
+            &AuthType::PublicKey,
+            &server.username,
+            None,
+            None,
+            Some(&key_path),
+        )
+        .await
+        .expect("autenticación");
+
+        assert!(
+            matches!(result, AuthResult::Success),
+            "se esperaba autenticación correcta, salió {result:?}"
+        );
+        // La host key quedó registrada en NUESTRO known_hosts, no en el del SO.
+        assert!(known_hosts.exists(), "el TOFU debió crear el known_hosts");
+        let recorded = std::fs::read_to_string(&known_hosts).unwrap();
+        assert!(
+            recorded.contains(&format!("[127.0.0.1]:{}", server.port)),
+            "el known_hosts no registró el host. Contenido:\n{recorded}"
+        );
+    }
+
+    /// **Integración**: si el `known_hosts` ya tiene una host key **distinta**
+    /// para ese host:puerto, la conexión debe **rechazarse** con el aviso de
+    /// cambio, no aprender la nueva en silencio. Es la defensa TOFU contra un
+    /// intermediario, y aquí se prueba contra un servidor real.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_host_key_cambiada_se_rechaza() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+
+        // Sembramos el known_hosts con una clave ed25519 cualquiera —válida en
+        // formato pero ajena a este servidor—: simula la clave «vieja» recordada.
+        let known_hosts = server.known_hosts_path();
+        let otra = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIODZ2p6z5wQh7l6h0l6h0l6h0l6h0l6h0l6h0l6h0l6h";
+        std::fs::write(&known_hosts, format!("{}\n", server.host_key_line_for(otra)))
+            .expect("sembrar known_hosts");
+
+        let addr = format!("127.0.0.1:{}", server.port);
+        let (handler, failure) =
+            host_keys::client_with_known_hosts("127.0.0.1".to_string(), server.port, known_hosts.clone());
+        let result = russh_connect_addr(test_client_config(), &addr, handler).await;
+
+        assert!(result.is_err(), "la conexión debió rechazarse por host key cambiada");
+        let msg = host_keys::take_failure(&failure).unwrap_or_default();
+        assert!(
+            msg.contains("cambiado"),
+            "el aviso debía hablar de host key cambiada, salió: {msg:?}"
+        );
+    }
+
     /// El log de sesión guarda salida del terminal: debe nacer privado (0600) y
     /// no heredar un `umask` permisivo. Y si ya existía con permisos laxos (log
     /// creado por una versión anterior), abrirlo lo endurece.

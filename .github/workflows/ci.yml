@@ -242,7 +242,8 @@ jobs:
   # porque ningún test ejecutaba un cliente contra algo que hablara el
   # protocolo. Lo encontró el usuario, no la batería. Este job cierra ese hueco:
   # levanta un servidor RDP mínimo (`rdp_fixture.rs`) y comprueba que el cliente
-  # de verdad llega a autenticarse.
+  # de verdad llega a autenticarse. También un `sshd` real (`ssh_fixture.rs`)
+  # para el flujo TOFU de host keys por el camino de conexión de Rustty.
   integration-linux:
     runs-on: ubuntu-latest
     name: Integración · Linux
@@ -292,6 +293,15 @@ jobs:
           done
           echo "::error::no se instaló ningún cliente xfreerdp"
           exit 1
+
+      # `sshd` real para el fixture SSH. `ssh-keygen` viene con openssh-client,
+      # ya presente; `sshd` está en openssh-server, que el runner puede no traer.
+      # Sin él, los tests SSH se saltan con gracia (el fixture devuelve None),
+      # pero lo instalamos para que corran de verdad.
+      - name: Install OpenSSH server
+        run: |
+          sudo apt-get install -y openssh-server
+          command -v sshd || ls -l /usr/sbin/sshd
 
       # `--lib` a propósito: `--ignored` sobre los doctests intentaría compilar
       # los fragmentos marcados `ignore` de `ipc.rs`, que son ilustrativos y no

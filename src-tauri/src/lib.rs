@@ -18,6 +18,8 @@ mod profiles;
 #[cfg(all(test, target_os = "linux"))]
 mod rdp_fixture;
 mod rdp_manager;
+#[cfg(all(test, target_os = "linux"))]
+mod ssh_fixture;
 mod scripts;
 mod sftp_manager;
 mod ssh_manager;

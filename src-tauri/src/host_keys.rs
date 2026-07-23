@@ -168,6 +168,37 @@ pub struct KnownHostsClient {
     agent_forwarding: bool,
     x11_forwarding: bool,
     remote_forwards: RemoteForwardMap,
+    /// Fichero `known_hosts` a usar. `None` —el caso de producción— deja que
+    /// russh use el default (`~/.ssh/known_hosts`). `Some(path)` lo redirige, y
+    /// solo lo hacen los tests de integración: sin esto, un test que ejercitara
+    /// el TOFU escribiría en el `known_hosts` real del usuario.
+    known_hosts_path: Option<std::path::PathBuf>,
+}
+
+impl KnownHostsClient {
+    /// `check_known_hosts` de russh, contra el fichero de este cliente.
+    fn check_known_hosts(&self, key: &PublicKey) -> Result<bool, russh::keys::Error> {
+        match &self.known_hosts_path {
+            Some(path) => known_hosts::check_known_hosts_path(&self.host, self.port, key, path),
+            None => known_hosts::check_known_hosts(&self.host, self.port, key),
+        }
+    }
+
+    /// `known_host_keys` de russh, contra el fichero de este cliente.
+    fn known_host_keys(&self) -> Result<Vec<(usize, PublicKey)>, russh::keys::Error> {
+        match &self.known_hosts_path {
+            Some(path) => known_hosts::known_host_keys_path(&self.host, self.port, path),
+            None => known_hosts::known_host_keys(&self.host, self.port),
+        }
+    }
+
+    /// `learn_known_hosts` de russh, contra el fichero de este cliente.
+    fn learn_known_hosts(&self, key: &PublicKey) -> Result<(), russh::keys::Error> {
+        match &self.known_hosts_path {
+            Some(path) => known_hosts::learn_known_hosts_path(&self.host, self.port, key, path),
+            None => known_hosts::learn_known_hosts(&self.host, self.port, key),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -216,6 +247,32 @@ pub fn client_with_remote_forwards(
             agent_forwarding,
             x11_forwarding,
             remote_forwards,
+            known_hosts_path: None,
+        },
+        failure,
+    )
+}
+
+/// Como [`client`], pero con el `known_hosts` en un fichero concreto en vez del
+/// `~/.ssh/known_hosts` del usuario. Existe **solo para los tests de
+/// integración**, que ejercitan el flujo TOFU real contra un `sshd` de pruebas y
+/// no deben tocar el known_hosts de la máquina.
+#[cfg(test)]
+pub fn client_with_known_hosts(
+    host: String,
+    port: u16,
+    known_hosts_path: std::path::PathBuf,
+) -> (KnownHostsClient, Arc<Mutex<Option<String>>>) {
+    let failure = Arc::new(Mutex::new(None));
+    (
+        KnownHostsClient {
+            host,
+            port,
+            failure: Arc::clone(&failure),
+            agent_forwarding: false,
+            x11_forwarding: false,
+            remote_forwards: remote_forward_map(),
+            known_hosts_path: Some(known_hosts_path),
         },
         failure,
     )
@@ -240,7 +297,7 @@ impl client::Handler for KnownHostsClient {
         &mut self,
         server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
-        match known_hosts::check_known_hosts(&self.host, self.port, server_public_key) {
+        match self.check_known_hosts(server_public_key) {
             // Coincide exactamente con una entrada existente (mismo algoritmo
             // y misma clave): aceptamos.
             Ok(true) => Ok(true),
@@ -252,7 +309,7 @@ impl client::Handler for KnownHostsClient {
                 // entrada registrada para este host:puerto: si la había, la
                 // clave realmente ha cambiado y debemos avisar en vez de
                 // aceptarla en silencio.
-                match known_hosts::known_host_keys(&self.host, self.port) {
+                match self.known_host_keys() {
                     Ok(recorded) if !recorded.is_empty() => {
                         let previous = recorded
                             .iter()
@@ -298,11 +355,7 @@ impl client::Handler for KnownHostsClient {
                                 }
                             }
                         }
-                        match known_hosts::learn_known_hosts(
-                            &self.host,
-                            self.port,
-                            server_public_key,
-                        ) {
+                        match self.learn_known_hosts(server_public_key) {
                             Ok(()) => Ok(true),
                             Err(err) => {
                                 self.set_failure(format!(
