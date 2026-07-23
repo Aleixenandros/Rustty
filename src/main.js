@@ -44,6 +44,8 @@ import { formatSize, formatDuration, formatSftpPermissions, formatSftpPermission
 import { escHtml } from "./modules/html.js";
 import { clampUiZoom } from "./modules/num.js";
 import { baseSlugifyThemeId } from "./modules/text.js";
+import { formatTime, formatRelativeTimeShort } from "./modules/datetime.js";
+import { formatAccelerator } from "./modules/platform.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
@@ -2166,7 +2168,7 @@ function renderSyncBackendCards() {
   const activeBackend = _syncConfigCache?.backend || "none";
   const enabled = !!_syncConfigCache?.enabled;
   const lastSyncAt = syncLastSyncAt();
-  const lastRel = lastSyncAt ? formatRelativeTimeShort(lastSyncAt) : null;
+  const lastRel = lastSyncAt ? formatRelativeTimeShort(lastSyncAt, t) : null;
   grid.innerHTML = backends.map((b) => {
     const isActive = activeBackend === b.id;
     const state = isActive && enabled
@@ -2200,18 +2202,8 @@ function renderSyncBackendCards() {
  * Formato relativo conciso ("ahora", "5 min", "2 h", "3 d"). Para el
  * tooltip de la topbar; usa el último timestamp de sync conocido.
  */
-function formatRelativeTimeShort(iso) {
-  const ts = new Date(iso).getTime();
-  if (!Number.isFinite(ts)) return null;
-  const diff = Date.now() - ts;
-  if (diff < 60_000) return t("time.now");
-  const min = Math.floor(diff / 60_000);
-  if (min < 60) return t("time.minutes_ago", { n: min });
-  const h = Math.floor(min / 60);
-  if (h < 24) return t("time.hours_ago", { n: h });
-  const d = Math.floor(h / 24);
-  return t("time.days_ago", { n: d });
-}
+/* `formatRelativeTimeShort` vive ahora en `modules/datetime.js` (con tests); se
+   le pasa `t` como argumento en cada llamada. */
 
 function currentOAuthProvider() {
   const el = document.getElementById("sync-backend");
@@ -18281,17 +18273,7 @@ async function sendSystemNotification(title, body) {
   }
 }
 
-function formatTime(secs) {
-  if (!secs) return "";
-  const d = new Date(secs * 1000);
-  const yr = d.getFullYear();
-  const now = new Date();
-  if (yr === now.getFullYear()) {
-    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
-      + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  }
-  return d.toLocaleDateString();
-}
+/* `formatTime` vive ahora en `modules/datetime.js` (con tests). */
 
 // ═══════════════════════════════════════════════════════════════
 // EXPORTAR / IMPORTAR CONEXIONES
@@ -21728,12 +21710,8 @@ function handleZoomWheel(e) {
 // ─── Editor de atajos ─────────────────────────────────────────
 
 /** Formatea un accelerator para visualización (mostrar "Cmd" en macOS). */
-function formatAccelerator(accel) {
-  if (!accel) return "";
-  const platform = navigator.userAgentData?.platform ?? navigator.userAgent ?? "";
-  const mac = /mac/i.test(platform);
-  return mac ? accel.replace(/\bCtrl\b/g, "Cmd") : accel;
-}
+/* `formatAccelerator` vive ahora en `modules/platform.js` (con tests); detecta
+   la plataforma con `isMacPlatform()`. */
 
 function renderShortcutsList() {
   const root = document.getElementById("shortcuts-list");
