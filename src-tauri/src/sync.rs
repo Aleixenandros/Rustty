@@ -881,6 +881,141 @@ mod tests {
         assert_eq!(segunda, 0);
         assert_eq!(local, estado_tras_primera);
     }
+
+    // ── Integración WebDAV contra un servidor real (`webdav_fixture`) ────────
+    //
+    // Cubren lo que el backlog pedía del fixture WebDAV: **ETag/412 y
+    // reintentos**. Son `#[ignore]` como el resto de la suite de integración,
+    // aunque no necesiten binarios del sistema (el servidor es un hilo propio),
+    // para que corran en el mismo job y no alarguen la batería normal.
+
+    #[cfg(target_os = "linux")]
+    fn backend_para(server: &crate::webdav_fixture::FakeWebDavServer) -> WebDavBackend {
+        WebDavBackend::new(server.state_url(), "usuario".into(), "secreto".into())
+    }
+
+    /// **Integración**: el ciclo normal. El `GET` captura el `ETag` del servidor
+    /// y el `PUT` posterior lo devuelve en `If-Match` — la escritura condicional
+    /// que impide pisar en silencio el push de otro equipo. Se verifica sobre lo
+    /// que el servidor **recibió de verdad**, no sobre el estado interno.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor WebDAV efímero; se corre con --ignored"]
+    #[tokio::test]
+    async fn webdav_el_put_devuelve_en_if_match_el_etag_que_dio_el_get() {
+        use crate::webdav_fixture::{start, Canned};
+
+        let server = start(vec![
+            Canned::ok_with_etag(b"estado-remoto", "\"v1\""),
+            Canned::status(204), // PUT aceptado
+        ])
+        .expect("arrancar WebDAV");
+        let backend = backend_para(&server);
+
+        let leido = backend.read().await.expect("GET");
+        assert_eq!(leido.as_deref(), Some(&b"estado-remoto"[..]));
+
+        backend.write(b"estado-nuevo").await.expect("PUT");
+
+        let peticiones = server.requests();
+        assert_eq!(server.methods(), vec!["GET", "PUT"]);
+        assert!(
+            peticiones.iter().all(|r| r.authorized),
+            "ambas peticiones debían llevar basic auth"
+        );
+        assert_eq!(
+            peticiones[1].if_match.as_deref(),
+            Some("\"v1\""),
+            "el PUT debía viajar con el ETag del GET en If-Match"
+        );
+        assert_eq!(peticiones[1].body, b"estado-nuevo");
+    }
+
+    /// **Integración**: si entre nuestro `GET` y nuestro `PUT` otro equipo empujó,
+    /// el servidor responde **412** y el backend debe traducirlo a un error
+    /// marcado con `CONFLICT_MARKER`, que es lo que hace al llamador re-leer y
+    /// re-mezclar en vez de dar la escritura por buena.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor WebDAV efímero; se corre con --ignored"]
+    #[tokio::test]
+    async fn webdav_un_412_se_traduce_en_conflicto_para_que_el_llamador_remezcle() {
+        use crate::webdav_fixture::{start, Canned};
+
+        let server = start(vec![
+            Canned::ok_with_etag(b"estado-remoto", "\"v1\""),
+            Canned::status(412), // otro equipo empujó primero
+        ])
+        .expect("arrancar WebDAV");
+        let backend = backend_para(&server);
+
+        backend.read().await.expect("GET");
+        let err = backend
+            .write(b"estado-nuevo")
+            .await
+            .expect_err("un 412 no puede darse por escritura correcta");
+
+        assert!(
+            err.to_string().contains(CONFLICT_MARKER),
+            "el error debía ir marcado como conflicto, salió: {err}"
+        );
+    }
+
+    /// **Integración**: primera sincronización. Un `404` no es un fallo, es «el
+    /// remoto aún no tiene estado» → `Ok(None)`, y además **limpia** el ETag para
+    /// que el PUT siguiente no arrastre una precondición de un ciclo anterior.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor WebDAV efímero; se corre con --ignored"]
+    #[tokio::test]
+    async fn webdav_un_404_es_primera_sincronizacion_y_no_deja_precondicion() {
+        use crate::webdav_fixture::{start, Canned};
+
+        let server = start(vec![
+            Canned::ok_with_etag(b"viejo", "\"v1\""), // primer ciclo: aprende un ETag
+            Canned::status(404),                      // segundo ciclo: ya no hay estado
+            Canned::status(201),                      // PUT de creación
+        ])
+        .expect("arrancar WebDAV");
+        let backend = backend_para(&server);
+
+        backend.read().await.expect("primer GET");
+        assert_eq!(backend.read().await.expect("segundo GET"), None);
+
+        backend.write(b"estado-nuevo").await.expect("PUT");
+
+        let peticiones = server.requests();
+        assert_eq!(server.methods(), vec!["GET", "GET", "PUT"]);
+        assert_eq!(
+            peticiones[2].if_match, None,
+            "tras un 404 el PUT no debe llevar el If-Match del ciclo anterior"
+        );
+    }
+
+    /// **Integración**: WebDAV genérico sin creación recursiva. Si el `PUT` cae
+    /// con **409** porque falta la carpeta padre, el backend debe mandar `MKCOL`
+    /// sobre el padre y **reintentar** el PUT, en vez de rendirse.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor WebDAV efímero; se corre con --ignored"]
+    #[tokio::test]
+    async fn webdav_un_409_dispara_mkcol_del_padre_y_reintenta_el_put() {
+        use crate::webdav_fixture::{start, Canned};
+
+        let server = start(vec![
+            Canned::status(409), // PUT: falta la carpeta padre
+            Canned::status(201), // MKCOL
+            Canned::status(201), // PUT reintentado
+        ])
+        .expect("arrancar WebDAV");
+        let backend = backend_para(&server);
+
+        backend.write(b"estado-nuevo").await.expect("PUT tras MKCOL");
+
+        assert_eq!(server.methods(), vec!["PUT", "MKCOL", "PUT"]);
+        let peticiones = server.requests();
+        assert_eq!(
+            peticiones[1].path, "/dav/rustty",
+            "el MKCOL debe ir sobre la carpeta padre del blob"
+        );
+        assert_eq!(peticiones[2].body, b"estado-nuevo", "el reintento reenvía el cuerpo");
+    }
 }
 
 // ─── Cifrado (age con passphrase) ────────────────────────────────────
