@@ -2,6 +2,25 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.61.1] - 2026-07-24
+
+### Corregido
+
+- **Conectar por FTPS ya no cierra la aplicación**. La conexión FTPS estrenada en
+  la 1.61.0 fallaba siempre: al preparar el cifrado, Rustty no elegía cuál de los
+  dos motores criptográficos que lleva dentro debía usar, y la aplicación se
+  cerraba de golpe en cuanto se pulsaba conectar. Ahora lo elige de forma
+  explícita. Si estrenaste FTPS con la 1.61.0 y no llegaste a conectar nunca, era
+  esto: actualiza y vuelve a probar.
+
+### Añadido
+
+- **Pruebas automáticas contra servidores de verdad** para las transferencias FTP
+  y FTPS, los túneles SSH y la sincronización por WebDAV. Cada versión se valida
+  ahora levantando servidores reales y comprobando el camino completo, en vez de
+  solo las piezas por separado. El fallo de FTPS de arriba lo encontró justamente
+  una de estas pruebas nuevas, antes de que lo sufriera nadie.
+
 ## [1.61.0] - 2026-07-23
 
 ### Añadido
