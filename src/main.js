@@ -42,6 +42,8 @@ import {
 } from "./modules/path-history.js";
 import { formatSize, formatDuration, formatSftpPermissions, formatSftpPermissionsOctal, formatOctalMode, formatSteppedNumber } from "./modules/format.js";
 import { escHtml } from "./modules/html.js";
+import { clampUiZoom } from "./modules/num.js";
+import { baseSlugifyThemeId } from "./modules/text.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
@@ -850,10 +852,7 @@ function applyUiZoom(zoom) {
   document.documentElement.style.setProperty("--ui-zoom", String(z));
 }
 
-function clampUiZoom(z) {
-  if (!Number.isFinite(z)) return 1;
-  return Math.min(1.6, Math.max(0.6, Math.round(z * 100) / 100));
-}
+/* `clampUiZoom` vive ahora en `modules/num.js` (con tests). */
 
 function adjustUiZoom(delta) {
   const current = clampUiZoom(prefs.uiZoom ?? 1);
@@ -973,12 +972,8 @@ const TERMINAL_THEME_TOKENS = [
   "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
 ];
 
-function baseSlugifyThemeId(name) {
-  return (name || "custom").toLowerCase()
-    .normalize("NFD").replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
-    .slice(0, 40) || "custom";
-}
+/* `baseSlugifyThemeId` vive ahora en `modules/text.js` (con tests); la unicidad
+   frente a los temas existentes la añade `uniqueThemeId`, más abajo. */
 
 function slugifyThemeId(name) {
   const slug = baseSlugifyThemeId(name);
