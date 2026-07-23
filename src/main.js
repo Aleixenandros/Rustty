@@ -40,6 +40,7 @@ import {
   pathSegments,
   pushPath,
 } from "./modules/path-history.js";
+import { formatSize, formatDuration } from "./modules/format.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
@@ -18195,23 +18196,8 @@ function formatSftpPermissionsOctal(mode) {
   return "0" + m.toString(8).padStart(3, "0");
 }
 
-function formatSize(bytes) {
-  if (bytes < 1024) return bytes + " B";
-  const units = ["KB", "MB", "GB", "TB"];
-  let v = bytes / 1024, u = 0;
-  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
-  return v.toFixed(v >= 100 ? 0 : 1) + " " + units[u];
-}
-
-function formatDuration(seconds) {
-  if (!Number.isFinite(seconds) || seconds < 0) return "?";
-  if (seconds < 60) return `${Math.ceil(seconds)}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.ceil(seconds % 60);
-  if (mins < 60) return `${mins}m ${secs}s`;
-  const hours = Math.floor(mins / 60);
-  return `${hours}h ${mins % 60}m`;
-}
+/* `formatSize` y `formatDuration` viven ahora en `modules/format.js` (con
+   tests); se importan arriba. Primer paso del troceo de este god-file. */
 
 /* ── Aviso de fin de comando largo (OSC 133) ──────────────────────────────
    Router mínimo por foco: sesión a la vista → nada (la está mirando); app con
