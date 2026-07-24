@@ -396,6 +396,7 @@ const DEFAULT_PREFS = {
   // barra inferior. Solo Linux de momento (degrada a nada en otros SO).
   metricsEnabled:  false,
   metricsSecs:     3,
+  metricsPanelVertical: false,
   theme:           "dark",    // "dark" | "light" | "system"
   // Tema del terminal independiente del de UI.
   // null / "inherit" = seguir a `theme`; cualquier otro id válido = tema fijo para el terminal.
@@ -1735,6 +1736,12 @@ function openSettingsModal() {
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
   document.getElementById("pref-bell").value                = prefs.bell;
   document.getElementById("pref-rdp-display").value         = prefs.rdpDisplay || "window";
+  const _metEnabled = document.getElementById("pref-metrics-enabled");
+  if (_metEnabled) _metEnabled.checked = !!prefs.metricsEnabled;
+  const _metSecs = document.getElementById("pref-metrics-secs");
+  if (_metSecs) _metSecs.value = String(prefs.metricsSecs || 3);
+  const _metOrient = document.getElementById("pref-metrics-orientation");
+  if (_metOrient) _metOrient.value = prefs.metricsPanelVertical ? "vertical" : "horizontal";
   const _termContrast = document.getElementById("pref-terminal-min-contrast");
   if (_termContrast) _termContrast.value = ["aa", "aaa"].includes(prefs.terminalMinContrast) ? prefs.terminalMinContrast : "off";
   const _termCursorHv = document.getElementById("pref-terminal-cursor-highvis");
@@ -3467,6 +3474,9 @@ function savePrefsFromModal() {
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     bell:            document.getElementById("pref-bell").value,
     rdpDisplay:      document.getElementById("pref-rdp-display").value,
+    metricsEnabled:  !!document.getElementById("pref-metrics-enabled")?.checked,
+    metricsSecs:     parseInt(document.getElementById("pref-metrics-secs")?.value, 10) || DEFAULT_PREFS.metricsSecs,
+    metricsPanelVertical: document.getElementById("pref-metrics-orientation")?.value === "vertical",
     terminalMinContrast: (() => {
       const v = document.getElementById("pref-terminal-min-contrast")?.value;
       return v === "aa" || v === "aaa" ? v : "off";
@@ -10606,6 +10616,9 @@ function updateMetricsExpandBtn(s) {
   const open = !!s?._metricsPanelOpen;
   btn.classList.toggle("active", open);
   btn.setAttribute("aria-pressed", open ? "true" : "false");
+  const label = open ? t("metrics.panel_hide") : t("metrics.panel_show");
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
 }
 
 // ── Panel ampliado del monitor de recursos (acoplado al pane, estilo SFTP) ──
@@ -10630,11 +10643,13 @@ function toggleMetricsPanel(sessionId) {
 
 function openMetricsPanel(sessionId) {
   const s = sessions.get(sessionId);
-  const pane = document.querySelector(`.terminal-pane[data-session="${CSS.escape(sessionId)}"]`);
+  const pane = s?.pane || document.querySelector(`.terminal-pane[data-session="${CSS.escape(sessionId)}"]`);
   if (!s || !pane || pane.querySelector(".metrics-panel")) return;
   // El panel no sirve sin datos: enciende el muestreo si estaba apagado.
   if (!s._metricsOn) setSessionMetrics(sessionId, true);
   s._metricsPanelOpen = true;
+  // Orientación: la elegida antes en esta sesión, o el default de preferencias.
+  if (s._metricsPanelVertical === undefined) s._metricsPanelVertical = !!prefs.metricsPanelVertical;
   pane.classList.toggle("metrics-split-vertical", !!s._metricsPanelVertical);
 
   const panel = document.createElement("div");
@@ -10673,7 +10688,7 @@ function openMetricsPanel(sessionId) {
 
 function closeMetricsPanel(sessionId) {
   const s = sessions.get(sessionId);
-  const pane = document.querySelector(`.terminal-pane[data-session="${CSS.escape(sessionId)}"]`);
+  const pane = s?.pane || document.querySelector(`.terminal-pane[data-session="${CSS.escape(sessionId)}"]`);
   pane?.querySelector(".metrics-panel")?.remove();
   pane?.classList.remove("metrics-split-vertical");
   if (s) {
@@ -10702,7 +10717,8 @@ function metricsBar(pct, label, sub) {
 
 /** Repinta el cuerpo del panel de una sesión con su última muestra. */
 function renderMetricsPanel(s) {
-  const body = document.querySelector(`.terminal-pane[data-session="${CSS.escape(s.id)}"] .metrics-body`);
+  const body = s?.pane?.querySelector(".metrics-body")
+    || document.querySelector(`.terminal-pane[data-session="${CSS.escape(s?.id || "")}"] .metrics-body`);
   if (!body) return;
   const st = s._metrics;
   const m = st?.latest;
@@ -10711,6 +10727,7 @@ function renderMetricsPanel(s) {
     return;
   }
 
+  try {
   const cpu = m.cpuPct == null ? "—" : `${Math.round(m.cpuPct)}%`;
   const ramPct = usagePct(m.memUsedKb, m.mem?.totalKb);
   const disks = (m.disks || []).map((d) =>
@@ -10718,10 +10735,10 @@ function renderMetricsPanel(s) {
   ).join("");
   const procs = (m.procs || []).map((p) => `
     <tr>
-      <td class="metrics-proc-pid mono">${p.pid}</td>
+      <td class="metrics-proc-pid mono">${Number(p.pid) || 0}</td>
       <td class="metrics-proc-cmd" title="${escHtml(p.command)}">${escHtml(p.command)}</td>
-      <td class="metrics-proc-num mono">${p.cpuPct.toFixed(1)}</td>
-      <td class="metrics-proc-num mono">${p.memPct.toFixed(1)}</td>
+      <td class="metrics-proc-num mono">${(Number(p.cpuPct) || 0).toFixed(1)}</td>
+      <td class="metrics-proc-num mono">${(Number(p.memPct) || 0).toFixed(1)}</td>
     </tr>`).join("");
 
   body.innerHTML = `
@@ -10746,6 +10763,12 @@ function renderMetricsPanel(s) {
       <header class="metrics-section-head"><span>${escHtml(t("metrics.processes"))}</span><strong>%CPU · %MEM</strong></header>
       <table class="metrics-proc-table"><tbody>${procs}</tbody></table>
     </section>`;
+  } catch (err) {
+    // Nunca dejar el panel en blanco en silencio: si algo del payload no encaja,
+    // se muestra el error aquí (y en consola) para poder diagnosticarlo.
+    console.error("[metrics] error al pintar el panel", err);
+    body.innerHTML = `<div class="metrics-empty">Error al pintar: ${escHtml(String(err))}</div>`;
+  }
 }
 
 let _statusOverflowObserver = null;

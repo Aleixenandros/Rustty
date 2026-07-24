@@ -2970,6 +2970,37 @@
                 </label>
                 <p class="settings-hint" data-i18n="prefs_system.autostart_minimized_hint">Al arrancar con el sistema, oculta la ventana y mantiene solo el icono en la bandeja.</p>
               </div>
+
+              <h4 class="prefs-subsection-title" data-i18n="prefs_system.metrics_title">Monitor de recursos</h4>
+              <p class="settings-hint" data-i18n="prefs_system.metrics_hint">Muestra CPU, memoria, disco, red y procesos del servidor remoto por la propia conexión SSH, sin instalar nada. Solo Linux por ahora.</p>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-metrics-enabled" />
+                  <span data-i18n="prefs_system.metrics_enabled">Activar automáticamente al conectar</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_system.metrics_enabled_hint">Si se desactiva, el monitor se enciende a mano con el botón de la barra inferior en cada sesión.</p>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-metrics-secs" data-i18n="prefs_system.metrics_rate">Tasa de refresco</label>
+                <select id="pref-metrics-secs">
+                  <option value="1" data-i18n="prefs_system.metrics_rate_realtime">Tiempo real (1 s)</option>
+                  <option value="2">2 s</option>
+                  <option value="3">3 s</option>
+                  <option value="5">5 s</option>
+                  <option value="10">10 s</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="prefs_system.metrics_rate_hint">Cada muestra es una lectura ligera por SSH; un intervalo más corto actualiza más a menudo a cambio de algo más de tráfico.</p>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-metrics-orientation" data-i18n="prefs_system.metrics_orientation">Orientación del panel por defecto</label>
+                <select id="pref-metrics-orientation">
+                  <option value="horizontal" data-i18n="prefs_system.orientation_horizontal">Horizontal (debajo)</option>
+                  <option value="vertical" data-i18n="prefs_system.orientation_vertical">Vertical (al lado)</option>
+                </select>
+              </div>
             </section>
 
             <section class="prefs-panel" role="tabpanel" data-prefs-panel="about">
