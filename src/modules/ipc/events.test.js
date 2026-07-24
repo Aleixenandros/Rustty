@@ -36,6 +36,7 @@ describe("contrato de prefijos", () => {
         "sshConnected",
         "sshError",
         "sshLog",
+        "sshMetrics",
         "sshReconnecting",
         "sshTunnelTraffic",
         "scriptProgress",

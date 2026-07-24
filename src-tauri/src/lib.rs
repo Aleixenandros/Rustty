@@ -14,6 +14,7 @@ mod keyring_scope;
 mod local_command;
 mod local_shell_manager;
 mod locks;
+mod metrics;
 mod notes;
 mod profiles;
 #[cfg(all(test, target_os = "linux"))]
@@ -275,6 +276,7 @@ pub fn run() {
             commands::ssh_start_tunnel,
             commands::ssh_stop_tunnel,
             commands::ssh_set_keepalive,
+            commands::ssh_set_metrics,
             commands::get_profile_password,
             // ── Keyring (credenciales del SO)
             commands::keyring_set,

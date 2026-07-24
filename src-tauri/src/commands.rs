@@ -684,6 +684,21 @@ pub fn ssh_set_keepalive(
         .map_err(|e| e.to_string())
 }
 
+/// Activa/desactiva el monitor de recursos de una sesión SSH. `secs` es el
+/// intervalo de muestreo en segundos; `None` o `0` lo desactiva. Efecto inmediato
+/// (se conserva a través de reconexiones automáticas). Con él activo, la sesión
+/// emite `ssh-metrics-{sessionId}` cada `secs` segundos.
+#[tauri::command]
+pub fn ssh_set_metrics(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    secs: Option<u32>,
+) -> Result<(), String> {
+    ssh_state
+        .set_metrics(&session_id, secs)
+        .map_err(|e| e.to_string())
+}
+
 // ─── Comandos RDP ────────────────────────────────────────────────────────────
 
 /// Lanza el cliente RDP nativo y devuelve el session_id.

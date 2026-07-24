@@ -38,6 +38,7 @@ use tokio::task::JoinHandle;
 use crate::error::AppError;
 use crate::host_keys;
 use crate::ipc::{event_name, EventKind};
+use crate::metrics;
 use crate::profiles::{AuthType, ConnectionProfile, SshTunnelType};
 
 /// Timeout TCP por defecto al abrir la conexión inicial. Sin techo russh
@@ -218,6 +219,10 @@ pub enum SessionCommand {
     /// Activa/desactiva en vivo el keepalive de la sesión. `Some(n>0)` envía un
     /// `keepalive@openssh.com` cada `n` segundos; `None` o `Some(0)` lo apaga.
     SetKeepAlive(Option<u32>),
+    /// Activa/desactiva el monitor de recursos. `Some(n>0)` muestrea el servidor
+    /// (CPU/mem/disco/red/procesos) cada `n` segundos por un `exec`; `None`/`0` lo
+    /// apaga.
+    SetMetrics(Option<u32>),
     /// Conexión TCP aceptada por un listener local o SOCKS.
     TunnelAccepted {
         tunnel_id: String,
@@ -364,6 +369,20 @@ impl SshManager {
         handle
             .cmd_tx
             .send(SessionCommand::SetKeepAlive(secs))
+            .map_err(|_| AppError::SessionNotFound(session_id.to_string()))
+    }
+
+    /// Activa/desactiva el monitor de recursos de una sesión (segundos de
+    /// intervalo; `None`/`0` = desactivado). Efecto inmediato y conservado a
+    /// través de reconexiones automáticas, como el keepalive.
+    pub fn set_metrics(&self, session_id: &str, secs: Option<u32>) -> Result<(), AppError> {
+        let sessions = self.sessions.lock_recover();
+        let handle = sessions
+            .get(session_id)
+            .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+        handle
+            .cmd_tx
+            .send(SessionCommand::SetMetrics(secs))
             .map_err(|_| AppError::SessionNotFound(session_id.to_string()))
     }
 
@@ -515,6 +534,9 @@ async fn run_session_with_reconnect(
     let keepalive_secs = Arc::new(AtomicU32::new(
         profile.keep_alive_secs.filter(|s| *s > 0).unwrap_or(0),
     ));
+    // Intervalo del monitor de recursos, compartido con el worker para sobrevivir
+    // a las reconexiones. Arranca apagado (0): el frontend lo enciende con opt-in.
+    let metrics_secs = Arc::new(AtomicU32::new(0));
 
     loop {
         let exit = run_session(
@@ -523,6 +545,7 @@ async fn run_session_with_reconnect(
             cmd_tx.clone(),
             log_path.clone(),
             keepalive_secs.clone(),
+            metrics_secs.clone(),
         )
         .await;
 
@@ -940,7 +963,7 @@ async fn open_session_log(path: &Path) -> Option<tokio::fs::File> {
 /// Crea el temporizador de keepalive de aplicación: `Some(interval)` que dispara
 /// cada `secs` segundos (el primer disparo a los `secs` s, no inmediato), o
 /// `None` si `secs == 0` (desactivado).
-fn make_keepalive_timer(secs: u32) -> Option<tokio::time::Interval> {
+fn make_periodic_timer(secs: u32) -> Option<tokio::time::Interval> {
     if secs == 0 {
         return None;
     }
@@ -950,12 +973,55 @@ fn make_keepalive_timer(secs: u32) -> Option<tokio::time::Interval> {
     Some(it)
 }
 
+/// Plazo máximo para leer la salida de una muestra del monitor. Si el servidor
+/// tarda más (muy cargado, red mala), se descarta esa muestra y la siguiente lo
+/// reintenta —nunca se acumula ni bloquea el canal indefinidamente—.
+const METRICS_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Lee la salida de un `exec` de muestreo ya lanzado, la parsea, deriva las
+/// métricas contra la muestra previa (compartida) y las emite al frontend. Corre
+/// en su **propia tarea**, fuera del bucle de sesión, para no frenar el terminal.
+async fn collect_and_emit_metrics(
+    mut channel: russh::Channel<client::Msg>,
+    session_id: String,
+    app_handle: AppHandle,
+    prev: Arc<Mutex<Option<metrics::RawSample>>>,
+) {
+    let mut buf = Vec::new();
+    let read = async {
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                ChannelMsg::Data { ref data } => buf.extend_from_slice(data),
+                ChannelMsg::Eof
+                | ChannelMsg::Close
+                | ChannelMsg::ExitStatus { .. }
+                | ChannelMsg::ExitSignal { .. } => break,
+                _ => {}
+            }
+        }
+    };
+    if tokio::time::timeout(METRICS_READ_TIMEOUT, read).await.is_err() {
+        return; // muestra demasiado lenta: se salta.
+    }
+
+    let text = String::from_utf8_lossy(&buf);
+    let cur = metrics::RawSample::parse(&text);
+    let derived = {
+        let mut guard = prev.lock_recover();
+        let m = metrics::Metrics::derive(guard.as_ref(), &cur);
+        *guard = Some(cur);
+        m
+    };
+    let _ = app_handle.emit(&event_name(EventKind::SshMetrics, &session_id), derived);
+}
+
 async fn run_session(
     spec: SessionSpec,
     cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     log_path: Option<PathBuf>,
     keepalive_secs: Arc<AtomicU32>,
+    metrics_secs: Arc<AtomicU32>,
 ) -> SessionExit {
     let SessionSpec {
         session_id,
@@ -1360,7 +1426,13 @@ async fn run_session(
     let mut out_buf: Vec<u8> = Vec::with_capacity(SSH_DATA_FLUSH_THRESHOLD);
     // Keepalive de aplicación togglable en vivo (ver `SessionCommand::SetKeepAlive`).
     // A 0 el temporizador queda inerte y su rama del `select!` se desactiva.
-    let mut ka_timer = make_keepalive_timer(keepalive_secs.load(Ordering::Relaxed));
+    let mut ka_timer = make_periodic_timer(keepalive_secs.load(Ordering::Relaxed));
+    // Monitor de recursos: temporizador (misma mecánica que el keepalive) y la
+    // muestra anterior, para derivar %CPU y tasas de red por delta. Se comparte
+    // con las tareas de recogida por `Arc<Mutex>`; se reinicia al cambiar el
+    // intervalo para no calcular una tasa con una muestra de otra cadencia.
+    let mut metrics_timer = make_periodic_timer(metrics_secs.load(Ordering::Relaxed));
+    let metrics_prev: Arc<Mutex<Option<metrics::RawSample>>> = Arc::new(Mutex::new(None));
     loop {
         tokio::select! {
             msg = channel.wait() => {
@@ -1405,6 +1477,22 @@ async fn run_session(
             _ = async { ka_timer.as_mut().unwrap().tick().await }, if ka_timer.is_some() => {
                 let _ = handle.send_keepalive(false).await;
             }
+            // Muestra del monitor de recursos: abrimos un canal `exec` (round-trip
+            // corto, como el open de un túnel) y delegamos la **lectura** de su
+            // salida a una tarea aparte, para no congelar el terminal mientras se
+            // lee. La tarea parsea, deriva contra la muestra previa y emite.
+            _ = async { metrics_timer.as_mut().unwrap().tick().await }, if metrics_timer.is_some() => {
+                if let Ok(channel) = handle.channel_open_session().await {
+                    if channel.exec(false, metrics::linux_sample_command()).await.is_ok() {
+                        tokio::spawn(collect_and_emit_metrics(
+                            channel,
+                            session_id.clone(),
+                            app_handle.clone(),
+                            metrics_prev.clone(),
+                        ));
+                    }
+                }
+            }
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(SessionCommand::Input(data)) => {
@@ -1416,7 +1504,15 @@ async fn run_session(
                     Some(SessionCommand::SetKeepAlive(secs)) => {
                         let n = secs.filter(|s| *s > 0).unwrap_or(0);
                         keepalive_secs.store(n, Ordering::Relaxed);
-                        ka_timer = make_keepalive_timer(n);
+                        ka_timer = make_periodic_timer(n);
+                    }
+                    Some(SessionCommand::SetMetrics(secs)) => {
+                        let n = secs.filter(|s| *s > 0).unwrap_or(0);
+                        metrics_secs.store(n, Ordering::Relaxed);
+                        metrics_timer = make_periodic_timer(n);
+                        // La cadencia cambió: la muestra previa ya no sirve para
+                        // el delta (daría una tasa disparatada). Se reinicia.
+                        *metrics_prev.lock_recover() = None;
                     }
                     Some(SessionCommand::StartTunnel { config, reply }) => {
                         let result = start_tunnel_runtime(

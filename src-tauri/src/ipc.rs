@@ -26,6 +26,9 @@ pub enum EventKind {
     SshReconnecting,
     /// `ssh-tunnel-traffic-{sessionId}` — tráfico acumulado por túnel.
     SshTunnelTraffic,
+    /// `ssh-metrics-{sessionId}` — muestra de recursos del servidor (CPU, memoria,
+    /// disco, red, procesos) del monitor por sesión. Payload: `Metrics`.
+    SshMetrics,
     /// `shell-closed-{sessionId}` — consola local cerrada.
     ShellClosed,
     /// `sftp-log-{sessionId}` — etapa de conexión SFTP/FTP.
@@ -67,6 +70,7 @@ impl EventKind {
             EventKind::SshClosed => "ssh-closed-",
             EventKind::SshReconnecting => "ssh-reconnecting-",
             EventKind::SshTunnelTraffic => "ssh-tunnel-traffic-",
+            EventKind::SshMetrics => "ssh-metrics-",
             EventKind::ShellClosed => "shell-closed-",
             EventKind::SftpLog => "sftp-log-",
             EventKind::SftpProgress => "sftp-progress-",

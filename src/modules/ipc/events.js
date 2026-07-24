@@ -34,6 +34,8 @@ export const EVENT_PREFIX = Object.freeze({
   sshReconnecting: "ssh-reconnecting-",
   /** `ssh-tunnel-traffic-{sessionId}` → {@link SshTunnelTrafficEvent} */
   sshTunnelTraffic: "ssh-tunnel-traffic-",
+  /** `ssh-metrics-{sessionId}` → {@link SshMetricsEvent} */
+  sshMetrics: "ssh-metrics-",
   /** `shell-closed-{sessionId}` → payload: null */
   shellClosed: "shell-closed-",
   /** `sftp-log-{sessionId}` → {@link SftpLogEvent} */
@@ -171,6 +173,24 @@ export function eventName(kind, suffix) {
  * @property {string} id Identificador del túnel.
  * @property {number} bytesUp Bytes enviados acumulados.
  * @property {number} bytesDown Bytes recibidos acumulados.
+ */
+
+/**
+ * Muestra de recursos del servidor remoto (monitor por sesión). Espejo de
+ * `metrics::Metrics` (Rust), serializado en camelCase. Los campos derivados por
+ * delta (`cpuPct`, `cpuCoresPct`, `netRxBps`, `netTxBps`) llegan `null` en la
+ * primera muestra, cuando aún no hay anterior con la que comparar.
+ * @typedef {object} SshMetricsEvent
+ * @property {number|null} cpuPct Uso de CPU agregado, 0..100.
+ * @property {number[]} cpuCoresPct Uso por core, 0..100.
+ * @property {{ totalKb: number, availableKb: number, swapTotalKb: number, swapFreeKb: number }} mem Memoria en kiB.
+ * @property {number} memUsedKb Memoria usada (total − disponible), en kiB.
+ * @property {{ one: number, five: number, fifteen: number }|null} load Carga media.
+ * @property {number} uptimeSecs Segundos encendido el servidor.
+ * @property {number|null} netRxBps Bytes/s de bajada.
+ * @property {number|null} netTxBps Bytes/s de subida.
+ * @property {Array<{ filesystem: string, sizeKb: number, usedKb: number, availKb: number, mount: string }>} disks Uso por sistema de ficheros.
+ * @property {Array<{ pid: number, cpuPct: number, memPct: number, command: string }>} procs Procesos top por CPU.
  */
 
 /**
