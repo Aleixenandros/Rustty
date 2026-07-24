@@ -10535,6 +10535,8 @@ function clearStatusBar() {
   if (metricsSep) metricsSep.classList.add("hidden");
   const metricsToggle = document.getElementById("status-metrics-toggle");
   if (metricsToggle) metricsToggle.classList.add("hidden");
+  const metricsExpand = document.getElementById("status-metrics-expand");
+  if (metricsExpand) metricsExpand.classList.add("hidden");
   closeStatusOverflowPopover();
 }
 
@@ -10593,6 +10595,157 @@ function updateMetricsToggle(s) {
   const label = on ? t("status.metrics_stop") : t("status.metrics_start");
   btn.title = label;
   btn.setAttribute("aria-label", label);
+  updateMetricsExpandBtn(s);
+}
+
+/** Estado del botón de expandir el panel (visible solo en sesión SSH viva). */
+function updateMetricsExpandBtn(s) {
+  const btn = document.getElementById("status-metrics-expand");
+  if (!btn) return;
+  btn.classList.remove("hidden");
+  const open = !!s?._metricsPanelOpen;
+  btn.classList.toggle("active", open);
+  btn.setAttribute("aria-pressed", open ? "true" : "false");
+}
+
+// ── Panel ampliado del monitor de recursos (acoplado al pane, estilo SFTP) ──
+
+/** Refit del terminal tras un cambio de layout del pane, en el siguiente frame. */
+function refitMetricsPane(s) {
+  if (!s?.fitAddon) return;
+  requestAnimationFrame(() => {
+    try { s.fitAddon.fit(); } catch { /* pane oculto */ }
+    notifyResize(s.id, s.terminal);
+    if (s.id === activeSessionId) updateStatusBar();
+  });
+}
+
+/** Alterna el panel ampliado de la sesión activa. */
+function toggleMetricsPanel(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  if (s._metricsPanelOpen) closeMetricsPanel(sessionId);
+  else openMetricsPanel(sessionId);
+}
+
+function openMetricsPanel(sessionId) {
+  const s = sessions.get(sessionId);
+  const pane = document.querySelector(`.terminal-pane[data-session="${CSS.escape(sessionId)}"]`);
+  if (!s || !pane || pane.querySelector(".metrics-panel")) return;
+  // El panel no sirve sin datos: enciende el muestreo si estaba apagado.
+  if (!s._metricsOn) setSessionMetrics(sessionId, true);
+  s._metricsPanelOpen = true;
+  pane.classList.toggle("metrics-split-vertical", !!s._metricsPanelVertical);
+
+  const panel = document.createElement("div");
+  panel.className = "metrics-panel";
+  panel.dataset.session = sessionId;
+  panel.innerHTML = `
+    <div class="metrics-panel-header">
+      <span class="metrics-panel-title">${escHtml(t("metrics.title"))}</span>
+      <span class="metrics-panel-actions">
+        <button type="button" class="metrics-panel-btn" data-metrics-act="orientation"
+                title="${escHtml(t("metrics.orientation"))}" aria-label="${escHtml(t("metrics.orientation"))}">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="none" stroke="currentColor"/><line x1="8" y1="1.5" x2="8" y2="14.5" stroke="currentColor"/></svg>
+        </button>
+        <button type="button" class="metrics-panel-btn" data-metrics-act="close"
+                title="${escHtml(t("metrics.close"))}" aria-label="${escHtml(t("metrics.close"))}">
+          <svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg>
+        </button>
+      </span>
+    </div>
+    <div class="metrics-body"></div>`;
+  pane.appendChild(panel);
+
+  panel.querySelector('[data-metrics-act="close"]')?.addEventListener("click", () => closeMetricsPanel(sessionId));
+  panel.querySelector('[data-metrics-act="orientation"]')?.addEventListener("click", () => {
+    const cur = sessions.get(sessionId);
+    if (!cur) return;
+    cur._metricsPanelVertical = !cur._metricsPanelVertical;
+    pane.classList.toggle("metrics-split-vertical", cur._metricsPanelVertical);
+    refitMetricsPane(cur);
+  });
+
+  renderMetricsPanel(s);
+  refitMetricsPane(s);
+  updateMetricsExpandBtn(s);
+}
+
+function closeMetricsPanel(sessionId) {
+  const s = sessions.get(sessionId);
+  const pane = document.querySelector(`.terminal-pane[data-session="${CSS.escape(sessionId)}"]`);
+  pane?.querySelector(".metrics-panel")?.remove();
+  pane?.classList.remove("metrics-split-vertical");
+  if (s) {
+    s._metricsPanelOpen = false;
+    refitMetricsPane(s);
+    updateMetricsExpandBtn(s);
+  }
+}
+
+/** Un sparkline SVG a partir de una serie y un color de token. */
+function metricsSparkline(series, color) {
+  const d = sparklinePath(series, 100, 28);
+  if (!d) return `<div class="metrics-spark metrics-spark-empty"></div>`;
+  return `<svg class="metrics-spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true">`
+    + `<path d="${d}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+/** Una barra de uso (0..100) con su etiqueta. */
+function metricsBar(pct, label, sub) {
+  const p = Math.max(0, Math.min(100, pct));
+  return `<div class="metrics-bar-row">
+    <div class="metrics-bar-label"><span>${escHtml(label)}</span><span class="metrics-bar-sub">${escHtml(sub)}</span></div>
+    <div class="metrics-bar"><div class="metrics-bar-fill" style="width:${p}%"></div></div>
+  </div>`;
+}
+
+/** Repinta el cuerpo del panel de una sesión con su última muestra. */
+function renderMetricsPanel(s) {
+  const body = document.querySelector(`.terminal-pane[data-session="${CSS.escape(s.id)}"] .metrics-body`);
+  if (!body) return;
+  const st = s._metrics;
+  const m = st?.latest;
+  if (!m) {
+    body.innerHTML = `<div class="metrics-empty">${escHtml(t("metrics.waiting"))}</div>`;
+    return;
+  }
+
+  const cpu = m.cpuPct == null ? "—" : `${Math.round(m.cpuPct)}%`;
+  const ramPct = usagePct(m.memUsedKb, m.mem?.totalKb);
+  const disks = (m.disks || []).map((d) =>
+    metricsBar(usagePct(d.usedKb, d.sizeKb), d.mount, `${formatKib(d.usedKb)} / ${formatKib(d.sizeKb)}`)
+  ).join("");
+  const procs = (m.procs || []).map((p) => `
+    <tr>
+      <td class="metrics-proc-pid mono">${p.pid}</td>
+      <td class="metrics-proc-cmd" title="${escHtml(p.command)}">${escHtml(p.command)}</td>
+      <td class="metrics-proc-num mono">${p.cpuPct.toFixed(1)}</td>
+      <td class="metrics-proc-num mono">${p.memPct.toFixed(1)}</td>
+    </tr>`).join("");
+
+  body.innerHTML = `
+    <section class="metrics-section">
+      <header class="metrics-section-head"><span>${escHtml(t("status.cpu"))}</span><strong>${cpu}</strong></header>
+      ${metricsSparkline(st.cpuHist, "var(--blue)")}
+    </section>
+    <section class="metrics-section">
+      <header class="metrics-section-head"><span>${escHtml(t("metrics.memory"))}</span><strong>${Math.round(ramPct)}%</strong></header>
+      ${metricsBar(ramPct, formatKib(m.memUsedKb), formatKib(m.mem?.totalKb || 0))}
+    </section>
+    <section class="metrics-section">
+      <header class="metrics-section-head"><span>${escHtml(t("metrics.network"))}</span><strong>↓ ${escHtml(formatBytesPerSec(m.netRxBps))} · ↑ ${escHtml(formatBytesPerSec(m.netTxBps))}</strong></header>
+      ${metricsSparkline(st.rxHist, "var(--green)")}
+      ${metricsSparkline(st.txHist, "var(--peach, var(--yellow))")}
+    </section>
+    <section class="metrics-section">
+      <header class="metrics-section-head"><span>${escHtml(t("status.disk"))}</span><strong>${escHtml(t("metrics.uptime"))}: ${escHtml(formatDuration(m.uptimeSecs))}</strong></header>
+      ${disks || `<div class="metrics-empty">—</div>`}
+    </section>
+    <section class="metrics-section metrics-section-procs">
+      <header class="metrics-section-head"><span>${escHtml(t("metrics.processes"))}</span><strong>%CPU · %MEM</strong></header>
+      <table class="metrics-proc-table"><tbody>${procs}</tbody></table>
+    </section>`;
 }
 
 let _statusOverflowObserver = null;
@@ -10621,6 +10774,12 @@ function ensureStatusOverflowObserver() {
     if (!activeSessionId) return;
     const s = sessions.get(activeSessionId);
     setSessionMetrics(activeSessionId, !s?._metricsOn);
+  });
+
+  const metricsExpandBtn = document.getElementById("status-metrics-expand");
+  metricsExpandBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (activeSessionId) toggleMetricsPanel(activeSessionId);
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeStatusOverflowPopover();
@@ -12072,7 +12231,10 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     if (m.cpuPct != null) st.cpuHist = pushHistory(st.cpuHist, m.cpuPct, METRICS_HISTORY_CAP);
     if (m.netRxBps != null) st.rxHist = pushHistory(st.rxHist, m.netRxBps, METRICS_HISTORY_CAP);
     if (m.netTxBps != null) st.txHist = pushHistory(st.txHist, m.netTxBps, METRICS_HISTORY_CAP);
-    if (sessionId === activeSessionId) renderStatusMetrics(s);
+    if (sessionId === activeSessionId) {
+      renderStatusMetrics(s);
+      if (s._metricsPanelOpen) renderMetricsPanel(s);
+    }
   }));
 
   return ul;

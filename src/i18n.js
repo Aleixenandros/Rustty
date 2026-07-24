@@ -1115,6 +1115,7 @@ export const DICTIONARIES = {
       disk: "Disco",
       metrics_start: "Iniciar monitor de recursos",
       metrics_stop: "Detener monitor de recursos",
+      metrics_expand: "Panel de recursos",
       cells: "celdas",
       overflow_more: "Más detalles",
       overflow_title: "Detalles de la conexión",
@@ -1128,6 +1129,11 @@ export const DICTIONARIES = {
       cwd_copied: "Ruta copiada al portapapeles",
       cwd_nav_error: "No se pudo abrir el panel SFTP en {path}",
     },
+    metrics: {
+        title: "Recursos", memory: "Memoria", network: "Red", processes: "Procesos",
+        uptime: "Encendido", orientation: "Cambiar orientación", close: "Cerrar panel",
+        waiting: "Esperando la primera muestra…",
+      },
     prefs_sync: {
       title: "Sincronización en la nube",
       hint: "Sincroniza perfiles, preferencias, temas y atajos entre equipos. Cifrado de extremo a extremo (E2E) con tu passphrase. El servidor solo ve datos opacos.",
@@ -2627,6 +2633,7 @@ export const DICTIONARIES = {
       disk: "Disk",
       metrics_start: "Start resource monitor",
       metrics_stop: "Stop resource monitor",
+      metrics_expand: "Resource panel",
       cells: "cells",
       overflow_more: "More details",
       overflow_title: "Connection details",
@@ -2640,6 +2647,11 @@ export const DICTIONARIES = {
       cwd_copied: "Path copied to clipboard",
       cwd_nav_error: "Could not open the SFTP panel at {path}",
     },
+    metrics: {
+        title: "Resources", memory: "Memory", network: "Network", processes: "Processes",
+        uptime: "Uptime", orientation: "Toggle orientation", close: "Close panel",
+        waiting: "Waiting for the first sample…",
+      },
     prefs_sync: {
       title: "Cloud sync",
       hint: "Sync profiles, preferences, themes and shortcuts across devices. End-to-end encrypted (E2E) with your passphrase. The server only sees opaque data.",
@@ -4139,6 +4151,7 @@ export const DICTIONARIES = {
       disk: "Disque",
       metrics_start: "Démarrer le moniteur de ressources",
       metrics_stop: "Arrêter le moniteur de ressources",
+      metrics_expand: "Panneau de ressources",
       cells: "cellules",
       overflow_more: "Plus de détails",
       overflow_title: "Détails de la connexion",
@@ -4152,6 +4165,11 @@ export const DICTIONARIES = {
       cwd_copied: "Chemin copié dans le presse-papiers",
       cwd_nav_error: "Impossible d'ouvrir le panneau SFTP sur {path}",
     },
+    metrics: {
+        title: "Ressources", memory: "Mémoire", network: "Réseau", processes: "Processus",
+        uptime: "Activité", orientation: "Changer l'orientation", close: "Fermer le panneau",
+        waiting: "En attente du premier échantillon…",
+      },
     prefs_sync: {
       title: "Synchronisation dans le cloud",
       hint: "Synchronise profils, préférences, thèmes et raccourcis entre appareils. Chiffrement de bout en bout (E2E) avec votre passphrase. Le serveur ne voit que des données opaques.",
@@ -5651,6 +5669,7 @@ export const DICTIONARIES = {
       disk: "Disco",
       metrics_start: "Iniciar monitor de recursos",
       metrics_stop: "Parar monitor de recursos",
+      metrics_expand: "Painel de recursos",
       cells: "células",
       overflow_more: "Mais detalhes",
       overflow_title: "Detalhes da ligação",
@@ -5664,6 +5683,11 @@ export const DICTIONARIES = {
       cwd_copied: "Caminho copiado para a área de transferência",
       cwd_nav_error: "Não foi possível abrir o painel SFTP em {path}",
     },
+    metrics: {
+        title: "Recursos", memory: "Memória", network: "Rede", processes: "Processos",
+        uptime: "Ativo", orientation: "Alternar orientação", close: "Fechar painel",
+        waiting: "À espera da primeira amostra…",
+      },
     prefs_sync: {
       title: "Sincronização na nuvem",
       hint: "Sincroniza perfis, preferências, temas e atalhos entre equipamentos. Cifragem ponta a ponta (E2E) com a sua passphrase. O servidor só vê dados opacos.",
@@ -7163,6 +7187,7 @@ export const DICTIONARIES = {
       disk: "Datenträger",
       metrics_start: "Ressourcenmonitor starten",
       metrics_stop: "Ressourcenmonitor stoppen",
+      metrics_expand: "Ressourcen-Panel",
       cells: "Zellen",
       overflow_more: "Mehr Details",
       overflow_title: "Verbindungsdetails",
@@ -7176,6 +7201,11 @@ export const DICTIONARIES = {
       cwd_copied: "Pfad in die Zwischenablage kopiert",
       cwd_nav_error: "SFTP-Panel konnte unter {path} nicht geöffnet werden",
     },
+    metrics: {
+        title: "Ressourcen", memory: "Speicher", network: "Netzwerk", processes: "Prozesse",
+        uptime: "Laufzeit", orientation: "Ausrichtung wechseln", close: "Panel schließen",
+        waiting: "Warte auf erste Messung…",
+      },
     prefs_sync: {
       title: "Cloud-Sync",
       hint: "Synchronisiere Profile, Einstellungen, Themes und Tastenkürzel zwischen Geräten. Ende-zu-Ende-verschlüsselt (E2E) mit deiner Passphrase. Der Server sieht nur undurchsichtige Daten.",
