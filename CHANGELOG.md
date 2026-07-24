@@ -2,6 +2,25 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.62.2] - 2026-07-24
+
+### Corregido
+
+- **El panel ampliado del monitor de recursos ya muestra sus gráficas**. En las
+  versiones anteriores se abría con un error y no pintaba nada. Ya funciona.
+- **La vista vertical del panel ya no se corta**: al ponerlo a un lado del terminal,
+  ocupa su espacio correctamente en vez de quedar aplastado contra el borde.
+
+### Añadido
+
+- **El panel del monitor se puede redimensionar** arrastrando su borde, y el tamaño
+  se recuerda.
+
+### Cambiado
+
+- **Los ajustes del monitor de recursos tienen su propia sección «Monitor»** en
+  Preferencias, en vez de estar dentro de «Sistema».
+
 ## [1.62.1] - 2026-07-24
 
 ### Corregido
