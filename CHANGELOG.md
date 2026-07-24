@@ -2,6 +2,24 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.62.0] - 2026-07-24
+
+### Añadido
+
+- **Monitor de recursos del servidor por sesión SSH**. Cada sesión puede mostrar,
+  en vivo, cómo va el servidor remoto: uso de CPU, memoria y disco aparecen de
+  forma compacta en la barra inferior, junto a la latencia, con solo pulsar el
+  botón del monitor. Un segundo botón abre un **panel con gráficas** —evolución de
+  CPU y de red, barras de memoria y de cada disco, tiempo encendido y la tabla de
+  procesos que más consumen—, que se puede colocar **dividiendo la pantalla en
+  vertical o en horizontal**. No hace falta instalar nada en el servidor: Rustty
+  lee la información por la propia conexión SSH y dibuja las gráficas él mismo, así
+  que funciona contra cualquier servidor Linux al que ya te conectes. Es opcional
+  y se enciende por sesión; el intervalo de muestreo es configurable.
+- **El tamaño del terminal se muestra ahora en píxeles** en la barra inferior, más
+  intuitivo, y se actualiza al redimensionar la ventana. Las columnas × filas (lo
+  que ve el shell) siguen disponibles en el tooltip.
+
 ## [1.61.1] - 2026-07-24
 
 ### Corregido
