@@ -2166,9 +2166,38 @@ body.reduce-motion.terminal-bell-visual::after {
 }
 #status-bar.status-bar--compact .status-overflow-btn { display: inline-flex; }
 
+/* Monitor de recursos: indicadores compactos + botón toggle. `tabular-nums`
+   para que los porcentajes no bailen al actualizarse cada pocos segundos. */
+#status-bar .status-metrics {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--subtext1);
+  white-space: nowrap;
+}
+#status-bar .status-metrics-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--subtext0);
+  cursor: pointer;
+  padding: 0;
+}
+#status-bar .status-metrics-toggle:hover { background: var(--surface0); color: var(--text); }
+#status-bar .status-metrics-toggle.active { color: var(--green); }
+
 #status-bar.status-bar--compact .status-cwd,
 #status-bar.status-bar--compact .status-dims,
 #status-bar.status-bar--compact .status-latency,
+#status-bar.status-bar--compact .status-metrics,
+#status-bar.status-bar--compact .status-metrics-sep,
 #status-bar.status-bar--compact .status-rec,
 #status-bar.status-bar--compact > .status-sep {
   display: none !important;

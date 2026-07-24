@@ -47,6 +47,7 @@ import { baseSlugifyThemeId } from "./modules/text.js";
 import { formatTime, formatRelativeTimeShort } from "./modules/datetime.js";
 import { formatAccelerator } from "./modules/platform.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
+import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { defaultHighlightRules, compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
@@ -390,6 +391,11 @@ const FILE_READ_LIMITS = Object.freeze({
 });
 
 const DEFAULT_PREFS = {
+  // Monitor de recursos por sesión SSH (opt-in). Cuando está activo, la sesión
+  // muestrea el servidor cada `metricsSecs` segundos y pinta CPU/RAM/disco en la
+  // barra inferior. Solo Linux de momento (degrada a nada en otros SO).
+  metricsEnabled:  false,
+  metricsSecs:     3,
   theme:           "dark",    // "dark" | "light" | "system"
   // Tema del terminal independiente del de UI.
   // null / "inherit" = seguir a `theme`; cualquier otro id válido = tema fijo para el terminal.
@@ -10522,7 +10528,70 @@ function clearStatusBar() {
     clearInterval(_statusLatencyTimer);
     _statusLatencyTimer = null;
   }
+  const metricsWrap = document.getElementById("status-metrics-wrap");
+  if (metricsWrap) metricsWrap.classList.add("hidden");
+  const metricsSep = document.getElementById("status-metrics-sep");
+  if (metricsSep) metricsSep.classList.add("hidden");
+  const metricsToggle = document.getElementById("status-metrics-toggle");
+  if (metricsToggle) metricsToggle.classList.add("hidden");
   closeStatusOverflowPopover();
+}
+
+/**
+ * Pinta los indicadores compactos del monitor (CPU/RAM/disco) en la barra a
+ * partir de la última muestra de la sesión. Oculta el grupo si el monitor está
+ * apagado o aún no llegó ninguna muestra.
+ * @param {ReturnType<typeof sessions.get>} s
+ */
+function renderStatusMetrics(s) {
+  const wrap = document.getElementById("status-metrics-wrap");
+  const sep = document.getElementById("status-metrics-sep");
+  if (!wrap) return;
+  const m = s?._metrics?.latest;
+  const show = !!(s?._metricsOn && m);
+  wrap.classList.toggle("hidden", !show);
+  sep?.classList.toggle("hidden", !show);
+  if (!show) return;
+
+  const cpuEl = document.getElementById("status-cpu");
+  if (cpuEl) {
+    cpuEl.textContent = m.cpuPct == null
+      ? `${t("status.cpu")} —`
+      : `${t("status.cpu")} ${Math.round(m.cpuPct)}%`;
+  }
+  const ramEl = document.getElementById("status-ram");
+  if (ramEl) {
+    ramEl.textContent = `${t("status.ram")} ${Math.round(usagePct(m.memUsedKb, m.mem?.totalKb))}%`;
+    ramEl.title = `${formatKib(m.memUsedKb)} / ${formatKib(m.mem?.totalKb || 0)}`;
+  }
+  const diskEl = document.getElementById("status-disk");
+  if (diskEl) {
+    const d = summaryDisk(m.disks);
+    if (d) {
+      diskEl.textContent = `${t("status.disk")} ${Math.round(usagePct(d.usedKb, d.sizeKb))}%`;
+      diskEl.title = `${d.mount} — ${formatKib(d.usedKb)} / ${formatKib(d.sizeKb)}`;
+      diskEl.classList.remove("hidden");
+    } else {
+      diskEl.classList.add("hidden");
+    }
+  }
+}
+
+/**
+ * Refleja el estado on/off del monitor en el botón de la barra (visible solo en
+ * sesiones SSH vivas).
+ * @param {ReturnType<typeof sessions.get>} s
+ */
+function updateMetricsToggle(s) {
+  const btn = document.getElementById("status-metrics-toggle");
+  if (!btn) return;
+  btn.classList.remove("hidden");
+  const on = !!s?._metricsOn;
+  btn.classList.toggle("active", on);
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  const label = on ? t("status.metrics_stop") : t("status.metrics_start");
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
 }
 
 let _statusOverflowObserver = null;
@@ -10543,6 +10612,14 @@ function ensureStatusOverflowObserver() {
   btn?.addEventListener("click", (e) => {
     e.stopPropagation();
     toggleStatusOverflowPopover();
+  });
+
+  const metricsBtn = document.getElementById("status-metrics-toggle");
+  metricsBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!activeSessionId) return;
+    const s = sessions.get(activeSessionId);
+    setSessionMetrics(activeSessionId, !s?._metricsOn);
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeStatusOverflowPopover();
@@ -10837,6 +10914,11 @@ function updateStatusBar() {
   } else if (dimsEl) {
     dimsEl.textContent = "—";
   }
+
+  // Monitor de recursos: botón toggle (siempre visible en sesión SSH) e
+  // indicadores compactos (solo con el monitor activo y una muestra recibida).
+  updateMetricsToggle(s);
+  renderStatusMetrics(s);
 
   // Badge REC si el perfil tiene session_log activado.
   const recWrap = document.getElementById("status-rec-wrap");
@@ -11887,6 +11969,11 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
       invoke("ssh_send_input", { sessionId, data: ` cd '${dir}'\r` }).catch(() => {});
     }
     startProfileAutoTunnels(sessionId);
+    // Monitor de recursos: auto-arranque si el usuario lo dejó activado por
+    // defecto, o si ya estaba encendido en esta sesión (sobrevive al reconnect).
+    if (s && (prefs.metricsEnabled || s._metricsOn)) {
+      setSessionMetrics(sessionId, true);
+    }
   }));
 
   ul.push(await listen(eventName("sshError", sessionId), (e) => {
@@ -11960,7 +12047,46 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     if (isGlobalTunnelsModalOpen()) renderGlobalTunnelLists();
   }));
 
+  // Monitor de recursos: cada muestra guarda la última instantánea y empuja la
+  // historia (para futuros sparklines); si la sesión está activa, refresca la
+  // barra inferior. La primera muestra llega sin %CPU/tasas (aún no hay delta).
+  ul.push(await listen(eventName("sshMetrics", sessionId), (/** @type {{ payload: SshMetricsEvent }} */ e) => {
+    const s = sessions.get(sessionId);
+    if (!s) return;
+    const m = e.payload;
+    const st = s._metrics || (s._metrics = { latest: null, cpuHist: [], rxHist: [], txHist: [] });
+    st.latest = m;
+    if (m.cpuPct != null) st.cpuHist = pushHistory(st.cpuHist, m.cpuPct, METRICS_HISTORY_CAP);
+    if (m.netRxBps != null) st.rxHist = pushHistory(st.rxHist, m.netRxBps, METRICS_HISTORY_CAP);
+    if (m.netTxBps != null) st.txHist = pushHistory(st.txHist, m.netTxBps, METRICS_HISTORY_CAP);
+    if (sessionId === activeSessionId) renderStatusMetrics(s);
+  }));
+
   return ul;
+}
+
+/** Puntos de historia que se conservan por métrica (para los sparklines). */
+const METRICS_HISTORY_CAP = 60;
+
+/**
+ * Enciende o apaga el monitor de recursos de una sesión: activa/desactiva el
+ * muestreo en el backend y refresca la barra. Idempotente por sesión.
+ * @param {string} sessionId
+ * @param {boolean} on
+ */
+async function setSessionMetrics(sessionId, on) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  s._metricsOn = on;
+  const secs = Math.max(1, Number(prefs.metricsSecs) || 3);
+  try {
+    await invoke("ssh_set_metrics", { sessionId, secs: on ? secs : null });
+  } catch { /* sesión ya cerrada */ }
+  if (!on && s._metrics) s._metrics.latest = null;
+  if (sessionId === activeSessionId) {
+    renderStatusMetrics(s);
+    updateMetricsToggle(s);
+  }
 }
 
 function setActiveTab(sessionId) {

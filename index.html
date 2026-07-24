@@ -214,6 +214,21 @@
               <span class="status-label" data-i18n="status.latency">Latencia</span>
               <span id="status-latency">—</span>
             </span>
+            <span class="status-sep status-metrics-sep hidden" id="status-metrics-sep"></span>
+            <span class="status-metrics hidden" id="status-metrics-wrap">
+              <span id="status-cpu" class="mono">—</span>
+              <span id="status-ram" class="mono">—</span>
+              <span id="status-disk" class="mono">—</span>
+            </span>
+            <button type="button" class="status-metrics-toggle" id="status-metrics-toggle"
+                    data-i18n-title="status.metrics_start" title="Iniciar monitor de recursos"
+                    data-i18n-aria-label="status.metrics_start" aria-label="Iniciar monitor de recursos"
+                    aria-pressed="false">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <path d="M1 11 L5 5 L8 9 L11 3 L15 8" fill="none" stroke="currentColor"
+                      stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+              </svg>
+            </button>
             <span class="status-rec hidden" id="status-rec-wrap" title="Sesión grabada en disco (session_log)">
               <span class="status-rec-dot"></span>
               <span>REC</span>
