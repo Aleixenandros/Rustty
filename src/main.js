@@ -3883,6 +3883,7 @@ async function init() {
     const s = sessions.get(activeSessionId);
     s?.fitAddon.fit();
     notifyResize(activeSessionId, s?.terminal);
+    updateStatusBar(); // refresca el tamaño en píxeles en vivo
   });
 }
 
@@ -10907,10 +10908,18 @@ function updateStatusBar() {
     }
   }
 
-  // Dimensiones cols × rows del xterm activo.
+  // Tamaño del terminal en píxeles (área real dibujada), más intuitivo que
+  // cols×rows para el usuario medio; el cols×rows —lo que ve el shell y a lo que
+  // se ajustan vim/htop/tmux— se conserva en el tooltip. Cae a cols×rows si el
+  // xterm aún no ha pintado su `.xterm-screen`.
   const dimsEl = document.getElementById("status-dims");
   if (dimsEl && s.terminal) {
-    dimsEl.textContent = `${s.terminal.cols}×${s.terminal.rows}`;
+    const screen = s.terminal.element?.querySelector(".xterm-screen");
+    dimsEl.textContent = screen
+      ? `${Math.round(screen.clientWidth)}×${Math.round(screen.clientHeight)} px`
+      : `${s.terminal.cols}×${s.terminal.rows}`;
+    const dimsWrap = document.getElementById("status-dims-wrap");
+    if (dimsWrap) dimsWrap.title = `${s.terminal.cols}×${s.terminal.rows} ${t("status.cells")}`;
   } else if (dimsEl) {
     dimsEl.textContent = "—";
   }
@@ -11711,7 +11720,11 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     handleTerminalInput(sessionObj, data);
   });
 
-  terminal.onResize(() => scheduleBackendResize(sessionObj));
+  terminal.onResize(() => {
+    scheduleBackendResize(sessionObj);
+    // Refleja el nuevo tamaño en la barra si es la sesión visible.
+    if (sessionObj.id === activeSessionId) updateStatusBar();
+  });
 
   document.getElementById("welcome-screen").classList.add("hidden");
   selectSession(sessionId, false);
