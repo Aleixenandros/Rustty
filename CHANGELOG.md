@@ -2,6 +2,22 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.62.1] - 2026-07-24
+
+### Corregido
+
+- **El panel ampliado del monitor de recursos ya se pinta**. En la 1.62.0 el panel
+  se abría vacío. Ahora muestra sus gráficas y, si algo del servidor no encajara,
+  lo indica en el propio panel en vez de quedarse en blanco.
+
+### Añadido
+
+- **Ajustes del monitor de recursos en Preferencias → Sistema**: activar el monitor
+  automáticamente al conectar, elegir la **tasa de refresco** (desde «Tiempo real»
+  cada segundo hasta cada 10 segundos) y la **orientación por defecto** del panel
+  (debajo del terminal o a un lado).
+- **Los botones del monitor explican qué hacen** al pasar el ratón por encima.
+
 ## [1.62.0] - 2026-07-24
 
 ### Añadido

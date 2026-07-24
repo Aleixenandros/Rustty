@@ -39,4 +39,10 @@ El **intervalo de muestreo** es configurable. Un intervalo más corto actualiza 
 
 ## Preferencias
 
-El monitor es **opt-in**: viene desactivado y solo se muestrea cuando lo enciendes. El estado se recuerda por sesión y sobrevive a las reconexiones automáticas. El intervalo de muestreo se ajusta en las preferencias.
+El monitor es **opt-in**: viene desactivado y solo se muestrea cuando lo enciendes. El estado se recuerda por sesión y sobrevive a las reconexiones automáticas.
+
+En **Preferencias → Sistema → Monitor de recursos** puedes ajustar:
+
+- **Activar automáticamente al conectar**: enciende el monitor en cada sesión nueva sin tener que pulsar el botón. Si lo dejas desactivado, lo enciendes a mano por sesión.
+- **Tasa de refresco**: cada cuánto se toma una muestra, desde **Tiempo real (1 s)** hasta cada 10 segundos. Un intervalo más corto actualiza más a menudo a cambio de algo más de tráfico.
+- **Orientación del panel por defecto**: si el panel ampliado se abre **debajo** del terminal (horizontal) o **a un lado** (vertical). Dentro del panel puedes cambiarla en cualquier momento con su botón de orientación.
