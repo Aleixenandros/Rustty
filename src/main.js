@@ -47,7 +47,7 @@ import { baseSlugifyThemeId } from "./modules/text.js";
 import { formatTime, formatRelativeTimeShort } from "./modules/datetime.js";
 import { formatAccelerator } from "./modules/platform.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
-import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory } from "./modules/metrics-view.js";
+import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { defaultHighlightRules, compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
@@ -10623,6 +10623,51 @@ function updateMetricsExpandBtn(s) {
 
 // ── Panel ampliado del monitor de recursos (acoplado al pane, estilo SFTP) ──
 
+const METRICS_PANEL_SIZE_KEY = "rustty-metrics-panel-size-percent";
+
+/** Tamaño del panel (% del pane) guardado, acotado a un rango razonable. */
+function loadMetricsPanelPct() {
+  const v = parseFloat(localStorage.getItem(METRICS_PANEL_SIZE_KEY));
+  return Number.isFinite(v) ? Math.min(75, Math.max(15, v)) : 40;
+}
+function saveMetricsPanelPct(pct) {
+  if (Number.isFinite(pct)) localStorage.setItem(METRICS_PANEL_SIZE_KEY, String(Math.round(pct)));
+}
+
+/**
+ * Arrastre del divisor del panel: en horizontal cambia el alto, en vertical el
+ * ancho, como % del pane. Refita el terminal en cada frame y persiste al soltar.
+ * @param {MouseEvent} e
+ * @param {HTMLElement} panel
+ * @param {HTMLElement} pane
+ * @param {ReturnType<typeof sessions.get>} s
+ */
+function startMetricsResize(e, panel, pane, s) {
+  e.preventDefault();
+  const vertical = pane.classList.contains("metrics-split-vertical");
+  document.body.classList.add("metrics-resizing");
+  document.body.classList.toggle("metrics-resizing-v", vertical);
+
+  const onMove = (ev) => {
+    const rect = pane.getBoundingClientRect();
+    const raw = vertical
+      ? ((rect.right - ev.clientX) / rect.width) * 100
+      : ((rect.bottom - ev.clientY) / rect.height) * 100;
+    const pct = Math.min(75, Math.max(15, raw));
+    panel.style.flexBasis = `${pct}%`;
+    requestAnimationFrame(() => { try { s?.fitAddon?.fit(); } catch { /* pane oculto */ } });
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    document.body.classList.remove("metrics-resizing", "metrics-resizing-v");
+    saveMetricsPanelPct(parseFloat(panel.style.flexBasis));
+    if (s) refitMetricsPane(s);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
 /** Refit del terminal tras un cambio de layout del pane, en el siguiente frame. */
 function refitMetricsPane(s) {
   if (!s?.fitAddon) return;
@@ -10655,7 +10700,9 @@ function openMetricsPanel(sessionId) {
   const panel = document.createElement("div");
   panel.className = "metrics-panel";
   panel.dataset.session = sessionId;
+  panel.style.flexBasis = `${loadMetricsPanelPct()}%`;
   panel.innerHTML = `
+    <div class="metrics-resize-handle"></div>
     <div class="metrics-panel-header">
       <span class="metrics-panel-title">${escHtml(t("metrics.title"))}</span>
       <span class="metrics-panel-actions">
@@ -10672,6 +10719,7 @@ function openMetricsPanel(sessionId) {
     <div class="metrics-body"></div>`;
   pane.appendChild(panel);
 
+  panel.querySelector(".metrics-resize-handle")?.addEventListener("mousedown", (e) => startMetricsResize(e, panel, pane, s));
   panel.querySelector('[data-metrics-act="close"]')?.addEventListener("click", () => closeMetricsPanel(sessionId));
   panel.querySelector('[data-metrics-act="orientation"]')?.addEventListener("click", () => {
     const cur = sessions.get(sessionId);

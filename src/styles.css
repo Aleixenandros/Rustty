@@ -2343,6 +2343,7 @@ body.reduce-motion.terminal-bell-visual::after {
 .term-area {
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0; /* deja encoger el terminal en el split vertical del monitor */
   display: flex;
   position: relative;
 }
@@ -2355,6 +2356,7 @@ body.reduce-motion.terminal-bell-visual::after {
   flex: 0 0 40%;
   min-height: 0;
   min-width: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
   background: var(--mantle, var(--base));
@@ -2362,6 +2364,29 @@ body.reduce-motion.terminal-bell-visual::after {
   border-radius: 4px;
   overflow: hidden;
 }
+
+/* Divisor para redimensionar el panel: arriba en split horizontal, a la
+   izquierda en split vertical. Es una franja fina sobre el borde del panel. */
+.metrics-resize-handle {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: row-resize;
+}
+.terminal-pane.metrics-split-vertical .metrics-resize-handle {
+  top: 0;
+  bottom: 0;
+  right: auto;
+  width: 6px;
+  height: auto;
+  cursor: col-resize;
+}
+.metrics-resize-handle:hover { background: var(--blue); opacity: 0.4; }
+body.metrics-resizing { cursor: row-resize; user-select: none; }
+body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 .terminal-pane.metrics-split-vertical .metrics-panel {
   flex-basis: 42%;
   border-top: 0;
