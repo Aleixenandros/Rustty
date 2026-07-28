@@ -39,9 +39,9 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
     "esbuild": "^0.28.0",
-    "eslint": "^10.6.0",
-    "eslint-plugin-jsdoc": "^63.2.0",
-    "globals": "^17.7.0",
+    "eslint": "^10.8.0",
+    "eslint-plugin-jsdoc": "^63.3.2",
+    "globals": "^17.8.0",
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"
