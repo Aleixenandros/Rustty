@@ -39,6 +39,7 @@ use crate::error::AppError;
 use crate::host_keys;
 use crate::ipc::{event_name, EventKind};
 use crate::metrics;
+use crate::mux;
 use crate::profiles::{AuthType, ConnectionProfile, SshTunnelType};
 
 /// Timeout TCP por defecto al abrir la conexión inicial. Sin techo russh
@@ -1050,6 +1051,43 @@ async fn collect_and_emit_metrics(
     let _ = app_handle.emit(&event_name(EventKind::SshMetrics, &session_id), derived);
 }
 
+/// Plazo del sondeo de binario en el remoto (sesiones persistentes). Si el
+/// servidor no contesta a tiempo se degrada a shell normal con aviso: mejor un
+/// shell pelado que una conexión colgada.
+const MUX_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Comprueba si un binario existe en el remoto ejecutando `command -v` por un
+/// canal `exec` aparte (el canal interactivo no se toca). `Ok(true)` = exit
+/// status 0 del remoto.
+async fn probe_remote_binary(
+    handle: &client::Handle<host_keys::KnownHostsClient>,
+    probe: &str,
+) -> Result<bool, String> {
+    let mut channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| e.to_string())?;
+    channel.exec(false, probe).await.map_err(|e| e.to_string())?;
+    let mut status: Option<u32> = None;
+    let read = async {
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                ChannelMsg::ExitStatus { exit_status } => {
+                    status = Some(exit_status);
+                    break;
+                }
+                ChannelMsg::Close | ChannelMsg::ExitSignal { .. } => break,
+                // Eof puede llegar antes que el exit status: se sigue leyendo.
+                _ => {}
+            }
+        }
+    };
+    tokio::time::timeout(MUX_PROBE_TIMEOUT, read)
+        .await
+        .map_err(|_| "plazo agotado".to_string())?;
+    Ok(status == Some(0))
+}
+
 /// Lee el desenlace de un `kill` remoto ya lanzado y lo devuelve por `reply`:
 /// estado de salida 0 → `Ok`; cualquier otro estado o el plazo agotado → `Err`
 /// con lo que el remoto haya impreso (p. ej. «Operation not permitted» o «No
@@ -1467,8 +1505,65 @@ async fn run_session(
         return SessionExit::Fatal(AppError::Ssh(format!("No se pudo solicitar PTY: {e}")));
     }
 
-    if let Err(e) = channel.request_shell(true).await {
-        return SessionExit::Fatal(AppError::Ssh(format!("No se pudo abrir shell: {e}")));
+    // Sesión persistente opt-in (tmux/screen): si el binario está en el remoto,
+    // el canal ejecuta el attach (crea la sesión con nombre o se reengancha, lo
+    // que también cubre la reconexión automática) en vez del shell pelado. La
+    // detección corre en un `exec` aparte, como las muestras del monitor, para
+    // no ensuciar el canal interactivo. Si falta el binario o el sondeo falla:
+    // degradación honesta a shell normal, con aviso en el log de conexión.
+    let mut persist_cmd: Option<String> = None;
+    if profile.persist_session {
+        let tool = mux::normalize_tool(profile.persist_session_tool.as_deref());
+        let name = profile
+            .persist_session_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&profile.name);
+        match probe_remote_binary(&handle, mux::probe_command(tool)).await {
+            Ok(true) => {
+                persist_cmd = Some(mux::attach_command(tool, name));
+                emit_connection_log(
+                    &app_handle,
+                    &session_id,
+                    "persist_session",
+                    "info",
+                    format!(
+                        "Sesión persistente {tool} «{}»",
+                        mux::sanitize_session_name(name)
+                    ),
+                );
+            }
+            Ok(false) => emit_connection_log(
+                &app_handle,
+                &session_id,
+                "persist_session",
+                "warning",
+                format!("{tool} no está instalado en el servidor: se abre un shell normal"),
+            ),
+            Err(e) => emit_connection_log(
+                &app_handle,
+                &session_id,
+                "persist_session",
+                "warning",
+                format!("No se pudo comprobar {tool} ({e}): se abre un shell normal"),
+            ),
+        }
+    }
+
+    match &persist_cmd {
+        Some(cmd) => {
+            if let Err(e) = channel.exec(true, cmd.as_str()).await {
+                return SessionExit::Fatal(AppError::Ssh(format!(
+                    "No se pudo abrir la sesión persistente: {e}"
+                )));
+            }
+        }
+        None => {
+            if let Err(e) = channel.request_shell(true).await {
+                return SessionExit::Fatal(AppError::Ssh(format!("No se pudo abrir shell: {e}")));
+            }
+        }
     }
 
     emit_connection_log(

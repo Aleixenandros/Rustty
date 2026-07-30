@@ -1051,6 +1051,29 @@
 
             <div class="form-row">
               <label class="checkbox-label">
+                <input id="f-persist-session" type="checkbox" />
+                <span data-i18n="modal_conn.persist_session">Reanudar sesión persistente (tmux/screen)</span>
+              </label>
+              <p class="form-hint" data-i18n="modal_conn.persist_session_hint">
+                Al conectar se reengancha (o crea) una sesión con nombre en el servidor: si la conexión cae o cierras la app, lo que estaba corriendo sigue vivo y la próxima conexión continúa donde estaba. Requiere tmux o screen en el servidor; si falta, se abre un shell normal y se avisa.
+              </p>
+              <div id="persist-session-fields" class="form-row-split" hidden>
+                <div class="form-group form-group-sm">
+                  <label for="f-persist-tool" data-i18n="modal_conn.persist_tool">Herramienta</label>
+                  <select id="f-persist-tool">
+                    <option value="tmux">tmux</option>
+                    <option value="screen">screen</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="f-persist-name"><span data-i18n="modal_conn.persist_name">Nombre de la sesión</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+                  <input id="f-persist-name" type="text" data-i18n-placeholder="modal_conn.persist_name_ph" placeholder="Derivado del nombre del perfil" />
+                </div>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label class="checkbox-label">
                 <input id="f-session-log" type="checkbox" />
                 <span data-i18n="modal_conn.session_log">Grabar sesión a fichero</span>
               </label>
@@ -3007,6 +3030,46 @@
                   <option value="horizontal" data-i18n="prefs_system.orientation_horizontal">Horizontal (debajo)</option>
                   <option value="vertical" data-i18n="prefs_system.orientation_vertical">Vertical (al lado)</option>
                 </select>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-metrics-alerts" />
+                  <span data-i18n="prefs_system.metrics_alerts">Avisar al superar un umbral</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_system.metrics_alerts_hint">Con el monitor encendido, muestra un aviso cuando la CPU, la memoria o un disco del servidor superan el porcentaje elegido. Cada métrica avisa una vez por episodio (no se repite mientras siga alta).</p>
+              </div>
+              <div id="metrics-alert-fields" class="hidden">
+                <div class="settings-row settings-row-inline">
+                  <label for="pref-metrics-alert-cpu" data-i18n="prefs_system.metrics_alert_cpu">Umbral de CPU</label>
+                  <select id="pref-metrics-alert-cpu">
+                    <option value="0" data-i18n="prefs_system.metrics_alert_off">Sin alerta</option>
+                    <option value="70">70 %</option>
+                    <option value="80">80 %</option>
+                    <option value="90">90 %</option>
+                    <option value="95">95 %</option>
+                  </select>
+                </div>
+                <div class="settings-row settings-row-inline">
+                  <label for="pref-metrics-alert-mem" data-i18n="prefs_system.metrics_alert_mem">Umbral de memoria</label>
+                  <select id="pref-metrics-alert-mem">
+                    <option value="0" data-i18n="prefs_system.metrics_alert_off">Sin alerta</option>
+                    <option value="70">70 %</option>
+                    <option value="80">80 %</option>
+                    <option value="90">90 %</option>
+                    <option value="95">95 %</option>
+                  </select>
+                </div>
+                <div class="settings-row settings-row-inline">
+                  <label for="pref-metrics-alert-disk" data-i18n="prefs_system.metrics_alert_disk">Umbral de disco</label>
+                  <select id="pref-metrics-alert-disk">
+                    <option value="0" data-i18n="prefs_system.metrics_alert_off">Sin alerta</option>
+                    <option value="70">70 %</option>
+                    <option value="80">80 %</option>
+                    <option value="90">90 %</option>
+                    <option value="95">95 %</option>
+                  </select>
+                </div>
               </div>
             </section>
 

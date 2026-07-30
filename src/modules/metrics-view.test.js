@@ -7,6 +7,7 @@ import {
   summaryDisk,
   sparklinePath,
   pushHistory,
+  computeMetricAlerts,
 } from "./metrics-view.js";
 
 describe("formatBytesPerSec", () => {
@@ -92,5 +93,47 @@ describe("pushHistory", () => {
   it("descarta los más viejos al superar el tope", () => {
     expect(pushHistory([1, 2, 3], 4, 3)).toEqual([2, 3, 4]);
     expect(pushHistory([], 1, 3)).toEqual([1]);
+  });
+});
+
+describe("computeMetricAlerts", () => {
+  const th = { cpu: 90, mem: 90, disk: 90 };
+
+  it("dispara al cruzar el umbral hacia arriba", () => {
+    const r = computeMetricAlerts({}, { cpu: 95, mem: 50, disk: 89.9 }, th);
+    expect(r.fired).toEqual(["cpu"]);
+    expect(r.active.cpu).toBe(true);
+    expect(r.active.mem).toBe(false);
+  });
+
+  it("no repite el aviso mientras sigue por encima", () => {
+    const first = computeMetricAlerts({}, { cpu: 95 }, { cpu: 90 });
+    const second = computeMetricAlerts(first.active, { cpu: 97 }, { cpu: 90 });
+    expect(second.fired).toEqual([]);
+    expect(second.active.cpu).toBe(true);
+  });
+
+  it("histéresis: no se rearma hasta caer bajo umbral - margen", () => {
+    const alerting = { cpu: true };
+    // 87 con umbral 90 y margen 5: sigue en alerta (no rearma, no dispara).
+    const mid = computeMetricAlerts(alerting, { cpu: 87 }, { cpu: 90 });
+    expect(mid.active.cpu).toBe(true);
+    expect(mid.fired).toEqual([]);
+    // 84 < 85: rearmado; el siguiente cruce vuelve a disparar.
+    const low = computeMetricAlerts(mid.active, { cpu: 84 }, { cpu: 90 });
+    expect(low.active.cpu).toBe(false);
+    const again = computeMetricAlerts(low.active, { cpu: 92 }, { cpu: 90 });
+    expect(again.fired).toEqual(["cpu"]);
+  });
+
+  it("umbral 0 = desactivado; valor null (primera muestra) nunca dispara", () => {
+    const r = computeMetricAlerts({}, { cpu: 99, mem: null }, { cpu: 0, mem: 90 });
+    expect(r.fired).toEqual([]);
+    expect(r.active).toEqual({ cpu: false, mem: false });
+  });
+
+  it("varias métricas pueden disparar en la misma muestra", () => {
+    const r = computeMetricAlerts({}, { cpu: 95, mem: 91, disk: 99 }, th);
+    expect(r.fired).toEqual(["cpu", "mem", "disk"]);
   });
 });

@@ -127,8 +127,19 @@ En el formulario de perfil, la sección **Opciones avanzadas** expone toggles SS
 - **Reenviar X11**: solicita el canal X11 con cookie sintética `MIT-MAGIC-COOKIE-1` y lo redirige a `localhost:6000+display`. Requiere un X server local.
 - **Bastion / Jump host**: conecta primero a un host bastión y abre el destino real a través de un canal `direct-tcpip`, equivalente a `ProxyJump`.
 - **Desactivar confirmación de pegado peligroso**: la confirmación al pegar texto multilínea, muy largo o con caracteres de control está activa de forma global; este toggle del perfil la **desactiva** solo para esta conexión.
+- **Reanudar sesión persistente (tmux/screen)**: ver la sección siguiente.
 
 Todas las opciones son **opt-in** y se guardan en el perfil; los toggles permanecen apagados hasta que los actives explícitamente.
+
+## Sesiones persistentes (tmux/screen)
+
+Con **Reanudar sesión persistente** activado en el perfil, al conectar Rustty no abre un shell pelado: se **reengancha a una sesión tmux (o screen) con nombre** en el servidor, creándola si aún no existe. La diferencia se nota cuando algo va mal: si la conexión se cae, o cierras la app, o apagas el portátil, **lo que estaba corriendo sigue vivo en el servidor** — y la siguiente conexión continúa exactamente donde estaba, con la reconexión automática reenganchando sola.
+
+- **Herramienta**: tmux (recomendado) o screen, según lo que haya en tu servidor.
+- **Nombre de la sesión**: por defecto se deriva del nombre del perfil; puedes fijar el que quieras. Dos perfiles con el mismo nombre de sesión contra el mismo host comparten sesión (es el comportamiento natural de tmux/screen).
+- **Sin nada que instalar en Rustty**: se usa el tmux/screen que ya esté en el servidor. Si no está, Rustty lo detecta al conectar, abre un **shell normal** y te lo avisa en el terminal — nunca falla en silencio.
+
+Límites honestos: los atajos y paneles internos de tmux (`Ctrl+B …`) son los de tmux, se dibujan dentro del terminal y conviven con los de Rustty; y el seguimiento del directorio para el panel SFTP (CWD) puede no funcionar dentro de tmux, porque tmux filtra la secuencia que lo comunica.
 
 ## Túneles guardados
 

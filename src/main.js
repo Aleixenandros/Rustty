@@ -48,7 +48,7 @@ import { formatTime, formatRelativeTimeShort } from "./modules/datetime.js";
 import { formatAccelerator } from "./modules/platform.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
 import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
-import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath } from "./modules/metrics-view.js";
+import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { defaultHighlightRules, compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
@@ -398,6 +398,12 @@ const DEFAULT_PREFS = {
   metricsEnabled:  false,
   metricsSecs:     3,
   metricsPanelVertical: false,
+  // Umbrales de alerta del monitor (opt-in): aviso al cruzar el % configurado,
+  // con histéresis para no repetir. 0 = métrica sin alerta.
+  metricsAlerts:   false,
+  metricsAlertCpu:  90,
+  metricsAlertMem:  90,
+  metricsAlertDisk: 90,
   theme:           "dark",    // "dark" | "light" | "system"
   // Tema del terminal independiente del de UI.
   // null / "inherit" = seguir a `theme`; cualquier otro id válido = tema fijo para el terminal.
@@ -1743,6 +1749,15 @@ function openSettingsModal() {
   if (_metSecs) _metSecs.value = String(prefs.metricsSecs || 3);
   const _metOrient = document.getElementById("pref-metrics-orientation");
   if (_metOrient) _metOrient.value = prefs.metricsPanelVertical ? "vertical" : "horizontal";
+  const _metAlerts = document.getElementById("pref-metrics-alerts");
+  if (_metAlerts) _metAlerts.checked = !!prefs.metricsAlerts;
+  const _metAlertCpu = document.getElementById("pref-metrics-alert-cpu");
+  if (_metAlertCpu) _metAlertCpu.value = String(prefs.metricsAlertCpu ?? 90);
+  const _metAlertMem = document.getElementById("pref-metrics-alert-mem");
+  if (_metAlertMem) _metAlertMem.value = String(prefs.metricsAlertMem ?? 90);
+  const _metAlertDisk = document.getElementById("pref-metrics-alert-disk");
+  if (_metAlertDisk) _metAlertDisk.value = String(prefs.metricsAlertDisk ?? 90);
+  updateMetricsAlertFields();
   const _termContrast = document.getElementById("pref-terminal-min-contrast");
   if (_termContrast) _termContrast.value = ["aa", "aaa"].includes(prefs.terminalMinContrast) ? prefs.terminalMinContrast : "off";
   const _termCursorHv = document.getElementById("pref-terminal-cursor-highvis");
@@ -3478,6 +3493,10 @@ function savePrefsFromModal() {
     metricsEnabled:  !!document.getElementById("pref-metrics-enabled")?.checked,
     metricsSecs:     parseInt(document.getElementById("pref-metrics-secs")?.value, 10) || DEFAULT_PREFS.metricsSecs,
     metricsPanelVertical: document.getElementById("pref-metrics-orientation")?.value === "vertical",
+    metricsAlerts:   !!document.getElementById("pref-metrics-alerts")?.checked,
+    metricsAlertCpu:  metricsAlertFromSelect("pref-metrics-alert-cpu", DEFAULT_PREFS.metricsAlertCpu),
+    metricsAlertMem:  metricsAlertFromSelect("pref-metrics-alert-mem", DEFAULT_PREFS.metricsAlertMem),
+    metricsAlertDisk: metricsAlertFromSelect("pref-metrics-alert-disk", DEFAULT_PREFS.metricsAlertDisk),
     terminalMinContrast: (() => {
       const v = document.getElementById("pref-terminal-min-contrast")?.value;
       return v === "aa" || v === "aaa" ? v : "off";
@@ -6726,6 +6745,13 @@ function updateLegacyAlgosVisibility() {
   if (box) box.hidden = !on;
 }
 
+/** Muestra herramienta y nombre de la sesión persistente solo con el opt-in activo. */
+function updatePersistSessionFields() {
+  const on = document.getElementById("f-persist-session")?.checked;
+  const box = document.getElementById("persist-session-fields");
+  if (box) box.hidden = !on;
+}
+
 // Renderiza las casillas con el estado del perfil y ajusta la visibilidad.
 async function applyLegacyAlgorithmsUI(selectedIds) {
   const catalog = await ensureLegacyAlgoCatalog();
@@ -6759,6 +6785,7 @@ function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiv
   document.getElementById("f-save-password").checked = true;
   document.getElementById("f-save-passphrase").checked = true;
   applyLegacyAlgorithmsUI(null);
+  updatePersistSessionFields();
   setPasswordSource("own");
   populateMasterCredSelect(null);
   refreshKeepassStatus().then(() => {
@@ -6941,6 +6968,13 @@ function openEditConnectionModal(profileId) {
 
   populateFolderSelect(profile.group || "", profile.workspace_id || getActiveWorkspaceId());
   document.getElementById("f-keep-alive").value = profile.keep_alive_secs ?? "";
+  const _fPersist = document.getElementById("f-persist-session");
+  if (_fPersist) _fPersist.checked = !!profile.persist_session;
+  const _fPersistTool = document.getElementById("f-persist-tool");
+  if (_fPersistTool) _fPersistTool.value = profile.persist_session_tool === "screen" ? "screen" : "tmux";
+  const _fPersistName = document.getElementById("f-persist-name");
+  if (_fPersistName) _fPersistName.value = profile.persist_session_name || "";
+  updatePersistSessionFields();
   const _fCmdNotifySecs = document.getElementById("f-cmd-notify-secs");
   if (_fCmdNotifySecs) _fCmdNotifySecs.value = profile.cmd_notify_secs ?? "";
   document.getElementById("f-allow-legacy").checked = !!profile.allow_legacy_algorithms;
@@ -8387,6 +8421,9 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     master_credential_id: masterCredentialId,
     follow_cwd: true,
     keep_alive_secs: keepAliveFromInput(document.getElementById("f-keep-alive").value),
+    persist_session: document.getElementById("f-persist-session")?.checked ?? false,
+    persist_session_tool: document.getElementById("f-persist-tool")?.value || null,
+    persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
     cmd_notify_secs: keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     legacy_algorithms: collectLegacyAlgorithms(),
@@ -8609,6 +8646,9 @@ async function saveAndClose(shouldConnect) {
     extra_credentials:   extraCredentials,
     follow_cwd:          true,
     keep_alive_secs:     keepAliveFromInput(document.getElementById("f-keep-alive").value),
+    persist_session:     document.getElementById("f-persist-session")?.checked ?? false,
+    persist_session_tool: document.getElementById("f-persist-tool")?.value || null,
+    persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
     cmd_notify_secs:     keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     legacy_algorithms:   collectLegacyAlgorithms(),
@@ -12266,7 +12306,15 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
   };
 
   ul.push(await listen(eventName("sshLog", sessionId), (/** @type {{ payload: SshLogEvent }} */ e) => {
-    appendConnectionLog(sessionId, e.payload || {});
+    const entry = e.payload || {};
+    appendConnectionLog(sessionId, entry);
+    // Degradación de la sesión persistente (tmux/screen ausente o sondeo
+    // fallido): además del log de conexión, una nota amarilla en el propio
+    // terminal — es donde el usuario está mirando al conectar.
+    if (entry.stage === "persist_session" && entry.status === "warning") {
+      const s = sessions.get(sessionId);
+      if (s) enqueueTerminalOutput(s, `\r\n\x1b[33m• ${entry.message || ""}\x1b[0m\r\n`);
+    }
   }));
 
   ul.push(await listen(eventName("sshConnected", sessionId), () => {
@@ -12395,6 +12443,7 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     if (m.cpuPct != null) st.cpuHist = pushHistory(st.cpuHist, m.cpuPct, METRICS_HISTORY_CAP);
     if (m.netRxBps != null) st.rxHist = pushHistory(st.rxHist, m.netRxBps, METRICS_HISTORY_CAP);
     if (m.netTxBps != null) st.txHist = pushHistory(st.txHist, m.netTxBps, METRICS_HISTORY_CAP);
+    checkMetricsAlerts(s, st, m);
     if (sessionId === activeSessionId) {
       renderStatusMetrics(s);
       if (s._metricsPanelOpen) renderMetricsPanel(s);
@@ -12406,6 +12455,54 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
 
 /** Puntos de historia que se conservan por métrica (para los sparklines). */
 const METRICS_HISTORY_CAP = 60;
+
+/** Valores admitidos de un select de umbral de alerta (0 = desactivado). */
+const METRICS_ALERT_LEVELS = [0, 70, 80, 90, 95];
+
+/** Lee un select de umbral y lo acota al catálogo (fallback si no encaja). */
+function metricsAlertFromSelect(id, fallback) {
+  const v = parseInt(document.getElementById(id)?.value, 10);
+  return METRICS_ALERT_LEVELS.includes(v) ? v : fallback;
+}
+
+/** Los selects de umbral solo se muestran con las alertas activadas. */
+function updateMetricsAlertFields() {
+  const on = !!document.getElementById("pref-metrics-alerts")?.checked;
+  document.getElementById("metrics-alert-fields")?.classList.toggle("hidden", !on);
+}
+
+/**
+ * Evalúa los umbrales de alerta sobre una muestra recién llegada y lanza un
+ * toast por cada métrica que cruza el suyo (disparo por flanco con histéresis:
+ * ver `computeMetricAlerts`). El estado vive en `st.alerts` por sesión, así una
+ * sesión en segundo plano también avisa — es el propósito de la alerta.
+ */
+function checkMetricsAlerts(s, st, m) {
+  if (!prefs.metricsAlerts) return;
+  const diskPcts = (m.disks || []).map((d) => usagePct(d.usedKb, d.sizeKb));
+  const values = {
+    cpu: m.cpuPct,
+    mem: m.mem?.totalKb ? usagePct(m.memUsedKb, m.mem.totalKb) : null,
+    disk: diskPcts.length ? Math.max(...diskPcts) : null,
+  };
+  const thresholds = {
+    cpu: prefs.metricsAlertCpu,
+    mem: prefs.metricsAlertMem,
+    disk: prefs.metricsAlertDisk,
+  };
+  const res = computeMetricAlerts(st.alerts || {}, values, thresholds);
+  st.alerts = res.active;
+  if (!res.fired.length) return;
+  const name = profiles.find((p) => p.id === s.profileId)?.name || s.id;
+  for (const key of res.fired) {
+    toast(
+      t(`metrics.alert_${key}`)
+        .replace("{name}", name)
+        .replace("{pct}", String(Math.round(values[key]))),
+      "warning",
+    );
+  }
+}
 
 /**
  * Enciende o apaga el monitor de recursos de una sesión: activa/desactiva el
@@ -19999,6 +20096,10 @@ function bindUIEvents() {
     });
   }
 
+  // Despliega/oculta herramienta y nombre de la sesión persistente.
+  document.getElementById("f-persist-session")
+    ?.addEventListener("change", updatePersistSessionFields);
+
   // Confirmación al activar el reenvío del agente SSH: es peligroso heredarlo
   // silenciosamente, así que solo se habilita tras aceptar el aviso de seguridad.
   const agentFwdToggle = document.getElementById("f-agent-forwarding");
@@ -20281,6 +20382,10 @@ function bindUIEvents() {
     .addEventListener("click", closeSettingsModal);
   document.getElementById("btn-prefs-save")
     .addEventListener("click", savePrefsFromModal);
+
+  // Despliega/oculta los umbrales de alerta del monitor con su toggle.
+  document.getElementById("pref-metrics-alerts")
+    ?.addEventListener("change", updateMetricsAlertFields);
 
   // Editor de reglas de resaltado
   document.getElementById("btn-highlight-add")
@@ -21122,6 +21227,8 @@ function profileToTemplateDefaults(p) {
     agent_forwarding: !!p.agent_forwarding,
     x11_forwarding: !!p.x11_forwarding,
     session_log: !!p.session_log,
+    persist_session: !!p.persist_session,
+    persist_session_tool: p.persist_session_tool || null,
   };
 }
 
@@ -21147,6 +21254,9 @@ function applyTemplateDefaultsToForm(d) {
   document.getElementById("f-allow-legacy")?.dispatchEvent(new Event("change"));
   setChk("f-x11-forwarding", d.x11_forwarding);
   setChk("f-session-log", d.session_log);
+  setChk("f-persist-session", d.persist_session);
+  if (d.persist_session_tool != null) setVal("f-persist-tool", d.persist_session_tool);
+  updatePersistSessionFields();
   renderConnectionSummary();
 }
 

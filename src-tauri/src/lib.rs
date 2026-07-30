@@ -15,6 +15,7 @@ mod local_command;
 mod local_shell_manager;
 mod locks;
 mod metrics;
+mod mux;
 mod notes;
 mod profiles;
 #[cfg(all(test, target_os = "linux"))]

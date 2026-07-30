@@ -95,3 +95,40 @@ export function pushHistory(series, value, cap) {
   const next = [...(series || []), value];
   return next.length > cap ? next.slice(next.length - cap) : next;
 }
+
+/**
+ * Umbrales de alerta del monitor, con disparo por flanco e histéresis: cada
+ * métrica avisa **una vez** al cruzar su umbral hacia arriba y no se rearma
+ * hasta caer por debajo de `umbral - rearmMargin` (sin histéresis, una métrica
+ * oscilando sobre el umbral dispararía un aviso por muestra).
+ *
+ * `prevActive` es el estado devuelto por la llamada anterior (`{}` al empezar).
+ * Umbral `0`/ausente = métrica desactivada; valor `null`/no finito (primera
+ * muestra, fuente «n/d») nunca dispara.
+ * @param {Record<string, boolean>} prevActive
+ * @param {Record<string, number|null|undefined>} values
+ * @param {Record<string, number>} thresholds
+ * @param {number} [rearmMargin]
+ * @returns {{ active: Record<string, boolean>, fired: string[] }}
+ */
+export function computeMetricAlerts(prevActive, values, thresholds, rearmMargin = 5) {
+  /** @type {Record<string, boolean>} */
+  const active = {};
+  /** @type {string[]} */
+  const fired = [];
+  for (const key of Object.keys(thresholds || {})) {
+    const th = Number(thresholds[key]) || 0;
+    const v = values?.[key];
+    if (th <= 0 || v == null || !Number.isFinite(v)) {
+      active[key] = false;
+      continue;
+    }
+    if (prevActive?.[key]) {
+      active[key] = v > th - rearmMargin;
+    } else {
+      active[key] = v >= th;
+      if (active[key]) fired.push(key);
+    }
+  }
+  return { active, fired };
+}

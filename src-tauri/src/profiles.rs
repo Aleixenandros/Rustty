@@ -174,6 +174,18 @@ pub struct ConnectionProfile {
     /// `None` o `0` deshabilita el keepalive. Útil contra caídas por NAT.
     #[serde(default)]
     pub keep_alive_secs: Option<u32>,
+    /// Sesión persistente del lado servidor (tmux/screen), opt-in: al conectar
+    /// se reengancha —o crea— una sesión con nombre en vez del shell pelado.
+    /// Una caída de red o cerrar la app deja el trabajo vivo en el servidor.
+    #[serde(default)]
+    pub persist_session: bool,
+    /// Multiplexor de la sesión persistente: `tmux` (default) o `screen`.
+    #[serde(default)]
+    pub persist_session_tool: Option<String>,
+    /// Nombre de la sesión persistente. `None`/vacío = derivado del nombre del
+    /// perfil. Se sanea a `[A-Za-z0-9_-]` antes de usarse (ver `mux`).
+    #[serde(default)]
+    pub persist_session_name: Option<String>,
     /// Umbral en segundos, propio de este perfil, del aviso de fin de comando
     /// largo (OSC 133). `None` = usar el umbral global de Preferencias.
     #[serde(default)]

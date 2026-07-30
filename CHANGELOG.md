@@ -2,6 +2,23 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.64.0] - 2026-07-30
+
+### Añadido
+
+- **Sesiones persistentes tmux/screen por perfil**: nueva opción «Reanudar
+  sesión persistente» en las opciones avanzadas del perfil SSH. Al conectar,
+  Rustty se reengancha (o crea) una sesión tmux o screen con nombre en el
+  servidor: si la conexión se cae o cierras la app, lo que estaba corriendo
+  sigue vivo, y la siguiente conexión —o la reconexión automática— continúa
+  donde estaba. Usa el tmux/screen que ya tenga el servidor; si no está, Rustty
+  abre un shell normal y lo avisa en el propio terminal.
+- **Alertas de umbral en el monitor de recursos**: Rustty puede avisar cuando
+  la CPU, la memoria o un disco del servidor superan el porcentaje que elijas,
+  con umbral propio por métrica. Cada métrica avisa una vez por episodio (no se
+  repite mientras siga alta) y funciona también con la sesión en segundo plano.
+  Es opcional y se configura en Preferencias → Monitor.
+
 ## [1.63.0] - 2026-07-30
 
 ### Añadido
