@@ -277,6 +277,7 @@ pub fn run() {
             commands::ssh_stop_tunnel,
             commands::ssh_set_keepalive,
             commands::ssh_set_metrics,
+            commands::ssh_kill_process,
             commands::get_profile_password,
             // ── Keyring (credenciales del SO)
             commands::keyring_set,

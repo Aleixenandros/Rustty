@@ -47,6 +47,7 @@ import { baseSlugifyThemeId } from "./modules/text.js";
 import { formatTime, formatRelativeTimeShort } from "./modules/datetime.js";
 import { formatAccelerator } from "./modules/platform.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
+import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { defaultHighlightRules, compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
@@ -10706,6 +10707,10 @@ function openMetricsPanel(sessionId) {
     <div class="metrics-panel-header">
       <span class="metrics-panel-title">${escHtml(t("metrics.title"))}</span>
       <span class="metrics-panel-actions">
+        <button type="button" class="metrics-panel-btn" data-metrics-act="export"
+                title="${escHtml(t("metrics.export"))}" aria-label="${escHtml(t("metrics.export"))}">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v7"/><path d="M4.5 6.5 8 10l3.5-3.5"/><path d="M2.5 13h11"/></svg>
+        </button>
         <button type="button" class="metrics-panel-btn" data-metrics-act="orientation"
                 title="${escHtml(t("metrics.orientation"))}" aria-label="${escHtml(t("metrics.orientation"))}">
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5" fill="none" stroke="currentColor"/><line x1="8" y1="1.5" x2="8" y2="14.5" stroke="currentColor"/></svg>
@@ -10721,6 +10726,13 @@ function openMetricsPanel(sessionId) {
 
   panel.querySelector(".metrics-resize-handle")?.addEventListener("mousedown", (e) => startMetricsResize(e, panel, pane, s));
   panel.querySelector('[data-metrics-act="close"]')?.addEventListener("click", () => closeMetricsPanel(sessionId));
+  panel.querySelector('[data-metrics-act="export"]')?.addEventListener("click", () => exportMetricsSnapshot(sessionId));
+  // El cuerpo se repinta entero con cada muestra: el click de «terminar proceso»
+  // se delega aquí, que sobrevive a los repintados.
+  panel.querySelector(".metrics-body")?.addEventListener("click", (e) => {
+    const btn = e.target.closest?.("[data-kill-pid]");
+    if (btn) confirmKillRemoteProcess(sessionId, Number(btn.dataset.killPid), btn.dataset.killCmd || "");
+  });
   panel.querySelector('[data-metrics-act="orientation"]')?.addEventListener("click", () => {
     const cur = sessions.get(sessionId);
     if (!cur) return;
@@ -10778,6 +10790,16 @@ function renderMetricsPanel(s) {
   try {
   const cpu = m.cpuPct == null ? "—" : `${Math.round(m.cpuPct)}%`;
   const ramPct = usagePct(m.memUsedKb, m.mem?.totalKb);
+  // CPU por core: mini-columnas estilo htop. La primera muestra llega sin el
+  // delta (array vacío) y el bloque simplemente no se pinta.
+  const cores = Array.isArray(m.cpuCoresPct) && m.cpuCoresPct.length
+    ? `<div class="metrics-cores">` + m.cpuCoresPct.map((c, i) => {
+        const p = Math.max(0, Math.min(100, Number(c) || 0));
+        return `<div class="metrics-core" title="${escHtml(`${t("metrics.core")} ${i}: ${Math.round(p)}%`)}">
+          <div class="metrics-core-track"><div class="metrics-core-fill" style="height:${p}%"></div></div>
+        </div>`;
+      }).join("") + `</div>`
+    : "";
   const disks = (m.disks || []).map((d) =>
     metricsBar(usagePct(d.usedKb, d.sizeKb), d.mount, `${formatKib(d.usedKb)} / ${formatKib(d.sizeKb)}`)
   ).join("");
@@ -10787,12 +10809,20 @@ function renderMetricsPanel(s) {
       <td class="metrics-proc-cmd" title="${escHtml(p.command)}">${escHtml(p.command)}</td>
       <td class="metrics-proc-num mono">${(Number(p.cpuPct) || 0).toFixed(1)}</td>
       <td class="metrics-proc-num mono">${(Number(p.memPct) || 0).toFixed(1)}</td>
+      <td class="metrics-proc-act">
+        <button type="button" class="metrics-proc-kill" data-kill-pid="${Number(p.pid) || 0}"
+                data-kill-cmd="${escHtml(p.command)}"
+                title="${escHtml(t("metrics.kill"))}" aria-label="${escHtml(t("metrics.kill"))}">
+          <svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg>
+        </button>
+      </td>
     </tr>`).join("");
 
   body.innerHTML = `
     <section class="metrics-section">
       <header class="metrics-section-head"><span>${escHtml(t("status.cpu"))}</span><strong>${cpu}</strong></header>
       ${metricsSparkline(st.cpuHist, "var(--blue)")}
+      ${cores}
     </section>
     <section class="metrics-section">
       <header class="metrics-section-head"><span>${escHtml(t("metrics.memory"))}</span><strong>${Math.round(ramPct)}%</strong></header>
@@ -10816,6 +10846,69 @@ function renderMetricsPanel(s) {
     // se muestra el error aquí (y en consola) para poder diagnosticarlo.
     console.error("[metrics] error al pintar el panel", err);
     body.innerHTML = `<div class="metrics-empty">Error al pintar: ${escHtml(String(err))}</div>`;
+  }
+}
+
+/**
+ * Exporta a un JSON local la última muestra del monitor y la historia de los
+ * sparklines de la sesión. Solo datos ya presentes en el panel: nada de
+ * credenciales ni de estado de la app.
+ */
+async function exportMetricsSnapshot(sessionId) {
+  const s = sessions.get(sessionId);
+  const st = s?._metrics;
+  if (!st?.latest) {
+    toast(t("metrics.waiting"), "warning");
+    return;
+  }
+  const profile = profiles.find((p) => p.id === s.profileId);
+  const host = profile?.host || sessionId;
+  const doc = {
+    kind: "rustty-metrics-snapshot",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    host,
+    profileName: profile?.name || null,
+    intervalSecs: Math.max(1, Number(prefs.metricsSecs) || 3),
+    sample: st.latest,
+    history: { cpuPct: st.cpuHist, netRxBps: st.rxHist, netTxBps: st.txHist },
+  };
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+  const safeHost = String(host).replace(/[^a-zA-Z0-9._-]+/g, "-");
+  let path;
+  try {
+    path = await saveDialog({
+      title: t("metrics.export"),
+      defaultPath: `rustty-metrics-${safeHost}-${stamp}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+  } catch (err) { toast(`${err}`, "error"); return; }
+  if (!path) return;
+  try {
+    await invoke("write_text_file", { path, contents: JSON.stringify(doc, null, 2) });
+    toast(t("metrics.exported"), "success");
+  } catch (err) { toast(`${err}`, "error"); }
+}
+
+/**
+ * Confirmación y envío de SIGTERM a un proceso del servidor remoto (acción de
+ * la tabla de procesos del monitor). Destructivo → siempre pregunta; el
+ * veredicto (permiso, proceso inexistente) es el del `kill` remoto.
+ */
+async function confirmKillRemoteProcess(sessionId, pid, command) {
+  if (!Number.isInteger(pid) || pid < 2) return;
+  const ok = await confirmThemed({
+    title: t("metrics.kill_title"),
+    message: t("metrics.kill_message").replace("{cmd}", command).replace("{pid}", String(pid)),
+    submitLabel: t("metrics.kill_confirm"),
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await invoke("ssh_kill_process", { sessionId, pid, force: false });
+    toast(t("metrics.killed").replace("{pid}", String(pid)), "success");
+  } catch (err) {
+    toast(`${err}`, "error");
   }
 }
 
@@ -20811,6 +20904,15 @@ function bindUIEvents() {
 
   // Atajos de teclado globales (capture phase para preempt a xterm)
   document.addEventListener("keydown", handleGlobalShortcut, { capture: true });
+  // Deshacer/rehacer con teclado en campos editables. Solo Linux: WebKitGTK no
+  // liga Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y al editor (keybindings de GTK3), así que
+  // sin esto los diálogos no tienen undo; en Windows/macOS el WebView ya lo
+  // trae nativo y no hay que tocarlo. Capture (registrado tras
+  // handleGlobalShortcut, que si consume hace preventDefault) para que ningún
+  // stopPropagation de un componente intermedio deje un campo sin deshacer.
+  if (/\bLinux\b/.test(navigator.userAgent)) {
+    document.addEventListener("keydown", handleEditUndoRedo, { capture: true });
+  }
   // Ctrl+Rueda → zoom del terminal. passive:false para poder preventDefault y
   // así evitar el zoom de la WebView. capture para ganarle a xterm.
   document.addEventListener("wheel", handleZoomWheel, { capture: true, passive: false });
@@ -21904,6 +22006,27 @@ function handleGlobalShortcut(e) {
       e.stopPropagation();
     }
   }
+}
+
+/**
+ * Restaura Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y en los campos editables sobre
+ * WebKitGTK, que implementa Undo/Redo en su editor pero no les da atajo de
+ * teclado (ver `modules/shortcuts/undo-keys.js`). El terminal queda fuera:
+ * ahí Ctrl+Z debe viajar tal cual al remoto (SIGTSTP).
+ */
+function handleEditUndoRedo(e) {
+  if (e.defaultPrevented) return;
+  const cmd = undoRedoCommand(e);
+  if (!cmd) return;
+  const el = e.target;
+  if (!(el instanceof HTMLElement) || el.closest(".xterm")) return;
+  const editable = el.tagName === "INPUT" || el.tagName === "TEXTAREA"
+    ? !el.readOnly && !el.disabled
+    : el.isContentEditable;
+  if (!editable) return;
+  e.preventDefault();
+  e.stopPropagation();
+  document.execCommand(cmd);
 }
 
 /**

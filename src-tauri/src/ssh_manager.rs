@@ -223,6 +223,16 @@ pub enum SessionCommand {
     /// (CPU/mem/disco/red/procesos) cada `n` segundos por un `exec`; `None`/`0` lo
     /// apaga.
     SetMetrics(Option<u32>),
+    /// Envía una señal de terminación a un proceso del servidor (acción de la
+    /// tabla de procesos del monitor de recursos). Abre un `exec` corto sobre el
+    /// handle ya autenticado, como una muestra de métricas; `force` escala de
+    /// SIGTERM a SIGKILL. El veredicto del servidor (estado de salida del `kill`
+    /// remoto) vuelve por `reply`.
+    KillProcess {
+        pid: u32,
+        force: bool,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     /// Conexión TCP aceptada por un listener local o SOCKS.
     TunnelAccepted {
         tunnel_id: String,
@@ -419,6 +429,31 @@ impl SshManager {
         let (reply, rx) = oneshot::channel();
         cmd_tx
             .send(SessionCommand::StopTunnel { tunnel_id, reply })
+            .map_err(|_| format!("Sesión SSH {session_id} no disponible"))?;
+        rx.await
+            .map_err(|_| "La sesión SSH no respondió".to_string())?
+    }
+
+    /// Envía SIGTERM (o SIGKILL con `force`) a un proceso del servidor remoto
+    /// por un `exec` sobre la sesión ya autenticada. Espera el estado de salida
+    /// del `kill` remoto: `Err` si el proceso no existe o no hay permiso.
+    pub async fn kill_process(
+        &self,
+        session_id: &str,
+        pid: u32,
+        force: bool,
+    ) -> Result<(), String> {
+        let cmd_tx = {
+            let sessions = self.sessions.lock_recover();
+            sessions
+                .get(session_id)
+                .ok_or_else(|| format!("Sesión SSH {session_id} no encontrada"))?
+                .cmd_tx
+                .clone()
+        };
+        let (reply, rx) = oneshot::channel();
+        cmd_tx
+            .send(SessionCommand::KillProcess { pid, force, reply })
             .map_err(|_| format!("Sesión SSH {session_id} no disponible"))?;
         rx.await
             .map_err(|_| "La sesión SSH no respondió".to_string())?
@@ -1015,6 +1050,45 @@ async fn collect_and_emit_metrics(
     let _ = app_handle.emit(&event_name(EventKind::SshMetrics, &session_id), derived);
 }
 
+/// Lee el desenlace de un `kill` remoto ya lanzado y lo devuelve por `reply`:
+/// estado de salida 0 → `Ok`; cualquier otro estado o el plazo agotado → `Err`
+/// con lo que el remoto haya impreso (p. ej. «Operation not permitted» o «No
+/// such process»). Corre en su propia tarea, fuera del bucle de sesión.
+async fn kill_remote_process(
+    mut channel: russh::Channel<client::Msg>,
+    reply: oneshot::Sender<Result<(), String>>,
+) {
+    let mut out = Vec::new();
+    let mut status: Option<u32> = None;
+    let read = async {
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                ChannelMsg::Data { ref data } => out.extend_from_slice(data),
+                ChannelMsg::ExtendedData { ref data, .. } => out.extend_from_slice(data),
+                ChannelMsg::ExitStatus { exit_status } => status = Some(exit_status),
+                ChannelMsg::Eof | ChannelMsg::Close | ChannelMsg::ExitSignal { .. } => break,
+                _ => {}
+            }
+        }
+    };
+    let result = if tokio::time::timeout(METRICS_READ_TIMEOUT, read).await.is_err() {
+        Err("El servidor no respondió al kill a tiempo".to_string())
+    } else {
+        match status {
+            Some(0) => Ok(()),
+            other => {
+                let text = String::from_utf8_lossy(&out).trim().to_string();
+                if text.is_empty() {
+                    Err(format!("kill terminó con estado {}", other.map_or_else(|| "desconocido".to_string(), |s| s.to_string())))
+                } else {
+                    Err(text)
+                }
+            }
+        }
+    };
+    let _ = reply.send(result);
+}
+
 async fn run_session(
     spec: SessionSpec,
     cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
@@ -1513,6 +1587,31 @@ async fn run_session(
                         // La cadencia cambió: la muestra previa ya no sirve para
                         // el delta (daría una tasa disparatada). Se reinicia.
                         *metrics_prev.lock_recover() = None;
+                    }
+                    Some(SessionCommand::KillProcess { pid, force, reply }) => {
+                        // PID 0 mataría el grupo de procesos del propio kill y
+                        // PID 1 es init: ninguno es un objetivo legítimo desde
+                        // la tabla de procesos.
+                        if pid < 2 {
+                            let _ = reply.send(Err(format!("PID no válido: {pid}")));
+                        } else {
+                            match handle.channel_open_session().await {
+                                Ok(kill_channel) => {
+                                    let sig = if force { "KILL" } else { "TERM" };
+                                    // Solo literales y un entero: sin datos del
+                                    // usuario que escapar hacia el shell remoto.
+                                    let kill_cmd = format!("kill -{sig} {pid}");
+                                    if kill_channel.exec(false, kill_cmd.as_str()).await.is_ok() {
+                                        tokio::spawn(kill_remote_process(kill_channel, reply));
+                                    } else {
+                                        let _ = reply.send(Err("No se pudo lanzar el kill remoto".to_string()));
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = reply.send(Err(format!("No se pudo abrir el canal: {e}")));
+                                }
+                            }
+                        }
                     }
                     Some(SessionCommand::StartTunnel { config, reply }) => {
                         let result = start_tunnel_runtime(

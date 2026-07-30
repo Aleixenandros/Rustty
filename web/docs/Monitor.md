@@ -19,12 +19,30 @@ El panel se **acopla a la sesión partiendo la pantalla**, sin taparte el termin
 
 Muestra:
 
-- **CPU**: porcentaje de uso y su evolución reciente.
+- **CPU**: porcentaje de uso y su evolución reciente, y una **columna por cada
+  core** del servidor (pasa el ratón por encima para ver el porcentaje exacto).
 - **Memoria**: usada respecto al total.
 - **Red**: velocidad de bajada y subida, con su evolución.
 - **Disco**: una barra por cada sistema de ficheros montado.
 - **Tiempo encendido** del servidor.
 - **Procesos**: los que más CPU consumen, con su %CPU y %MEM.
+
+### Terminar un proceso
+
+Cada fila de la tabla de procesos tiene un botón para **terminar ese proceso en
+el servidor** (aparece al pasar el ratón por la fila). Rustty pide **confirmación
+siempre** antes de enviar la señal (SIGTERM, la petición educada de terminar) y
+te avisa con el mensaje del servidor si no se pudo — por ejemplo, si el proceso
+es de otro usuario y no tienes permiso. Si el proceso ignora la señal, seguirá
+apareciendo en la siguiente muestra.
+
+### Exportar una instantánea
+
+El botón de exportar de la cabecera del panel guarda en un **archivo JSON** la
+última muestra completa (CPU, memoria, discos, red, procesos) y la historia
+reciente de las gráficas. Útil para adjuntar a un informe o comparar el estado
+del servidor en dos momentos. El archivo se guarda donde tú elijas y no
+contiene credenciales ni datos de la app.
 
 ## Cómo lo obtiene
 
@@ -35,7 +53,7 @@ El **intervalo de muestreo** es configurable. Un intervalo más corto actualiza 
 ## Límites
 
 - **Solo Linux** de momento. En servidores que no exponen `/proc` (algunos BSD/macOS) los indicadores pueden aparecer como «n/d»; el soporte de más sistemas llegará más adelante.
-- Es una **lectura**, no un gestor de procesos: de momento el monitor observa, no actúa sobre el servidor.
+- Salvo por «Terminar un proceso» —que siempre pide confirmación—, el monitor es una **lectura**: observa el servidor, no lo cambia.
 
 ## Preferencias
 

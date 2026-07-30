@@ -2449,6 +2449,39 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 .metrics-proc-num { text-align: right; color: var(--subtext1); }
 .metrics-empty { color: var(--subtext0); padding: 6px 0; }
 
+/* CPU por core: mini-columnas estilo htop bajo el sparkline. Con muchos cores
+   la rejilla envuelve; el detalle exacto va en el tooltip de cada columna. */
+.metrics-cores { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; }
+.metrics-core-track {
+  width: 8px;
+  height: 22px;
+  border-radius: 2px;
+  background: var(--surface0);
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+}
+.metrics-core-fill { width: 100%; background: var(--blue); transition: height 0.3s; }
+
+/* Terminar proceso: botón por fila, discreto hasta pasar por encima. */
+.metrics-proc-act { width: 22px; }
+.metrics-proc-kill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 16px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.metrics-proc-table tr:hover .metrics-proc-kill { color: var(--subtext0); }
+.metrics-proc-kill:hover { background: var(--surface0); color: var(--red); }
+.metrics-proc-kill:focus-visible { color: var(--subtext0); }
+
 .terminal-search {
   position: absolute;
   top: 6px;

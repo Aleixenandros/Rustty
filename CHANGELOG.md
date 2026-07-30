@@ -2,6 +2,30 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.63.0] - 2026-07-30
+
+### Añadido
+
+- **CPU por core en el monitor de recursos**: el panel muestra, bajo la gráfica
+  de CPU, una columna por cada core del servidor con su uso en vivo (el detalle
+  exacto, al pasar el ratón por encima). Estilo htop, sin instalar nada.
+- **Terminar procesos remotos desde el monitor**: cada fila de la tabla de
+  procesos tiene ahora un botón para terminar ese proceso en el servidor. Pide
+  confirmación antes (es una acción destructiva) y avisa si el servidor lo
+  rechaza —por ejemplo, por falta de permisos—.
+- **Exportar instantánea del monitor**: un botón del panel guarda en un archivo
+  JSON la última muestra completa (CPU, memoria, discos, red, procesos) y la
+  historia reciente de las gráficas. Útil para informes o para comparar el
+  estado del servidor en dos momentos.
+
+### Corregido
+
+- **Ctrl+Z ya funciona en los campos de texto en Linux**: deshacer (Ctrl+Z) y
+  rehacer (Ctrl+Shift+Z o Ctrl+Y) no hacían nada al escribir en los diálogos
+  —por ejemplo, al añadir una conexión— porque el navegador embebido de Linux
+  no trae ese atajo de serie. Ahora funcionan en todos los campos de la app.
+  En el terminal nada cambia: Ctrl+Z sigue llegando al servidor, como siempre.
+
 ## [1.62.2] - 2026-07-24
 
 ### Corregido

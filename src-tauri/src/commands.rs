@@ -699,6 +699,20 @@ pub fn ssh_set_metrics(
         .map_err(|e| e.to_string())
 }
 
+/// Envía SIGTERM (o SIGKILL con `force = true`) a un proceso del servidor de una
+/// sesión SSH, desde la tabla de procesos del monitor de recursos. El veredicto
+/// es el del servidor: el estado de salida del `kill` remoto (falla si el
+/// proceso no existe o el usuario no tiene permiso sobre él).
+#[tauri::command]
+pub async fn ssh_kill_process(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    pid: u32,
+    force: bool,
+) -> Result<(), String> {
+    ssh_state.kill_process(&session_id, pid, force).await
+}
+
 // ─── Comandos RDP ────────────────────────────────────────────────────────────
 
 /// Lanza el cliente RDP nativo y devuelve el session_id.
