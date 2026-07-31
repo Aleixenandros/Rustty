@@ -15,7 +15,10 @@ mod local_command;
 mod local_shell_manager;
 mod locks;
 mod metrics;
-mod mux;
+// `pub`: la detección de versión para el modo control aún no tiene llamador
+// en producción (llega con `tmux/client.rs`); como API pública de la lib no
+// dispara `dead_code` con clippy bloqueante.
+pub mod mux;
 mod notes;
 mod profiles;
 #[cfg(all(test, target_os = "linux"))]
@@ -33,6 +36,9 @@ mod ssh_manager;
 mod store_file;
 mod subst;
 mod sync;
+// `pub` por el mismo motivo que `mux`: fase 1 del modo control, todavía sin
+// llamador en producción.
+pub mod tmux;
 mod tunnel_throttle;
 
 use std::path::PathBuf;

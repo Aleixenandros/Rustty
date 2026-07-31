@@ -66,6 +66,42 @@ pub fn attach_command(tool: &str, raw_name: &str) -> String {
     }
 }
 
+// ─── Versión de tmux (requisito del modo control, F0.2) ─────────────
+
+/// Versión mínima de tmux para el modo control (`-CC`) tal y como lo vamos a
+/// hablar: las suscripciones de formato (`refresh-client -B`) y el flow
+/// control por pane (`pause-after`) aparecen en tmux 3.2. El attach normal no
+/// tiene mínimo: cualquier tmux vale.
+pub const MIN_CONTROL_MODE_VERSION: (u32, u32) = (3, 2);
+
+/// Comando de sondeo de la versión en el remoto. `tmux -V` y no
+/// `display-message -p "#{version}"`: no exige un servidor tmux ya arrancado
+/// (display-message falla sin servidor) y devuelve la misma versión con el
+/// prefijo `tmux `.
+pub fn version_probe_command() -> &'static str {
+    "tmux -V"
+}
+
+/// Extrae `(mayor, menor)` de la salida de `tmux -V` o de `#{version}`:
+/// `tmux 3.3a` → (3, 3); `3.2` → (3, 2); `tmux next-3.4` → (3, 4). Sufijos de
+/// letra o rc se ignoran. Sin un `mayor.menor` reconocible → `None` (versión
+/// desconocida: el llamador degrada con aviso, no adivina).
+pub fn parse_tmux_version(output: &str) -> Option<(u32, u32)> {
+    let bytes = output.as_bytes();
+    let start = bytes.iter().position(u8::is_ascii_digit)?;
+    let rest = &output[start..];
+    let (major_str, tail) = rest.split_once('.')?;
+    let major: u32 = major_str.parse().ok()?;
+    let minor_digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
+    let minor: u32 = minor_digits.parse().ok()?;
+    Some((major, minor))
+}
+
+/// ¿Esta versión soporta el modo control que necesitamos?
+pub fn supports_control_mode(version: (u32, u32)) -> bool {
+    version >= MIN_CONTROL_MODE_VERSION
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,5 +152,40 @@ mod tests {
     fn probe_command_por_herramienta() {
         assert_eq!(probe_command("tmux"), "command -v tmux");
         assert_eq!(probe_command("screen"), "command -v screen");
+    }
+
+    #[test]
+    fn parse_version_de_tmux_v_y_de_formato() {
+        // Salida real de `tmux -V` y de `#{version}` (con y sin sufijo).
+        assert_eq!(parse_tmux_version("tmux 3.7b"), Some((3, 7)));
+        assert_eq!(parse_tmux_version("3.7b"), Some((3, 7)));
+        assert_eq!(parse_tmux_version("tmux 3.2"), Some((3, 2)));
+        assert_eq!(parse_tmux_version("tmux 1.9a"), Some((1, 9)));
+        assert_eq!(parse_tmux_version("tmux next-3.4"), Some((3, 4)));
+        assert_eq!(parse_tmux_version("tmux 3.10"), Some((3, 10)));
+    }
+
+    #[test]
+    fn parse_version_desconocida_es_none() {
+        assert_eq!(parse_tmux_version(""), None);
+        assert_eq!(parse_tmux_version("tmux master"), None);
+        assert_eq!(parse_tmux_version("tmux 3"), None);
+        assert_eq!(parse_tmux_version("bash: tmux: command not found"), None);
+    }
+
+    #[test]
+    fn minimo_del_modo_control_es_3_2() {
+        assert!(supports_control_mode((3, 2)));
+        assert!(supports_control_mode((3, 7)));
+        // Comparación numérica, no léxica: 3.10 > 3.2.
+        assert!(supports_control_mode((3, 10)));
+        assert!(supports_control_mode((4, 0)));
+        assert!(!supports_control_mode((3, 1)));
+        assert!(!supports_control_mode((2, 9)));
+    }
+
+    #[test]
+    fn version_probe_no_exige_servidor() {
+        assert_eq!(version_probe_command(), "tmux -V");
     }
 }

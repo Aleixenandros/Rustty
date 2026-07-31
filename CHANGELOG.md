@@ -2,6 +2,17 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.65.0] - 2026-07-31
+
+### Cambiado
+
+- **Las copias de seguridad sincronizadas ahora se comprimen antes de
+  cifrarse**: el estado (perfiles, temas, notas…) ocupa bastante menos en
+  Google Drive, WebDAV o la carpeta local y viaja más rápido, sin tocar nada
+  de tu configuración. Rustty sigue leyendo sin problema las copias creadas
+  por versiones anteriores; eso sí, una versión anterior no puede leer las
+  copias nuevas — si sincronizas varios equipos, actualízalos todos.
+
 ## [1.64.0] - 2026-07-30
 
 ### Añadido

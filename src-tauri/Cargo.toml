@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.64.0"
+version = "1.65.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -70,6 +70,11 @@ fontdb = "0.23"
 # `reqwest` con rustls (sin openssl) para WebDAV/APIs cloud. `urlencoding`
 # para escapar rutas/queries y `sha2`/`base64` para PKCE OAuth.
 age = "0.11"
+# gzip del JSON del estado ANTES de cifrar: `age` no comprime y el estado
+# (perfiles + temas + notas) crece rápido. La lectura acepta ambos formatos
+# (el gzip se detecta por su magic tras descifrar); ya estaba en el árbol
+# como transitiva.
+flate2 = "1"
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "query", "form"] }
 urlencoding = "2"

@@ -579,6 +579,38 @@ mod tests {
         assert!(unpack_state("clave-123", &bytes[..bytes.len() / 2]).is_err());
     }
 
+    /// Desde v1.65.0 el plaintext va comprimido (gzip) antes del `age`; un
+    /// blob de una versión anterior (JSON directo) debe seguir leyéndose.
+    /// Regresión aquí = un equipo sin actualizar deja de sincronizar.
+    #[test]
+    fn estado_comprimido_y_retrocompatibilidad_sin_gzip() {
+        let mut st = SyncState::default();
+        st.items.insert(
+            "notes:conexion".into(),
+            sync_item(json!({"md": "x".repeat(4096)}), "dev-a"),
+        );
+
+        // El plaintext del formato nuevo es gzip de verdad (y más pequeño que
+        // el JSON para un estado redundante como este).
+        let bytes = pack_state("clave-123", &st).expect("cifra");
+        let plain = decrypt("clave-123", &bytes).expect("descifra");
+        assert_eq!(plain[..2], GZIP_MAGIC, "el plaintext debe empezar por el magic gzip");
+        let json = serde_json::to_vec(&st).expect("serializa");
+        assert!(plain.len() < json.len(), "gzip debe reducir un estado redundante");
+
+        // Formato antiguo: JSON directo cifrado, sin gzip. Se sigue leyendo.
+        let legacy = encrypt("clave-123", &json).expect("cifra legacy");
+        let back = unpack_state("clave-123", &legacy).expect("lee el formato antiguo");
+        assert!(st.content_eq(&back));
+
+        // Un gzip corrupto tras descifrar bien: error claro, nunca pánico.
+        let mut roto = plain.clone();
+        let len = roto.len();
+        roto[len / 2] ^= 0xff;
+        let recifrado = encrypt("clave-123", &roto).expect("cifra");
+        assert!(unpack_state("clave-123", &recifrado).is_err());
+    }
+
     #[test]
     fn content_eq_ignora_device_id() {
         let mut a = SyncState::default();
@@ -2975,17 +3007,48 @@ impl SyncManager {
 
 // ─── Helpers de serialización del estado cifrado ────────────────────
 
-/// Serializa, cifra con passphrase, devuelve los bytes listos para escribir.
+/// Cabecera de un stream gzip (RFC 1952). Un JSON jamás empieza así, por lo
+/// que el formato del plaintext se distingue sin versionado propio.
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+
+/// Tope de descompresión del estado. El blob es E2E del propio usuario, pero
+/// un fichero remoto corrupto/hostil no debe poder inflar memoria sin límite.
+const MAX_STATE_JSON: u64 = 128 * 1024 * 1024;
+
+/// Serializa, **comprime** (gzip) y cifra con passphrase. `age` no comprime y
+/// el JSON del estado (perfiles + temas + notas largas) es muy redundante:
+/// comprimir antes de cifrar reduce blob y tráfico. Ojo: una versión anterior
+/// a la 1.65.0 no sabe leer este formato — la lectura sí acepta ambos.
 pub fn pack_state(passphrase: &str, state: &SyncState) -> Result<Vec<u8>, AppError> {
     let json =
         serde_json::to_vec(state).map_err(|e| AppError::Sync(format!("serialize state: {e}")))?;
-    encrypt(passphrase, &json)
+    let mut encoder =
+        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(&json)
+        .and_then(|()| encoder.finish())
+        .map_err(|e| AppError::Sync(format!("compress state: {e}")))
+        .and_then(|compressed| encrypt(passphrase, &compressed))
 }
 
-/// Descifra y deserializa.
+/// Descifra y deserializa. Acepta los dos formatos de plaintext: gzip
+/// (≥ 1.65.0, detectado por su magic) y JSON directo (blobs anteriores).
 pub fn unpack_state(passphrase: &str, ciphertext: &[u8]) -> Result<SyncState, AppError> {
     let plain = decrypt(passphrase, ciphertext)?;
-    let state: SyncState = serde_json::from_slice(&plain)
+    let json = if plain.starts_with(&GZIP_MAGIC) {
+        let mut decoder = flate2::read::GzDecoder::new(&plain[..]).take(MAX_STATE_JSON + 1);
+        let mut out = Vec::new();
+        decoder
+            .read_to_end(&mut out)
+            .map_err(|e| AppError::Sync(format!("decompress state: {e}")))?;
+        if out.len() as u64 > MAX_STATE_JSON {
+            return Err(AppError::Sync("estado descomprimido demasiado grande".into()));
+        }
+        out
+    } else {
+        plain
+    };
+    let state: SyncState = serde_json::from_slice(&json)
         .map_err(|e| AppError::Sync(format!("deserialize state: {e}")))?;
     Ok(state)
 }
