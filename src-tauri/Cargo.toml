@@ -79,7 +79,7 @@ chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "query", "form"] }
 urlencoding = "2"
 sha2 = "0.11"
-base64 = "0.22"
+base64 = "0.23"
 tauri-plugin-clipboard-manager = "2"
 # Importador de Ásbrú Connection Manager: parseo YAML + descifrado de contraseñas
 # (Blowfish-CBC con KDF de OpenSSL/MD5). WebCrypto no ofrece ni Blowfish ni MD5,
