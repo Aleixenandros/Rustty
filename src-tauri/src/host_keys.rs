@@ -30,6 +30,12 @@ use crate::locks::MutexExt;
 /// `true` = preguntar antes de aprender una clave nueva (default).
 static STRICT_FIRST_CONNECT: AtomicBool = AtomicBool::new(true);
 
+/// `true` (default) = ante una host key **cambiada**, preguntar al usuario:
+/// aceptar reemplaza la(s) entrada(s) de known_hosts de forma atómica y la
+/// conexión continúa; rechazar (o agotar el plazo) no toca nada. `false` =
+/// comportamiento clásico: rechazar siempre con instrucciones manuales.
+static PROMPT_ON_KEY_CHANGE: AtomicBool = AtomicBool::new(true);
+
 /// Handle de la app para emitir el evento de confirmación. Ausente en la CLI,
 /// que cae al prompt por stdin.
 static APP: OnceLock<AppHandle> = OnceLock::new();
@@ -53,9 +59,28 @@ pub fn strict_first_connect() -> bool {
     STRICT_FIRST_CONNECT.load(Ordering::Relaxed)
 }
 
+/// Fija la política ante una host key cambiada (la llama el frontend al
+/// cargar/guardar preferencias).
+pub fn set_prompt_on_key_change(prompt: bool) {
+    PROMPT_ON_KEY_CHANGE.store(prompt, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn prompt_on_key_change() -> bool {
+    PROMPT_ON_KEY_CHANGE.load(Ordering::Relaxed)
+}
+
 /// Registra el `AppHandle` (en `setup`). Sin él —CLI— se pregunta por stdin.
 pub fn register_app(app: AppHandle) {
     let _ = APP.set(app);
+}
+
+/// Entrada previa de known_hosts mostrada en el diálogo de clave cambiada.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviousHostKey {
+    line: usize,
+    fingerprint: String,
 }
 
 /// Payload de `ssh-hostkey-prompt` (espejo de `HostKeyPromptEvent` en events.js).
@@ -68,6 +93,11 @@ struct HostKeyPrompt {
     fingerprint: String,
     key_type: String,
     via_jump: bool,
+    /// `true` = la clave de un host YA CONOCIDO ha cambiado (posible MITM):
+    /// el diálogo debe ser el de peligro, no el de primera conexión.
+    changed: bool,
+    /// Con `changed`: las entradas registradas que se reemplazarían al aceptar.
+    previous: Vec<PreviousHostKey>,
 }
 
 /// Entrega la respuesta del usuario a una confirmación en vuelo.
@@ -80,14 +110,22 @@ pub fn resolve_prompt(prompt_id: &str, accept: bool) -> bool {
     }
 }
 
-/// Pide confirmación de una host key nueva. `Ok(true)` = el usuario la acepta.
-async fn confirm_new_host_key(host: &str, port: u16, key: &PublicKey) -> Result<bool, String> {
+/// Pide confirmación de una host key. `previous` vacío = primera conexión;
+/// con entradas = la clave de un host YA CONOCIDO **ha cambiado** y aceptar
+/// implica reemplazarlas. `Ok(true)` = el usuario la acepta.
+async fn confirm_host_key(
+    host: &str,
+    port: u16,
+    key: &PublicKey,
+    previous: &[(usize, String)],
+) -> Result<bool, String> {
     let fingerprint = fingerprint_sha256(key);
     let key_type = key.algorithm().as_str().to_string();
+    let changed = !previous.is_empty();
 
     let Some(app) = APP.get() else {
         // Sin interfaz (CLI): preguntar por la terminal.
-        return confirm_on_stdin(host, port, &fingerprint, &key_type);
+        return confirm_on_stdin(host, port, &fingerprint, &key_type, previous);
     };
 
     let prompt_id = uuid::Uuid::new_v4().to_string();
@@ -101,6 +139,14 @@ async fn confirm_new_host_key(host: &str, port: u16, key: &PublicKey) -> Result<
         fingerprint,
         key_type,
         via_jump: false,
+        changed,
+        previous: previous
+            .iter()
+            .map(|(line, fingerprint)| PreviousHostKey {
+                line: *line,
+                fingerprint: fingerprint.clone(),
+            })
+            .collect(),
     };
     if let Err(err) = app.emit(HOST_KEY_PROMPT, payload) {
         PENDING.lock_recover().remove(&prompt_id);
@@ -127,22 +173,41 @@ fn confirm_on_stdin(
     port: u16,
     fingerprint: &str,
     key_type: &str,
+    previous: &[(usize, String)],
 ) -> Result<bool, String> {
     use std::io::{BufRead, IsTerminal, Write};
 
+    let changed = !previous.is_empty();
     let stdin = std::io::stdin();
     if !stdin.is_terminal() {
         // Sin terminal interactiva no hay a quién preguntar: rechazar es lo
         // seguro (y el usuario puede activar el TOFU automático si lo quiere).
+        if changed {
+            return Err(format!(
+                "ALERTA: la host key de {host}:{port} ha cambiado ({key_type}, {fingerprint}). \
+                 Sin terminal interactiva no se puede confirmar el cambio: \
+                 conecta desde la app para revisarlo y decidir."
+            ));
+        }
         return Err(format!(
             "host key desconocida de {host}:{port} ({key_type}, {fingerprint}). \
              Sin terminal interactiva no se puede confirmar: conecta una vez desde la app \
              o activa la confianza automática en Preferencias → Seguridad."
         ));
     }
-    println!("La autenticidad del host {host}:{port} no se puede establecer.");
-    println!("Huella de la clave {key_type}: {fingerprint}");
-    print!("¿Confiar en este host y guardar su clave? (sí/no): ");
+    if changed {
+        println!("¡ALERTA! La host key de {host}:{port} HA CAMBIADO.");
+        for (line, prev) in previous {
+            println!("  registrada (known_hosts línea {line}): {prev}");
+        }
+        println!("  recibida ahora ({key_type}): {fingerprint}");
+        println!("Esto puede indicar un ataque de intermediario. Acepta SOLO si el cambio es esperado.");
+        print!("¿Reemplazar la clave registrada y continuar? (sí/no): ");
+    } else {
+        println!("La autenticidad del host {host}:{port} no se puede establecer.");
+        println!("Huella de la clave {key_type}: {fingerprint}");
+        print!("¿Confiar en este host y guardar su clave? (sí/no): ");
+    }
     let _ = std::io::stdout().flush();
 
     let mut line = String::new();
@@ -199,6 +264,59 @@ impl KnownHostsClient {
             None => known_hosts::learn_known_hosts(&self.host, self.port, key),
         }
     }
+
+    /// Entradas registradas para este host:puerto como `(línea, huella)`.
+    fn recorded_entries(&self) -> Vec<(usize, String)> {
+        self.known_host_keys()
+            .map(|keys| {
+                keys.into_iter()
+                    .map(|(line, key)| (line, fingerprint_sha256(&key)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Reemplaza las entradas de este host en known_hosts: quita `lines`
+    /// (1-indexed) y aprende `key`. La eliminación reescribe el fichero de
+    /// forma **atómica** con 0600: un corte a mitad de un write directo
+    /// truncaría known_hosts y se perderían todos los pins TOFU.
+    fn replace_known_hosts_entries(
+        &self,
+        lines: &[usize],
+        key: &PublicKey,
+    ) -> Result<(), String> {
+        let path = match &self.known_hosts_path {
+            Some(path) => path.clone(),
+            None => default_known_hosts_path()?,
+        };
+        remove_known_hosts_lines(&path, lines)?;
+        self.learn_known_hosts(key).map_err(|e| e.to_string())
+    }
+}
+
+/// `~/.ssh/known_hosts`, el mismo default que usa russh.
+fn default_known_hosts_path() -> Result<std::path::PathBuf, String> {
+    dirs::home_dir()
+        .map(|home| home.join(".ssh").join("known_hosts"))
+        .ok_or_else(|| "No se pudo localizar el directorio home".to_string())
+}
+
+/// Elimina líneas concretas (1-indexed) de un fichero known_hosts,
+/// conservando el salto de línea final si existía. Escritura atómica privada.
+fn remove_known_hosts_lines(path: &std::path::Path, lines: &[usize]) -> Result<(), String> {
+    let contents = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let had_trailing_newline = contents.ends_with('\n');
+    let kept: Vec<&str> = contents
+        .lines()
+        .enumerate()
+        .filter(|(idx, _)| !lines.contains(&(idx + 1)))
+        .map(|(_, line)| line)
+        .collect();
+    let mut out = kept.join("\n");
+    if had_trailing_newline && !out.is_empty() {
+        out.push('\n');
+    }
+    crate::atomic_file::write(path, out.as_bytes(), true).map_err(|e| e.to_string())
 }
 
 #[derive(Clone)]
@@ -288,6 +406,64 @@ impl KnownHostsClient {
             *failure = Some(message);
         }
     }
+
+    /// La clave del host **ha cambiado** respecto a known_hosts (posible
+    /// MITM). Con la política de preguntar (default): diálogo de peligro y,
+    /// si el usuario acepta explícitamente, se reemplazan las entradas
+    /// registradas por la nueva y la conexión **continúa**. Rechazo, plazo
+    /// agotado o política desactivada → se rechaza sin tocar known_hosts.
+    async fn handle_changed_key(&self, key: &PublicKey, previous: Vec<(usize, String)>) -> bool {
+        let new_fp = fingerprint_sha256(key);
+        let prev_desc = previous
+            .iter()
+            .map(|(line, fp)| format!("línea {line}: {fp}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        if !prompt_on_key_change() {
+            // Política clásica: rechazo con instrucciones manuales.
+            self.set_failure(format!(
+                "ALERTA: la host key de {}:{} ha cambiado. \
+                 Fingerprint recibido: {new_fp}. \
+                 Entradas previas en known_hosts → {prev_desc}. \
+                 Si reconoces el cambio, elimina las líneas correspondientes de \
+                 ~/.ssh/known_hosts y vuelve a conectar (o activa la pregunta de \
+                 cambio de clave en Preferencias → Seguridad).",
+                self.host, self.port,
+            ));
+            return false;
+        }
+
+        match confirm_host_key(&self.host, self.port, key, &previous).await {
+            Ok(true) => {
+                let lines: Vec<usize> = previous.iter().map(|(line, _)| *line).collect();
+                match self.replace_known_hosts_entries(&lines, key) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        self.set_failure(format!(
+                            "Aceptaste la clave nueva de {}:{} pero no se pudo \
+                             actualizar known_hosts: {err}",
+                            self.host, self.port,
+                        ));
+                        false
+                    }
+                }
+            }
+            Ok(false) => {
+                self.set_failure(format!(
+                    "ALERTA: la host key de {}:{} ha cambiado y se ha RECHAZADO. \
+                     Fingerprint recibido: {new_fp}; registrado → {prev_desc}. \
+                     known_hosts queda intacto.",
+                    self.host, self.port,
+                ));
+                false
+            }
+            Err(err) => {
+                self.set_failure(err);
+                false
+            }
+        }
+    }
 }
 
 impl client::Handler for KnownHostsClient {
@@ -311,31 +487,20 @@ impl client::Handler for KnownHostsClient {
                 // aceptarla en silencio.
                 match self.known_host_keys() {
                     Ok(recorded) if !recorded.is_empty() => {
+                        // La clave ha cambiado (de algoritmo, además): mismo
+                        // tratamiento que un `KeyChanged`, con confirmación.
                         let previous = recorded
                             .iter()
-                            .map(|(line, key)| {
-                                format!("línea {}: {}", line, fingerprint_sha256(key))
-                            })
-                            .collect::<Vec<_>>()
-                            .join("; ");
-                        self.set_failure(format!(
-                            "ALERTA: la host key de {}:{} ha cambiado. \
-                             Fingerprint recibido: {}. \
-                             Entradas previas en known_hosts → {}. \
-                             Si reconoces el cambio, elimina las líneas correspondientes de ~/.ssh/known_hosts y vuelve a conectar.",
-                            self.host,
-                            self.port,
-                            fingerprint_sha256(server_public_key),
-                            previous,
-                        ));
-                        Ok(false)
+                            .map(|(line, key)| (*line, fingerprint_sha256(key)))
+                            .collect();
+                        Ok(self.handle_changed_key(server_public_key, previous).await)
                     }
                     Ok(_) | Err(_) => {
                         // No hay entradas previas: es la PRIMERA conexión a este
                         // host. Con el modo estricto (default) el usuario confirma
                         // la huella antes de aprenderla; sin él, TOFU clásico.
                         if strict_first_connect() {
-                            match confirm_new_host_key(&self.host, self.port, server_public_key)
+                            match confirm_host_key(&self.host, self.port, server_public_key, &[])
                                 .await
                             {
                                 Ok(true) => {}
@@ -369,16 +534,14 @@ impl client::Handler for KnownHostsClient {
                 }
             }
             Err(russh::keys::Error::KeyChanged { line }) => {
-                self.set_failure(format!(
-                    "ALERTA: la host key de {}:{} ha cambiado (known_hosts línea {}). \
-                     Fingerprint recibido: {}. \
-                     Si reconoces el cambio, elimina esa línea de ~/.ssh/known_hosts y vuelve a conectar.",
-                    self.host,
-                    self.port,
-                    line,
-                    fingerprint_sha256(server_public_key)
-                ));
-                Ok(false)
+                // Mismo algoritmo, clave distinta. Las entradas registradas
+                // salen del propio fichero; si no se pudieran listar, al menos
+                // la línea que denuncia russh.
+                let mut previous = self.recorded_entries();
+                if previous.is_empty() {
+                    previous.push((line, "(no legible)".to_string()));
+                }
+                Ok(self.handle_changed_key(server_public_key, previous).await)
             }
             Err(err) => {
                 self.set_failure(format!(
@@ -704,9 +867,74 @@ mod tests {
         // En la CLI sin TTY (p. ej. dentro de un script) no hay a quién
         // preguntar: se rechaza con un error accionable en vez de aprender la
         // clave a ciegas. En el test, stdin no es un terminal.
-        let err = confirm_on_stdin("host.example", 22, "SHA256:abc", "ssh-ed25519")
+        let err = confirm_on_stdin("host.example", 22, "SHA256:abc", "ssh-ed25519", &[])
             .expect_err("sin TTY debe fallar");
         assert!(err.contains("host.example"));
         assert!(err.contains("SHA256:abc"));
+    }
+
+    #[tokio::test]
+    async fn sin_terminal_la_clave_cambiada_tambien_se_rechaza() {
+        // El caso cambiado sin TTY: mismo rechazo seguro, pero el mensaje debe
+        // hablar del CAMBIO (es la señal de un posible MITM, no una primera
+        // conexión).
+        let previous = vec![(33, "SHA256:vieja".to_string())];
+        let err = confirm_on_stdin("host.example", 22, "SHA256:abc", "ssh-ed25519", &previous)
+            .expect_err("sin TTY debe fallar");
+        assert!(err.contains("ha cambiado"), "{err}");
+        assert!(err.contains("host.example"));
+    }
+
+    /// Aceptar una clave cambiada reemplaza la entrada vieja y deja intactas
+    /// las de otros hosts. Se valida contra las funciones known_hosts REALES
+    /// de russh (misma numeración de líneas que denuncia `KeyChanged`): la
+    /// clave nueva pasa a verificar `Ok(true)` y la vieja desaparece.
+    #[test]
+    fn reemplazar_entradas_actualiza_known_hosts_atomicamente() {
+        // Clave real generada con ssh-keygen (solo para el test; sin privada).
+        const NUEVA: &str =
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHiVQ7pP9Gkw4Ce6/iSwB16+zfQQK08zZ0xMXi3zO2yy";
+        let dir = std::env::temp_dir().join(format!("rustty-kh-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let kh = dir.join("known_hosts");
+        // Línea 1: otro host (debe sobrevivir). Línea 2: la clave "vieja" del
+        // host que cambia.
+        std::fs::write(
+            &kh,
+            format!("otro.example {PUB_ED25519}\n[cambia.example]:2222 {PUB_ED25519}\n"),
+        )
+        .unwrap();
+
+        let vieja: PublicKey = PublicKey::from_openssh(PUB_ED25519).unwrap();
+        let nueva: PublicKey = PublicKey::from_openssh(NUEVA).unwrap();
+
+        // Las líneas a reemplazar salen de russh, no de contar a mano: así el
+        // test valida también que la numeración coincide.
+        let registradas =
+            known_hosts::known_host_keys_path("cambia.example", 2222, &kh).unwrap();
+        assert_eq!(registradas.len(), 1);
+        let lines: Vec<usize> = registradas.iter().map(|(l, _)| *l).collect();
+
+        remove_known_hosts_lines(&kh, &lines).expect("quitar la línea vieja");
+        known_hosts::learn_known_hosts_path("cambia.example", 2222, &nueva, &kh)
+            .expect("aprender la nueva");
+
+        // La nueva verifica; la vieja ya no está; el otro host sobrevive.
+        assert!(known_hosts::check_known_hosts_path("cambia.example", 2222, &nueva, &kh).unwrap());
+        let contents = std::fs::read_to_string(&kh).unwrap();
+        assert!(contents.contains("otro.example"), "{contents}");
+        assert_eq!(
+            contents.matches("cambia.example").count(),
+            1,
+            "solo debe quedar la entrada nueva: {contents}"
+        );
+        assert!(
+            matches!(
+                known_hosts::check_known_hosts_path("cambia.example", 2222, &vieja, &kh),
+                Err(russh::keys::Error::KeyChanged { .. })
+            ),
+            "la clave vieja debe denunciarse como cambiada"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

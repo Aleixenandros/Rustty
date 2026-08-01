@@ -8,8 +8,14 @@ mod error;
 mod ftps_certs;
 mod external_client;
 mod host_keys;
-mod ipc;
+// `pub`: los EventKind de tmux (F2.1) aún no tienen emisor en producción (el
+// wiring llega en la fase 2); como API pública de la lib no disparan
+// `dead_code` con clippy bloqueante. Mismo criterio que `mux` y `tmux`.
+pub mod ipc;
 mod keepass_manager;
+// `pub` como `mux`/`tmux`: sus helpers puros (p. ej. `install_command_at`)
+// los usa también el test de integración de otro módulo.
+pub mod key_setup;
 mod keyring_scope;
 mod local_command;
 mod local_shell_manager;
@@ -278,6 +284,8 @@ pub fn run() {
             commands::ssh_connect,
             commands::ssh_test_connection,
             commands::ssh_disconnect,
+            commands::ssh_setup_key_access,
+            commands::ssh_open_shell,
             commands::ssh_send_input,
             commands::ssh_resize,
             commands::ssh_start_tunnel,
@@ -349,6 +357,7 @@ pub fn run() {
             commands::list_known_hosts,
             commands::remove_known_host_line,
             commands::set_host_key_policy,
+            commands::set_host_key_change_policy,
             commands::ssh_hostkey_response,
             commands::set_ftps_cert_policy,
             commands::ftps_cert_response,

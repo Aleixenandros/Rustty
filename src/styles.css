@@ -9287,7 +9287,8 @@ body.color-blind-safe .modal-summary-badge.warn::before {
 }
 
 /* Indicador flotante de grabación de script (Fase 3) */
-#script-rec-bar {
+#script-rec-bar,
+#script-run-bar {
   position: fixed;
   bottom: 20px;
   left: 50%;
@@ -9304,6 +9305,17 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
 }
 #script-rec-bar.hidden { display: none; }
+#script-run-bar.hidden { display: none; }
+/* La barra del run convive con la de grabación sin solaparse. */
+#script-run-bar { bottom: 76px; }
+/* Punto de estado del run: azul en curso, verde/rojo al terminar (sin pulso). */
+#script-run-bar .script-rec-dot {
+  background: var(--blue, #89b4fa);
+  animation: none;
+  box-shadow: none;
+}
+#script-run-bar.run-ok .script-rec-dot { background: var(--green, #a6e3a1); }
+#script-run-bar.run-error .script-rec-dot { background: var(--red, #f38ba8); }
 .script-rec-dot {
   width: 11px;
   height: 11px;

@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "1.65.0"
+version = "1.66.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -13,6 +13,18 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+# Perfil de release medido el 2026-08-01: el binario baja de 44 MB a 25 MB
+# (−44 %) a cambio de ~2,5× de tiempo de build (87 s → 233 s), que solo paga
+# la release. `opt-level = "s"` bajaría a 18 MB pero se descarta sin un
+# benchmark de rendimiento en runtime (cripto y pipelining SFTP son
+# sensibles a la optimización). `panic = "abort"` queda VETADO: los
+# `lock_recover()` dependen del unwinding — un pánico en un hilo envenena su
+# mutex y los demás se recuperan; con abort moriría el proceso entero.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
@@ -100,6 +112,10 @@ tauri-plugin-process = "2.3.1"
 # Coincidencia de patrones para el paso `waitRegex` del motor de scripts. Ya
 # presente en el árbol de dependencias; se declara directo para poder usarlo.
 regex = "1.12.4"
+# RNG para generar el par de claves ed25519 del asistente de «acceso sin
+# contraseña» (`key_setup`): `PrivateKey::random` de ssh-key pide un CryptoRng
+# de rand_core 0.10, que ya está en el árbol vía russh. Misma versión del lock.
+rand = "0.10"
 tauri-plugin-single-instance = "2.4.2"
 
 # Señales POSIX para terminar el árbol de procesos de un «comando local» que se

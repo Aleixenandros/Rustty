@@ -56,6 +56,21 @@ pub enum EventKind {
     /// `script-done-{runId}` — el run completo terminó (agregado ok/error/total).
     /// Sufijo: `runId`.
     ScriptDone,
+    /// `tmux-layout-{sessionId}` — layout nuevo de una ventana tmux (modo
+    /// control): árbol de panes + altas/bajas. Sufijo: sessionId de la
+    /// **conexión** que habla el modo control. La salida de cada pane NO tiene
+    /// evento propio: va por el Channel de su sesión lógica, como ssh-data.
+    TmuxLayout,
+    /// `tmux-window-added-{sessionId}` — ventana tmux nueva (pestaña).
+    TmuxWindowAdded,
+    /// `tmux-window-closed-{sessionId}` — ventana tmux cerrada (con sus panes).
+    TmuxWindowClosed,
+    /// `tmux-pane-closed-{sessionId}` — una pane concreta terminó (su sesión
+    /// lógica del frontend debe cerrarse).
+    TmuxPaneClosed,
+    /// `tmux-exit-{sessionId}` — la sesión de control terminó (`%exit`,
+    /// desincronización o timeout): no se escribe más en el canal.
+    TmuxExit,
 }
 
 impl EventKind {
@@ -82,6 +97,11 @@ impl EventKind {
             EventKind::ScriptHostDone => "script-host-done-",
             EventKind::ScriptHostError => "script-host-error-",
             EventKind::ScriptDone => "script-done-",
+            EventKind::TmuxLayout => "tmux-layout-",
+            EventKind::TmuxWindowAdded => "tmux-window-added-",
+            EventKind::TmuxWindowClosed => "tmux-window-closed-",
+            EventKind::TmuxPaneClosed => "tmux-pane-closed-",
+            EventKind::TmuxExit => "tmux-exit-",
         }
     }
 }
@@ -169,6 +189,11 @@ mod tests {
             EventKind::ScriptHostDone,
             EventKind::ScriptHostError,
             EventKind::ScriptDone,
+            EventKind::TmuxLayout,
+            EventKind::TmuxWindowAdded,
+            EventKind::TmuxWindowClosed,
+            EventKind::TmuxPaneClosed,
+            EventKind::TmuxExit,
         ] {
             assert!(kind.prefix().ends_with('-'), "{kind:?} sin guion final");
         }

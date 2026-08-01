@@ -2,6 +2,43 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.66.0] - 2026-08-01
+
+### Añadido
+
+- **Nueva pestaña en esta conexión**: el menú contextual de una pestaña SSH
+  conectada puede abrir más terminales **sobre la misma conexión**, sin
+  repetir el handshake ni volver a pedir contraseña o segundo factor. Cada
+  pestaña hija es independiente (teclado, tamaño, cierre); cerrar la pestaña
+  original cierra la conexión entera, y se avisa antes si hay hijas abiertas.
+- **Acceso sin contraseña en un clic**: botón derecho sobre un perfil con
+  contraseña → «Acceso sin contraseña (clave SSH)…». Rustty usa tu clave
+  `~/.ssh/id_ed25519` (la crea si no existe), la instala en el servidor como
+  haría `ssh-copy-id`, **comprueba que funciona** reconectando con ella y solo
+  entonces cambia el perfil a autenticación por clave. Opcionalmente añade un
+  alias a tu `~/.ssh/config` para el `ssh` de la terminal, sin tocar jamás
+  entradas existentes.
+- **Aviso al cambiar la clave de un servidor**: si la clave de un host ya
+  conocido cambia (lo que antes obligaba a editar `known_hosts` a mano),
+  Rustty muestra ahora un aviso con las huellas registrada y recibida y deja
+  decidir: aceptar reemplaza la entrada antigua y la conexión continúa;
+  rechazar no toca nada. Desactivable en Preferencias → Seguridad para volver
+  al rechazo clásico.
+- **Scripts en segundo plano**: el panel de ejecución de un script se puede
+  minimizar a una barra flotante con el progreso en vivo (paso a paso con una
+  conexión, N de M con varias) y seguir usando el terminal mientras corre; un
+  clic recupera el panel completo.
+- **Vista previa al restaurar una copia**: antes de restaurar un snapshot de
+  las copias de seguridad, el diálogo muestra qué va a cambiar de verdad
+  (perfiles nuevos, cambiados y eliminados, temas, atajos, notas…), en vez de
+  un «¿seguro?» a ciegas.
+
+### Cambiado
+
+- **La aplicación ocupa bastante menos**: el binario baja alrededor de un 44 %
+  gracias a un perfil de compilación optimizado, sin cambiar nada de su
+  funcionamiento.
+
 ## [1.65.0] - 2026-07-31
 
 ### Cambiado

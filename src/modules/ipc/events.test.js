@@ -44,6 +44,11 @@ describe("contrato de prefijos", () => {
         "scriptHostDone",
         "scriptHostError",
         "scriptDone",
+        "tmuxLayout",
+        "tmuxWindowAdded",
+        "tmuxWindowClosed",
+        "tmuxPaneClosed",
+        "tmuxExit",
       ].sort()
     );
   });

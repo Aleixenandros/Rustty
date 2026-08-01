@@ -23,8 +23,13 @@ const MAX_PENDING_LINE: usize = 16 * 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ControlEvent {
     /// Bloque `%begin`…`%end`/`%error` completo. `success` = terminó en `%end`.
+    /// `flags` viene de la guarda de cierre: el bit 1 marca que el bloque
+    /// responde a un comando de **este** cliente de control (el saludo del
+    /// arranque y los bloques espontáneos llegan con 0) — es la señal que usa
+    /// `client.rs` para no descorrelacionar la cola FIFO.
     CommandResponse {
         number: u64,
+        flags: u64,
         success: bool,
         output: String,
     },
@@ -134,11 +139,12 @@ impl ControlParser {
                 text.strip_prefix("%error ").map(|rest| (rest, false))
             };
             if let Some((rest, success)) = closing {
-                let number = guard_number(rest, block.number);
+                let (number, flags) = guard_fields(rest, block.number);
                 let output = std::mem::take(&mut block.output);
                 self.block = None;
                 return Some(ControlEvent::CommandResponse {
                     number,
+                    flags,
                     success,
                     output,
                 });
@@ -177,7 +183,7 @@ impl ControlParser {
         let text = String::from_utf8_lossy(line).into_owned();
         if let Some(rest) = text.strip_prefix("%begin ") {
             self.block = Some(PendingBlock {
-                number: guard_number(rest, 0),
+                number: guard_fields(rest, 0).0,
                 output: String::new(),
             });
             return None;
@@ -293,14 +299,18 @@ fn id(token: &str, sigil: char) -> Option<u64> {
     token.strip_prefix(sigil)?.parse().ok()
 }
 
-/// Número de comando de una guarda `%begin`/`%end`/`%error`: el formato es
-/// `<timestamp> <número> <flags>`. Si no se puede leer, cae al de reserva
-/// (el del `%begin` abierto) para no perder la correlación por una guarda rara.
-fn guard_number(rest: &str, fallback: u64) -> u64 {
-    rest.split_whitespace()
-        .nth(1)
+/// Campos de una guarda `%begin`/`%end`/`%error`: el formato es
+/// `<timestamp> <número> <flags>`. Un número ilegible cae al de reserva (el
+/// del `%begin` abierto) para no perder la correlación por una guarda rara;
+/// unos flags ilegibles caen a 0 (bloque no atribuible a este cliente).
+fn guard_fields(rest: &str, fallback_number: u64) -> (u64, u64) {
+    let mut fields = rest.split_whitespace().skip(1);
+    let number = fields
+        .next()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(fallback)
+        .unwrap_or(fallback_number);
+    let flags = fields.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    (number, flags)
 }
 
 /// Separa `%<pane> <payload>` a nivel de bytes.
@@ -371,6 +381,7 @@ mod tests {
             vec![
                 ControlEvent::CommandResponse {
                     number: 280,
+                    flags: 0,
                     success: true,
                     output: String::new(),
                 },
@@ -386,6 +397,7 @@ mod tests {
                 },
                 ControlEvent::CommandResponse {
                     number: 287,
+                    flags: 1,
                     success: true,
                     output: "0: tmux* (1 panes) [80x24] [layout b25d,80x24,0,0,0] @0 (active)\n"
                         .into(),
@@ -452,6 +464,7 @@ mod tests {
             events,
             vec![ControlEvent::CommandResponse {
                 number: 42,
+                flags: 1,
                 success: false,
                 output: "bad command: nope\n\n".into(),
             }]
@@ -525,6 +538,7 @@ mod tests {
             vec![
                 ControlEvent::CommandResponse {
                     number: 2,
+                    flags: 0,
                     success: true,
                     output: String::new(),
                 },

@@ -41,6 +41,13 @@ impl FakeSshServer {
         self.dir.join("known_hosts")
     }
 
+    /// Fichero `authorized_keys` que lee el sshd del fixture. Para los tests
+    /// que instalan claves nuevas por la vía real (asistente de acceso sin
+    /// contraseña) sin acercarse al `~/.ssh` del desarrollador.
+    pub fn authorized_keys_path(&self) -> PathBuf {
+        self.dir.join("authorized_keys")
+    }
+
     /// Fingerprint de la host key del servidor, en el formato de una línea de
     /// `known_hosts` (`[127.0.0.1]:puerto tipo base64`). Sirve para pre-sembrar
     /// un `known_hosts` con una clave *distinta* y provocar el aviso de cambio.

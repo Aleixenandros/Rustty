@@ -539,6 +539,9 @@
       <button class="ctx-item ctx-conn-only hidden" data-ctx="wake-on-lan">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-power"/></svg></span><span data-i18n="ctx.wake_on_lan">Despertar equipo</span>
       </button>
+      <button class="ctx-item ctx-conn-only ctx-keyaccess-only hidden" data-ctx="key-access">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-key"/></svg></span><span data-i18n="ctx.key_access">Acceso sin contraseña (clave SSH)…</span>
+      </button>
       <button class="ctx-item ctx-conn-only ctx-promote-only hidden" data-ctx="promote-master">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-key"/></svg></span><span data-i18n="ctx.promote_master">Promover a credencial maestra…</span>
       </button>
@@ -622,6 +625,9 @@
       </button>
       <button class="ctx-item tabctx-dup-overrides hidden" data-tabctx="duplicate-overrides">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span data-i18n="tabctx.duplicate_overrides">Duplicar con cambios…</span>
+      </button>
+      <button class="ctx-item tabctx-new-shell hidden" data-tabctx="new-shell">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-plus-circle"/></svg></span><span data-i18n="tabctx.new_shell">Nueva pestaña en esta conexión</span>
       </button>
       <button class="ctx-item tabctx-keepalive hidden" data-tabctx="toggle-keepalive">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg></span><span class="tabctx-keepalive-label" data-i18n="tabctx.keepalive_enable">Mantener sesión activa</span>
@@ -1319,6 +1325,7 @@
       <div id="script-run-modal" role="dialog" aria-modal="true" aria-labelledby="script-run-title">
         <div class="modal-header">
           <h2 id="script-run-title" data-i18n="scripts.run_title">Ejecutar script</h2>
+          <button class="btn-icon hidden" id="btn-script-run-minimize" data-i18n-aria-label="scripts.bg_minimize" aria-label="Seguir en segundo plano" data-i18n-title="scripts.bg_minimize" title="Seguir en segundo plano"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-down"/></svg></button>
           <button class="btn-icon" id="btn-script-run-close" data-i18n-aria-label="scripts.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <div class="global-tunnels-body">
@@ -1427,6 +1434,18 @@
       </span>
       <button type="button" class="btn-primary" id="btn-script-rec-stop" data-i18n="scripts.rec_stop">Detener y editar</button>
       <button type="button" class="btn-secondary" id="btn-script-rec-cancel" data-i18n="scripts.rec_cancel">Descartar</button>
+    </div>
+
+    <!-- Barra flotante de un run de script en segundo plano: el run sigue vivo
+         en el backend; esta barra muestra su progreso y permite recuperar el
+         modal. Misma familia visual que la barra de grabación. -->
+    <div id="script-run-bar" class="hidden" role="status" aria-live="polite">
+      <span class="script-rec-dot" aria-hidden="true"></span>
+      <span class="script-rec-text">
+        <span class="script-rec-title" id="script-run-bar-title" data-i18n="scripts.run_title">Ejecutar script</span>
+        <span id="script-run-bar-progress" class="script-rec-count"></span>
+      </span>
+      <button type="button" class="btn-primary" id="btn-script-run-restore" data-i18n="scripts.bg_restore">Ver progreso</button>
     </div>
 
     <!-- ══════════════════════════════════════════════════════
@@ -2614,6 +2633,14 @@
                   <span data-i18n="prefs_security.strict_host_key">Confirmar la huella en la primera conexión</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_security.strict_host_key_hint">Al conectar por primera vez a un servidor, muestra la huella de su clave y pide confirmación antes de guardarla. Si lo desactivas, la primera clave se acepta y se recuerda automáticamente (TOFU): cómodo, pero un intermediario en esa primera conexión pasaría inadvertido.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-hostkey-change-prompt" />
+                  <span data-i18n="prefs_security.host_key_change_prompt">Preguntar si la clave de un servidor cambia</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_security.host_key_change_prompt_hint">Si la clave de un servidor ya conocido cambia (señal típica de un intermediario, pero también de una reinstalación), muestra un aviso con las huellas y deja decidir: aceptar reemplaza la entrada antigua y la conexión continúa; rechazar no toca nada. Si lo desactivas, el cambio se rechaza siempre y hay que editar known_hosts a mano.</p>
               </div>
 
               <div class="settings-row">

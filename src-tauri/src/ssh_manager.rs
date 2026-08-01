@@ -201,12 +201,37 @@ fn emit_connection_log(
 // ─── Mensajes del frontend al hilo SSH ──────────────────────────────────────
 
 pub enum SessionCommand {
-    /// Bytes de entrada del usuario (teclas)
-    Input(Vec<u8>),
-    /// Solicitud de redimensionado del terminal
-    Resize { cols: u32, rows: u32 },
-    /// Cierre limpio de la sesión
+    /// Bytes de entrada del usuario (teclas). `shell: None` = el canal
+    /// principal de la conexión; `Some(id)` = una shell hija multiplexada
+    /// (F0.3: una conexión ya no es un único canal).
+    Input {
+        data: Vec<u8>,
+        shell: Option<String>,
+    },
+    /// Solicitud de redimensionado del terminal (mismo enrutado que `Input`).
+    Resize {
+        cols: u32,
+        rows: u32,
+        shell: Option<String>,
+    },
+    /// Cierre limpio de la conexión entera (incluidas sus shells hijas).
     Disconnect,
+    /// Abre una shell adicional (nuevo `channel_open_session` + PTY + shell)
+    /// sobre el handle ya autenticado: sin handshake, sin re-autenticación,
+    /// sin segundo MFA. La salida viaja por su propio `on_data` y sus eventos
+    /// de ciclo de vida usan `shell_id` como sessionId lógico.
+    OpenShell {
+        shell_id: String,
+        on_data: Channel<Response>,
+        cols: u32,
+        rows: u32,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// Cierra solo una shell hija (la conexión y el resto siguen vivas).
+    CloseShell { shell_id: String },
+    /// Limpieza interna: la tarea de una shell hija terminó (canal cerrado por
+    /// el servidor o `CloseShell`). Nunca llega del frontend.
+    ShellClosed { shell_id: String },
     /// Arranca un túnel sobre la conexión SSH ya autenticada.
     StartTunnel {
         config: SshTunnelConfig,
@@ -257,6 +282,16 @@ pub enum SessionCommand {
 
 struct SessionHandle {
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    /// `Some(id)` = esta entrada es una shell hija: comparte el `cmd_tx` del
+    /// worker de su conexión y los comandos viajan con este id de shell.
+    shell: Option<String>,
+}
+
+/// Mensajes del worker de la conexión hacia la tarea de una shell hija.
+enum ShellMsg {
+    Input(Vec<u8>),
+    Resize { cols: u32, rows: u32 },
+    Close,
 }
 
 // ─── Estado global gestionado por Tauri ─────────────────────────────────────
@@ -340,8 +375,52 @@ impl SshManager {
 
         self.sessions
             .lock_recover()
-            .insert(session_id, SessionHandle { cmd_tx });
+            .insert(session_id, SessionHandle { cmd_tx, shell: None });
 
+        Ok(())
+    }
+
+    /// Abre una shell adicional sobre la conexión de `parent_session_id`,
+    /// reutilizando su handle ya autenticado (sin handshake ni MFA). La nueva
+    /// shell se registra como sesión lógica propia con id `shell_id`: a partir
+    /// de aquí `send_input`/`resize`/`disconnect` funcionan con ese id igual
+    /// que con una sesión normal. Si el padre ya es una shell hija, la nueva
+    /// nace como hermana sobre la misma conexión.
+    pub async fn open_shell(
+        &self,
+        parent_session_id: &str,
+        shell_id: String,
+        on_data: Channel<Response>,
+        cols: u32,
+        rows: u32,
+    ) -> Result<(), String> {
+        let cmd_tx = {
+            let sessions = self.sessions.lock_recover();
+            sessions
+                .get(parent_session_id)
+                .ok_or_else(|| format!("Sesión SSH {parent_session_id} no encontrada"))?
+                .cmd_tx
+                .clone()
+        };
+        let (reply, rx) = oneshot::channel();
+        cmd_tx
+            .send(SessionCommand::OpenShell {
+                shell_id: shell_id.clone(),
+                on_data,
+                cols,
+                rows,
+                reply,
+            })
+            .map_err(|_| format!("Sesión SSH {parent_session_id} no disponible"))?;
+        rx.await
+            .map_err(|_| "La sesión SSH no respondió".to_string())??;
+        self.sessions.lock_recover().insert(
+            shell_id.clone(),
+            SessionHandle {
+                cmd_tx,
+                shell: Some(shell_id),
+            },
+        );
         Ok(())
     }
 
@@ -353,7 +432,10 @@ impl SshManager {
             .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
         handle
             .cmd_tx
-            .send(SessionCommand::Input(data))
+            .send(SessionCommand::Input {
+                data,
+                shell: handle.shell.clone(),
+            })
             .map_err(|_| AppError::SessionNotFound(session_id.to_string()))
     }
 
@@ -365,7 +447,11 @@ impl SshManager {
             .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
         handle
             .cmd_tx
-            .send(SessionCommand::Resize { cols, rows })
+            .send(SessionCommand::Resize {
+                cols,
+                rows,
+                shell: handle.shell.clone(),
+            })
             .map_err(|_| AppError::SessionNotFound(session_id.to_string()))
     }
 
@@ -460,11 +546,17 @@ impl SshManager {
             .map_err(|_| "La sesión SSH no respondió".to_string())?
     }
 
-    /// Cierra y elimina una sesión del mapa de estado
+    /// Cierra y elimina una sesión del mapa de estado. Una shell hija cierra
+    /// solo su canal (la conexión y sus hermanas siguen vivas); la sesión
+    /// principal cierra la conexión entera, hijas incluidas.
     pub fn disconnect(&self, session_id: &str) -> Result<(), AppError> {
         let mut sessions = self.sessions.lock_recover();
         if let Some(handle) = sessions.remove(session_id) {
-            let _ = handle.cmd_tx.send(SessionCommand::Disconnect);
+            let cmd = match handle.shell {
+                Some(shell_id) => SessionCommand::CloseShell { shell_id },
+                None => SessionCommand::Disconnect,
+            };
+            let _ = handle.cmd_tx.send(cmd);
         }
         Ok(())
     }
@@ -477,7 +569,14 @@ impl SshManager {
             .map(|(_, h)| h)
             .collect();
         for handle in handles {
-            let _ = handle.cmd_tx.send(SessionCommand::Disconnect);
+            // Una hija NO debe mandar `Disconnect` (tumbaría su conexión
+            // compartida por la vía equivocada): cierra solo su shell; la
+            // conexión cae con el `Disconnect` de su sesión principal.
+            let cmd = match handle.shell {
+                Some(shell_id) => SessionCommand::CloseShell { shell_id },
+                None => SessionCommand::Disconnect,
+            };
+            let _ = handle.cmd_tx.send(cmd);
         }
     }
 }
@@ -1127,6 +1226,105 @@ async fn kill_remote_process(
     let _ = reply.send(result);
 }
 
+/// Abre una shell hija (F0.3) sobre el handle ya autenticado: canal nuevo +
+/// PTY + shell, y su tarea de E/S propia. Siempre un shell **pelado**, aunque
+/// el perfil tenga sesión persistente: un segundo `attach -A` a la misma
+/// sesión tmux/screen duplicaría la misma pantalla, no daría otra terminal.
+async fn open_extra_shell(
+    handle: &client::Handle<host_keys::KnownHostsClient>,
+    shell_id: &str,
+    on_data: Channel<Response>,
+    cols: u32,
+    rows: u32,
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    shells: &mut HashMap<String, mpsc::UnboundedSender<ShellMsg>>,
+) -> Result<(), String> {
+    let (cols, rows) = if cols == 0 || rows == 0 { (80, 24) } else { (cols, rows) };
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("No se pudo abrir el canal: {e}"))?;
+    channel
+        .request_pty(true, "xterm-256color", cols, rows, 0, 0, &[])
+        .await
+        .map_err(|e| format!("No se pudo solicitar PTY: {e}"))?;
+    channel
+        .request_shell(true)
+        .await
+        .map_err(|e| format!("No se pudo abrir shell: {e}"))?;
+    let (tx, rx) = mpsc::unbounded_channel();
+    shells.insert(shell_id.to_string(), tx);
+    tokio::spawn(run_extra_shell(
+        channel,
+        shell_id.to_string(),
+        on_data,
+        rx,
+        cmd_tx,
+    ));
+    Ok(())
+}
+
+/// E/S de una shell hija, en su propia tarea del mismo runtime: lee el canal
+/// hacia su `on_data` (con el mismo coalescing que el canal principal) y
+/// atiende su buzón de input/resize/cierre. No emite eventos de ciclo de vida:
+/// al terminar avisa al worker con `ShellClosed`, que es quien emite (si la
+/// tarea muriera cancelada al caer el runtime, el drain del worker cubre).
+async fn run_extra_shell(
+    mut channel: russh::Channel<client::Msg>,
+    shell_id: String,
+    on_data: Channel<Response>,
+    mut rx: mpsc::UnboundedReceiver<ShellMsg>,
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+) {
+    let mut out_buf: Vec<u8> = Vec::with_capacity(SSH_DATA_FLUSH_THRESHOLD);
+    loop {
+        tokio::select! {
+            msg = channel.wait() => {
+                match msg {
+                    Some(ChannelMsg::Data { data }) => {
+                        out_buf.extend_from_slice(&data);
+                        if out_buf.len() >= SSH_DATA_FLUSH_THRESHOLD {
+                            let _ = on_data.send(Response::new(std::mem::take(&mut out_buf)));
+                        }
+                    }
+                    Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        out_buf.extend_from_slice(&data);
+                        if out_buf.len() >= SSH_DATA_FLUSH_THRESHOLD {
+                            let _ = on_data.send(Response::new(std::mem::take(&mut out_buf)));
+                        }
+                    }
+                    Some(ChannelMsg::Eof)
+                    | Some(ChannelMsg::Close)
+                    | Some(ChannelMsg::ExitStatus { .. })
+                    | Some(ChannelMsg::ExitSignal { .. }) => break,
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+            _ = tokio::time::sleep(SSH_DATA_FLUSH_QUIET), if !out_buf.is_empty() => {
+                let _ = on_data.send(Response::new(std::mem::take(&mut out_buf)));
+            }
+            cmd = rx.recv() => {
+                match cmd {
+                    Some(ShellMsg::Input(data)) => {
+                        let _ = channel.data(&data[..]).await;
+                    }
+                    Some(ShellMsg::Resize { cols, rows }) => {
+                        let _ = channel.window_change(cols, rows, 0, 0).await;
+                    }
+                    Some(ShellMsg::Close) | None => break,
+                }
+            }
+        }
+    }
+    if !out_buf.is_empty() {
+        let _ = on_data.send(Response::new(std::mem::take(&mut out_buf)));
+    }
+    let _ = channel.eof().await;
+    let _ = channel.close().await;
+    let _ = cmd_tx.send(SessionCommand::ShellClosed { shell_id });
+}
+
 async fn run_session(
     spec: SessionSpec,
     cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
@@ -1588,6 +1786,9 @@ async fn run_session(
     // 4. Bucle de E/S: multiplexa datos del servidor y comandos del frontend
     let mut exit_kind = SessionExit::ServerClosed;
     let mut tunnels: HashMap<String, ActiveTunnel> = HashMap::new();
+    // Shells hijas multiplexadas sobre este mismo handle (F0.3): cada una vive
+    // en su propia tarea con su canal russh; aquí solo queda su buzón.
+    let mut shells: HashMap<String, mpsc::UnboundedSender<ShellMsg>> = HashMap::new();
     // Buffer de coalescing del caudal de salida. Acumula bytes contiguos
     // (stdout + stderr, en orden de llegada) y los entrega por `on_data` cuando
     // supera el umbral o tras una breve ventana de inactividad. Ver
@@ -1664,11 +1865,57 @@ async fn run_session(
             }
             cmd = cmd_rx.recv() => {
                 match cmd {
-                    Some(SessionCommand::Input(data)) => {
-                        let _ = channel.data(&data[..]).await;
+                    Some(SessionCommand::Input { data, shell }) => match shell {
+                        None => { let _ = channel.data(&data[..]).await; }
+                        Some(id) => {
+                            // Shell hija: reenvío a su tarea. Si ya no está
+                            // (canal muerto en carrera), se descarta igual que
+                            // haría el propio canal cerrado.
+                            if let Some(tx) = shells.get(&id) {
+                                let _ = tx.send(ShellMsg::Input(data));
+                            }
+                        }
+                    },
+                    Some(SessionCommand::Resize { cols, rows, shell }) => match shell {
+                        None => { let _ = channel.window_change(cols, rows, 0, 0).await; }
+                        Some(id) => {
+                            if let Some(tx) = shells.get(&id) {
+                                let _ = tx.send(ShellMsg::Resize { cols, rows });
+                            }
+                        }
+                    },
+                    Some(SessionCommand::OpenShell { shell_id, on_data, cols, rows, reply }) => {
+                        let result = open_extra_shell(
+                            &handle,
+                            &shell_id,
+                            on_data,
+                            cols,
+                            rows,
+                            cmd_tx.clone(),
+                            &mut shells,
+                        ).await;
+                        if result.is_ok() {
+                            // `ssh-connected` ANTES de responder al invoke: el
+                            // frontend registra sus listeners antes de invocar
+                            // y así nunca se pierde el evento de vida.
+                            let _ = app_handle.emit(
+                                &event_name(EventKind::SshConnected, &shell_id),
+                                &profile.name,
+                            );
+                        }
+                        let _ = reply.send(result);
                     }
-                    Some(SessionCommand::Resize { cols, rows }) => {
-                        let _ = channel.window_change(cols, rows, 0, 0).await;
+                    Some(SessionCommand::CloseShell { shell_id }) => {
+                        if let Some(tx) = shells.get(&shell_id) {
+                            let _ = tx.send(ShellMsg::Close);
+                        }
+                    }
+                    Some(SessionCommand::ShellClosed { shell_id }) => {
+                        // Único punto de emisión del cierre de una hija (la
+                        // tarea no emite): así el drain final no duplica.
+                        if shells.remove(&shell_id).is_some() {
+                            let _ = app_handle.emit(&event_name(EventKind::SshClosed, &shell_id), "");
+                        }
                     }
                     Some(SessionCommand::SetKeepAlive(secs)) => {
                         let n = secs.filter(|s| *s > 0).unwrap_or(0);
@@ -1825,6 +2072,13 @@ async fn run_session(
         if let Some(task) = tunnel.local_task {
             task.abort();
         }
+    }
+    // Las shells hijas mueren con la conexión. Su `ssh-closed` se emite AQUÍ y
+    // no en sus tareas: cuando el runtime del hilo caiga, esas tareas pueden
+    // cancelarse sin llegar a ejecutar su tramo final, y el frontend se
+    // quedaría con pestañas hijas zombis creyéndose conectadas.
+    for (shell_id, _tx) in shells.drain() {
+        let _ = app_handle.emit(&event_name(EventKind::SshClosed, &shell_id), "");
     }
     if let Ok(mut map) = remote_forwards.lock() {
         map.clear();
@@ -2891,6 +3145,348 @@ mod tests {
             .cancel_tcpip_forward("127.0.0.1".to_string(), asignado)
             .await
             .expect("cancelar el tcpip-forward");
+    }
+
+    /// **Integración**: el primitivo de F0.3 («varias shells sobre una única
+    /// conexión SSH», la base de «Nueva pestaña en esta conexión»): dos
+    /// `channel_open_session` + PTY + shell sobre el MISMO handle autenticado
+    /// —exactamente lo que hace `open_extra_shell`— contra un `sshd` real, y
+    /// cada shell ejecuta lo suyo y responde por su canal sin cruzarse con la
+    /// otra. Los marcadores usan `$((…))`: el eco del tecleo contiene la
+    /// expresión sin evaluar, así que el marcador evaluado solo puede venir de
+    /// la ejecución en esa shell.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_dos_shells_sobre_una_misma_conexion() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+
+        let handle = connect_and_auth(&server).await;
+
+        async fn abrir_shell(
+            handle: &client::Handle<host_keys::KnownHostsClient>,
+        ) -> russh::Channel<client::Msg> {
+            let channel = handle.channel_open_session().await.expect("abrir canal");
+            channel
+                .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
+                .await
+                .expect("pedir PTY");
+            channel.request_shell(true).await.expect("pedir shell");
+            channel
+        }
+
+        async fn leer_hasta(channel: &mut russh::Channel<client::Msg>, needle: &str) -> String {
+            let mut acc: Vec<u8> = Vec::new();
+            let lectura = async {
+                while let Some(msg) = channel.wait().await {
+                    match msg {
+                        ChannelMsg::Data { data } => acc.extend_from_slice(&data),
+                        ChannelMsg::ExtendedData { data, .. } => acc.extend_from_slice(&data),
+                        _ => {}
+                    }
+                    if String::from_utf8_lossy(&acc).contains(needle) {
+                        break;
+                    }
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(15), lectura)
+                .await
+                .unwrap_or_else(|_| panic!("plazo agotado esperando {needle:?}"));
+            String::from_utf8_lossy(&acc).into_owned()
+        }
+
+        let mut shell_a = abrir_shell(&handle).await;
+        let mut shell_b = abrir_shell(&handle).await;
+
+        shell_a
+            .data(&b"echo marca-A-$((6*7))\n"[..])
+            .await
+            .expect("escribir en la shell A");
+        shell_b
+            .data(&b"echo marca-B-$((6*7))\n"[..])
+            .await
+            .expect("escribir en la shell B");
+
+        let salida_a = leer_hasta(&mut shell_a, "marca-A-42").await;
+        let salida_b = leer_hasta(&mut shell_b, "marca-B-42").await;
+
+        assert!(
+            !salida_a.contains("marca-B-42"),
+            "la salida de B se cruzó al canal de A: {salida_a:?}"
+        );
+        assert!(
+            !salida_b.contains("marca-A-42"),
+            "la salida de A se cruzó al canal de B: {salida_b:?}"
+        );
+
+        // Cerrar una shell no tumba la otra: B sigue ejecutando tras cerrar A.
+        let _ = shell_a.eof().await;
+        let _ = shell_a.close().await;
+        shell_b
+            .data(&b"echo sigo-viva-$((6*8))\n"[..])
+            .await
+            .expect("escribir en B tras cerrar A");
+        leer_hasta(&mut shell_b, "sigo-viva-48").await;
+    }
+
+    /// **Integración**: el núcleo del asistente de «acceso sin contraseña»
+    /// por el camino real. Genera una clave ed25519 nueva en un tempdir
+    /// (jamás el `~/.ssh` del desarrollador), la INSTALA con el comando
+    /// idempotente de `key_setup` por un `exec` sobre la sesión autenticada —
+    /// apuntado al `authorized_keys` que lee el sshd del fixture — y VERIFICA
+    /// autenticando de verdad con ella. La segunda pasada del comando no
+    /// duplica la línea.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_instalar_clave_nueva_y_autenticar_con_ella() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::key_setup;
+        use crate::ssh_fixture;
+
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+        let handle = connect_and_auth(&server).await;
+
+        let dir = std::env::temp_dir().join(format!("rustty-keysetup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key_path = dir.join("id_ed25519");
+        let (public, generated) = key_setup::ensure_local_key(&key_path).expect("genera la clave");
+        assert!(generated, "no existía: debe generarse");
+        let pub_line = key_setup::public_key_line(&public, "rustty-it").expect("línea pública");
+
+        let target_dir = server
+            .authorized_keys_path()
+            .parent()
+            .unwrap()
+            .display()
+            .to_string();
+        let cmd = key_setup::install_command_at(&pub_line, &target_dir);
+        // Dos pasadas: la primera instala, la segunda debe ser un no-op.
+        for pasada in 0..2 {
+            let mut channel = handle.channel_open_session().await.expect("abrir canal");
+            channel.exec(true, cmd.as_str()).await.expect("exec instalar");
+            let mut status = None;
+            let espera = async {
+                while let Some(msg) = channel.wait().await {
+                    match msg {
+                        ChannelMsg::ExitStatus { exit_status } => {
+                            status = Some(exit_status);
+                            break;
+                        }
+                        ChannelMsg::Close | ChannelMsg::ExitSignal { .. } => break,
+                        // Eof puede llegar antes que el exit status.
+                        _ => {}
+                    }
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(10), espera)
+                .await
+                .expect("plazo del comando de instalación");
+            assert_eq!(status, Some(0), "instalación (pasada {pasada})");
+        }
+        let contents = std::fs::read_to_string(server.authorized_keys_path()).unwrap();
+        assert_eq!(
+            contents.matches(&pub_line).count(),
+            1,
+            "idempotente: una sola línea tras dos pasadas: {contents}"
+        );
+
+        // Verificación real: autenticar con la clave recién instalada.
+        let addr = format!("127.0.0.1:{}", server.port);
+        let (handler, failure) = host_keys::client_with_known_hosts(
+            "127.0.0.1".to_string(),
+            server.port,
+            server.known_hosts_path(),
+        );
+        let mut con_clave = russh_connect_addr(test_client_config(), &addr, handler)
+            .await
+            .unwrap_or_else(|e| {
+                panic!("no conectó: {e}. {:?}", host_keys::take_failure(&failure))
+            });
+        let auth = authenticate_handle(
+            &mut con_clave,
+            &AuthType::PublicKey,
+            &server.username,
+            None,
+            None,
+            Some(&key_path.display().to_string()),
+        )
+        .await
+        .expect("autenticación con la clave nueva");
+        assert!(
+            matches!(auth, AuthResult::Success),
+            "el servidor debió aceptar la clave instalada: {auth:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Mata el servidor tmux del socket del test aunque el test falle a
+    /// mitad: el tmux corre en esta misma máquina (sshd de localhost), así
+    /// que un `kill-server` local llega igual.
+    struct TmuxServerGuard(String);
+    impl Drop for TmuxServerGuard {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("tmux")
+                .args(["-L", &self.0, "kill-server"])
+                .output();
+        }
+    }
+
+    /// Bombea bytes del canal por el pipeline completo del modo control
+    /// (parser → cliente → manager) hasta que el predicado dé por buena una
+    /// actualización del modelo. Devuelve todo lo visto hasta entonces.
+    async fn pump_updates(
+        channel: &mut russh::Channel<client::Msg>,
+        control: &mut crate::tmux::client::ControlClient,
+        manager: &mut crate::tmux::manager::TmuxManager,
+        mut pred: impl FnMut(&crate::tmux::manager::ModelUpdate) -> bool,
+    ) -> Vec<crate::tmux::manager::ModelUpdate> {
+        let mut seen = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            let msg = tokio::time::timeout_at(deadline, channel.wait())
+                .await
+                .unwrap_or_else(|_| panic!("plazo agotado; visto hasta ahora: {seen:?}"));
+            let Some(msg) = msg else {
+                panic!("canal cerrado sin cumplirse el predicado; visto: {seen:?}");
+            };
+            let bytes = match msg {
+                ChannelMsg::Data { data } => data.to_vec(),
+                ChannelMsg::ExtendedData { data, .. } => data.to_vec(),
+                _ => continue,
+            };
+            let mut matched = false;
+            for ev in control.feed(&bytes) {
+                for update in manager.apply(ev) {
+                    if pred(&update) {
+                        matched = true;
+                    }
+                    seen.push(update);
+                }
+            }
+            if matched {
+                return seen;
+            }
+        }
+    }
+
+    /// **Integración (F7.3 parcial)**: el stack completo de la Fase 1 del modo
+    /// control —`tmux/protocol` + `tmux/client` + `tmux/layout` +
+    /// `tmux/manager`— contra un **tmux real** hablando por un canal `exec`
+    /// de un **sshd real**: arranque de `tmux -C new-session`, `split-window`
+    /// con respuesta correlada y `%layout-change` parseado, `send-keys` cuyo
+    /// `%output` (desescapado) llega a la sesión lógica de SU pane, y
+    /// `kill-server` → `%exit` → el cliente se cierra y prohíbe escribir.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd, ssh-keygen y tmux; se corre con --ignored"]
+    #[tokio::test]
+    async fn tmux_control_mode_real_sobre_ssh() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+        use crate::tmux::client::{ControlClient, SendError, ShutdownReason};
+        use crate::tmux::manager::{ModelUpdate, TmuxManager};
+
+        if std::process::Command::new("tmux").arg("-V").output().is_err() {
+            eprintln!("tmux no disponible; test omitido");
+            return;
+        }
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+
+        let handle = connect_and_auth(&server).await;
+
+        // Socket propio (-L) y config vacía (-f /dev/null): el servidor tmux
+        // del test jamás toca el del usuario.
+        let socket = format!("rustty-it-{}", uuid::Uuid::new_v4());
+        let _tmux_guard = TmuxServerGuard(socket.clone());
+        let mut channel = handle.channel_open_session().await.expect("abrir canal");
+        let attach = format!("tmux -C -f /dev/null -L {socket} new-session -A -s rustty_it");
+        channel.exec(true, attach.as_str()).await.expect("exec tmux -C");
+
+        let mut control = ControlClient::new();
+        let mut manager = TmuxManager::new("it");
+
+        // 1. Arranque: la sesión se anuncia con su nombre.
+        pump_updates(&mut channel, &mut control, &mut manager, |up| {
+            matches!(up, ModelUpdate::SessionChanged { name, .. } if name == "rustty_it")
+        })
+        .await;
+
+        // 2. split-window -h: respuesta correlada a NUESTRO tag (pese al
+        // saludo con flags 0) y %layout-change real parseado a dos panes.
+        let (tag, bytes) = control.send_command("split-window -h", 0).expect("split");
+        channel.data(&bytes[..]).await.expect("escribir split");
+        let mut command_ok = false;
+        let mut added_panes = Vec::new();
+        pump_updates(&mut channel, &mut control, &mut manager, |up| {
+            match up {
+                ModelUpdate::CommandDone { tag: t, success, .. } if *t == tag => {
+                    assert!(success, "split-window falló: {up:?}");
+                    command_ok = true;
+                }
+                ModelUpdate::LayoutChanged { added, .. } if added.len() == 2 => {
+                    added_panes = added.clone();
+                }
+                _ => {}
+            }
+            command_ok && !added_panes.is_empty()
+        })
+        .await;
+        assert_eq!(
+            added_panes[0].logical_id,
+            format!("it-p{}", added_panes[0].pane),
+            "id lógico determinista"
+        );
+
+        // 3. send-keys a la PRIMERA pane: su %output llega a su sesión lógica
+        // (comillas simples: tmux no debe expandir el $((…)), eso lo hace el
+        // shell de la pane al recibir Enter).
+        let objetivo = added_panes[0].clone();
+        let keys = format!(
+            "send-keys -t %{} 'echo hola-$((6*7))' Enter",
+            objetivo.pane
+        );
+        let (_tag, bytes) = control.send_command(&keys, 0).expect("send-keys");
+        channel.data(&bytes[..]).await.expect("escribir send-keys");
+        let mut salida = Vec::new();
+        pump_updates(&mut channel, &mut control, &mut manager, |up| {
+            if let ModelUpdate::Output { pane, bytes } = up {
+                if pane.logical_id == objetivo.logical_id {
+                    salida.extend_from_slice(bytes);
+                }
+            }
+            String::from_utf8_lossy(&salida).contains("hola-42")
+        })
+        .await;
+
+        // 4. kill-server → %exit → cliente cerrado: escribir queda prohibido.
+        let (_tag, bytes) = control.send_command("kill-server", 0).expect("kill-server");
+        channel.data(&bytes[..]).await.expect("escribir kill-server");
+        let updates = pump_updates(&mut channel, &mut control, &mut manager, |up| {
+            matches!(
+                up,
+                ModelUpdate::Ended {
+                    reason: ShutdownReason::Exit(_)
+                }
+            )
+        })
+        .await;
+        assert!(control.is_closed(), "tras %exit el cliente queda cerrado: {updates:?}");
+        assert_eq!(control.send_command("ls", 0), Err(SendError::Closed));
     }
 
     /// El log de sesión guarda salida del terminal: debe nacer privado (0600) y

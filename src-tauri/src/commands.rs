@@ -419,6 +419,61 @@ pub fn ssh_connect(
     Ok(session_id)
 }
 
+/// Asistente de «acceso sin contraseña» (equivalente de `ssh-copy-id`):
+/// garantiza la clave local, la instala en el remoto autenticando con las
+/// credenciales actuales del perfil, VERIFICA reconectando con la clave y,
+/// opcionalmente, añade un bloque `Host` a `~/.ssh/config`. Corre en su hilo
+/// con runtime propio (mismo patrón que `ssh_test_connection`). El cambio del
+/// perfil a autenticación por clave lo hace el frontend, y solo si `verified`.
+#[tauri::command]
+pub async fn ssh_setup_key_access(
+    profile_state: State<'_, ProfileManager>,
+    cred_state: State<'_, CredentialStore>,
+    profile_id: String,
+    password: Option<String>,
+    passphrase: Option<String>,
+    ask_answers: Option<std::collections::HashMap<String, String>>,
+    write_ssh_config: bool,
+) -> Result<crate::key_setup::KeySetupReport, String> {
+    let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
+    let mut profile = profiles
+        .into_iter()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
+    credentials::substitute_connection_fields(&mut profile, &cred_state);
+    if profile
+        .proxy_jump
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| !s.is_empty())
+    {
+        return Err(
+            "Los perfiles con ProxyJump todavía no soportan el asistente de acceso con clave"
+                .to_string(),
+        );
+    }
+    let resolved_password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let result = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt.block_on(crate::key_setup::setup_key_access(
+                &profile,
+                resolved_password.as_deref(),
+                passphrase.as_deref(),
+                write_ssh_config,
+            )),
+            Err(e) => Err(format!("No se pudo crear runtime tokio: {e}")),
+        };
+        let _ = tx.send(result);
+    });
+    rx.await
+        .map_err(|e| format!("El asistente de clave no respondió: {e}"))?
+}
+
 /// Comando **async**: la prueba corre en su hilo con runtime propio y aquí solo
 /// se espera el resultado por un oneshot. La versión síncrona original hacía
 /// `rx.recv()` bloqueante en el hilo principal de Tauri y congelaba toda la
@@ -572,6 +627,33 @@ fn apply_credential(profile: &mut ConnectionProfile, credential_id: &str) -> Res
 #[tauri::command]
 pub fn ssh_disconnect(ssh_state: State<SshManager>, session_id: String) -> Result<(), String> {
     ssh_state.disconnect(&session_id).map_err(|e| e.to_string())
+}
+
+/// Abre una shell adicional sobre la conexión SSH ya autenticada de
+/// `parent_session_id` («Nueva pestaña en esta conexión»): sin handshake, sin
+/// segunda autenticación ni MFA. La nueva shell vive como sesión lógica con su
+/// propio `session_id`: entrada, resize, cierre y eventos (`ssh-connected` /
+/// `ssh-closed`) funcionan igual que en una sesión normal.
+#[tauri::command]
+pub async fn ssh_open_shell(
+    ssh_state: State<'_, SshManager>,
+    on_data: Channel<Response>,
+    parent_session_id: String,
+    session_id: Option<String>,
+    cols: Option<u32>,
+    rows: Option<u32>,
+) -> Result<String, String> {
+    let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    ssh_state
+        .open_shell(
+            &parent_session_id,
+            session_id.clone(),
+            on_data,
+            cols.unwrap_or(80),
+            rows.unwrap_or(24),
+        )
+        .await?;
+    Ok(session_id)
 }
 
 /// Resuelve la contraseña almacenada del perfil (KeePass o keyring).
@@ -2884,6 +2966,15 @@ pub fn profiles_recovery(profile_state: State<ProfileManager>) -> crate::atomic_
 #[tauri::command]
 pub fn set_host_key_policy(strict: bool) {
     crate::host_keys::set_strict_first_connect(strict);
+}
+
+/// Fija la política ante una host key **cambiada**: `true` (default) pregunta
+/// al usuario —aceptar reemplaza la entrada de known_hosts y la conexión
+/// continúa—; `false` es el rechazo clásico con instrucciones manuales. La
+/// llama el frontend al cargar y al guardar preferencias.
+#[tauri::command]
+pub fn set_host_key_change_policy(prompt: bool) {
+    crate::host_keys::set_prompt_on_key_change(prompt);
 }
 
 /// Respuesta del usuario a una confirmación de host key (`ssh-hostkey-prompt`).

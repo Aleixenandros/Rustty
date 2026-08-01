@@ -58,6 +58,20 @@ export const EVENT_PREFIX = Object.freeze({
   scriptHostError: "script-host-error-",
   /** `script-done-{runId}` → {@link ScriptDoneEvent} */
   scriptDone: "script-done-",
+  /**
+   * `tmux-layout-{sessionId}` → {@link TmuxLayoutEvent}. Sufijo: sessionId de
+   * la CONEXIÓN que habla el modo control (`tmux -CC`). La salida de cada pane
+   * no tiene evento propio: va por el Channel de su sesión lógica.
+   */
+  tmuxLayout: "tmux-layout-",
+  /** `tmux-window-added-{sessionId}` → {@link TmuxWindowEvent} */
+  tmuxWindowAdded: "tmux-window-added-",
+  /** `tmux-window-closed-{sessionId}` → {@link TmuxWindowEvent} */
+  tmuxWindowClosed: "tmux-window-closed-",
+  /** `tmux-pane-closed-{sessionId}` → {@link TmuxPaneClosedEvent} */
+  tmuxPaneClosed: "tmux-pane-closed-",
+  /** `tmux-exit-{sessionId}` → {@link TmuxExitEvent} */
+  tmuxExit: "tmux-exit-",
 });
 
 /**
@@ -94,6 +108,11 @@ export const EVENT = Object.freeze({
  * @property {string} fingerprint Huella SHA256 de la clave presentada.
  * @property {string} keyType Algoritmo (`ssh-ed25519`, `rsa-sha2-512`…).
  * @property {boolean} viaJump `true` si la clave es de un bastión ProxyJump.
+ * @property {boolean} changed `true` = la clave de un host YA CONOCIDO ha
+ *   cambiado (posible MITM): diálogo de peligro; aceptar reemplaza la entrada
+ *   de known_hosts y la conexión continúa.
+ * @property {Array<{ line: number, fingerprint: string }>} previous Con
+ *   `changed`: entradas registradas que se reemplazarían al aceptar.
  */
 
 /**
@@ -248,4 +267,41 @@ export function eventName(kind, suffix) {
  * @property {number} total Hosts totales de la tirada.
  * @property {number} okCount Hosts completados sin error.
  * @property {number} errorCount Hosts que fallaron.
+ */
+
+// --- Payloads de los eventos tmux (modo control, sufijo = sessionId de la
+// conexión). Contrato preliminar de F2.1: espeja `ModelUpdate` de
+// `src-tauri/src/tmux/manager.rs` en camelCase; el wiring (fases 2-4) lo
+// consolidará. Cada pane de tmux es una sesión lógica del frontend con id
+// determinista (`{sessionId}-p{pane}`).
+
+/**
+ * Vínculo pane de tmux ↔ sesión lógica del frontend.
+ * @typedef {object} TmuxPaneBinding
+ * @property {number} pane Id numérico de la pane (`%n`).
+ * @property {string} logicalId SessionId lógico de esa pane en el frontend.
+ */
+
+/**
+ * @typedef {object} TmuxLayoutEvent
+ * @property {number} window Ventana (`@n`) cuyo layout cambió.
+ * @property {unknown} layout Árbol de celdas (espejo de `LayoutCell`).
+ * @property {TmuxPaneBinding[]} added Panes nuevas en esta ventana.
+ * @property {TmuxPaneBinding[]} removed Panes que ya no están en esta ventana.
+ */
+
+/**
+ * @typedef {object} TmuxWindowEvent
+ * @property {number} window Ventana (`@n`) añadida o cerrada.
+ * @property {string} [name] Nombre de la ventana, si se conoce.
+ */
+
+/**
+ * @typedef {object} TmuxPaneClosedEvent
+ * @property {TmuxPaneBinding} pane Pane terminada: su sesión lógica se cierra.
+ */
+
+/**
+ * @typedef {object} TmuxExitEvent
+ * @property {string|null} reason Razón del `%exit` (o desync/timeout), si la hay.
  */

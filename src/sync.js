@@ -1004,18 +1004,23 @@ export async function listSnapshots() {
   return await invoke("sync_list_snapshots", { webdavPassword });
 }
 
-export async function restoreSnapshot(snapshotId, ctx) {
-  const dialogs = requireDialogs(ctx);
+/** Descarga y descifra un snapshot SIN aplicarlo (para la vista previa). */
+export async function readSnapshotState(snapshotId) {
   const passphrase = await getStoredPassphrase();
   if (!passphrase) {
     throw new Error("Configura la passphrase de sync antes de restaurar");
   }
   const webdavPassword = await getStoredWebDavPassword();
-  const state = await invoke("sync_read_snapshot", {
+  return await invoke("sync_read_snapshot", {
     snapshotId,
     passphrase,
     webdavPassword,
   });
+}
+
+/** Aplica un estado de snapshot ya leído (con la confirmación de secretos). */
+export async function applySnapshotState(state, ctx) {
+  const dialogs = requireDialogs(ctx);
   const allowSecrets = stateHasSecrets(state)
     ? await dialogs.confirm({
         title: "Restaurar copia",
@@ -1024,6 +1029,11 @@ export async function restoreSnapshot(snapshotId, ctx) {
       })
     : false;
   return await applyMergedState(state, { ...ctx, allowSecrets });
+}
+
+export async function restoreSnapshot(snapshotId, ctx) {
+  const state = await readSnapshotState(snapshotId);
+  return await applySnapshotState(state, ctx);
 }
 
 /* ─────────────────────────── Tracking de tombstones ──────────────── */

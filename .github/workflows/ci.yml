@@ -302,11 +302,14 @@ jobs:
       # `sshd` real para el fixture SSH. `ssh-keygen` viene con openssh-client,
       # ya presente; `sshd` está en openssh-server, que el runner puede no traer.
       # Sin él, los tests SSH se saltan con gracia (el fixture devuelve None),
-      # pero lo instalamos para que corran de verdad.
-      - name: Install OpenSSH server
+      # pero lo instalamos para que corran de verdad. `tmux` es para el test del
+      # modo control (`tmux_control_mode_real_sobre_ssh`), que habla el
+      # protocolo -CC de un tmux real a través del sshd del fixture.
+      - name: Install OpenSSH server + tmux
         run: |
-          sudo apt-get install -y openssh-server
+          sudo apt-get install -y openssh-server tmux
           command -v sshd || ls -l /usr/sbin/sshd
+          tmux -V
 
       # `--lib` a propósito: `--ignored` sobre los doctests intentaría compilar
       # los fragmentos marcados `ignore` de `ipc.rs`, que son ilustrativos y no

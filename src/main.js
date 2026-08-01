@@ -51,6 +51,7 @@ import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { defaultHighlightRules, compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
+import { normalizePrefs } from "./modules/prefs/normalize.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
@@ -421,6 +422,11 @@ const DEFAULT_PREFS = {
   // presente ya en esa primera conexión. La política vive en el backend
   // (`host_keys`): esta pref solo la fija con `set_host_key_policy`.
   strictHostKey:   true,
+  // Host key CAMBIADA: activo (default) pregunta con un diálogo de peligro y,
+  // si el usuario acepta, reemplaza la entrada de known_hosts y la conexión
+  // continúa; desactivado, rechazo clásico con instrucciones manuales. La
+  // política vive en el backend: se fija con `set_host_key_change_policy`.
+  hostKeyChangePrompt: true,
   // Primera conexión FTPS: igual que `strictHostKey` pero para el certificado
   // TLS del servidor (TOFU por huella). Activo (default) pide confirmar la huella
   // de un certificado nuevo; desactivado la aprende en silencio. La política vive
@@ -668,48 +674,16 @@ function loadPrefs() {
     stored = JSON.parse(localStorage.getItem("rustty-prefs") || "null");
     if (stored) prefs = { ...DEFAULT_PREFS, ...stored };
   } catch {}
-  if (!Array.isArray(prefs.workspaces) || prefs.workspaces.length === 0) {
-    prefs.workspaces = [{ id: "default", name: "Default" }];
-  }
-  if (!prefs.workspaces.some((w) => w.id === prefs.activeWorkspaceId)) {
-    prefs.activeWorkspaceId = prefs.workspaces[0].id;
-  }
-  migrateLegacyFolderColors();
-  normalizeWorkspaceColors();
-  // Migración de carpetas globales → por workspace
-  if (!prefs.userFoldersByWorkspace || typeof prefs.userFoldersByWorkspace !== "object") {
-    prefs.userFoldersByWorkspace = {};
-  }
-  const legacy = stored && Array.isArray(stored.userFolders)
-    ? stored.userFolders.filter((f) => typeof f === "string" && f.trim())
-    : [];
-  if (legacy.length && !prefs.userFoldersByWorkspace[prefs.activeWorkspaceId]) {
-    prefs.userFoldersByWorkspace[prefs.activeWorkspaceId] = [...legacy];
-  }
-  prefs.userFolders = []; // legacy vacío tras migración
-  for (const w of prefs.workspaces) {
-    if (!Array.isArray(prefs.userFoldersByWorkspace[w.id])) {
-      prefs.userFoldersByWorkspace[w.id] = [];
-    }
-  }
+  // Normalización y migraciones: núcleo puro en `modules/prefs/normalize.js`
+  // (mismo orden histórico; las migraciones de colores van inyectadas).
+  normalizePrefs(prefs, stored, {
+    migrateFolderColors: migrateLegacyFolderColors,
+    normalizeWorkspaceColors,
+    defaultHighlightRules,
+    supportedLangs: SUPPORTED_LANGS,
+    detectLanguage,
+  });
   userFolders = new Set(prefs.userFoldersByWorkspace[prefs.activeWorkspaceId] || []);
-  if (!Array.isArray(prefs.favorites)) prefs.favorites = [];
-  if (!["current", "all", "favorites"].includes(prefs.sidebarViewMode)) {
-    prefs.sidebarViewMode = "current";
-  }
-  prefs.searchAllWorkspaces = prefs.searchAllWorkspaces !== false;
-  prefs.sidebarCompact = Boolean(prefs.sidebarCompact);
-  if (typeof prefs.foldersFirst !== "boolean") prefs.foldersFirst = true;
-  if (!Array.isArray(prefs.highlightRules)) {
-    prefs.highlightRules = defaultHighlightRules();
-  }
-  if (stored && !stored._highlightRulesSeeded && prefs.highlightRules.length === 0) {
-    prefs.highlightRules = defaultHighlightRules();
-  }
-  prefs._highlightRulesSeeded = true;
-  if (!prefs.lang || !SUPPORTED_LANGS.includes(prefs.lang)) {
-    prefs.lang = detectLanguage();
-  }
   setLanguage(prefs.lang);
   applyTranslations();
   registerAllCustomThemes();
@@ -1691,6 +1665,8 @@ function openSettingsModal() {
   if (confirmRiskyPasteEl) confirmRiskyPasteEl.checked = prefs.confirmRiskyPaste !== false;
   const strictHostKeyEl = document.getElementById("pref-strict-host-key");
   if (strictHostKeyEl) strictHostKeyEl.checked = prefs.strictHostKey !== false;
+  const hostKeyChangePromptEl = document.getElementById("pref-hostkey-change-prompt");
+  if (hostKeyChangePromptEl) hostKeyChangePromptEl.checked = prefs.hostKeyChangePrompt !== false;
   const strictFtpsCertEl = document.getElementById("pref-strict-ftps-cert");
   if (strictFtpsCertEl) strictFtpsCertEl.checked = prefs.strictFtpsCert !== false;
   const onWakeEl = document.getElementById("pref-on-wake");
@@ -2526,6 +2502,39 @@ async function syncTestNow() {
 }
 
 /**
+ * Detalle legible de un diff de sync (altas/cambios/bajas por tipo + muestra
+ * de nombres de perfil). Compartido por la vista previa de la primera sync y
+ * por la de restaurar un snapshot.
+ * @param {ReturnType<typeof sync.diffRemoteAgainstLocal>} diff
+ */
+function formatSyncDiffDetail(diff) {
+  const kindKeys = {
+    profile: "prefs_sync.kind_profile",
+    prefs: "prefs_sync.kind_prefs",
+    theme: "prefs_sync.kind_theme",
+    shortcut: "prefs_sync.kind_shortcut",
+    snippet: "prefs_sync.kind_snippet",
+    note: "prefs_sync.kind_note",
+    cred: "prefs_sync.kind_cred",
+    secret: "prefs_sync.kind_secret",
+  };
+  const parts = [];
+  for (const [kind, c] of Object.entries(diff.kinds)) {
+    const label = kindKeys[kind] ? t(kindKeys[kind]) : kind;
+    const segs = [];
+    if (c.added) segs.push(t("prefs_sync.diff_added", { n: c.added }));
+    if (c.changed) segs.push(t("prefs_sync.diff_changed", { n: c.changed }));
+    if (c.deleted) segs.push(t("prefs_sync.diff_deleted", { n: c.deleted }));
+    if (segs.length) parts.push(`${label}: ${segs.join(", ")}`);
+  }
+  let detail = parts.join(" · ");
+  if (diff.addedProfileNames.length) {
+    detail += ` (${diff.addedProfileNames.join(", ")}${diff.addedProfileNames.length >= 8 ? "…" : ""})`;
+  }
+  return detail;
+}
+
+/**
  * Vista previa (dry-run) de la primera sincronización: si este equipo no
  * tiene caché de un merge anterior y el remoto ya está poblado, muestra el
  * alcance (altas/cambios/bajas por tipo) y pide confirmación. Devuelve si se
@@ -2557,29 +2566,7 @@ async function confirmFirstSyncIfNeeded() {
     const diff = sync.diffRemoteAgainstLocal(remote, current);
     if (!diff.total) return true; // idéntico: aplicar sin preguntar
 
-    const kindKeys = {
-      profile: "prefs_sync.kind_profile",
-      prefs: "prefs_sync.kind_prefs",
-      theme: "prefs_sync.kind_theme",
-      shortcut: "prefs_sync.kind_shortcut",
-      snippet: "prefs_sync.kind_snippet",
-      note: "prefs_sync.kind_note",
-      cred: "prefs_sync.kind_cred",
-      secret: "prefs_sync.kind_secret",
-    };
-    const parts = [];
-    for (const [kind, c] of Object.entries(diff.kinds)) {
-      const label = kindKeys[kind] ? t(kindKeys[kind]) : kind;
-      const segs = [];
-      if (c.added) segs.push(t("prefs_sync.diff_added", { n: c.added }));
-      if (c.changed) segs.push(t("prefs_sync.diff_changed", { n: c.changed }));
-      if (c.deleted) segs.push(t("prefs_sync.diff_deleted", { n: c.deleted }));
-      if (segs.length) parts.push(`${label}: ${segs.join(", ")}`);
-    }
-    let message = `${t("prefs_sync.first_sync_message")} ${parts.join(" · ")}`;
-    if (diff.addedProfileNames.length) {
-      message += ` (${diff.addedProfileNames.join(", ")}${diff.addedProfileNames.length >= 8 ? "…" : ""})`;
-    }
+    const message = `${t("prefs_sync.first_sync_message")} ${formatSyncDiffDetail(diff)}`;
     return await confirmThemed({
       title: t("prefs_sync.first_sync_title"),
       message,
@@ -2916,18 +2903,51 @@ async function syncRestoreSnapshot() {
     toast(t("prefs_sync.snapshots_none"), "warning");
     return;
   }
+  // Leer el snapshot ANTES de confirmar para poder enseñar el alcance real
+  // (altas/cambios/bajas respecto al estado actual) en vez de un «¿seguro?»
+  // a ciegas. Si la vista previa falla, se confirma sin detalle: restaurar
+  // debe seguir siendo posible aunque el diff no se pueda calcular.
+  let state = null;
+  let detail = "";
+  try {
+    setSyncStatus("busy", "prefs_sync.status_busy");
+    state = await sync.readSnapshotState(id);
+    const current = await sync.buildSyncState({
+      profiles,
+      prefs,
+      deviceId: _syncDeviceIdCache,
+      selective: {
+        profiles: true, prefs: true, themes: true, shortcuts: true,
+        snippets: true, notes: true,
+        // El diff no necesita leer secretos del keyring.
+        secrets: false,
+      },
+      snippets: sync.loadLocalSnippets(),
+    });
+    const diff = sync.diffRemoteAgainstLocal(state, current);
+    detail = diff.total ? formatSyncDiffDetail(diff) : t("prefs_sync.snapshots_diff_none");
+  } catch (e) {
+    console.error("[sync] vista previa del snapshot", e);
+  }
+  setSyncStatus("success", "prefs_sync.status_success");
   const okRestore = await confirmThemed({
     title: t("prefs_sync.snapshots_restore"),
-    message: t("prefs_sync.snapshots_confirm"),
+    message: detail
+      ? `${t("prefs_sync.snapshots_confirm")}\n\n${detail}`
+      : t("prefs_sync.snapshots_confirm"),
     submitLabel: t("prefs_sync.snapshots_restore"),
     danger: true,
   });
   if (!okRestore) return;
   try {
     setSyncStatus("busy", "prefs_sync.status_busy");
-    const summary = await sync.restoreSnapshot(id, {
-      profiles, prefs, deviceId: _syncDeviceIdCache, dialogs: syncDialogs,
-    });
+    const summary = state
+      ? await sync.applySnapshotState(state, {
+          profiles, prefs, deviceId: _syncDeviceIdCache, dialogs: syncDialogs,
+        })
+      : await sync.restoreSnapshot(id, {
+          profiles, prefs, deviceId: _syncDeviceIdCache, dialogs: syncDialogs,
+        });
     migrateLegacyFolderColors();
     normalizeWorkspaceColors();
     applySyncedUserFolders();
@@ -3454,6 +3474,7 @@ function savePrefsFromModal() {
     rightClickPaste: document.getElementById("pref-right-click-paste").checked,
     confirmRiskyPaste: document.getElementById("pref-confirm-risky-paste")?.checked ?? true,
     strictHostKey:     document.getElementById("pref-strict-host-key")?.checked ?? true,
+    hostKeyChangePrompt: document.getElementById("pref-hostkey-change-prompt")?.checked ?? true,
     strictFtpsCert:    document.getElementById("pref-strict-ftps-cert")?.checked ?? true,
     onWakeAction:      document.getElementById("pref-on-wake")?.value || "check",
     shareCommandHistory: !!document.getElementById("pref-share-command-history")?.checked,
@@ -4938,10 +4959,13 @@ function initWakeWatcher() {
 // no hay UI: aquí solo se le comunica la preferencia y se atiende la pregunta
 // que emite cuando encuentra una clave desconocida.
 
-/** Comunica al backend si hay que confirmar la huella en la primera conexión. */
+/** Comunica al backend si hay que confirmar la huella en la primera conexión
+ * y si hay que preguntar cuando la clave de un host conocido CAMBIA. */
 function applyHostKeyPolicy() {
   invoke("set_host_key_policy", { strict: prefs.strictHostKey !== false })
     .catch((e) => console.error("[hostkey] set policy", e));
+  invoke("set_host_key_change_policy", { prompt: prefs.hostKeyChangePrompt !== false })
+    .catch((e) => console.error("[hostkey] set change policy", e));
 }
 
 /** Igual para el certificado TLS de un servidor FTPS (TOFU por huella). */
@@ -4994,18 +5018,44 @@ async function initHostKeyPrompt() {
     EVENT.hostKeyPrompt,
     async (/** @type {{ payload: HostKeyPromptEvent }} */ event) => {
       const p = event.payload || {};
-      const accept = await confirmThemed({
-        title: t("modal_hostkey.title"),
-        message: [
-          t("modal_hostkey.intro", { host: p.host, port: p.port }),
-          "",
-          t("modal_hostkey.fingerprint", { type: p.keyType, fingerprint: p.fingerprint }),
-          "",
-          t("modal_hostkey.advice"),
-        ].join("\n"),
-        submitLabel: t("modal_hostkey.accept"),
-        danger: true,
-      });
+      let accept;
+      if (p.changed) {
+        // La clave de un host YA CONOCIDO ha cambiado: diálogo de peligro con
+        // las huellas registradas y la recibida. Aceptar reemplaza la entrada
+        // de known_hosts (lo hace el backend) y la conexión continúa.
+        const previous = (p.previous || [])
+          .map((e) => t("modal_hostkey_changed.previous_line", {
+            line: e.line,
+            fingerprint: e.fingerprint,
+          }))
+          .join("\n");
+        accept = await confirmThemed({
+          title: t("modal_hostkey_changed.title"),
+          message: [
+            t("modal_hostkey_changed.intro", { host: p.host, port: p.port }),
+            "",
+            previous,
+            t("modal_hostkey_changed.received", { type: p.keyType, fingerprint: p.fingerprint }),
+            "",
+            t("modal_hostkey_changed.advice"),
+          ].join("\n"),
+          submitLabel: t("modal_hostkey_changed.accept"),
+          danger: true,
+        });
+      } else {
+        accept = await confirmThemed({
+          title: t("modal_hostkey.title"),
+          message: [
+            t("modal_hostkey.intro", { host: p.host, port: p.port }),
+            "",
+            t("modal_hostkey.fingerprint", { type: p.keyType, fingerprint: p.fingerprint }),
+            "",
+            t("modal_hostkey.advice"),
+          ].join("\n"),
+          submitLabel: t("modal_hostkey.accept"),
+          danger: true,
+        });
+      }
       try {
         await invoke("ssh_hostkey_response", { promptId: p.promptId, accept });
       } catch (e) {
@@ -6094,6 +6144,15 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   menu.querySelectorAll(".ctx-promote-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "connection" || !canPromote)
   );
+  // «Acceso sin contraseña»: perfiles SSH con contraseña y sin ProxyJump (el
+  // asistente instala la clave en el destino directo; los saltos, más adelante).
+  const canKeyAccess = !!ctxProfile
+    && (ctxProfile.connection_type || "ssh") === "ssh"
+    && (ctxProfile.auth_type || "password") === "password"
+    && !(ctxProfile.proxy_jump || "").trim();
+  menu.querySelectorAll(".ctx-keyaccess-only").forEach((el) =>
+    el.classList.toggle("hidden", type !== "connection" || !canKeyAccess)
+  );
   // «Ejecutar script…» solo tiene sentido sobre conexiones SSH.
   const canScript = !!ctxProfile && (ctxProfile.connection_type || "ssh") === "ssh";
   menu.querySelectorAll(".ctx-script-only").forEach((el) =>
@@ -6307,6 +6366,9 @@ function handleContextMenuAction(action) {
       break;
     case "promote-master":
       if (id) promoteProfilePasswordToMaster(id);
+      break;
+    case "key-access":
+      if (id) setupKeyAccessForProfile(id);
       break;
     case "toggle-favorite":
       if (id) toggleFavoriteProfile(id);
@@ -8766,6 +8828,72 @@ function identityView(profile, cred) {
  * adicional elegida o null para la principal.
  * Devuelve { password, passphrase } o null si el usuario canceló.
  */
+/**
+ * Asistente de «acceso sin contraseña» (equivalente integrado de ssh-copy-id):
+ * garantiza la clave local (`~/.ssh/id_ed25519`, se genera si falta), la
+ * instala en el `authorized_keys` del servidor autenticando con la contraseña
+ * actual del perfil, VERIFICA reconectando con la clave y, solo entonces,
+ * cambia el perfil a autenticación por clave. Opcionalmente añade un bloque
+ * `Host` a `~/.ssh/config` (nunca pisa entradas existentes).
+ * @param {string} profileId
+ */
+async function setupKeyAccessForProfile(profileId) {
+  const profile = profiles.find((p) => p.id === profileId);
+  if (!profile) return;
+  const ok = await confirmThemed({
+    title: t("key_setup.title"),
+    message: t("key_setup.intro", { name: profile.name, host: profile.host }),
+    submitLabel: t("key_setup.submit"),
+  });
+  if (!ok) return;
+  // Opcional (elige el usuario): alias en ~/.ssh/config para el ssh de la
+  // terminal. Cancelar = no tocar el config; el asistente sigue igual.
+  const writeConfig = await confirmThemed({
+    title: t("key_setup.config_title"),
+    message: t("key_setup.config_msg"),
+    submitLabel: t("key_setup.config_yes"),
+  });
+  const creds = await resolveSshCredentials(profile);
+  if (!creds) return;
+  toast(t("key_setup.working"), "info", 6000);
+  try {
+    const report = await invoke("ssh_setup_key_access", {
+      profileId,
+      password: creds.password || null,
+      passphrase: creds.passphrase || null,
+      askAnswers: null,
+      writeSshConfig: writeConfig,
+    });
+    if (report.verified) {
+      // Verificado de verdad: el perfil pasa a autenticar por clave.
+      const updated = {
+        ...profile,
+        auth_type: "public_key",
+        key_path: report.keyPath,
+        updated_at: new Date().toISOString(),
+      };
+      await invoke("save_profile", { profile: updated });
+      profiles[profiles.findIndex((x) => x.id === profile.id)] = updated;
+      scheduleProfileAutoSync();
+      renderConnectionList();
+      toast(t("key_setup.done_verified", { path: report.keyPath }), "success", 8000);
+    } else {
+      // Instalada pero sin verificar: el perfil NO se toca (honestidad ante
+      // todo); el usuario puede reintentar o revisar el motivo.
+      toast(
+        `${t("key_setup.done_unverified")}${report.verifyError ? ` (${report.verifyError})` : ""}`,
+        "warning",
+        10000
+      );
+    }
+    if (report.sshConfigAdded) {
+      toast(t("key_setup.config_added", { alias: report.alias || "" }), "success", 7000);
+    }
+  } catch (err) {
+    toast(`${t("key_setup.failed")}: ${err}`, "error", 9000);
+  }
+}
+
 async function resolveSshCredentials(profile, cred = null) {
   const view = identityView(profile, cred);
   // Etiqueta para los prompts: el perfil con el usuario de la identidad.
@@ -9244,6 +9372,69 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
     sessions.delete(sessionId);
     removeTab(sessionId);
     toast(`No se pudo conectar: ${err}`, "error");
+  }
+}
+
+/**
+ * «Nueva pestaña en esta conexión» (F0.3): abre una shell adicional sobre la
+ * conexión SSH ya autenticada de `fromSessionId` — sin handshake, sin volver a
+ * pedir contraseña ni MFA. La nueva pestaña es una sesión lógica normal
+ * (entrada, resize, cierre y eventos con su propio id); keepalive, monitor y
+ * túneles viven en la conexión, es decir, en la pestaña raíz.
+ * @param {string} fromSessionId
+ */
+async function openShellInConnection(fromSessionId) {
+  const from = sessions.get(fromSessionId);
+  if (!from || from.type !== "ssh" || !from.profileId) return;
+  // Si se pide desde una pestaña que ya es hija, la conexión es la de su raíz:
+  // la nueva shell nace como hermana y el cierre en cadena queda coherente.
+  const rootId = from._parentSessionId || fromSessionId;
+  const root = sessions.get(rootId);
+  if (!root || root.status !== "connected") {
+    toast(t("shell_child.root_not_connected"), "warning");
+    return;
+  }
+
+  const profile = profiles.find((p) => p.id === from.profileId);
+  if (!profile) return;
+  const sessionId = `ssh-${crypto.randomUUID()}`;
+  // Sufijo ·N para distinguir las shells de la misma conexión en las pestañas
+  // (la raíz es la 1). Solo el nombre visible; el alias por sesión sigue libre.
+  const siblings = [...sessions.values()].filter((c) => c._parentSessionId === rootId).length;
+  const tabProfile = { ...profile, name: `${profile.name} ·${siblings + 2}` };
+  createTerminalTab(sessionId, tabProfile, "connecting", { private: from.private, credId: from.credentialId || null });
+  const session = sessions.get(sessionId);
+  session._parentSessionId = rootId;
+
+  try {
+    const dataChannel = new Channel();
+    session.unlisteners = await registerSshListeners(sessionId, session.terminal, dataChannel);
+    if (session._closing) {
+      for (const ul of session.unlisteners) { try { ul(); } catch {} }
+      sessions.delete(sessionId);
+      removeTab(sessionId);
+      return;
+    }
+    await invoke("ssh_open_shell", {
+      parentSessionId: rootId,
+      sessionId,
+      onData: dataChannel,
+      cols: session.terminal.cols,
+      rows: session.terminal.rows,
+    });
+    if (session._closing) {
+      await invoke("ssh_disconnect", { sessionId }).catch(() => {});
+      for (const ul of session.unlisteners) { try { ul(); } catch {} }
+      sessions.delete(sessionId);
+      removeTab(sessionId);
+      return;
+    }
+    setActiveTab(sessionId);
+  } catch (err) {
+    for (const ul of session?.unlisteners || []) { try { ul(); } catch {} }
+    sessions.delete(sessionId);
+    removeTab(sessionId);
+    toast(`${t("shell_child.open_failed")}: ${err}`, "error");
   }
 }
 
@@ -10439,6 +10630,10 @@ async function reconnectSshInPlace(s) {
   for (const ul of s.unlisteners) { try { ul(); } catch {} }
   s.unlisteners = [];
   s.status = "connecting";
+  // Si era una shell hija (su conexión murió), reconectar la PROMOCIONA a
+  // conexión propia: `ssh_connect` con su mismo id abre una sesión completa,
+  // así que deja de ser hija a todos los efectos (guards, cierre, monitor).
+  delete s._parentSessionId;
   updateTabStatus(oldSessionId, "connecting");
   appendConnectionLog(oldSessionId, {
     stage: "reconnecting",
@@ -10639,6 +10834,13 @@ function renderStatusMetrics(s) {
 function updateMetricsToggle(s) {
   const btn = document.getElementById("status-metrics-toggle");
   if (!btn) return;
+  // Shell hija: el monitor es de la conexión y sus muestras llegan bajo el id
+  // de la pestaña raíz — el toggle aquí solo pisaría la cadencia de la raíz.
+  if (s?._parentSessionId) {
+    btn.classList.add("hidden");
+    updateMetricsExpandBtn(s);
+    return;
+  }
   btn.classList.remove("hidden");
   const on = !!s?._metricsOn;
   btn.classList.toggle("active", on);
@@ -10653,6 +10855,11 @@ function updateMetricsToggle(s) {
 function updateMetricsExpandBtn(s) {
   const btn = document.getElementById("status-metrics-expand");
   if (!btn) return;
+  // Shell hija: sin monitor propio (ver `updateMetricsToggle`).
+  if (s?._parentSessionId) {
+    btn.classList.add("hidden");
+    return;
+  }
   btn.classList.remove("hidden");
   const open = !!s?._metricsPanelOpen;
   btn.classList.toggle("active", open);
@@ -12339,7 +12546,7 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     document
       .querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`)
       ?.classList.remove("has-unread-disconnect");
-    if (s?.profileId && !s.private) recordRecentConnection(s.profileId);
+    if (s?.profileId && !s.private && !s._parentSessionId) recordRecentConnection(s.profileId);
     renderConnectionList();
     s?.fitAddon.fit();
     // El PTY recién abierto pudo crearse con un tamaño ya desfasado si el
@@ -12352,11 +12559,16 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
       const dir = s._initialDir.replace(/'/g, `'\\''`);
       invoke("ssh_send_input", { sessionId, data: ` cd '${dir}'\r` }).catch(() => {});
     }
-    startProfileAutoTunnels(sessionId);
-    // Monitor de recursos: auto-arranque si el usuario lo dejó activado por
-    // defecto, o si ya estaba encendido en esta sesión (sobrevive al reconnect).
-    if (s && (prefs.metricsEnabled || s._metricsOn)) {
-      setSessionMetrics(sessionId, true);
+    // Una shell hija comparte la conexión de su raíz: los túneles automáticos
+    // y el monitor son de la CONEXIÓN (ya los gestiona la pestaña raíz);
+    // relanzarlos aquí los duplicaría o pisaría su cadencia.
+    if (!s?._parentSessionId) {
+      startProfileAutoTunnels(sessionId);
+      // Monitor de recursos: auto-arranque si el usuario lo dejó activado por
+      // defecto, o si ya estaba encendido en esta sesión (sobrevive al reconnect).
+      if (s && (prefs.metricsEnabled || s._metricsOn)) {
+        setSessionMetrics(sessionId, true);
+      }
     }
   }));
 
@@ -12562,9 +12774,14 @@ async function confirmCloseSession(sessionId) {
   const transfers = sessionHasActiveTransfers(s)
     ? "\n\nHay transferencias SFTP en curso que se cancelarán."
     : "";
+  // Cerrar una pestaña raíz cierra su conexión, y con ella caen las shells
+  // hijas abiertas sobre ella («Nueva pestaña en esta conexión»): avisarlo.
+  const liveChildren = [...sessions.values()]
+    .filter((c) => c._parentSessionId === sessionId && isSessionLive(c)).length;
+  const children = liveChildren > 0 ? `\n\n${t("shell_child.close_children_warning")}` : "";
   return confirmThemed({
     title: "Cerrar pestaña",
-    message: `La conexión "${name}" sigue abierta. ¿Cerrar la pestaña y desconectar?${transfers}`,
+    message: `La conexión "${name}" sigue abierta. ¿Cerrar la pestaña y desconectar?${transfers}${children}`,
     submitLabel: "Cerrar y desconectar",
     danger: true,
   });
@@ -13859,6 +14076,13 @@ function extractScriptAsks(script) {
  * lanzar sobre un objetivo distinto del guardado (menú contextual).
  */
 async function beginScriptRun(script, targetOverride = null) {
+  // Con un run vivo en segundo plano, abrir otro lo dejaría huérfano (los
+  // listeners comparan contra `scriptRunState`): se recupera el que corre.
+  if (scriptRunState && !scriptRunState.finished && !scriptRunState.readonly) {
+    toast(t("scripts.bg_running"), "warning");
+    restoreScriptRun();
+    return;
+  }
   const target = targetOverride || script.target;
   const profileIds = resolveTarget(target, scriptEligibleProfiles());
   if (!profileIds.length) {
@@ -13890,6 +14114,7 @@ async function beginScriptRun(script, targetOverride = null) {
   document.getElementById("script-run-cred-password").value = "";
   document.getElementById("script-run-setup")?.classList.remove("hidden");
   document.getElementById("script-run-status")?.classList.add("hidden");
+  document.getElementById("btn-script-run-minimize")?.classList.add("hidden");
   document.getElementById("script-run-overlay")?.classList.remove("hidden");
   renderScriptRunPreview();
   await renderScriptRunCredControls();
@@ -14176,6 +14401,7 @@ async function startScriptRun(script, profileIds, options) {
           .querySelectorAll("#script-run-hosts [data-script-run-abort]")
           .forEach((b) => { b.disabled = true; });
         updateScriptRunFooter(run);
+        updateScriptRunIndicator();
         saveScriptRunToHistory(run).catch(() => {});
         if (ok === total) toast(t("scripts.done_toast_ok", { n: total }), "success");
         else toast(t("scripts.done_toast_err", { ok, total }), "warning", 6000);
@@ -14190,6 +14416,8 @@ async function startScriptRun(script, profileIds, options) {
 
   document.getElementById("script-run-setup")?.classList.add("hidden");
   document.getElementById("script-run-status")?.classList.remove("hidden");
+  // Con el run ya corriendo, el modal puede mandarse a segundo plano.
+  document.getElementById("btn-script-run-minimize")?.classList.remove("hidden");
   document.getElementById("script-run-summary-line").textContent = "";
   updateScriptRunFooter(run);
   renderScriptRunHosts();
@@ -14208,6 +14436,7 @@ async function startScriptRun(script, profileIds, options) {
     // volver a la fase de opciones para poder reintentar
     document.getElementById("script-run-setup")?.classList.remove("hidden");
     document.getElementById("script-run-status")?.classList.add("hidden");
+    document.getElementById("btn-script-run-minimize")?.classList.add("hidden");
   }
 }
 
@@ -14311,6 +14540,8 @@ function scriptHostBadge(h) {
 /** Refresco puntual de la fila de un host (sin re-render completo). */
 function updateScriptHostRow(run, profileId) {
   if (scriptRunState !== run) return;
+  // Con el modal en segundo plano, la barra flotante es la vista visible.
+  updateScriptRunIndicator();
   const row = document.querySelector(
     `#script-run-hosts .script-run-host[data-profile-id="${cssAttrEscape(profileId)}"]`
   );
@@ -14353,6 +14584,59 @@ async function abortScriptRun(profileId = null) {
   }
 }
 
+/** Run minimizado a la barra flotante (el run sigue vivo; solo cambia la UI). */
+let scriptRunMinimized = false;
+
+/**
+ * Manda el run en curso a segundo plano: se oculta el modal SIN tocar el run
+ * (los listeners siguen actualizando el estado y las filas ocultas) y la barra
+ * flotante muestra el progreso. Petición de usuario (2026-08-01): poder seguir
+ * usando el terminal mientras un script se ejecuta.
+ */
+function minimizeScriptRun() {
+  if (!scriptRunState || scriptRunState.readonly) return;
+  scriptRunMinimized = true;
+  document.getElementById("script-run-overlay")?.classList.add("hidden");
+  document.getElementById("script-run-bar")?.classList.remove("hidden");
+  updateScriptRunIndicator();
+}
+
+/** Recupera el modal del run desde la barra flotante. */
+function restoreScriptRun() {
+  scriptRunMinimized = false;
+  document.getElementById("script-run-bar")?.classList.add("hidden");
+  if (scriptRunState) document.getElementById("script-run-overlay")?.classList.remove("hidden");
+}
+
+/** Refresca la barra flotante del run en segundo plano (si está minimizado). */
+function updateScriptRunIndicator() {
+  if (!scriptRunMinimized) return;
+  const run = scriptRunState;
+  const bar = document.getElementById("script-run-bar");
+  if (!run || !bar) return;
+  const title = document.getElementById("script-run-bar-title");
+  if (title) title.textContent = run.script?.name || t("scripts.run_title");
+  const hosts = [...run.hosts.values()];
+  const done = hosts.filter((h) => h.status === "ok" || h.status === "error").length;
+  const failed = hosts.filter((h) => h.status === "error").length;
+  bar.classList.toggle("run-ok", run.finished && failed === 0);
+  bar.classList.toggle("run-error", failed > 0);
+  const progress = document.getElementById("script-run-bar-progress");
+  if (!progress) return;
+  if (run.finished) {
+    progress.textContent = t("scripts.done_summary", { ok: run.okCount, total: run.total });
+  } else if (run.total === 1 && hosts[0]) {
+    // Un solo host: el paso concreto dice más que «0/1 hosts».
+    const h = hosts[0];
+    progress.textContent = t("scripts.bg_step", {
+      step: Math.min(h.stepIndex + 1, Math.max(h.totalSteps, 1)),
+      total: Math.max(h.totalSteps, 1),
+    });
+  } else {
+    progress.textContent = t("scripts.bg_hosts", { done, total: run.total });
+  }
+}
+
 async function closeScriptRunModal() {
   const run = scriptRunState;
   // "Terminado" = el backend lo confirmó (`finished`) o todos los hosts ya
@@ -14375,6 +14659,8 @@ async function closeScriptRunModal() {
   }
   scriptRunState = null;
   scriptRunSetup = null;
+  scriptRunMinimized = false;
+  document.getElementById("script-run-bar")?.classList.add("hidden");
   document.getElementById("script-run-overlay")?.classList.add("hidden");
 }
 
@@ -14554,6 +14840,8 @@ function openHistoryRun(record) {
   document.getElementById("script-run-title").textContent = record.scriptName || t("scripts.run_title");
   document.getElementById("script-run-setup")?.classList.add("hidden");
   document.getElementById("script-run-status")?.classList.remove("hidden");
+  // Vista de historial: no hay nada corriendo que mandar a segundo plano.
+  document.getElementById("btn-script-run-minimize")?.classList.add("hidden");
   document.getElementById("script-run-summary-line").textContent =
     t("scripts.done_summary", { ok: run.summary.ok, total: run.summary.total });
   document.getElementById("script-run-overlay")?.classList.remove("hidden");
@@ -14762,6 +15050,8 @@ function initScriptsUi() {
   });
 
   // Modal de ejecución
+  document.getElementById("btn-script-run-minimize")?.addEventListener("click", () => minimizeScriptRun());
+  document.getElementById("btn-script-run-restore")?.addEventListener("click", () => restoreScriptRun());
   document.getElementById("btn-script-run-close")?.addEventListener("click", () => closeScriptRunModal());
   document.getElementById("btn-script-run-cancel")?.addEventListener("click", () => closeScriptRunModal());
   document.getElementById("btn-script-run-done")?.addEventListener("click", () => closeScriptRunModal());
@@ -24004,11 +24294,22 @@ function showTabContextMenu(x, y, sessionId) {
     && !ctxSession._closeOverride;
   menu.querySelector(".tabctx-dup-overrides")?.classList.toggle("hidden", !canDupOverrides);
 
+  // «Nueva pestaña en esta conexión» (F0.3): SSH con perfil y con la conexión
+  // viva — la suya, o la de su raíz si esta pestaña ya es una shell hija.
+  const shellRoot = ctxSession?._parentSessionId
+    ? sessions.get(ctxSession._parentSessionId)
+    : ctxSession;
+  const canNewShell = ctxSession?.type === "ssh" && !!ctxSession.profileId
+    && !ctxSession._closeOverride && shellRoot?.status === "connected";
+  menu.querySelector(".tabctx-new-shell")?.classList.toggle("hidden", !canNewShell);
+
   // "Mantener sesión activa" (keepalive): solo en sesiones SSH. El label y el
-  // check reflejan el estado actual de la sesión (`_keepAliveSecs`).
+  // check reflejan el estado actual de la sesión (`_keepAliveSecs`). En una
+  // shell hija se oculta: el keepalive es de la conexión (pestaña raíz).
   const kaItem = menu.querySelector(".tabctx-keepalive");
   if (kaItem) {
-    const isSsh = ctxSession?.type === "ssh" && !ctxSession._closeOverride;
+    const isSsh = ctxSession?.type === "ssh" && !ctxSession._closeOverride
+      && !ctxSession._parentSessionId;
     kaItem.classList.toggle("hidden", !isSsh);
     if (isSsh) {
       const on = (ctxSession._keepAliveSecs || 0) > 0;
@@ -24145,6 +24446,10 @@ async function handleTabContextAction(action) {
   if (action === "duplicate-overrides") {
     const s = sessions.get(targetId);
     if (s?.profileId && s.type === "ssh") duplicateSessionWithOverrides(s.profileId);
+    return;
+  }
+  if (action === "new-shell") {
+    await openShellInConnection(targetId);
     return;
   }
   if (action === "view-add") {
