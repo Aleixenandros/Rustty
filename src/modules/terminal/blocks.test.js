@@ -6,6 +6,7 @@ import {
   blockAt,
   nextBlock,
   pruneBlocksBefore,
+  removeBlock,
 } from "./blocks.js";
 
 describe("handleOsc133", () => {
@@ -101,5 +102,12 @@ describe("consultas", () => {
     // El bloque abierto sobrevive aunque su prompt quede por encima.
     expect(pruneBlocksBefore(s, 9999)).toBe(1);
     expect(s.blocks.map((b) => b.id)).toEqual([3]);
+  });
+
+  it("removeBlock retira por id y comunica si existía", () => {
+    const s = tracker();
+    expect(removeBlock(s, 2)).toBe(true);
+    expect(s.blocks.map((b) => b.id)).toEqual([1, 3]);
+    expect(removeBlock(s, 2)).toBe(false);
   });
 });

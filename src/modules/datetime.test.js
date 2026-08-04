@@ -1,6 +1,6 @@
 // @ts-check
 import { describe, it, expect } from "vitest";
-import { formatTime, formatRelativeTimeShort } from "./datetime.js";
+import { formatDashboardTime, formatTime, formatRelativeTimeShort } from "./datetime.js";
 
 // Reloj fijo dentro de 2026 para las comparaciones de año.
 const NOW = Date.parse("2026-06-15T12:00:00Z");
@@ -60,5 +60,25 @@ describe("formatRelativeTimeShort", () => {
       .toBe("time.minutes_ago:59");
     expect(formatRelativeTimeShort(new Date(NOW - 60 * 60_000).toISOString(), t, { now: NOW }))
       .toBe("time.hours_ago:1");
+  });
+});
+
+describe("formatDashboardTime", () => {
+  const t = (key, params) => (params ? `${key}:${params.n}` : key);
+
+  it("traduce la ausencia de actividad y las fechas inválidas", () => {
+    expect(formatDashboardTime(null, t, { now: NOW })).toBe("dashboard.no_activity");
+    expect(formatDashboardTime("mal", t, { now: NOW })).toBe("dashboard.no_activity");
+  });
+
+  it("reutiliza el tiempo relativo durante la última semana", () => {
+    expect(formatDashboardTime(new Date(NOW - 3 * 3600_000).toISOString(), t, { now: NOW }))
+      .toBe("time.hours_ago:3");
+  });
+
+  it("usa una fecha localizada para actividad más antigua", () => {
+    const value = "2025-01-02T12:00:00Z";
+    expect(formatDashboardTime(value, t, { now: NOW, locale: "en-CA" }))
+      .toBe(new Date(value).toLocaleDateString("en-CA"));
   });
 });

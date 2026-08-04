@@ -1,10 +1,17 @@
 # KeePass
 
-Rustty puede leer bases KeePass `.kdbx` para resolver contraseñas sin copiarlas a los perfiles.
+Rustty reúne en **Preferencias → Credenciales** las tres fuentes reutilizables:
+credenciales locales protegidas por el keyring, bases KeePass y variables de
+texto. Cada fuente conserva su almacenamiento y sus reglas de seguridad; la
+sección común solo evita repartirlas por menús distintos.
+
+La cabecera muestra el número de credenciales locales y si KeePass está
+bloqueado o desbloqueado. Usa **←/→**, **Inicio** y **Fin** para recorrer las
+vistas **Locales / KeePass / Variables** con el teclado.
 
 ## Desbloquear una base
 
-En **Preferencias → KeePass** selecciona:
+En **Preferencias → Credenciales → KeePass** selecciona:
 
 - Ruta del fichero `.kdbx`.
 - Contraseña maestra.
@@ -14,7 +21,8 @@ La base se descifra en memoria y queda disponible hasta que la bloquees, abras o
 
 ## Bloqueo automático
 
-Por defecto la base permanece abierta mientras la app lo esté. En **Preferencias → KeePass** puedes hacer que se cierre sola:
+Por defecto la base permanece abierta mientras la app lo esté. En
+**Preferencias → Credenciales → KeePass** puedes hacer que se cierre sola:
 
 - **Bloqueo automático**: `Nunca` (por defecto) o tras `5`, `15`, `30` o `60` minutos **sin usarla**. Junto al estado verás cuánto queda para el cierre.
 - **Bloquear al suspender el equipo** (activado por defecto): si cierras el portátil con la base abierta, al despertar la encuentras bloqueada.

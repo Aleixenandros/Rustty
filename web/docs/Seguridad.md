@@ -43,9 +43,18 @@ Un script ejecuta comandos reales en tus servidores: revisa la previsualización
 
 ## Credenciales maestras y variables
 
-En **Preferencias → Credenciales** puedes definir dos tipos reutilizables entre perfiles: **credenciales maestras** y **variables de texto**. Una credencial maestra (contraseña o token) se guarda una sola vez en el keyring del sistema y se referencia con `${master:nombre}`; el perfil guarda únicamente la referencia, nunca el valor, así que **rotar** la credencial actualiza a la vez todos los perfiles que la usan. Las variables (`${var:nombre}`) son texto plano y sirven para reutilizar valores comunes como un dominio o un usuario.
+En **Preferencias → Credenciales** puedes gestionar las tres fuentes en un solo
+lugar: **Locales**, **KeePass** y **Variables**. Una credencial maestra local
+(contraseña o token) se guarda una sola vez en el keyring del sistema y se
+referencia con `${master:nombre}`; el perfil guarda únicamente la referencia,
+nunca el valor, así que **rotar** la credencial actualiza a la vez todos los
+perfiles que la usan. Las variables (`${var:nombre}`) son texto plano y sirven
+para reutilizar valores comunes como un dominio o un usuario. La vista KeePass
+mantiene su base cifrada y su ciclo de bloqueo independientes.
 
-La lista se organiza en dos pestañas (**Maestras** y **Variables**); cada fila muestra su variable de referencia, que se **copia al portapapeles al pulsarla**.
+Cada fila local o de variable muestra su referencia, que se **copia al
+portapapeles al pulsarla**. La cabecera resume el número de credenciales locales
+y el estado de bloqueo de KeePass.
 
 En el formulario de conexión, el selector **Origen de la contraseña** permite elegir entre *Contraseña propia*, *Credencial maestra* o *KeePass*. También puedes **promover** la contraseña propia de un perfil a credencial maestra desde su menú contextual.
 

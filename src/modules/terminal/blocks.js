@@ -40,7 +40,10 @@ export function createBlockTracker(maxBlocks = 1000) {
   return { blocks: [], nextId: 1, maxBlocks: Math.max(1, maxBlocks) };
 }
 
-/** Último bloque sin cerrar, si lo hay. @param {BlockTracker} state */
+/**
+ * Último bloque sin cerrar, si lo hay.
+ * @param {BlockTracker} state
+ */
 function openBlock(state) {
   const last = state.blocks[state.blocks.length - 1];
   return last && last.endLine === null ? last : null;
@@ -147,4 +150,18 @@ export function pruneBlocksBefore(state, line) {
   const before = state.blocks.length;
   state.blocks = state.blocks.filter((b) => b.endLine === null || b.endLine >= line);
   return before - state.blocks.length;
+}
+
+/**
+ * Retira un bloque por su identificador estable. El wiring con xterm lo usa
+ * cuando el `Marker` correspondiente sale del scrollback y se dispone.
+ * @param {BlockTracker} state
+ * @param {number} id
+ * @returns {boolean} `true` si existía.
+ */
+export function removeBlock(state, id) {
+  const index = state.blocks.findIndex((block) => block.id === id);
+  if (index < 0) return false;
+  state.blocks.splice(index, 1);
+  return true;
 }

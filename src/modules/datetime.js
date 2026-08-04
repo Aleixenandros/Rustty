@@ -55,3 +55,30 @@ export function formatRelativeTimeShort(iso, t, { now = Date.now() } = {}) {
   const d = Math.floor(h / 24);
   return t("time.days_ago", { n: d });
 }
+
+/**
+ * Fecha de última conexión para el dashboard. Durante la última semana usa el
+ * mismo formato relativo traducido que la sincronización; después muestra una
+ * fecha absoluta localizada. Los valores ausentes o corruptos nunca filtran el
+ * antiguo literal castellano: pasan por i18n.
+ *
+ * @param {unknown} value
+ * @param {(key: string, params?: Record<string, unknown>) => string} t
+ * @param {{ now?: number, locale?: string }} [opts]
+ * @returns {string}
+ */
+export function formatDashboardTime(
+  value,
+  t,
+  { now = Date.now(), locale = undefined } = {},
+) {
+  if (!value) return t("dashboard.no_activity");
+  const date = new Date(/** @type {string|number|Date} */ (value));
+  if (!Number.isFinite(date.getTime())) return t("dashboard.no_activity");
+  const diff = now - date.getTime();
+  if (diff < 7 * 86_400_000) {
+    return formatRelativeTimeShort(date.toISOString(), t, { now })
+      || t("dashboard.no_activity");
+  }
+  return date.toLocaleDateString(locale);
+}

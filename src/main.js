@@ -44,10 +44,29 @@ import { formatSize, formatDuration, formatSftpPermissions, formatSftpPermission
 import { escHtml } from "./modules/html.js";
 import { clampUiZoom } from "./modules/num.js";
 import { baseSlugifyThemeId } from "./modules/text.js";
-import { formatTime, formatRelativeTimeShort } from "./modules/datetime.js";
+import { formatTime, formatRelativeTimeShort, formatDashboardTime } from "./modules/datetime.js";
 import { formatAccelerator } from "./modules/platform.js";
+import { compareVersions } from "./modules/version.js";
+import {
+  groupActivityByDay,
+  normalizeActivityItem,
+  serializableActivityItem,
+} from "./modules/activity.js";
+import {
+  createTransferConflictState,
+  nextAvailableTransferName,
+  normalizeSftpConflictPolicy,
+  recursiveConflictPolicyForTransfer as recursiveConflictPolicy,
+} from "./modules/sftp-conflicts.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
 import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
+import { tabIndexForKey } from "./modules/tab-navigation.js";
+import {
+  createBlockTracker,
+  handleOsc133,
+  nextBlock,
+  removeBlock,
+} from "./modules/terminal/blocks.js";
 import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { defaultHighlightRules, compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
@@ -1632,17 +1651,34 @@ function playBellSound() {
 let prefsActiveTab = "terminal";
 
 function switchPrefsTab(tab) {
+  const legacyCredentialView = tab === "keepass" ? "keepass" : null;
   if (tab === "sync") tab = "data";
+  if (tab === "keepass") tab = "credentials";
   prefsActiveTab = tab;
   cancelShortcutCapture();
-  document.querySelectorAll(".prefs-nav-item").forEach((el) =>
-    el.classList.toggle("active", el.dataset.prefsTab === tab)
-  );
-  document.querySelectorAll(".prefs-panel").forEach((el) =>
-    el.classList.toggle("active", el.dataset.prefsPanel === tab)
-  );
-  // Refrescar la lista de credenciales al entrar en su pestaña.
-  if (tab === "credentials") renderCredList();
+  document.querySelectorAll(".prefs-nav-item").forEach((el) => {
+    const name = el.dataset.prefsTab;
+    const active = name === tab;
+    const panel = document.querySelector(`.prefs-panel[data-prefs-panel="${name}"]`);
+    const tabId = `prefs-tab-${name}`;
+    const panelId = `prefs-panel-${name}`;
+    el.id = tabId;
+    el.setAttribute("aria-controls", panelId);
+    el.setAttribute("aria-selected", active ? "true" : "false");
+    el.setAttribute("tabindex", active ? "0" : "-1");
+    el.classList.toggle("active", active);
+    if (panel) {
+      panel.id = panelId;
+      panel.setAttribute("aria-labelledby", tabId);
+      panel.classList.toggle("active", active);
+      panel.hidden = !active;
+    }
+  });
+  // KeePass fue una pestaña lateral hasta v1.66. Las aperturas antiguas se
+  // redirigen a su vista dentro de Credenciales.
+  if (tab === "credentials") {
+    switchCredentialView(legacyCredentialView || _credentialView);
+  }
   // Refrescar snippets y comandos locales al entrar en "Comandos".
   if (tab === "commands") {
     renderSnippetList();
@@ -3045,22 +3081,6 @@ async function populateAboutVersion() {
   }
 }
 
-function normalizeVersion(version) {
-  return String(version || "").trim().replace(/^v/i, "");
-}
-
-function compareVersions(a, b) {
-  const pa = normalizeVersion(a).split(/[.-]/).map((part) => parseInt(part, 10) || 0);
-  const pb = normalizeVersion(b).split(/[.-]/).map((part) => parseInt(part, 10) || 0);
-  const len = Math.max(pa.length, pb.length, 3);
-  for (let i = 0; i < len; i++) {
-    const va = pa[i] || 0;
-    const vb = pb[i] || 0;
-    if (va !== vb) return va > vb ? 1 : -1;
-  }
-  return 0;
-}
-
 function setAboutUpdateStatus(text, type = "") {
   const el = document.getElementById("about-update-status");
   if (!el) return;
@@ -3257,33 +3277,6 @@ function activityTime(value) {
   });
 }
 
-function normalizeActivityItem(item) {
-  if (!item || typeof item !== "object" || !item.title) return null;
-  const timestamp = new Date(item.timestamp);
-  return {
-    id: String(item.id || crypto.randomUUID()),
-    kind: String(item.kind || "toast").slice(0, 40),
-    status: String(item.status || "info").slice(0, 40),
-    title: String(item.title).slice(0, 500),
-    detail: item.detail ? String(item.detail).slice(0, 2000) : "",
-    actionLabel: item.actionLabel ? String(item.actionLabel).slice(0, 80) : "",
-    action: typeof item.action === "function" ? item.action : null,
-    timestamp: Number.isFinite(timestamp.getTime()) ? timestamp.toISOString() : new Date().toISOString(),
-  };
-}
-
-function serializableActivityItem(item) {
-  return {
-    id: item.id,
-    kind: item.kind,
-    status: item.status,
-    title: item.title,
-    detail: item.detail,
-    actionLabel: item.actionLabel,
-    timestamp: item.timestamp,
-  };
-}
-
 function loadActivityHistory() {
   try {
     const raw = JSON.parse(localStorage.getItem(ACTIVITY_HISTORY_STORAGE_KEY) || "[]");
@@ -3318,35 +3311,6 @@ function _persistActivityHistoryNow() {
   } catch (err) {
     console.warn("[activity] could not persist history", err);
   }
-}
-
-/**
- * Devuelve la lista de entradas del centro de actividad agrupada por día
- * relativo: "Hoy", "Ayer", "Esta semana" (3-7 días) y fechas absolutas
- * para todo lo anterior.
- */
-function groupActivityByDay(items) {
-  const dayMs = 24 * 60 * 60 * 1000;
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const groups = new Map();
-  for (const it of items) {
-    const ts = it.timestamp ? new Date(it.timestamp).getTime() : Date.now();
-    const dayStart = new Date(new Date(ts).getFullYear(), new Date(ts).getMonth(), new Date(ts).getDate()).getTime();
-    const diffDays = Math.round((startOfToday - dayStart) / dayMs);
-    let key, label;
-    if (diffDays <= 0) { key = "today"; label = t("activity.today"); }
-    else if (diffDays === 1) { key = "yesterday"; label = t("activity.yesterday"); }
-    else if (diffDays < 7) { key = "week"; label = t("activity.this_week"); }
-    else {
-      key = `d${dayStart}`;
-      // Fecha absoluta localizada según el idioma activo.
-      label = new Date(dayStart).toLocaleDateString(getLanguage());
-    }
-    if (!groups.has(key)) groups.set(key, { label, sort: dayStart, items: [] });
-    groups.get(key).items.push(it);
-  }
-  return [...groups.values()].sort((a, b) => b.sort - a.sort);
 }
 
 function recordActivity({ kind = "toast", status = "info", title, detail = "", actionLabel = "", action = null } = {}) {
@@ -3399,7 +3363,7 @@ function renderActivityCenter() {
   }
   // Agrupar por día relativo (Hoy / Ayer / Esta semana / fecha) para que la
   // lista no sea un muro indistinguible cuando hay >100 entradas.
-  const groups = groupActivityByDay(visible);
+  const groups = groupActivityByDay(visible, { t, locale: getLanguage() });
   list.innerHTML = groups.map((g) => `
     <div class="activity-group-header">${escHtml(g.label)}</div>
     ${g.items.map((item) => `
@@ -3647,6 +3611,7 @@ async function refreshKeepassStatus() {
     keepassUnlocked = false;
   }
   const label = document.getElementById("keepass-status-label");
+  const summary = document.getElementById("credential-keepass-summary");
   const btnUnlock = document.getElementById("btn-keepass-unlock");
   const btnLock = document.getElementById("btn-keepass-lock");
   if (!label) {
@@ -3654,16 +3619,26 @@ async function refreshKeepassStatus() {
     return;
   }
   if (keepassUnlocked) {
-    label.textContent = "Desbloqueada";
+    label.textContent = t("prefs_keepass.unlocked");
     label.classList.remove("locked");
     label.classList.add("unlocked");
+    if (summary) {
+      summary.textContent = t("prefs_keepass.unlocked");
+      summary.classList.remove("locked");
+      summary.classList.add("unlocked");
+    }
     btnUnlock.classList.add("hidden");
     btnLock.classList.remove("hidden");
     try { keepassEntries = await invoke("keepass_list_entries"); } catch { keepassEntries = []; }
   } else {
-    label.textContent = "Bloqueada";
+    label.textContent = t("prefs_keepass.locked");
     label.classList.remove("unlocked");
     label.classList.add("locked");
+    if (summary) {
+      summary.textContent = t("prefs_keepass.locked");
+      summary.classList.remove("unlocked");
+      summary.classList.add("locked");
+    }
     btnUnlock.classList.remove("hidden");
     btnLock.classList.add("hidden");
     keepassEntries = [];
@@ -5102,21 +5077,6 @@ function dashboardProfileHost(profile) {
   return `${user}${profile.host}${port}`;
 }
 
-function formatDashboardTime(value) {
-  if (!value) return "Sin actividad";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Sin actividad";
-  const diff = Date.now() - date.getTime();
-  const minute = 60 * 1000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  if (diff < minute) return "Ahora";
-  if (diff < hour) return `Hace ${Math.max(1, Math.floor(diff / minute))} min`;
-  if (diff < day) return `Hace ${Math.floor(diff / hour)} h`;
-  if (diff < 7 * day) return `Hace ${Math.floor(diff / day)} d`;
-  return date.toLocaleDateString();
-}
-
 function dashboardProtocol(profile) {
   return (profile.connection_type || "ssh").toUpperCase();
 }
@@ -5336,7 +5296,7 @@ function renderDashboardResultRow(profile, lastConnectedAt) {
         <div class="dashboard-result-name">${escHtml(profile.name)}</div>
         <div class="dashboard-result-meta">${escHtml(dashboardProfileHost(profile))} · ${escHtml(profile.group || "Sin carpeta")}</div>
       </div>
-      <span class="dashboard-result-time">${escHtml(formatDashboardTime(lastConnectedAt))}</span>
+      <span class="dashboard-result-time">${escHtml(formatDashboardTime(lastConnectedAt, t, { locale: getLanguage() }))}</span>
       <button class="dashboard-connect" data-dashboard-connect="${escHtml(profile.id)}">Conectar</button>
     </div>`;
 }
@@ -5346,7 +5306,7 @@ function renderDashboardActivityRow(profile, lastConnectedAt) {
   return `
     <div class="dashboard-activity-row" role="button" tabindex="0" data-profile-id="${escHtml(profile.id)}">
       <span class="dashboard-activity-name">${escHtml(profile.name)}</span>
-      <span class="dashboard-activity-meta">${escHtml(proto)} · ${escHtml(formatDashboardTime(lastConnectedAt))}</span>
+      <span class="dashboard-activity-meta">${escHtml(proto)} · ${escHtml(formatDashboardTime(lastConnectedAt, t, { locale: getLanguage() }))}</span>
     </div>`;
 }
 
@@ -12154,6 +12114,11 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     tunnelPanel: null,
     connectionLogs: [],
     connectionLogOpen: false,
+    // Bloques semánticos OSC 133 y sus anclas vivas en el scrollback. Los
+    // Marker actualizan su línea al podar xterm; el tracker aporta navegación
+    // y estado de comando sin acoplar ese dominio al terminal gráfico.
+    commandBlocks: createBlockTracker(),
+    commandBlockMarkers: new Map(),
     // Identidad adicional usada para conectar (`ProfileCredential.id`) o null si
     // se usó la principal. Lo consulta «pegar contraseña» (Ctrl+P).
     credentialId: credId,
@@ -12191,9 +12156,8 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
 
   // OSC 133 (FinalTerm semantic prompts): A=prompt start, B=command start,
   // C=output start, D[;code]=command end. bash/zsh/fish modernos los
-  // emiten cuando están configurados; Rustty marca la línea del prompt
-  // actual con una franja izquierda de 2 px usando una decoración del
-  // marker correspondiente. Slice estético #15.
+  // emiten cuando están configurados; Rustty retiene los bloques vivos del
+  // scrollback, marca sus prompts y permite navegar entre ellos.
   terminal.parser.registerOscHandler(133, (data) => {
     const kind = (data || "")[0];
     // Estado semántico para blindar OSC 7 (ver el handler de OSC 7): mientras
@@ -12217,15 +12181,37 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
       }
       sessionObj._cmdStartTs = null;
     }
+
+    // Los Marker de xterm son la fuente de verdad después de que el scrollback
+    // haya expulsado líneas: sincronizamos sus posiciones antes de incorporar
+    // el marcador OSC nuevo, cuya línea usa el mismo sistema de coordenadas.
+    for (const block of sessionObj.commandBlocks.blocks) {
+      const entry = sessionObj.commandBlockMarkers.get(block.id);
+      if (entry?.marker && !entry.marker.isDisposed) block.promptLine = entry.marker.line;
+    }
+    const line = terminal.buffer.active.baseY + terminal.buffer.active.cursorY;
+    handleOsc133(sessionObj.commandBlocks, data, line);
+
+    // `maxBlocks` puede desalojar el más antiguo aunque su Marker siga vivo.
+    // Liberamos en paralelo su decoración para que las dos retenciones nunca
+    // diverjan ni crezcan sin límite.
+    const retainedIds = new Set(sessionObj.commandBlocks.blocks.map((block) => block.id));
+    for (const [id, entry] of sessionObj.commandBlockMarkers) {
+      if (retainedIds.has(id)) continue;
+      sessionObj.commandBlockMarkers.delete(id);
+      entry.decoration?.dispose?.();
+      entry.marker?.dispose?.();
+    }
+
     if (kind === "A") {
       try {
-        // Dispose del marker/decoración previos.
-        sessionObj._oscPromptDecoration?.dispose?.();
-        sessionObj._oscPromptMarker?.dispose?.();
+        const block = sessionObj.commandBlocks.blocks.at(-1);
         const marker = terminal.registerMarker(0);
-        if (!marker) return true;
-        sessionObj._oscPromptMarker = marker;
-        sessionObj._oscPromptDecoration = terminal.registerDecoration({
+        if (!block || !marker) {
+          if (block) removeBlock(sessionObj.commandBlocks, block.id);
+          return true;
+        }
+        const decoration = terminal.registerDecoration({
           marker,
           width: 1,
           height: 1,
@@ -12233,8 +12219,16 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
           layer: "top",
           backgroundColor: undefined,
         });
-        if (sessionObj._oscPromptDecoration) {
-          sessionObj._oscPromptDecoration.onRender((el) => {
+        sessionObj.commandBlockMarkers.set(block.id, { marker, decoration });
+        marker.onDispose(() => {
+          const current = sessionObj.commandBlockMarkers.get(block.id);
+          if (current?.marker !== marker) return;
+          sessionObj.commandBlockMarkers.delete(block.id);
+          current.decoration?.dispose?.();
+          removeBlock(sessionObj.commandBlocks, block.id);
+        });
+        if (decoration) {
+          decoration.onRender((el) => {
             el.classList.add("osc133-prompt-decoration");
           });
         }
@@ -12243,8 +12237,6 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
         console.debug("[osc133]", err);
       }
     }
-    // B/C/D no necesitan acción visual ahora; futuras iteraciones podrían
-    // medir tiempo de comando o capturar bloques.
     return true;
   });
 
@@ -15099,11 +15091,46 @@ function initScriptsUi() {
   });
 }
 
-// ─── Credenciales: maestras, variables y secretos (Preferencias) ─────────
+// ─── Credenciales locales, KeePass y variables (Preferencias) ────────────
 // Estado del editor: id de la credencial en edición (null = alta nueva).
 let _credEditId = null;
-// Tipo seleccionado en el filtro de la lista (master | var | secret).
+// Tipo predeterminado al abrir el editor desde una vista de catálogo.
 let _credFilter = "master";
+// Vista interna de Preferencias → Credenciales (master | keepass | var).
+let _credentialView = "master";
+
+/**
+ * Cambia entre credenciales locales, KeePass y variables sin mezclar sus
+ * modelos de almacenamiento. Mantiene semántica de tabs y navegación por
+ * teclado para el control segmentado.
+ *
+ * @param {unknown} requestedView
+ * @param {{ focus?: boolean }} [options]
+ */
+function switchCredentialView(requestedView, { focus = false } = {}) {
+  const view = ["master", "keepass", "var"].includes(String(requestedView))
+    ? String(requestedView)
+    : "master";
+  _credentialView = view;
+  document.querySelectorAll("[data-credential-view-tab]").forEach((tab) => {
+    const active = tab.dataset.credentialViewTab === view;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+    tab.setAttribute("tabindex", active ? "0" : "-1");
+    if (active && focus) tab.focus();
+  });
+  document.querySelectorAll("[data-credential-view]").forEach((panel) => {
+    const active = panel.dataset.credentialView === view;
+    panel.classList.toggle("active", active);
+    panel.hidden = !active;
+  });
+  if (view === "master" || view === "var") {
+    _credFilter = view;
+    renderCredList();
+  } else {
+    refreshKeepassStatus();
+  }
+}
 
 /** Construye el marcador `${<kind>:nombre}` para previsualización y copia. */
 function credVar(kind, name) {
@@ -15117,54 +15144,63 @@ function credEmptyKey(kind) {
   return "prefs_credentials.empty";
 }
 
-/** Carga el catálogo y pinta la lista del tipo activo (master/var/secret). */
+/** Carga una vez el catálogo y pinta las listas locales y de variables. */
 async function renderCredList() {
-  const list = document.getElementById("cred-list");
-  if (!list) return;
+  const lists = [...document.querySelectorAll("[data-cred-list]")];
+  if (!lists.length) return;
   let creds;
   try {
     creds = await invoke("master_cred_list");
   } catch (err) {
-    list.innerHTML = `<div class="tunnel-empty">${escHtml(String(err))}</div>`;
+    lists.forEach((list) => {
+      list.innerHTML = `<div class="tunnel-empty">${escHtml(String(err))}</div>`;
+    });
     return;
   }
-  const items = (creds || []).filter((c) => c.kind === _credFilter);
-  if (!items.length) {
-    list.innerHTML = `<div class="tunnel-empty">${escHtml(t(credEmptyKey(_credFilter)))}</div>`;
-    return;
+  const localCount = document.getElementById("credential-local-count");
+  if (localCount) {
+    localCount.textContent = String((creds || []).filter((credential) => credential.kind === "master").length);
   }
-  list.innerHTML = items
-    .map((c) => {
-      const varText = credVar(c.kind, c.name);
-      // Descripción o, en variables (no secretas), su valor de texto.
-      const descText = c.description
-        ? c.description
-        : (c.kind === "var" && c.value ? "= " + c.value : "");
-      const desc = descText
-        ? `<span class="cred-desc" title="${escHtml(descText)}">${escHtml(descText)}</span>`
-        : "";
-      const badge = `<span class="cred-kind-badge">${escHtml(t("prefs_credentials.badge_" + c.kind))}</span>`;
-      return `
-        <div class="cred-row" data-cred-id="${escHtml(c.id)}" data-cred-name="${escHtml(c.name)}" data-cred-kind="${escHtml(c.kind)}">
-          <div class="cred-row-top">
-            <span class="cred-name" title="${escHtml(c.name)}">${escHtml(c.name)}</span>
-            ${badge}
-            ${desc}
-            <span class="cred-row-actions">
-              <button type="button" class="global-tunnel-action" data-cred-action="edit">${escHtml(t("prefs_credentials.edit"))}</button>
-              <button type="button" class="global-tunnel-action danger" data-cred-action="delete">${escHtml(t("prefs_credentials.delete"))}</button>
-            </span>
-          </div>
-          <button type="button" class="cred-var" data-cred-action="copy" title="${escHtml(t("prefs_credentials.copy_var"))}">
-            <code>${escHtml(varText)}</code>
-          </button>
-        </div>`;
-    })
-    .join("");
+  lists.forEach((list) => {
+    const kind = list.dataset.credList || "master";
+    const items = (creds || []).filter((credential) => credential.kind === kind);
+    if (!items.length) {
+      list.innerHTML = `<div class="tunnel-empty">${escHtml(t(credEmptyKey(kind)))}</div>`;
+      return;
+    }
+    list.innerHTML = items
+      .map((credential) => {
+        const varText = credVar(credential.kind, credential.name);
+        // Descripción o, en variables (no secretas), su valor de texto.
+        const descText = credential.description
+          ? credential.description
+          : (credential.kind === "var" && credential.value ? "= " + credential.value : "");
+        const desc = descText
+          ? `<span class="cred-desc" title="${escHtml(descText)}">${escHtml(descText)}</span>`
+          : "";
+        const badge = `<span class="cred-kind-badge">${escHtml(t("prefs_credentials.badge_" + credential.kind))}</span>`;
+        return `
+          <div class="cred-row" data-cred-id="${escHtml(credential.id)}" data-cred-name="${escHtml(credential.name)}" data-cred-kind="${escHtml(credential.kind)}">
+            <div class="cred-row-top">
+              <span class="cred-name" title="${escHtml(credential.name)}">${escHtml(credential.name)}</span>
+              ${badge}
+              ${desc}
+              <span class="cred-row-actions">
+                <button type="button" class="global-tunnel-action" data-cred-action="edit">${escHtml(t("prefs_credentials.edit"))}</button>
+                <button type="button" class="global-tunnel-action danger" data-cred-action="delete">${escHtml(t("prefs_credentials.delete"))}</button>
+              </span>
+            </div>
+            <button type="button" class="cred-var" data-cred-action="copy" title="${escHtml(t("prefs_credentials.copy_var"))}">
+              <code>${escHtml(varText)}</code>
+            </button>
+          </div>`;
+      })
+      .join("");
+  });
 }
 
 /** Abre el editor de credencial. `cred` null = alta; objeto = edición. */
-function openCredEditModal(cred = null) {
+function openCredEditModal(cred = null, defaultKind = _credFilter) {
   const overlay = document.getElementById("cred-edit-overlay");
   if (!overlay) return;
   _credEditId = cred ? cred.id : null;
@@ -15179,7 +15215,7 @@ function openCredEditModal(cred = null) {
 
   // Tipo: en alta se elige libremente (default = filtro activo); en edición es
   // fijo (cambiar el tipo movería el valor entre keyring y catálogo).
-  const kind = cred ? cred.kind : _credFilter;
+  const kind = cred ? cred.kind : defaultKind;
   if (kindSelect) {
     kindSelect.value = kind;
     kindSelect.disabled = !!cred;
@@ -17876,10 +17912,7 @@ function transferDirectionLabel(direction) {
 }
 
 function recursiveConflictPolicyForTransfer(resolved) {
-  if (resolved?.renamed) return "overwrite";
-  if (resolved?.overwrite) return "overwrite";
-  const policy = normalizeSftpConflictPolicy(prefs.sftpConflictPolicy);
-  return policy === "ask" ? "overwrite" : policy;
+  return recursiveConflictPolicy(resolved, prefs.sftpConflictPolicy);
 }
 
 async function transferSelected(sessionId, direction) {
@@ -17986,20 +18019,6 @@ function retrySftpTransfer(sessionId, transferId) {
   processSftpQueue(sessionId);
 }
 
-function createTransferConflictState() {
-  return {
-    policy: null,
-    reservedNames: {
-      local: new Set(),
-      remote: new Set(),
-    },
-  };
-}
-
-function normalizeSftpConflictPolicy(policy) {
-  return ["ask", "overwrite", "skip", "rename"].includes(policy) ? policy : "ask";
-}
-
 /** Modo de pegado de contraseña con broadcast activo, saneado. Default: "all". */
 function normalizePastePasswordBroadcast(mode) {
   return ["all", "active", "ask"].includes(mode) ? mode : "all";
@@ -18032,18 +18051,13 @@ function reserveDestinationName(side, name, conflictState = null) {
 }
 
 function autoRenameTransferName(sessionId, side, name, isDir, conflictState = null) {
-  const dot = !isDir ? name.lastIndexOf(".") : -1;
-  const hasExt = dot > 0 && dot < name.length - 1;
-  const base = hasExt ? name.slice(0, dot) : name;
-  const ext = hasExt ? name.slice(dot) : "";
-  for (let i = 1; i < 10_000; i += 1) {
-    const candidate = `${base} (${i})${ext}`;
-    if (!destinationNameExists(sessionId, side, candidate, conflictState)) {
-      reserveDestinationName(side, candidate, conflictState);
-      return candidate;
-    }
-  }
-  return `${base} (${Date.now()})${ext}`;
+  const candidate = nextAvailableTransferName(
+    name,
+    isDir,
+    (value) => destinationNameExists(sessionId, side, value, conflictState),
+  );
+  reserveDestinationName(side, candidate, conflictState);
+  return candidate;
 }
 
 async function promptSftpTransferConflict(name, targetSide, isDir) {
@@ -20700,6 +20714,15 @@ function bindUIEvents() {
   document.querySelectorAll(".prefs-nav-item").forEach((btn) => {
     btn.addEventListener("click", () => switchPrefsTab(btn.dataset.prefsTab));
   });
+  document.querySelector(".prefs-nav")?.addEventListener("keydown", (e) => {
+    const tabs = [...document.querySelectorAll(".prefs-nav-item")];
+    const current = tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+    const next = tabIndexForKey(current, tabs.length, e.key);
+    if (next === null) return;
+    e.preventDefault();
+    switchPrefsTab(tabs[next].dataset.prefsTab);
+    tabs[next].focus();
+  });
 
   // Atajos de teclado: delegación sobre la lista
   const shortcutsList = document.getElementById("shortcuts-list");
@@ -20872,21 +20895,29 @@ function bindUIEvents() {
       }
     });
 
-  // Credenciales (Preferencias → Credenciales): master / var / secret
-  document.getElementById("btn-cred-add")
-    ?.addEventListener("click", () => openCredEditModal(null));
-  document.getElementById("cred-filter")
+  // Credenciales (Preferencias → Credenciales): locales / KeePass / variables.
+  document.getElementById("credential-source-tabs")
     ?.addEventListener("click", (e) => {
-      const btn = e.target.closest("[data-cred-filter]");
+      const btn = e.target.closest("[data-credential-view-tab]");
       if (!btn) return;
-      _credFilter = btn.dataset.credFilter;
-      document.querySelectorAll("#cred-filter [data-cred-filter]").forEach((b) => {
-        b.classList.toggle("active", b === btn);
-      });
-      renderCredList();
+      switchCredentialView(btn.dataset.credentialViewTab);
     });
-  document.getElementById("cred-list")
+  document.getElementById("credential-source-tabs")
+    ?.addEventListener("keydown", (e) => {
+      const tabs = [...document.querySelectorAll("[data-credential-view-tab]")];
+      const current = tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+      const next = tabIndexForKey(current, tabs.length, e.key);
+      if (next === null) return;
+      e.preventDefault();
+      switchCredentialView(tabs[next]?.dataset.credentialViewTab, { focus: true });
+    });
+  document.getElementById("credential-source-content")
     ?.addEventListener("click", async (e) => {
+      const addBtn = e.target.closest("[data-cred-add]");
+      if (addBtn) {
+        openCredEditModal(null, addBtn.dataset.credAdd || "master");
+        return;
+      }
       const btn = e.target.closest("[data-cred-action]");
       if (!btn) return;
       const row = btn.closest("[data-cred-id]");
@@ -22241,6 +22272,40 @@ function initCommandsAndPalette() {
   });
 }
 
+/**
+ * Desplaza el terminal activo al prompt OSC 133 anterior/siguiente.
+ * Devuelve false cuando no hay destino para que el atajo siga llegando al
+ * programa remoto (importante en shells sin integración o TUIs con alt-screen).
+ * @param {1|-1} direction
+ */
+function navigateCommandBlock(direction) {
+  const session = activeSessionId ? sessions.get(activeSessionId) : null;
+  const terminal = session?.terminal;
+  const tracker = session?.commandBlocks;
+  const markers = session?.commandBlockMarkers;
+  if (!terminal || !tracker || !markers || terminal.buffer.active.type === "alternate") return false;
+
+  for (const block of tracker.blocks) {
+    const entry = markers.get(block.id);
+    if (entry?.marker && !entry.marker.isDisposed) block.promptLine = entry.marker.line;
+  }
+
+  const fromLine = terminal.buffer.active.viewportY;
+  let target = nextBlock(tracker, fromLine, direction);
+  while (target) {
+    const entry = markers.get(target.id);
+    if (entry?.marker && !entry.marker.isDisposed && entry.marker.line >= 0) {
+      terminal.scrollToLine(entry.marker.line);
+      terminal.focus();
+      return true;
+    }
+    markers.delete(target.id);
+    removeBlock(tracker, target.id);
+    target = nextBlock(tracker, fromLine, direction);
+  }
+  return false;
+}
+
 const SHORTCUT_ACTIONS = {
   paste_terminal:    { default: "Ctrl+Alt+V",     run: () => pasteIntoActiveTerminal() },
   copy_terminal:     { default: "Ctrl+Alt+C",     run: () => copyActiveSelection() },
@@ -22254,6 +22319,8 @@ const SHORTCUT_ACTIONS = {
   prev_tab:          { default: "Ctrl+Shift+Tab", run: () => switchTab(-1) },
   next_pane:         { default: "Ctrl+Alt+ArrowRight", run: () => focusPaneByOffset(+1) },
   prev_pane:         { default: "Ctrl+Alt+ArrowLeft",  run: () => focusPaneByOffset(-1) },
+  prev_command_block:{ default: "Alt+ArrowUp",    run: () => navigateCommandBlock(-1) },
+  next_command_block:{ default: "Alt+ArrowDown",  run: () => navigateCommandBlock(1) },
   open_preferences:  { default: "Ctrl+,",         run: () => openSettingsModal() },
   zoom_in:           { default: "Ctrl+=",         run: () => adjustTerminalFontSize(+1) },
   zoom_out:          { default: "Ctrl+-",         run: () => adjustTerminalFontSize(-1) },
@@ -22389,9 +22456,13 @@ function handleGlobalShortcut(e) {
       // (por ejemplo el input de búsqueda de la sidebar), no como atajo global.
       if (SHORTCUT_ACTIONS[id].scope) continue;
       if (getShortcut(id) === candidate) {
+        // Las acciones condicionales (hoy, la navegación OSC 133) devuelven
+        // `false` cuando no tienen destino: no secuestramos entonces la tecla
+        // que necesita el shell o TUI remoto.
+        const handled = SHORTCUT_ACTIONS[id].run();
+        if (handled === false) return;
         e.preventDefault();
         e.stopPropagation();
-        SHORTCUT_ACTIONS[id].run();
         return;
       }
     }

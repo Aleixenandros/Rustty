@@ -39,7 +39,16 @@ Todos los atajos son **configurables** desde **Preferencias → Atajos**. Pulsa 
 | `Ctrl+Alt+-`   | Disminuir tamaño de la UI                           |
 | `Ctrl+Alt+0`   | Restablecer tamaño de la UI                         |
 | `Ctrl+Shift+R` | Reconectar la sesión activa                         |
+| `Alt+↑`        | Ir al bloque de comando anterior (OSC 133)          |
+| `Alt+↓`        | Ir al bloque de comando siguiente (OSC 133)         |
 | _(sin asignar)_ | Limpiar la línea del prompt en SSH y consola local |
+
+La navegación por bloques funciona cuando el shell remoto emite los marcadores
+semánticos **OSC 133**. Rustty ancla cada prompt al scrollback y salta entre
+ellos sin perder su posición aunque se poden líneas antiguas. Si no hay un
+bloque al que ir —o estás dentro de una aplicación de pantalla completa—,
+Rustty no consume `Alt+↑/↓`: las teclas llegan al servidor con normalidad. Las
+dos combinaciones se pueden cambiar o desactivar como cualquier otro atajo.
 
 «Limpiar la línea del prompt» vacía de un tirón lo que tengas escrito en la línea de edición del shell (envía `Ctrl+A` + `Ctrl+K`, así borra toda la línea sin importar dónde esté el cursor). No trae combinación por defecto a propósito: `Ctrl+U` —el atajo nativo del shell para borrar hasta el inicio— lo usan también programas de pantalla completa como `vim` o `less`, así que Rustty te deja elegir tú la tecla desde **Preferencias → Atajos**. Recuerda que `Ctrl+U`, `Ctrl+K` y `Ctrl+W` siguen funcionando de forma nativa dentro del shell.
 
@@ -85,6 +94,11 @@ Dentro del buscador, `Esc` limpia el texto y restablece la lista; un segundo `Es
 El capturador detecta cualquier combinación de **Ctrl / Alt / Shift / Meta** más una tecla final, y normaliza el código de tecla independientemente del layout del teclado (ES / EN / FR). En macOS, `Ctrl` se muestra como `Cmd` en la interfaz pero internamente sigue siendo la misma combinación.
 
 Si un atajo entra en conflicto con otro ya asignado, Rustty te avisa con un toast pero deja que decidas: puedes mantener el conflicto (uno de los dos no funcionará) o elegir una combinación distinta.
+
+Dentro de **Preferencias**, las secciones laterales forman una lista de
+pestañas accesible: **↑/↓** o **←/→** cambian de sección, e **Inicio/Fin** saltan
+a los extremos. El foco y los estados `aria-selected` acompañan siempre a la
+sección visible.
 
 ## Exportar / importar
 

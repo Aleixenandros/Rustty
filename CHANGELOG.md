@@ -2,6 +2,44 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.67.0] - 2026-08-05
+
+### Añadido
+
+- **Navegación entre bloques de comando**: cuando el shell ofrece marcadores
+  OSC 133, Rustty conserva cada prompt como un bloque del scrollback y permite
+  saltar al anterior o siguiente con `Alt+↑` / `Alt+↓`. Los atajos son
+  configurables y no secuestran la tecla si no hay destino o una aplicación de
+  pantalla completa está usando el terminal.
+
+### Cambiado
+
+- **KeePass vive ahora dentro de Preferencias → Credenciales**: las fuentes
+  Locales, KeePass y Variables comparten una única sección con selector interno,
+  recuento de credenciales y estado de bloqueo, sin mezclar sus almacenamientos
+  ni ciclos de seguridad.
+- **Preferencias es más accesible con teclado y lector de pantalla**: sus
+  secciones exponen pestaña/panel asociados, selección y foco correctos, y se
+  recorren con flechas, Inicio y Fin.
+- **Menor superficie en la aplicación final**: Tauri elimina de la build los
+  comandos de plugins que Rustty no autoriza ni utiliza.
+
+### Corregido
+
+- Las fechas relativas del dashboard ya usan el idioma activo.
+- La comparación de versiones del actualizador ordena correctamente
+  prereleases y metadatos SemVer, y el estado de KeePass ya no vuelve a
+  castellano al refrescarse.
+
+### Interno
+
+- La agrupación del centro de actividad, la resolución de conflictos SFTP, la
+  comparación SemVer, los bloques OSC 133 y la navegación de pestañas tienen
+  núcleos puros con pruebas de regresión.
+- Dependencias de build y runtime actualizadas a `actions/checkout@v7`,
+  `actions/setup-node@v7`, `@xterm/addon-ligatures` 0.11.0,
+  `@xterm/addon-web-links` 0.12.0 y `serde_json` 1.0.143.
+
 ## [1.66.0] - 2026-08-01
 
 ### Añadido

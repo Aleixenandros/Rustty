@@ -5261,6 +5261,58 @@ body.overlay-scrollbars ::-webkit-scrollbar-thumb:hover {
   font-size: 11px;
 }
 
+/* Selector interno de las fuentes de credenciales. KeePass conserva su ciclo
+   de vida independiente, pero ya no ocupa una categoría lateral propia. */
+.credential-source-tabs {
+  margin-bottom: 16px;
+}
+
+.credential-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 14px;
+}
+
+.credential-overview-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--surface1);
+  border-radius: var(--radius-pill);
+  background: var(--mantle);
+  color: var(--subtext0);
+  font-size: 11px;
+}
+
+.credential-overview-item strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.credential-overview-item strong.unlocked {
+  color: var(--green);
+}
+
+.credential-overview-item strong.locked {
+  color: var(--red);
+}
+
+.credential-source-view {
+  display: none;
+}
+
+.credential-source-view.active {
+  display: block;
+}
+
+.credential-source-title {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 /* Legacy wrapper retained in case some code still references it */
 .settings-body {
   overflow-y: auto;
@@ -8651,11 +8703,10 @@ body.zen-mode #zen-exit-btn {
   width: 100%;
 }
 
-/* ─── OSC 133 prompt highlight — slice estético #15 ────────────
-   Decoración aplicada al marker del último prompt detectado.
-   xterm la ancla a la línea: pintamos una franja izquierda 2 px
-   en el acento principal para que el usuario localice de un
-   vistazo dónde empieza el prompt actual. */
+/* ─── Bloques de comando OSC 133 ───────────────────────────────
+   Decoración aplicada a cada prompt detectado que sigue vivo en el
+   scrollback. xterm la ancla a la línea y Rustty permite recorrer esos
+   bloques con los atajos configurables Alt+↑/Alt+↓. */
 .osc133-prompt-decoration {
   width: 2px !important;
   background: var(--blue);

@@ -29,6 +29,7 @@
   - Integración nativa con el keyring del sistema (Secret Service/KWallet en Linux, macOS Keychain, Windows Credential Store).
   - Soporte para bases de datos **KeePass** (`.kdbx`) como fuente de contraseñas.
   - **Credenciales maestras** reutilizables: define una contraseña una vez y refiérela desde varios perfiles con `${master:nombre}`; el valor vive solo en el keyring y rotarlo actualiza todos los perfiles que la usan. Forma parte de un **motor de variables** (`${host}`, `${env:…}`, `${var:…}`, `${ask:…}`) que se resuelve al conectar, también en campos como el host o el usuario.
+  - Gestión unificada en **Preferencias → Credenciales**, con vistas separadas para credenciales locales, KeePass y variables; unifica el acceso sin mezclar sus almacenamientos.
   - Atajo `Ctrl+P` para pegar la contraseña del perfil activo (la del **usuario con el que se conectó** la sesión, si se usó un usuario adicional) sin exponerla en pantalla. Con *broadcast* activo no se bloquea: una preferencia decide si se difunde a todas las panes, solo a la activa o se pregunta (ver pestaña Seguridad).
   - **Pestaña Seguridad** en Preferencias que centraliza las opciones sensibles bajo un principio claro —nunca bloquear, siempre ofrecer opciones— incluyendo el pegado de contraseña con *broadcast*, la confirmación de pegados peligrosos, el guardado de pantalla, la gestión de `known_hosts` y la retención de logs.
   - **Sesión privada / efímera** ("Abrir en privado" desde el menú del perfil): no deja rastro en recientes, centro de actividad, borradores ni grabación de sesión, y la pestaña se marca como privada.
@@ -82,7 +83,11 @@ Rustty incluye un **editor de atajos** en Preferencias → *Atajos* que permite 
 | `Ctrl+Shift+P`                 | Abrir la paleta de comandos global                     |
 | `Ctrl+K`                       | Buscar conexiones desde cualquier vista                |
 | `Ctrl+F`                       | Buscar dentro del buffer del terminal                  |
+| `Alt+↑` / `Alt+↓`             | Bloque de comando OSC 133 anterior / siguiente         |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Aumentar / disminuir / restablecer el tamaño de fuente |
+
+La navegación por bloques solo consume `Alt+↑/↓` cuando el shell emite OSC 133
+y existe un destino; en caso contrario las teclas siguen llegando al remoto.
 
 ## CLI SSH
 

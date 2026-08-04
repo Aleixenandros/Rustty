@@ -490,6 +490,7 @@ export const DICTIONARIES = {
     dashboard: {
       pinned_title: "Anclados",
       open_sftp: "Abrir SFTP",
+      no_activity: "Sin actividad",
     },
     tabctx: {
       duplicate: "Duplicar pestaña",
@@ -809,7 +810,6 @@ export const DICTIONARIES = {
       tab_terminal: "Terminal",
       tab_appearance: "Apariencia",
       tab_transfer: "FTP/SFTP",
-      tab_keepass: "KeePass",
       tab_credentials: "Credenciales",
       tab_security: "Seguridad",
       tab_data: "Copias de seguridad",
@@ -1027,19 +1027,26 @@ export const DICTIONARIES = {
     prefs_credentials: {
       title: "Credenciales",
       hint_html:
-        "Define contraseñas o tokens maestros y variables de texto reutilizables entre perfiles. Refiérelos en los campos de un perfil (host, usuario, contraseña…) con <code>${master:nombre}</code> o <code>${var:nombre}</code>. Las maestras se guardan cifradas en el keyring y nunca se muestran; las variables son texto plano.",
+        "Gestiona credenciales locales, KeePass y variables reutilizables desde un único lugar. Cada fuente conserva su almacenamiento y su ciclo de seguridad.",
+      source_label: "Fuente o tipo de credencial",
+      source_local: "Locales",
+      source_keepass: "KeePass",
+      source_variables: "Variables",
+      local_title: "Credenciales locales",
+      local_hint_html:
+        "Guarda contraseñas o tokens reutilizables en el keyring del sistema y refiérelos con <code>${master:nombre}</code>. El valor nunca se incluye en el catálogo de Rustty.",
+      variables_title: "Variables",
+      variables_hint_html:
+        "Guarda valores de texto no secretos para reutilizarlos con <code>${var:nombre}</code> en perfiles, snippets y comandos.",
       warn_shared:
         "Reutilizar una misma credencial en varios hosts implica que, si se compromete, quedan afectados todos a la vez.",
-      warn_distinct:
-        "Nota: esto NO es la passphrase de sincronización ni la contraseña maestra de KeePass. Son conceptos distintos.",
       list_label: "Credenciales",
-      filter_master: "Maestras",
-      filter_var: "Variables",
-      filter_secret: "Secretos",
+      variables_list_label: "Variables",
       badge_master: "Maestra",
       badge_var: "Variable",
       badge_secret: "Secreto",
       add: "Añadir credencial…",
+      add_var: "Añadir variable…",
       empty: "Aún no hay credenciales maestras.",
       empty_var: "Aún no hay variables.",
       empty_secret: "Aún no hay secretos.",
@@ -1408,6 +1415,8 @@ export const DICTIONARIES = {
       action_prev_tab:         "Pestaña anterior",
       action_next_pane:        "Pane siguiente",
       action_prev_pane:        "Pane anterior",
+      action_prev_command_block: "Bloque de comando anterior",
+      action_next_command_block: "Bloque de comando siguiente",
       action_open_preferences: "Abrir preferencias",
       action_zoom_in:          "Aumentar tamaño de fuente",
       action_zoom_out:         "Disminuir tamaño de fuente",
@@ -2078,6 +2087,7 @@ export const DICTIONARIES = {
     dashboard: {
       pinned_title: "Pinned",
       open_sftp: "Open SFTP",
+      no_activity: "No activity",
     },
     tabctx: {
       duplicate: "Duplicate tab",
@@ -2397,7 +2407,6 @@ export const DICTIONARIES = {
       tab_terminal: "Terminal",
       tab_appearance: "Appearance",
       tab_transfer: "FTP/SFTP",
-      tab_keepass: "KeePass",
       tab_credentials: "Credentials",
       tab_security: "Security",
       tab_data: "Backups",
@@ -2615,19 +2624,26 @@ export const DICTIONARIES = {
     prefs_credentials: {
       title: "Credentials",
       hint_html:
-        "Define master passwords or tokens and reusable text variables shared across profiles. Reference them in a profile's fields (host, user, password…) with <code>${master:name}</code> or <code>${var:name}</code>. Master credentials are stored encrypted in the keyring and never shown; variables are plain text.",
+        "Manage local credentials, KeePass, and reusable variables in one place. Each source keeps its own storage and security lifecycle.",
+      source_label: "Credential source or type",
+      source_local: "Local",
+      source_keepass: "KeePass",
+      source_variables: "Variables",
+      local_title: "Local credentials",
+      local_hint_html:
+        "Store reusable passwords or tokens in the system keyring and reference them with <code>${master:name}</code>. The value is never included in Rustty's catalog.",
+      variables_title: "Variables",
+      variables_hint_html:
+        "Store non-secret text values and reuse them with <code>${var:name}</code> in profiles, snippets, and commands.",
       warn_shared:
         "Reusing the same credential across several hosts means that, if it is compromised, all of them are affected at once.",
-      warn_distinct:
-        "Note: this is NOT the sync passphrase nor the KeePass master password. They are different concepts.",
       list_label: "Credentials",
-      filter_master: "Master",
-      filter_var: "Variables",
-      filter_secret: "Secrets",
+      variables_list_label: "Variables",
       badge_master: "Master",
       badge_var: "Variable",
       badge_secret: "Secret",
       add: "Add credential…",
+      add_var: "Add variable…",
       empty: "No master credentials yet.",
       empty_var: "No variables yet.",
       empty_secret: "No secrets yet.",
@@ -2996,6 +3012,8 @@ export const DICTIONARIES = {
       action_prev_tab:         "Previous tab",
       action_next_pane:        "Next pane",
       action_prev_pane:        "Previous pane",
+      action_prev_command_block: "Previous command block",
+      action_next_command_block: "Next command block",
       action_open_preferences: "Open preferences",
       action_zoom_in:          "Increase font size",
       action_zoom_out:         "Decrease font size",
@@ -3666,6 +3684,7 @@ export const DICTIONARIES = {
     dashboard: {
       pinned_title: "Épinglés",
       open_sftp: "Ouvrir SFTP",
+      no_activity: "Aucune activité",
     },
     tabctx: {
       duplicate: "Dupliquer l'onglet",
@@ -3985,7 +4004,6 @@ export const DICTIONARIES = {
       tab_terminal: "Terminal",
       tab_appearance: "Apparence",
       tab_transfer: "FTP/SFTP",
-      tab_keepass: "KeePass",
       tab_credentials: "Identifiants",
       tab_security: "Sécurité",
       tab_data: "Sauvegardes",
@@ -4203,19 +4221,26 @@ export const DICTIONARIES = {
     prefs_credentials: {
       title: "Identifiants",
       hint_html:
-        "Définissez des mots de passe ou jetons maîtres et des variables texte réutilisables entre profils. Référencez-les dans les champs d'un profil (hôte, utilisateur, mot de passe…) avec <code>${master:nom}</code> ou <code>${var:nom}</code>. Les identifiants maîtres sont stockés chiffrés dans le trousseau et jamais affichés ; les variables sont du texte brut.",
+        "Gérez les identifiants locaux, KeePass et les variables réutilisables depuis un seul endroit. Chaque source conserve son propre stockage et son cycle de sécurité.",
+      source_label: "Source ou type d'identifiant",
+      source_local: "Locaux",
+      source_keepass: "KeePass",
+      source_variables: "Variables",
+      local_title: "Identifiants locaux",
+      local_hint_html:
+        "Stockez des mots de passe ou jetons réutilisables dans le trousseau système et référencez-les avec <code>${master:nom}</code>. La valeur n'est jamais incluse dans le catalogue de Rustty.",
+      variables_title: "Variables",
+      variables_hint_html:
+        "Stockez des valeurs texte non secrètes et réutilisez-les avec <code>${var:nom}</code> dans les profils, snippets et commandes.",
       warn_shared:
         "Réutiliser un même identifiant sur plusieurs hôtes implique que, s'il est compromis, tous sont affectés à la fois.",
-      warn_distinct:
-        "Remarque : ce n'est PAS la phrase secrète de synchronisation ni le mot de passe maître de KeePass. Ce sont des concepts différents.",
       list_label: "Identifiants",
-      filter_master: "Maîtres",
-      filter_var: "Variables",
-      filter_secret: "Secrets",
+      variables_list_label: "Variables",
       badge_master: "Maître",
       badge_var: "Variable",
       badge_secret: "Secret",
       add: "Ajouter un identifiant…",
+      add_var: "Ajouter une variable…",
       empty: "Aucun identifiant maître pour l'instant.",
       empty_var: "Aucune variable pour l'instant.",
       empty_secret: "Aucun secret pour l'instant.",
@@ -4590,6 +4615,8 @@ export const DICTIONARIES = {
       action_prev_tab:         "Onglet précédent",
       action_next_pane:        "Panneau suivant",
       action_prev_pane:        "Panneau précédent",
+      action_prev_command_block: "Bloc de commande précédent",
+      action_next_command_block: "Bloc de commande suivant",
       action_open_preferences: "Ouvrir les préférences",
       action_zoom_in:          "Agrandir la police",
       action_zoom_out:         "Réduire la police",
@@ -5254,6 +5281,7 @@ export const DICTIONARIES = {
     dashboard: {
       pinned_title: "Fixados",
       open_sftp: "Abrir SFTP",
+      no_activity: "Sem atividade",
     },
     tabctx: {
       duplicate: "Duplicar separador",
@@ -5573,7 +5601,6 @@ export const DICTIONARIES = {
       tab_terminal: "Terminal",
       tab_appearance: "Aparência",
       tab_transfer: "FTP/SFTP",
-      tab_keepass: "KeePass",
       tab_credentials: "Credenciais",
       tab_security: "Segurança",
       tab_data: "Cópias de segurança",
@@ -5791,19 +5818,26 @@ export const DICTIONARIES = {
     prefs_credentials: {
       title: "Credenciais",
       hint_html:
-        "Define palavras-passe ou tokens mestres e variáveis de texto reutilizáveis entre perfis. Referencia-os nos campos de um perfil (host, utilizador, palavra-passe…) com <code>${master:nome}</code> ou <code>${var:nome}</code>. As credenciais mestras são guardadas cifradas no keyring e nunca são mostradas; as variáveis são texto simples.",
+        "Gere credenciais locais, KeePass e variáveis reutilizáveis num único lugar. Cada fonte mantém o seu próprio armazenamento e ciclo de segurança.",
+      source_label: "Fonte ou tipo de credencial",
+      source_local: "Locais",
+      source_keepass: "KeePass",
+      source_variables: "Variáveis",
+      local_title: "Credenciais locais",
+      local_hint_html:
+        "Guarda palavras-passe ou tokens reutilizáveis no keyring do sistema e referencia-os com <code>${master:nome}</code>. O valor nunca é incluído no catálogo do Rustty.",
+      variables_title: "Variáveis",
+      variables_hint_html:
+        "Guarda valores de texto não secretos e reutiliza-os com <code>${var:nome}</code> em perfis, snippets e comandos.",
       warn_shared:
         "Reutilizar a mesma credencial em vários hosts implica que, se for comprometida, todos ficam afetados ao mesmo tempo.",
-      warn_distinct:
-        "Nota: isto NÃO é a frase-passe de sincronização nem a palavra-passe mestra do KeePass. São conceitos distintos.",
       list_label: "Credenciais",
-      filter_master: "Mestras",
-      filter_var: "Variáveis",
-      filter_secret: "Segredos",
+      variables_list_label: "Variáveis",
       badge_master: "Mestra",
       badge_var: "Variável",
       badge_secret: "Segredo",
       add: "Adicionar credencial…",
+      add_var: "Adicionar variável…",
       empty: "Ainda não há credenciais mestras.",
       empty_var: "Ainda não há variáveis.",
       empty_secret: "Ainda não há segredos.",
@@ -6178,6 +6212,8 @@ export const DICTIONARIES = {
       action_prev_tab:         "Separador anterior",
       action_next_pane:        "Painel seguinte",
       action_prev_pane:        "Painel anterior",
+      action_prev_command_block: "Bloco de comando anterior",
+      action_next_command_block: "Bloco de comando seguinte",
       action_open_preferences: "Abrir preferências",
       action_zoom_in:          "Aumentar tamanho da fonte",
       action_zoom_out:         "Diminuir tamanho da fonte",
@@ -6842,6 +6878,7 @@ export const DICTIONARIES = {
     dashboard: {
       pinned_title: "Angeheftet",
       open_sftp: "SFTP öffnen",
+      no_activity: "Keine Aktivität",
     },
     tabctx: {
       duplicate: "Tab duplizieren",
@@ -7161,7 +7198,6 @@ export const DICTIONARIES = {
       tab_terminal: "Terminal",
       tab_appearance: "Aussehen",
       tab_transfer: "FTP/SFTP",
-      tab_keepass: "KeePass",
       tab_credentials: "Anmeldedaten",
       tab_security: "Sicherheit",
       tab_data: "Backups",
@@ -7379,19 +7415,26 @@ export const DICTIONARIES = {
     prefs_credentials: {
       title: "Anmeldedaten",
       hint_html:
-        "Definiere profilübergreifend wiederverwendbare Master-Passwörter oder -Tokens und Textvariablen. Verweise in den Feldern eines Profils (Host, Benutzer, Passwort…) mit <code>${master:name}</code> oder <code>${var:name}</code> darauf. Master-Anmeldedaten werden verschlüsselt im Schlüsselbund gespeichert und nie angezeigt; Variablen sind Klartext.",
+        "Verwalte lokale Anmeldedaten, KeePass und wiederverwendbare Variablen an einem Ort. Jede Quelle behält ihren eigenen Speicher- und Sicherheitszyklus.",
+      source_label: "Quelle oder Art der Anmeldedaten",
+      source_local: "Lokal",
+      source_keepass: "KeePass",
+      source_variables: "Variablen",
+      local_title: "Lokale Anmeldedaten",
+      local_hint_html:
+        "Speichere wiederverwendbare Passwörter oder Tokens im System-Schlüsselbund und verweise mit <code>${master:name}</code> darauf. Der Wert wird nie in den Rustty-Katalog aufgenommen.",
+      variables_title: "Variablen",
+      variables_hint_html:
+        "Speichere nicht geheime Textwerte und verwende sie mit <code>${var:name}</code> in Profilen, Snippets und Befehlen.",
       warn_shared:
         "Dieselben Anmeldedaten für mehrere Hosts zu verwenden bedeutet, dass bei einer Kompromittierung alle gleichzeitig betroffen sind.",
-      warn_distinct:
-        "Hinweis: Dies ist NICHT die Sync-Passphrase und auch nicht das KeePass-Masterpasswort. Das sind unterschiedliche Konzepte.",
       list_label: "Anmeldedaten",
-      filter_master: "Master",
-      filter_var: "Variablen",
-      filter_secret: "Geheimnisse",
+      variables_list_label: "Variablen",
       badge_master: "Master",
       badge_var: "Variable",
       badge_secret: "Geheimnis",
       add: "Anmeldedaten hinzufügen…",
+      add_var: "Variable hinzufügen…",
       empty: "Noch keine Master-Anmeldedaten.",
       empty_var: "Noch keine Variablen.",
       empty_secret: "Noch keine Geheimnisse.",
@@ -7760,6 +7803,8 @@ export const DICTIONARIES = {
       action_prev_tab:         "Vorheriger Tab",
       action_next_pane:        "Nächstes Pane",
       action_prev_pane:        "Vorheriges Pane",
+      action_prev_command_block: "Vorheriger Befehlsblock",
+      action_next_command_block: "Nächster Befehlsblock",
       action_open_preferences: "Einstellungen öffnen",
       action_zoom_in:          "Schrift vergrößern",
       action_zoom_out:         "Schrift verkleinern",
