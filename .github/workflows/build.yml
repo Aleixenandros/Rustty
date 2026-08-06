@@ -456,14 +456,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist-assets
-          # `latest.json` no entra: lo genera tauri-action y ya va firmado con
-          # la clave del updater. `SHA256SUMS.txt` tampoco puede firmarse a sí
-          # mismo.
           gh release download "${GITHUB_REF_NAME}" \
-            --dir dist-assets --clobber --repo "${GITHUB_REPOSITORY}" \
-            --exclude 'latest.json' --exclude 'SHA256SUMS.txt'
+            --dir dist-assets --clobber --repo "${GITHUB_REPOSITORY}"
+          # Fuera del manifiesto: `latest.json` lo genera tauri-action y ya va
+          # firmado con la clave del updater, y `SHA256SUMS.txt` no puede
+          # firmarse a sí mismo. Se descartan DESPUÉS de descargar porque
+          # `gh release download` no sabe excluir por nombre — solo incluir con
+          # `--pattern`, que obligaría a enumerar todos los formatos.
+          rm -f dist-assets/latest.json dist-assets/SHA256SUMS.txt
           cd dist-assets
-          sha256sum * > ../SHA256SUMS.txt
+          sha256sum -- * > ../SHA256SUMS.txt
           cd ..
           cat SHA256SUMS.txt
           gh release upload "${GITHUB_REF_NAME}" SHA256SUMS.txt \
