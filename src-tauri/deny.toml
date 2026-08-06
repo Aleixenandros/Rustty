@@ -22,9 +22,19 @@ all-features = true
 yanked = "deny"
 unmaintained = "workspace"
 ignore = [
-  # ── Excepciones activas ────────────────────────────────────────────────
-  # (ninguna ahora mismo; al añadir una, formato:)
-  # { id = "RUSTSEC-0000-0000", reason = "por qué no nos afecta", expires = "2026-12-31" },
+  # ── Excepciones activas (revisadas 2026-08-06) ─────────────────────────
+  #
+  # Las tres son transitivas y **ninguna tiene arreglo desde nuestro
+  # Cargo.toml**: se ha comprobado que forzar la versión parcheada no resuelve
+  # (ver el motivo de cada una). Cada motivo lleva escrita su fecha de revisión
+  # —`cargo-deny` no tiene campo de caducidad—: una excepción sin fecha se queda
+  # para siempre.
+
+  { id = "RUSTSEC-2023-0071", reason = "Marvin Attack (timing sidechannel en `rsa`). Llega por `russh` → `ssh-key`; el propio aviso dice «No safe upgrade is available» y no hay versión parcheada que forzar. Alcance en Rustty: solo afecta a las claves de cliente RSA al firmar la autenticación; un atacante necesitaría medir con precisión los tiempos de NUESTRAS firmas. Se mitiga usando Ed25519, que es lo que recomienda el asistente de «acceso sin contraseña». REVISAR ANTES DE 2027-02-06; cuando RustCrypto publique la implementación de tiempo constante." },
+
+  { id = "RUSTSEC-2026-0194", reason = "Coste cuadrático de `quick-xml` al detectar atributos duplicados. Bloqueado upstream: llega por `wayland-scanner`, que pide `quick-xml ^0.39`, así que `cargo update --precise 0.41.0` es imposible sin parchear ese crate. Alcance en Rustty: `wayland-scanner` corre en **tiempo de compilación** y solo lee los XML de protocolo Wayland que vienen con el propio crate — no procesa nada que venga de un servidor ni del usuario. REVISAR ANTES DE 2027-02-06; retirar cuando `wayland-scanner` suba a quick-xml 0.41." },
+
+  { id = "RUSTSEC-2026-0195", reason = "Agotamiento de memoria por declaraciones de espacio de nombres sin límite en `quick-xml` (`NsReader`). Mismo origen, mismo bloqueo y mismo alcance que RUSTSEC-2026-0194: se resuelven juntas al subir `wayland-scanner`. REVISAR ANTES DE 2027-02-06." },
 ]
 
 [licenses]
