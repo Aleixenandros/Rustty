@@ -220,11 +220,17 @@ The quickest way is the automatic installer (see [Quick install with a script](#
 
 ### Integrity verification
 
-Alongside each artifact its `.sig` (Tauri updater signature) is published, and the release page includes the `sha256` of each file. To verify:
+Alongside each artifact its `.sig` (Tauri updater signature) is published and, since v1.68.0, a **`SHA256SUMS.txt`** file with the digest of every artifact in the release:
 
 ```bash
-sha256sum Rustty_*_amd64.deb
-# compare with the hash listed in the release
+# Download SHA256SUMS.txt and the artifact you want, into the same directory:
+sha256sum --check --ignore-missing SHA256SUMS.txt
+```
+
+That manifest also carries a GitHub **build provenance attestation**, tying it to the workflow, the commit and the runner that produced it. Verifying it does not rely on the integrity of the release page, so it answers the question the `sha256` alone cannot — "what if whoever altered the binary also altered the number next to it?":
+
+```bash
+gh attestation verify SHA256SUMS.txt --repo Aleixenandros/Rustty
 ```
 
 The **macOS** binaries are signed with Apple Developer ID and notarized, and the **automatic updates** are signed with minisign and verified against the embedded public key. **Windows** code signing is under evaluation. The full signing model (mechanisms, roles, verifiable build and how to verify a download) is in [`CODE_SIGNING.md`](CODE_SIGNING.md).

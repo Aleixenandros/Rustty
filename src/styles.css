@@ -92,6 +92,20 @@
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 
+  /* Diff (bloques de comando): tinte de línea añadida/eliminada. Derivados de
+     --green/--red con color-mix, así que siguen a cualquiera de los 12 temas
+     sin repetir literales hex por tema. */
+  --diff-add-bg: color-mix(in srgb, var(--green) 18%, transparent);
+  --diff-del-bg: color-mix(in srgb, var(--red) 18%, transparent);
+  --diff-add-fg: var(--green);
+  --diff-del-fg: var(--red);
+
+  /* Botón de cerrar de la barra de título (Windows/Linux sin decoración).
+     El rojo es una convención del sistema, no del tema, pero pasa por token
+     para que un tema de alto contraste pueda cambiarlo. */
+  --window-close-bg: #e81123;
+  --window-close-fg: #ffffff;
+
   /* Drag & drop: indicadores unificados (sidebar, tabs, SFTP) */
   --drag-color: var(--blue);
   --drag-bg-soft: color-mix(in srgb, var(--blue) 10%, transparent);
@@ -838,17 +852,17 @@ body.sidebar-collapsed #sidebar-resize-handle {
 /* Scrollbar WebKit explícita: las reglas estándar `scrollbar-*` no siempre
    se respetan en WebKit2GTK con tema claro del sistema, lo que dejaba una
    franja casi blanca entre la sidebar y el terminal. */
-#connection-list::-webkit-scrollbar {
+body:not(.native-scrollbars) #connection-list::-webkit-scrollbar {
   width: 8px;
 }
-#connection-list::-webkit-scrollbar-track {
+body:not(.native-scrollbars) #connection-list::-webkit-scrollbar-track {
   background: transparent;
 }
-#connection-list::-webkit-scrollbar-thumb {
+body:not(.native-scrollbars) #connection-list::-webkit-scrollbar-thumb {
   background: var(--surface1);
   border-radius: 4px;
 }
-#connection-list::-webkit-scrollbar-thumb:hover {
+body:not(.native-scrollbars) #connection-list::-webkit-scrollbar-thumb:hover {
   background: var(--surface2);
 }
 
@@ -1225,7 +1239,7 @@ body.sidebar-collapsed #sidebar-resize-handle {
   scrollbar-width: none;
 }
 
-#tab-scroll::-webkit-scrollbar { display: none; }
+body:not(.native-scrollbars) #tab-scroll::-webkit-scrollbar { display: none; }
 
 #btn-toggle-sidebar {
   flex: 0 0 auto;
@@ -1293,8 +1307,8 @@ body.platform-macos #tab-bar { padding-left: 76px; }
   color: var(--text);
 }
 .win-ctrl-close:hover {
-  background: #e81123;
-  color: #ffffff;
+  background: var(--window-close-bg);
+  color: var(--window-close-fg);
 }
 .win-ctrl svg { display: block; }
 
@@ -1587,14 +1601,14 @@ body.has-session-tabs .tab-home .tab-name {
    bordes ni en la parte inferior (sobre la barra de estado). No afecta a los
    panes SFTP (.file-transfer-pane) ni RDP (.rdp-pane). */
 .terminal-pane:has(.xterm-container) {
-  background: var(--xterm-bg, #1e1e2e);
+  background: var(--xterm-bg, var(--base));
   /* Esquinas rectas: con el fondo del terminal pintado, un border-radius
      dejaría asomar el color claro de la interfaz en las esquinas. */
   border-radius: 0;
 }
 .terminal-pane:has(.xterm-container) .term-area,
 .terminal-pane:has(.xterm-container) .xterm-container {
-  background: var(--xterm-bg, #1e1e2e);
+  background: var(--xterm-bg, var(--base));
   border-radius: 0;
 }
 
@@ -2303,7 +2317,7 @@ body.reduce-motion.terminal-bell-visual::after {
 }
 
 #view-layout-bar button[data-action="broadcast"].active {
-  background: var(--peach, #fab387);
+  background: var(--peach);
   color: var(--base);
 }
 
@@ -2317,7 +2331,7 @@ body.reduce-motion.terminal-bell-visual::after {
    Slice estético #8: añade una franja superior de 2 px + label "BROADCAST"
    en la esquina superior izquierda para que el estado sea inequívoco. */
 .terminal-pane.pane-broadcasting {
-  outline: 2px solid var(--peach, #fab387);
+  outline: 2px solid var(--peach);
   outline-offset: -2px;
   position: relative;
 }
@@ -2334,7 +2348,7 @@ body.reduce-motion.terminal-bell-visual::after {
   letter-spacing: 0.08em;
   padding: 2px 7px 2px 6px;
   color: var(--crust);
-  background: var(--peach, #fab387);
+  background: var(--peach);
   border-bottom-right-radius: var(--radius-sm);
   pointer-events: none;
   animation: motion-fade-in var(--motion-fast) var(--motion-ease-out);
@@ -3147,6 +3161,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
    los oculta. Sin esto, el modal se renderizaba en el flujo del documento, al
    pie de la pantalla, en vez de superpuesto y centrado. ── */
 #health-overlay,
+#block-diff-overlay,
 #known-hosts-overlay,
 #cred-edit-overlay,
 #ask-modal-overlay,
@@ -3183,6 +3198,96 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   display: flex;
   flex-direction: column;
 }
+
+/* Diferencias entre bloques de comando (OSC 133): tabla lado a lado con
+   numeración por lado, al estilo de un diff de Git. */
+#block-diff-modal {
+  width: 980px;
+  max-width: calc(100vw - 40px);
+  max-height: 86vh;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.52);
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 8px;
+}
+
+.block-diff-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 10px 16px 0;
+}
+
+.block-diff-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.block-diff-side code {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.block-diff-tag {
+  flex: none;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--subtext0);
+  border: 1px solid var(--surface0);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.block-diff-body {
+  flex: 1;
+  overflow: auto;
+  margin: 8px 16px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  background: var(--base);
+}
+
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-sm);
+  table-layout: fixed;
+}
+
+.diff-table td {
+  vertical-align: top;
+  padding: 0 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diff-num {
+  width: 44px;
+  text-align: right;
+  color: var(--overlay0);
+  user-select: none;
+  border-right: 1px solid var(--surface0);
+}
+
+.diff-cell { width: calc(50% - 44px); }
+.diff-cell.diff-add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
+.diff-cell.diff-del { background: var(--diff-del-bg); color: var(--diff-del-fg); }
+.diff-cell.diff-empty { background: var(--crust, transparent); }
+
+/* Modo daltónico: el color no puede ser la única señal. */
+body.color-blind-safe .diff-cell.diff-add::before { content: "+ "; }
+body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
 
 /* Comprobación de salud (DNS/TCP): filas de resultado con badges por prueba. */
 .health-list {
@@ -4109,6 +4214,14 @@ select option {
   cursor: pointer;
 }
 
+/* Opción anulada por otra (p. ej. las barras superpuestas cuando están activas
+   las del sistema): sigue visible —para que se entienda por qué no aplica—
+   pero atenuada y sin cursor de acción. */
+.checkbox-label.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 input[type="checkbox"] {
   width: 15px;
   height: 15px;
@@ -4404,19 +4517,35 @@ input[type="checkbox"] {
 }
 
 /* ─── Scrollbars personalizados ──────────────────────────────── */
-::-webkit-scrollbar {
+/* Todo el estilizado de barras va bajo `body:not(.native-scrollbars)`: en
+   WebKit basta con que exista UNA regla `::-webkit-scrollbar` aplicable para
+   que la barra nativa desaparezca, así que la única forma de devolvérsela a
+   quien la necesita (barras anchas y siempre visibles, motricidad fina o baja
+   visión) es que ninguna regla custom llegue a coincidir. */
+body:not(.native-scrollbars) ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
-::-webkit-scrollbar-track { background: transparent; }
+body:not(.native-scrollbars) ::-webkit-scrollbar-track { background: transparent; }
 
-::-webkit-scrollbar-thumb {
+body:not(.native-scrollbars) ::-webkit-scrollbar-thumb {
   background: var(--surface1);
   border-radius: 3px;
 }
 
-::-webkit-scrollbar-thumb:hover { background: var(--surface2); }
+body:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover { background: var(--surface2); }
+
+/* ─── Barras de desplazamiento nativas (opt-in, accesibilidad) ───
+   `prefs.nativeScrollbars`. Devuelve las barras anchas y siempre visibles del
+   sistema: anula de un golpe los `scrollbar-width: thin` repartidos por la
+   hoja (de ahí el `!important` sobre `*`, que aquí es la intención literal:
+   ninguna regla custom debe sobrevivir) y desactiva el modo superpuesto. */
+body.native-scrollbars,
+body.native-scrollbars * {
+  scrollbar-width: auto !important;
+  scrollbar-color: auto !important;
+}
 
 /* ─── Barras de desplazamiento superpuestas (opt-in) ─────────────
    `prefs.overlayScrollbars`. Estilo "overlay": el pulgar flota sobre el
@@ -4424,18 +4553,18 @@ input[type="checkbox"] {
    ancho al pasar el ratón. Aditivo: si está desactivado se usan las finas
    normales de arriba. La reducción de movimiento anula la transición por la
    regla global `*`. */
-body.overlay-scrollbars ::-webkit-scrollbar {
+body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar {
   width: 12px;
   height: 12px;
 }
-body.overlay-scrollbars ::-webkit-scrollbar-thumb {
+body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb {
   background: var(--surface1);
   border: 4px solid transparent;
   border-radius: 8px;
   background-clip: padding-box;
   transition: border-width var(--motion-fast) var(--motion-ease);
 }
-body.overlay-scrollbars ::-webkit-scrollbar-thumb:hover {
+body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover {
   background: var(--surface2);
   border-width: 3px;
 }
@@ -5616,7 +5745,7 @@ body.overlay-scrollbars ::-webkit-scrollbar-thumb:hover {
 }
 
 .form-hint.warning {
-  color: var(--red, #e57373);
+  color: var(--red);
 }
 
 /* Aviso con icono SVG (en lugar de emoji): alinea el triángulo con la primera
@@ -5689,7 +5818,7 @@ body.overlay-scrollbars ::-webkit-scrollbar-thumb:hover {
 .form-advanced {
   margin-top: 12px;
   padding: 8px 10px;
-  border: 1px solid var(--surface1, #313244);
+  border: 1px solid var(--surface1);
   border-radius: 8px;
   background: var(--mantle, transparent);
 }
@@ -6887,7 +7016,7 @@ body.sftp-panel-resizing {
   cursor: text;
 }
 
-.sftp-breadcrumb::-webkit-scrollbar {
+body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
   display: none;
 }
 
@@ -9350,9 +9479,9 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   gap: 12px;
   padding: 10px 14px;
   border-radius: 10px;
-  background: var(--mantle, #1e1e2e);
-  color: var(--text, #cdd6f4);
-  border: 1px solid var(--surface1, #45475a);
+  background: var(--mantle);
+  color: var(--text);
+  border: 1px solid var(--surface1);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
 }
 #script-rec-bar.hidden { display: none; }
@@ -9361,17 +9490,17 @@ body.color-blind-safe .modal-summary-badge.warn::before {
 #script-run-bar { bottom: 76px; }
 /* Punto de estado del run: azul en curso, verde/rojo al terminar (sin pulso). */
 #script-run-bar .script-rec-dot {
-  background: var(--blue, #89b4fa);
+  background: var(--blue);
   animation: none;
   box-shadow: none;
 }
-#script-run-bar.run-ok .script-rec-dot { background: var(--green, #a6e3a1); }
-#script-run-bar.run-error .script-rec-dot { background: var(--red, #f38ba8); }
+#script-run-bar.run-ok .script-rec-dot { background: var(--green); }
+#script-run-bar.run-error .script-rec-dot { background: var(--red); }
 .script-rec-dot {
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  background: var(--red, #f38ba8);
+  background: var(--red);
   box-shadow: 0 0 0 0 rgba(243, 139, 168, 0.6);
   animation: script-rec-pulse 1.4s ease-out infinite;
   flex: 0 0 auto;
@@ -9386,7 +9515,7 @@ body.color-blind-safe .modal-summary-badge.warn::before {
 }
 .script-rec-text { display: flex; flex-direction: column; line-height: 1.2; }
 .script-rec-title { font-weight: 600; font-size: 0.9em; }
-.script-rec-count { font-size: 0.8em; color: var(--subtext0, #a6adc8); }
+.script-rec-count { font-size: 0.8em; color: var(--subtext0); }
 
 /* Fila de la lista de scripts: nombre | objetivo | meta | acciones */
 .script-row {

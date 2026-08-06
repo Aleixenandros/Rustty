@@ -226,11 +226,17 @@ La forma más rápida es el instalador automático (ver [Instalación rápida co
 
 ### Verificación de integridad
 
-Junto a cada artefacto se publica su `.sig` (firma del updater de Tauri) y la página del release incluye el `sha256` de cada fichero. Para verificar:
+Junto a cada artefacto se publica su `.sig` (firma del updater de Tauri) y, desde la v1.68.0, un fichero **`SHA256SUMS.txt`** con la huella de todos los artefactos del release:
 
 ```bash
-sha256sum Rustty_*_amd64.deb
-# comparar con el hash indicado en la release
+# Descarga SHA256SUMS.txt y el artefacto que quieras, en el mismo directorio:
+sha256sum --check --ignore-missing SHA256SUMS.txt
+```
+
+Ese manifiesto lleva además una **atestación de procedencia** de GitHub, que lo ata al workflow, al commit y al runner que lo produjeron. Comprobarla no depende de la integridad de la página del release, así que responde a la pregunta que el `sha256` por sí solo no puede responder —«¿y si quien alteró el binario alteró también el número de al lado?»—:
+
+```bash
+gh attestation verify SHA256SUMS.txt --repo Aleixenandros/Rustty
 ```
 
 Los binarios de **macOS** están firmados con Apple Developer ID y notarizados, y las **actualizaciones automáticas** van firmadas con minisign y se verifican contra la clave pública embebida. La firma de código de **Windows** está en evaluación. El modelo de firma completo (mecanismos, roles, construcción verificable y cómo verificar una descarga) está en [`CODE_SIGNING.md`](CODE_SIGNING.md).

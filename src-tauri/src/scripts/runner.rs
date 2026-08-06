@@ -129,6 +129,9 @@ fn ansi_regex() -> &'static regex::Regex {
         regex::Regex::new(
             r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-Z\\-_]",
         )
+        // Invariante de compilación: el patrón es un literal fijo de este
+        // fichero, no entra nada del exterior. Si dejara de compilar sería un
+        // error de programación detectado por el primer test que lo use.
         .expect("regex ANSI válida")
     })
 }

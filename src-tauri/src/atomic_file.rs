@@ -185,12 +185,12 @@ pub fn read_or_recover(
     }
 
     let current = std::fs::read_to_string(path);
-    if let Ok(text) = &current {
-        if is_valid(text) {
+    if let Ok(text) = current {
+        if is_valid(&text) {
             // Copia de seguridad de la última versión válida. Si falla, no es
             // motivo para abortar la carga: se sigue con el fichero bueno.
             let _ = write(&backup_path(path), text.as_bytes(), private);
-            return Ok((Some(current.unwrap()), Recovery::Intact));
+            return Ok((Some(text), Recovery::Intact));
         }
     }
 

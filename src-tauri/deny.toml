@@ -1,0 +1,76 @@
+# Política de cadena de suministro del backend (`cargo deny`).
+#
+# La ejecuta el job «Cadena de suministro» de `ci.yml`. Se divide en dos pasos
+# a propósito:
+#   · `check advisories` es **bloqueante**: una dependencia con aviso de
+#     seguridad no se fusiona sin que alguien lo mire.
+#   · `check bans licenses sources` es advisory de momento: el árbol de Tauri
+#     arrastra duplicados que no dependen de nosotros. Se endurece cuando estén
+#     todos clasificados aquí.
+#
+# Regla de oro de este fichero: **toda excepción lleva motivo y fecha**. Una
+# excepción sin justificación escrita es una excepción que nadie vuelve a
+# revisar, y a los seis meses ya nadie sabe si sigue haciendo falta.
+
+[graph]
+# Solo lo que puede acabar en un binario que distribuimos.
+all-features = true
+
+[advisories]
+# `deny` para vulnerabilidades, `warn` para lo que solo está sin mantenimiento:
+# un crate sin mantenedor es deuda a vigilar, no un fallo de hoy.
+yanked = "deny"
+unmaintained = "workspace"
+ignore = [
+  # ── Excepciones activas ────────────────────────────────────────────────
+  # (ninguna ahora mismo; al añadir una, formato:)
+  # { id = "RUSTSEC-0000-0000", reason = "por qué no nos afecta", expires = "2026-12-31" },
+]
+
+[licenses]
+# Compatibles con la Apache-2.0 del proyecto. Cualquier otra obliga a una
+# decisión explícita: se añade aquí o se retira la dependencia.
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MIT",
+  "MIT-0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "CC0-1.0",
+  "OpenSSL",
+  "BSL-1.0",
+  "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+
+[[licenses.exceptions]]
+# `ring` combina ISC/MIT/OpenSSL con su propio texto derivado de BoringSSL.
+name = "ring"
+allow = ["ISC", "MIT", "OpenSSL"]
+
+[bans]
+# Duplicados: avisar, no romper. La mitad vienen del árbol de Tauri y no están
+# en nuestra mano; lo que importa es verlos crecer.
+multiple-versions = "warn"
+wildcards = "deny"
+# Un `*` en Cargo.toml propio sí es culpa nuestra y sí rompe.
+allow-wildcard-paths = false
+
+[[bans.deny]]
+# `openssl` vendorizado: el backend habla TLS con rustls (proveedor `ring`).
+# Si aparece, es que una dependencia nueva lo arrastró — y eso cambia lo que
+# distribuimos y cómo se firma. Ver el invariante del proveedor rustls.
+name = "openssl-src"
+
+[sources]
+# Todo debe venir de crates.io. Un git suelto en el árbol es código sin
+# revisión de crates.io ni versión reproducible.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -423,13 +423,15 @@ impl KnownHostsClient {
         if !prompt_on_key_change() {
             // Política clásica: rechazo con instrucciones manuales.
             self.set_failure(format!(
-                "ALERTA: la host key de {}:{} ha cambiado. \
+                "{} ALERTA: la host key de {}:{} ha cambiado. \
                  Fingerprint recibido: {new_fp}. \
                  Entradas previas en known_hosts → {prev_desc}. \
                  Si reconoces el cambio, elimina las líneas correspondientes de \
                  ~/.ssh/known_hosts y vuelve a conectar (o activa la pregunta de \
                  cambio de clave en Preferencias → Seguridad).",
-                self.host, self.port,
+                crate::ipc_error::HOSTKEY_CHANGED_MARKER,
+                self.host,
+                self.port,
             ));
             return false;
         }
@@ -451,10 +453,12 @@ impl KnownHostsClient {
             }
             Ok(false) => {
                 self.set_failure(format!(
-                    "ALERTA: la host key de {}:{} ha cambiado y se ha RECHAZADO. \
+                    "{} ALERTA: la host key de {}:{} ha cambiado y se ha RECHAZADO. \
                      Fingerprint recibido: {new_fp}; registrado → {prev_desc}. \
                      known_hosts queda intacto.",
-                    self.host, self.port,
+                    crate::ipc_error::HOSTKEY_CHANGED_MARKER,
+                    self.host,
+                    self.port,
                 ));
                 false
             }
@@ -506,8 +510,9 @@ impl client::Handler for KnownHostsClient {
                                 Ok(true) => {}
                                 Ok(false) => {
                                     self.set_failure(format!(
-                                        "Host key de {}:{} rechazada: no se ha confirmado la huella {}. \
+                                        "{} Host key de {}:{} rechazada: no se ha confirmado la huella {}. \
                                          La clave no se ha guardado.",
+                                        crate::ipc_error::HOSTKEY_UNKNOWN_MARKER,
                                         self.host,
                                         self.port,
                                         fingerprint_sha256(server_public_key)

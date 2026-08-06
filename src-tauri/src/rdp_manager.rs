@@ -298,8 +298,7 @@ impl RdpManager {
     pub fn disconnect_all(&self) {
         let handles: Vec<_> = self
             .sessions
-            .lock()
-            .unwrap()
+            .lock_recover()
             .drain()
             .map(|(_, h)| h)
             .collect();

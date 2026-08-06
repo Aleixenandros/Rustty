@@ -1609,6 +1609,35 @@
       </div>
     </div>
 
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Diferencias entre bloques de comando (OSC 133)
+    ══════════════════════════════════════════════════════ -->
+    <div id="block-diff-overlay" class="hidden">
+      <div id="block-diff-modal" role="dialog" aria-modal="true" aria-labelledby="block-diff-title">
+        <div class="modal-header">
+          <h2 id="block-diff-title" data-i18n="blocks.diff_title">Diferencias entre bloques</h2>
+          <button class="btn-icon" id="btn-block-diff-close" data-i18n-aria-label="blocks.diff_close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+        </div>
+        <div class="block-diff-bar">
+          <span class="block-diff-side">
+            <span class="block-diff-tag" data-i18n="blocks.diff_older">Antes</span>
+            <code id="block-diff-left-label"></code>
+          </span>
+          <span class="block-diff-side">
+            <span class="block-diff-tag" data-i18n="blocks.diff_newer">Después</span>
+            <code id="block-diff-right-label"></code>
+          </span>
+        </div>
+        <p class="prefs-panel-hint" id="block-diff-summary" aria-live="polite"></p>
+        <p class="prefs-panel-hint hidden" id="block-diff-warning" data-i18n="blocks.diff_truncated">El tramo cambiado era demasiado grande para alinearlo línea a línea: se muestra como sustitución completa.</p>
+        <div id="block-diff-body" class="block-diff-body"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" id="btn-block-diff-copy" data-i18n="blocks.diff_copy">Copiar diferencias</button>
+          <button type="button" class="btn-primary" id="btn-block-diff-ok" data-i18n="blocks.diff_close">Cerrar</button>
+        </div>
+      </div>
+    </div>
+
     <div id="command-palette-overlay" class="hidden">
       <div id="command-palette-modal" role="dialog" aria-modal="true" data-i18n-aria-label="palette.title" aria-label="Paleta de comandos">
         <input id="command-palette-input" type="text" autocomplete="off" spellcheck="false"
@@ -1935,6 +1964,15 @@
                 </label>
                 <p class="settings-hint" data-i18n="prefs_terminal.ligatures_hint">Requiere una fuente con soporte (FiraCode, JetBrains Mono, Cascadia Code…). Se aplica a sesiones nuevas.</p>
               </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-terminal-renderer" data-i18n="prefs_terminal.renderer">Motor de dibujado</label>
+                <select id="pref-terminal-renderer">
+                  <option value="auto" data-i18n="prefs_terminal.renderer_auto">GPU con reserva (recomendado)</option>
+                  <option value="dom" data-i18n="prefs_terminal.renderer_dom">Solo CPU (DOM)</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="prefs_terminal.renderer_hint">Con GPU el terminal aguanta salidas masivas sin bloquear la interfaz; si la aceleración falla o se pierde, se pasa a CPU y se reintenta la GPU al recuperarse. Elige «Solo CPU» si ves parpadeos o artefactos (máquinas virtuales, drivers antiguos). Se aplica a sesiones nuevas.</p>
 
               <div class="settings-row settings-row-inline">
                 <label for="pref-cursor-style" data-i18n="prefs_terminal.cursor_style">Estilo de cursor</label>
@@ -2310,6 +2348,14 @@
                   <span data-i18n="prefs_appearance.overlay_scrollbars">Barras de desplazamiento superpuestas</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_appearance.overlay_scrollbars_hint">El pulgar flota sobre el contenido, fino en reposo y más ancho al pasar el ratón. Desactívalo para las barras finas normales.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-native-scrollbars" />
+                  <span data-i18n="prefs_appearance.native_scrollbars">Barras de desplazamiento del sistema</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_appearance.native_scrollbars_hint">Devuelve las barras anchas y siempre visibles del sistema operativo, sin ningún estilizado propio. Pensado para quien necesita una diana grande o mayor contraste; anula el modo superpuesto.</p>
               </div>
 
               <div class="settings-row">
@@ -3054,6 +3100,30 @@
                   <span data-i18n="prefs_system.autostart_minimized">Arrancar minimizado</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_system.autostart_minimized_hint">Al arrancar con el sistema, oculta la ventana y mantiene solo el icono en la bandeja.</p>
+              </div>
+
+              <h4 class="prefs-subhead" data-i18n="diagnostics.title">Informe de diagnóstico</h4>
+              <p class="settings-hint" data-i18n="diagnostics.hint">Genera un informe con la versión, la plataforma, tus preferencias y los últimos eventos, para adjuntarlo a un informe de fallo. Nunca incluye contraseñas, passphrases, tokens ni contenido del terminal; los hosts y las rutas salen anonimizados salvo que lo autorices aquí.</p>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="diag-include-hosts" />
+                  <span data-i18n="diagnostics.include_hosts">Incluir los hosts reales</span>
+                </label>
+                <p class="settings-hint" data-i18n="diagnostics.include_hosts_hint">Sin esta opción, cada host aparece con un alias estable («host-3f2a»): las líneas se pueden correlacionar entre sí sin revelar a dónde te conectas.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="diag-include-paths" />
+                  <span data-i18n="diagnostics.include_paths">Incluir las rutas reales</span>
+                </label>
+                <p class="settings-hint" data-i18n="diagnostics.include_paths_hint">Sin esta opción solo se informa de la forma de cada ruta (profundidad y extensión), nunca de su contenido.</p>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <button type="button" class="btn-secondary" id="btn-diag-copy" data-i18n="diagnostics.copy">Copiar resumen</button>
+                <button type="button" class="btn-secondary" id="btn-diag-export" data-i18n="diagnostics.export">Exportar informe…</button>
               </div>
 
             </section>

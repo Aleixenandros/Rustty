@@ -18,6 +18,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { IPC_ERROR_KIND, ipcErrorKind, ipcErrorText } from "./modules/ipc/errors.js";
 
 const KEYRING_SERVICE = "rustty";
 const KEY_PASSPHRASE = "sync:passphrase";
@@ -28,14 +29,21 @@ const KEY_WEBDAV_PASS = "sync:webdav_password";
 export const SYNC_OFFLINE_MARKER = "sync-offline:";
 export const SYNC_BAD_PASSPHRASE_MARKER = "sync-passphrase:";
 
-/** ¿El error es un fallo de conectividad (DNS/connect/timeout)? */
+/**
+ * Desde que `sync_run` devuelve `IpcError`, su rechazo es un objeto y el
+ * discriminante manda. Los marcadores siguen valiéndose por sí solos: los
+ * emiten también comandos de sync que aún rechazan con cadena, y el mensaje
+ * estructurado los conserva a propósito.
+ */
 export function isOfflineError(err) {
-  return String(err).includes(SYNC_OFFLINE_MARKER);
+  return ipcErrorKind(err) === IPC_ERROR_KIND.offline
+    || ipcErrorText(err).includes(SYNC_OFFLINE_MARKER);
 }
 
 /** ¿El error es «el blob remoto no descifra» (passphrase rotada/incorrecta)? */
 export function isBadPassphraseError(err) {
-  return String(err).includes(SYNC_BAD_PASSPHRASE_MARKER);
+  return ipcErrorKind(err) === IPC_ERROR_KIND.badPassphrase
+    || ipcErrorText(err).includes(SYNC_BAD_PASSPHRASE_MARKER);
 }
 
 // Subset de prefs que se sincroniza (excluimos rutas locales; los secretos

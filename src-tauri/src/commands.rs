@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 use crate::credentials::{self, CredentialKind, CredentialMeta, CredentialStore};
 use crate::external_client::{TelnetManager, VncManager};
 use crate::host_keys::fingerprint_sha256;
+use crate::ipc_error::{IpcError, IpcErrorKind};
 use crate::keepass_manager;
 use crate::keyring_scope;
 use crate::local_command::{self, LocalCommandOutput, LocalCommandRegistry};
@@ -377,8 +378,8 @@ pub fn ssh_connect(
     // siempre; `ssh_manager` también defiende contra 0.
     cols: Option<u32>,
     rows: Option<u32>,
-) -> Result<String, String> {
-    let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
+) -> Result<String, IpcError> {
+    let profiles = profile_state.load_all()?;
     let mut profile = profiles
         .into_iter()
         .find(|p| p.id == profile_id)
@@ -413,8 +414,7 @@ pub fn ssh_connect(
                 rows: rows.unwrap_or(24),
             },
             data_dir.0.clone(),
-        )
-        .map_err(|e| e.to_string())?;
+        )?;
 
     Ok(session_id)
 }
@@ -1032,8 +1032,8 @@ pub async fn sftp_connect(
     ask_answers: Option<std::collections::HashMap<String, String>>,
     max_concurrent: Option<usize>,
     credential_id: Option<String>,
-) -> Result<String, String> {
-    let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
+) -> Result<String, IpcError> {
+    let profiles = profile_state.load_all()?;
     let mut profile = profiles
         .into_iter()
         .find(|p| p.id == profile_id)
@@ -1900,14 +1900,15 @@ pub async fn sync_run(
     current: SyncState,
     passphrase: String,
     webdav_password: Option<String>,
-) -> Result<SyncRunOutcome, String> {
+) -> Result<SyncRunOutcome, IpcError> {
     let config = state.load_config();
     if !config.enabled || matches!(config.backend, SyncBackendKind::None) {
-        return Err("Sincronización no habilitada".into());
+        return Err(IpcError::new(
+            IpcErrorKind::NotFound,
+            "Sincronización no habilitada",
+        ));
     }
-    let backend = state
-        .backend(&config, webdav_password.as_deref().unwrap_or(""))
-        .map_err(|e| e.to_string())?;
+    let backend = state.backend(&config, webdav_password.as_deref().unwrap_or(""))?;
 
     // La escritura condicional de WebDAV puede rechazar el push (412) si otro
     // equipo empujó entre nuestro read y nuestro write: se re-lee, re-mezcla
@@ -1954,7 +1955,7 @@ pub async fn sync_run(
                     retried_conflict = true;
                     continue;
                 }
-                return Err(msg);
+                return Err(IpcError::from(msg));
             }
         }
         break (merged, clamped, pruned, deduped);

@@ -148,10 +148,10 @@ impl ScriptManager {
         &self,
         cache: &'a mut Option<Vec<Script>>,
     ) -> Result<&'a mut Vec<Script>, String> {
-        if cache.is_none() {
-            *cache = Some(store::load(&self.path()).map_err(|e| e.to_string())?);
+        match cache {
+            Some(scripts) => Ok(scripts),
+            slot => Ok(slot.insert(store::load(&self.path()).map_err(|e| e.to_string())?)),
         }
-        Ok(cache.as_mut().expect("acabamos de rellenar la caché"))
     }
 
     /// Devuelve un clon del `Arc` del registro (para que el fan-out se

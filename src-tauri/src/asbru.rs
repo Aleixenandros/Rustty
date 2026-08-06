@@ -396,7 +396,9 @@ pub fn asbru_decrypt(blob: String) -> Result<String, String> {
         Blowfish::new_from_slice(key).map_err(|e| format!("clave inválida: {e}"))?;
 
     let mut out: Vec<u8> = Vec::with_capacity(ct.len());
-    let mut prev: [u8; 8] = iv.try_into().unwrap();
+    let mut prev: [u8; 8] = iv
+        .try_into()
+        .map_err(|_| "material de clave insuficiente para el IV".to_string())?;
     for chunk in ct.chunks(8) {
         let mut block = Block::<Blowfish>::try_from(chunk)
             .map_err(|_| "bloque de tamaño inválido".to_string())?;

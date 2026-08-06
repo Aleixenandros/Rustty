@@ -17,8 +17,34 @@ describe("handleOsc133", () => {
     expect(handleOsc133(s, "C", 12)).toBe(true);
     expect(handleOsc133(s, "D;0", 20)).toBe(true);
     expect(s.blocks).toEqual([
-      { id: 1, promptLine: 10, commandLine: 11, outputLine: 12, endLine: 20, exitCode: 0 },
+      {
+        id: 1,
+        promptLine: 10, promptCol: 0,
+        commandLine: 11, commandCol: 0,
+        outputLine: 12, outputCol: 0,
+        endLine: 20, endCol: 0,
+        exitCode: 0,
+      },
     ]);
+  });
+
+  it("registra la columna de cada marcador (recorte del prompt)", () => {
+    const s = createBlockTracker();
+    handleOsc133(s, "A", 4, 0);
+    handleOsc133(s, "B", 4, 13);
+    handleOsc133(s, "C", 5, 0);
+    handleOsc133(s, "D;0", 9, 2);
+    expect(s.blocks[0]).toMatchObject({
+      promptCol: 0, commandCol: 13, outputCol: 0, endCol: 2,
+    });
+  });
+
+  it("una columna ausente o inválida queda en 0, nunca en NaN", () => {
+    const s = createBlockTracker();
+    handleOsc133(s, "A", 0);
+    handleOsc133(s, "B", 0, NaN);
+    handleOsc133(s, "C", 1, -3);
+    expect(s.blocks[0]).toMatchObject({ promptCol: 0, commandCol: 0, outputCol: 0 });
   });
 
   it("captura el código de salida distinto de cero y el D sin código", () => {

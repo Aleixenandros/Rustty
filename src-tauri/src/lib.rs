@@ -12,6 +12,7 @@ mod host_keys;
 // wiring llega en la fase 2); como API pública de la lib no disparan
 // `dead_code` con clippy bloqueante. Mismo criterio que `mux` y `tmux`.
 pub mod ipc;
+pub mod ipc_error;
 mod keepass_manager;
 // `pub` como `mux`/`tmux`: sus helpers puros (p. ej. `install_command_at`)
 // los usa también el test de integración de otro módulo.
@@ -189,7 +190,13 @@ pub fn run() {
             // .exe en `.conf/com.rustty.app/`. Si no, ruta estándar (identifier).
             let data_dir = resolve_data_dir();
 
-            std::fs::create_dir_all(&data_dir).expect("No se pudo crear el directorio de datos");
+            // Sin directorio de datos no hay perfiles, credenciales ni known_hosts
+            // que valgan: parar aquí es preferible a arrancar una app que perderá
+            // en silencio todo lo que el usuario guarde. El mensaje lleva la ruta
+            // porque en modo portable no es la estándar.
+            if let Err(err) = std::fs::create_dir_all(&data_dir) {
+                panic!("No se pudo crear el directorio de datos {}: {err}", data_dir.display());
+            }
 
             // Retira los temporales que dejó un cierre brusco (kill -9, corte de
             // luz) entre el `open` y el `rename` de una escritura atómica. Solo

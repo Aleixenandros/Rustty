@@ -2,6 +2,67 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.68.0] - 2026-08-06
+
+### Añadido
+
+- **Los bloques de comando ya se pueden copiar, exportar y comparar**: sobre los
+  marcadores OSC 133 que el shell emite, Rustty distingue el comando de su
+  salida y ofrece copiar cualquiera de los dos, copiar el bloque entero como
+  Markdown (con host, directorio, fecha y código de salida) o exportarlo a un
+  fichero `.md`. Las acciones están en la paleta de comandos y en Preferencias →
+  Atajos, sin combinación asignada de fábrica.
+- **Diferencias entre dos ejecuciones**: comparar la salida de un bloque con la
+  del anterior —dos `df -h` seguidos, dos `kubectl get pods`— en una vista lado a
+  lado con numeración por columna y resaltado de líneas añadidas y eliminadas,
+  copiable en formato unificado para pegar en un ticket.
+- **Informe de diagnóstico** (Preferencias → Sistema): genera un fichero con la
+  versión, la plataforma, las preferencias y los últimos eventos para adjuntar a
+  un informe de fallo. Nunca incluye contraseñas, passphrases, tokens ni
+  contenido del terminal; los hosts salen con un alias estable y las rutas
+  reducidas a su forma, salvo que se autorice lo contrario con una casilla.
+- **Barras de desplazamiento del sistema** (Preferencias → Apariencia): opción de
+  accesibilidad que devuelve las barras anchas y siempre visibles del sistema
+  operativo, sin ningún estilizado propio.
+- **Elección del motor de dibujado del terminal** (Preferencias → Terminal):
+  GPU con reserva —el comportamiento de siempre— o solo CPU, para máquinas
+  virtuales y controladores que producen parpadeos.
+
+### Cambiado
+
+- **El terminal recupera la GPU por su cuenta**: si el contexto gráfico se pierde
+  (suspensión, cambio de tarjeta, reinicio del controlador), la sesión sigue
+  pintando en CPU y reintenta la aceleración con espera creciente, repintando la
+  pantalla al recuperarla. Antes la caída era definitiva hasta reabrir la pestaña.
+- **Los fallos de conexión llegan clasificados**: conectar por SSH o SFTP y
+  sincronizar distinguen ahora entre credenciales rechazadas, clave de host
+  desconocida, clave de host cambiada, red inalcanzable, tiempo agotado y
+  conflicto de sincronización. Un aviso de clave de host cambiada se muestra más
+  tiempo y ya no se confunde con una contraseña incorrecta.
+- **Publicación verificable**: cada release incorpora un manifiesto
+  `SHA256SUMS.txt` con la huella de todos sus artefactos y una atestación de
+  procedencia de GitHub, de modo que el `sha256` publicado deja de depender solo
+  de la integridad de la página del release.
+
+### Corregido
+
+- **El comando copiado ya no arrastra el prompt**: los bloques registran también
+  la columna de cada marcador, así que el texto empieza donde empieza el comando.
+- **Los bloques dejan de descolocarse al llenarse el historial**: al podar el
+  scrollback se reajustaba solo la línea del prompt, no las del comando, la
+  salida y el final.
+- Dos gestores (escritorio remoto y clientes externos) volvían a tomar un cerrojo
+  de forma que un fallo previo en otro hilo podía dejar sesiones colgadas al
+  desconectar todo.
+
+### Seguridad
+
+- **Cadena de suministro del release endurecida**: todas las acciones de CI están
+  fijadas por huella de commit, hay revisión de avisos de seguridad y licencias de
+  las dependencias de Rust (`cargo-deny`), escaneo de secretos, y cada ejecución
+  publica el inventario de dependencias (SBOM) del backend y del frontend.
+- Actualizadas `rustls`, `serde_json`, `thiserror`, `futures` y `vite`.
+
 ## [1.67.0] - 2026-08-05
 
 ### Añadido

@@ -1560,8 +1560,13 @@ async fn run_session(
         let mut current_handler = Some(client_handler);
         let mut current_failure = Some(host_key_failure);
         for attempt in 0..TCP_CONNECT_MAX_ATTEMPTS {
-            let handler = current_handler.take().unwrap();
-            let failure = current_failure.take().unwrap();
+            // Ambos se reponen al final de cada vuelta; si faltaran, el
+            // reintento no tiene con qué autenticar y se sale con el último
+            // error en vez de entrar en pánico dentro del hilo de la sesión.
+            let (Some(handler), Some(failure)) = (current_handler.take(), current_failure.take())
+            else {
+                break;
+            };
             match russh_connect_addr(config.clone(), &addr, handler).await {
                 Ok(h) => {
                     handle_opt = Some(h);
@@ -1844,6 +1849,9 @@ async fn run_session(
             // Keepalive de aplicación: cuando está activo enviamos un
             // `keepalive@openssh.com` (sin pedir respuesta) para mantener viva la
             // conexión frente a NAT/idle. La rama se apaga con `ka_timer == None`.
+            // El `unwrap` lo cubre la guarda: `tokio::select!` evalúa la
+            // precondición ANTES de construir el futuro de la rama, así que
+            // aquí el Option siempre es Some.
             _ = async { ka_timer.as_mut().unwrap().tick().await }, if ka_timer.is_some() => {
                 let _ = handle.send_keepalive(false).await;
             }
@@ -1851,6 +1859,7 @@ async fn run_session(
             // corto, como el open de un túnel) y delegamos la **lectura** de su
             // salida a una tarea aparte, para no congelar el terminal mientras se
             // lee. La tarea parsea, deriva contra la muestra previa y emite.
+            // Mismo invariante que el keepalive: lo garantiza la guarda.
             _ = async { metrics_timer.as_mut().unwrap().tick().await }, if metrics_timer.is_some() => {
                 if let Ok(channel) = handle.channel_open_session().await {
                     if channel.exec(false, metrics::linux_sample_command()).await.is_ok() {

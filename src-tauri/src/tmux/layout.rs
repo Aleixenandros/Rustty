@@ -126,8 +126,11 @@ impl Cursor<'_> {
         if self.pos == start {
             return Err(format!("se esperaba un número en la posición {start}"));
         }
+        // El rango lo acotó `is_ascii_digit`, así que es UTF-8 válido por
+        // construcción; aun así se propaga como error de parseo — este módulo
+        // procesa datos que llegan por la red y no debe tener ni un pánico.
         std::str::from_utf8(&self.bytes[start..self.pos])
-            .expect("dígitos ASCII")
+            .map_err(|_| format!("bytes no UTF-8 en la posición {start}"))?
             .parse()
             .map_err(|_| format!("número desbordado en la posición {start}"))
     }

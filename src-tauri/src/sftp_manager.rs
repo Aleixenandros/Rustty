@@ -1851,7 +1851,11 @@ async fn pipelined_download(
             let max_ahead = SFTP_CHUNK * SFTP_READAHEAD_FACTOR * parallelism as u64;
             while !idle_files.is_empty() && next_read < total && next_read - next_write < max_ahead
             {
-                let mut f = idle_files.pop().unwrap();
+                // El `while` ya comprobó que hay handles libres; si aun así
+                // no lo hubiera, se sale del bucle de lectura — un pánico aquí
+                // mataría el hilo de la transferencia y dejaría la sesión viva
+                // sin nadie que la atienda.
+                let Some(mut f) = idle_files.pop() else { break };
                 let len = (total - next_read).min(SFTP_CHUNK);
                 let off = next_read;
                 next_read += len;
@@ -1870,7 +1874,9 @@ async fn pipelined_download(
             break;
         }
 
-        let (f, offset, result) = in_flight.next().await.unwrap();
+        // `in_flight` no está vacío (se comprobó justo arriba); si el stream
+        // se agotara igualmente, terminar es lo correcto.
+        let Some((f, offset, result)) = in_flight.next().await else { break };
         idle_files.push(f);
         let data = result?;
         completed.insert(offset, data);
@@ -2020,7 +2026,7 @@ async fn pipelined_upload(
 
         if !paused {
             while !idle_files.is_empty() && next_offset < total {
-                let mut f = idle_files.pop().unwrap();
+                let Some(mut f) = idle_files.pop() else { break };
                 let len = (total - next_offset).min(SFTP_CHUNK);
                 let off = next_offset;
                 next_offset += len;
@@ -2056,7 +2062,7 @@ async fn pipelined_upload(
             break;
         }
 
-        let (f, n, result) = in_flight.next().await.unwrap();
+        let Some((f, n, result)) = in_flight.next().await else { break };
         idle_files.push(f);
         result?;
         transferred += n;

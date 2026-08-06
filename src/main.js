@@ -62,21 +62,26 @@ import { comboFromEvent } from "./modules/shortcuts/combo.js";
 import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { tabIndexForKey } from "./modules/tab-navigation.js";
 import {
+  blockAt,
   createBlockTracker,
   handleOsc133,
   nextBlock,
   removeBlock,
 } from "./modules/terminal/blocks.js";
+import { extractBlockText, blockToMarkdown, blockFileName } from "./modules/terminal/block-text.js";
+import { diffLines, pairDiffRows, diffToUnifiedText } from "./modules/terminal/diff.js";
 import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { defaultHighlightRules, compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
 import { normalizePrefs } from "./modules/prefs/normalize.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
+import { ipcErrorText, isHostKeyError } from "./modules/ipc/errors.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
 import { generatePassphrase, passphraseStrength } from "./modules/passphrase.js";
 import { rankCommandSuggestions } from "./modules/command-suggest.js";
 import { detectedWake, staggerDelays } from "./modules/wake.js";
+import { buildDiagnosticsReport, diagnosticsToMarkdown } from "./modules/diagnostics.js";
 import { STEP_TYPES, makeStep, emptyScript, validateScript } from "./modules/scripts/model.js";
 import { resolveTarget } from "./modules/scripts/targets.js";
 import { toMarkdown as scriptToMarkdown, parseRunbook } from "./modules/scripts/runbook.js";
@@ -606,6 +611,15 @@ const DEFAULT_PREFS = {
   // Barras de desplazamiento superpuestas: el pulgar flota sobre el contenido,
   // fino en reposo y más ancho al pasar el ratón. Off = las finas normales.
   overlayScrollbars: false,
+  // Barras nativas del sistema (anchas, siempre visibles). Accesibilidad: hay
+  // quien las necesita. Gana sobre `overlayScrollbars` y desmonta TODO el
+  // estilizado propio; en WebKit basta una regla custom para perder la nativa.
+  nativeScrollbars: false,
+  // Renderer del terminal. "auto" intenta WebGL y cae a DOM si la GPU no está
+  // disponible o pierde el contexto; "dom" fuerza el backend DOM (útil en
+  // máquinas virtuales o drivers con parpadeos). El default sigue siendo auto:
+  // el WebGL es lo que evita que un `cat` de un log grande cuelgue la UI.
+  terminalRenderer: "auto",
   // UUIDs de las últimas entradas KeePass seleccionadas (más reciente primero,
   // máx 8). Usado por el selector avanzado para sugerir entradas habituales.
   recentKeepassEntries: [],
@@ -714,7 +728,7 @@ function loadPrefs() {
   applyReduceMotion(prefs.reduceMotion);
   applyStrongFocus(prefs.strongFocus);
   applyViewFade(prefs.viewFade !== false);
-  applyOverlayScrollbars(prefs.overlayScrollbars);
+  applyScrollbarStyle();
   if (loadZenMode()) applyZenMode(true);
 }
 
@@ -939,8 +953,24 @@ function applyViewFade(enabled) {
   document.body.classList.toggle("view-fade", !!enabled);
 }
 
-function applyOverlayScrollbars(enabled) {
-  document.body.classList.toggle("overlay-scrollbars", !!enabled);
+/**
+ * Aplica el estilo de barras de desplazamiento elegido. Las nativas ganan: son
+ * una opción de accesibilidad, y quien las pide quiere las del sistema, no una
+ * versión superpuesta de las nuestras.
+ */
+function applyScrollbarStyle() {
+  const native = !!prefs.nativeScrollbars;
+  document.body.classList.toggle("native-scrollbars", native);
+  document.body.classList.toggle("overlay-scrollbars", !native && !!prefs.overlayScrollbars);
+}
+
+/** Con las nativas activas, el toggle de superpuestas no pinta nada. */
+function syncScrollbarPrefControls() {
+  const overlay = document.getElementById("pref-overlay-scrollbars");
+  const native = document.getElementById("pref-native-scrollbars");
+  if (!overlay || !native) return;
+  overlay.disabled = !!native.checked;
+  overlay.closest(".checkbox-label")?.classList.toggle("is-disabled", !!native.checked);
 }
 
 // ─── Export / Import de temas ─────────────────────────────────
@@ -1743,6 +1773,11 @@ function openSettingsModal() {
   if (_viewFade) _viewFade.checked = prefs.viewFade !== false;
   const _overlayScrollbars = document.getElementById("pref-overlay-scrollbars");
   if (_overlayScrollbars) _overlayScrollbars.checked = !!prefs.overlayScrollbars;
+  const _nativeScrollbars = document.getElementById("pref-native-scrollbars");
+  if (_nativeScrollbars) _nativeScrollbars.checked = !!prefs.nativeScrollbars;
+  syncScrollbarPrefControls();
+  const _terminalRenderer = document.getElementById("pref-terminal-renderer");
+  if (_terminalRenderer) _terminalRenderer.value = prefs.terminalRenderer === "dom" ? "dom" : "auto";
   const _searchAllWorkspaces = document.getElementById("pref-search-all-workspaces");
   if (_searchAllWorkspaces) _searchAllWorkspaces.checked = prefs.searchAllWorkspaces !== false;
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
@@ -3081,6 +3116,114 @@ async function populateAboutVersion() {
   }
 }
 
+/* ── Bundle de diagnóstico ────────────────────────────────────────────────
+   Lo que hace falta para reproducir un fallo (versión, plataforma, prefs,
+   últimos eventos) sin nada de lo que la app promete no soltar. La redacción
+   la hace el módulo puro `diagnostics.js`; aquí solo se recoge el estado y se
+   respeta el consentimiento del usuario para hosts y rutas. */
+
+/** Etiqueta corta del SO a partir del user agent (no hay plugin de OS). */
+function diagnosticsPlatform() {
+  const ua = navigator.userAgent || "";
+  if (/Windows/.test(ua)) return "windows";
+  if (/Mac OS X|Macintosh/.test(ua)) return "macos";
+  if (/Linux/.test(ua)) return "linux";
+  return "unknown";
+}
+
+/** Motor del WebView, sin la retahíla completa del user agent. */
+function diagnosticsWebview() {
+  const ua = navigator.userAgent || "";
+  const engine = /WebKit\/([\d.]+)/.exec(ua);
+  return engine ? `WebKit ${engine[1]}` : ua.slice(0, 80);
+}
+
+async function buildCurrentDiagnostics(options) {
+  if (!_cachedAppVersion) {
+    try {
+      const { getVersion } = await import("@tauri-apps/api/app");
+      _cachedAppVersion = await getVersion();
+    } catch { /* sin API de Tauri (dev en navegador): el informe sale sin versión */ }
+  }
+  // El motivo de un fallo no se copia aquí: ya viaja en los logs de conexión y
+  // en la actividad, ambos redactados por el mismo camino.
+  const sessionList = [...sessions.values()].map((s) => ({
+    type: s.type || "",
+    status: s.status || "",
+    host: profiles.find((p) => p.id === s.profileId)?.host || "",
+  }));
+  // «Logs de aplicación» = el diagnóstico de conexión que ya se registra por
+  // sesión (etapas del handshake, errores). Nunca contenido del terminal.
+  const logs = [];
+  for (const s of sessions.values()) {
+    for (const entry of s.connectionLogs || []) {
+      logs.push(`${entry.timestamp} [${entry.status}] ${entry.stage}: ${entry.message}`);
+    }
+  }
+  return buildDiagnosticsReport({
+    appVersion: _cachedAppVersion || "",
+    platform: diagnosticsPlatform(),
+    arch: navigator.userAgentData?.architecture || "",
+    locale: getLanguage(),
+    webview: diagnosticsWebview(),
+    prefs,
+    counts: {
+      profiles: profiles.length,
+      workspaces: (prefs.workspaces || []).length,
+      scripts: scriptsCache.length,
+      sessions: sessions.size,
+    },
+    sessions: sessionList,
+    activity: activityItems.map((item) => ({
+      timestamp: item.timestamp,
+      kind: item.kind,
+      status: item.status,
+      title: item.title,
+      detail: item.detail,
+    })),
+    logs,
+  }, options);
+}
+
+/** Opciones de consentimiento marcadas en Preferencias → Sistema. */
+function diagnosticsConsent() {
+  return {
+    includeHosts: !!document.getElementById("diag-include-hosts")?.checked,
+    includePaths: !!document.getElementById("diag-include-paths")?.checked,
+  };
+}
+
+/** Copia al portapapeles el resumen legible del informe. */
+async function copyDiagnosticsSummary() {
+  try {
+    const report = await buildCurrentDiagnostics(diagnosticsConsent());
+    await writeSystemClipboardText(diagnosticsToMarkdown(report));
+    toast(t("diagnostics.copied"), "success");
+  } catch (err) { toast(`${err}`, "error"); }
+}
+
+/** Exporta el informe completo a un JSON elegido por el usuario. */
+async function exportDiagnosticsBundle() {
+  let report;
+  try {
+    report = await buildCurrentDiagnostics(diagnosticsConsent());
+  } catch (err) { toast(`${err}`, "error"); return; }
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+  let path;
+  try {
+    path = await saveDialog({
+      title: t("diagnostics.export"),
+      defaultPath: `rustty-diagnostics-${stamp}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+  } catch (err) { toast(`${err}`, "error"); return; }
+  if (!path) return;
+  try {
+    await invoke("write_text_file", { path, contents: JSON.stringify(report, null, 2) });
+    toast(t("diagnostics.exported"), "success");
+  } catch (err) { toast(`${err}`, "error"); }
+}
+
 function setAboutUpdateStatus(text, type = "") {
   const el = document.getElementById("about-update-status");
   if (!el) return;
@@ -3507,6 +3650,11 @@ function savePrefsFromModal() {
     strongFocus:     !!document.getElementById("pref-strong-focus")?.checked,
     viewFade:        document.getElementById("pref-view-fade")?.checked ?? true,
     overlayScrollbars: !!document.getElementById("pref-overlay-scrollbars")?.checked,
+    nativeScrollbars: !!document.getElementById("pref-native-scrollbars")?.checked,
+    terminalRenderer: (() => {
+      const v = document.getElementById("pref-terminal-renderer")?.value;
+      return v === "dom" ? "dom" : "auto";
+    })(),
     searchAllWorkspaces: document.getElementById("pref-search-all-workspaces")?.checked ?? true,
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
@@ -3589,7 +3737,7 @@ function savePrefsFromModal() {
   applyReduceMotion(prefs.reduceMotion);
   applyStrongFocus(prefs.strongFocus);
   applyViewFade(prefs.viewFade !== false);
-  applyOverlayScrollbars(prefs.overlayScrollbars);
+  applyScrollbarStyle();
   applyPrefsToAllTerminals();
   renderConnectionList();
   closeSettingsModal();
@@ -9331,7 +9479,11 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
     for (const ul of session?.unlisteners || []) { try { ul(); } catch {} }
     sessions.delete(sessionId);
     removeTab(sessionId);
-    toast(`No se pudo conectar: ${err}`, "error");
+    // `ssh_connect` rechaza con `IpcError` estructurado: un fallo de host key
+    // no es «credenciales incorrectas» y no debe empujar a reescribir la
+    // contraseña, así que se avisa aparte y con más peso.
+    toast(`No se pudo conectar: ${ipcErrorText(err)}`, "error",
+      isHostKeyError(err) ? 12000 : undefined);
   }
 }
 
@@ -10407,6 +10559,71 @@ function scheduleTerminalOutputFlush(sessionObj) {
   }
 }
 
+/* ── Renderer del terminal (WebGL con caída a DOM) ────────────────────────
+   El backend DOM de xterm es muy costoso al pintar salidas masivas (un `cat`
+   de un log grande llegaba a saturar el hilo de UI); el addon WebGL descarga
+   el pintado en la GPU. Se carga tras `open()` —lo exige el addon— y de forma
+   defensiva: si el contexto no se puede crear (WebKitGTK sin GL, VM sin
+   aceleración) o se pierde en caliente, xterm vuelve solo al renderer DOM.
+
+   La pérdida de contexto es **recuperable**: el compositor puede reiniciarse
+   (cambio de GPU, suspensión, driver que se recarga). Por eso el fallback no
+   es definitivo — se reintenta con espera creciente y, si vuelve, se fuerza un
+   repintado completo, porque el buffer de xterm no se redibuja solo al cambiar
+   de renderer. */
+
+/** Esperas entre reintentos de WebGL tras perder el contexto. */
+const WEBGL_RETRY_DELAYS_MS = [2000, 8000, 30000];
+
+/**
+ * Activa el renderer configurado en un terminal recién abierto.
+ * @param {any} terminal
+ */
+function attachTerminalRenderer(terminal) {
+  if (prefs.terminalRenderer === "dom") return;
+  loadWebglRenderer(terminal, 0);
+}
+
+/**
+ * @param {any} terminal
+ * @param {number} attempt Índice del reintento (0 = primera carga).
+ */
+function loadWebglRenderer(terminal, attempt) {
+  if (terminal._core?._isDisposed) return;
+  try {
+    const webglAddon = new WebglAddon();
+    webglAddon.onContextLoss(() => {
+      try { webglAddon.dispose(); } catch { /* ya dispuesto: xterm sigue en DOM */ }
+      scheduleWebglRetry(terminal, attempt);
+    });
+    terminal.loadAddon(webglAddon);
+    terminal._webglAddon = webglAddon;
+    if (attempt > 0) {
+      // Al recuperar la GPU, el contenido no se repinta solo: el renderer nuevo
+      // arranca con el canvas vacío hasta el siguiente cambio del buffer.
+      try { terminal.refresh(0, terminal.rows - 1); } catch { /* terminal cerrado */ }
+    }
+  } catch (err) {
+    console.warn("[webgl] renderer no disponible, se usa el backend DOM:", err);
+    if (attempt > 0) scheduleWebglRetry(terminal, attempt);
+  }
+}
+
+/**
+ * Programa el siguiente intento de volver a WebGL. Agotados los plazos, la
+ * sesión se queda en DOM: correcto pero más lento, nunca en negro.
+ * @param {any} terminal
+ * @param {number} attempt
+ */
+function scheduleWebglRetry(terminal, attempt) {
+  const delay = WEBGL_RETRY_DELAYS_MS[attempt];
+  if (delay === undefined) {
+    console.warn("[webgl] contexto perdido de forma persistente; se mantiene el backend DOM");
+    return;
+  }
+  setTimeout(() => loadWebglRenderer(terminal, attempt + 1), delay);
+}
+
 function flushTerminalOutput(sessionObj) {
   if (!sessionObj?.terminal || sessionObj._outputWriting) return;
   const chunk = takeTerminalOutputChunk(sessionObj);
@@ -10625,7 +10842,8 @@ async function reconnectSshInPlace(s) {
     s.status = "error";
     updateTabStatus(oldSessionId, "error");
     showReconnectOverlay(oldSessionId, "Error al reconectar");
-    toast(`No se pudo reconectar: ${err}`, "error");
+    toast(`No se pudo reconectar: ${ipcErrorText(err)}`, "error",
+      isHostKeyError(err) ? 12000 : undefined);
   }
 }
 
@@ -12074,22 +12292,7 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   };
   terminalScreen?.addEventListener("mousedown", stopHoveredLinkMouseReport);
   terminalScreen?.addEventListener("mouseup", stopHoveredLinkMouseReport);
-  // Renderer WebGL: el backend DOM por defecto de xterm es muy costoso al pintar
-  // salidas masivas (un `cat` de un log grande puede saturar el hilo de UI). El
-  // addon WebGL descarga el pintado a la GPU y sube el techo de rendimiento de
-  // forma notable. Se carga tras `open()` (lo exige el addon) y de forma
-  // defensiva: si el contexto no se puede crear (p. ej. WebKitGTK sin WebGL) o
-  // se pierde en caliente, hacemos `dispose()` y xterm vuelve solo al renderer
-  // DOM, así que nunca dejamos el terminal sin pintar.
-  try {
-    const webglAddon = new WebglAddon();
-    webglAddon.onContextLoss(() => {
-      try { webglAddon.dispose(); } catch {}
-    });
-    terminal.loadAddon(webglAddon);
-  } catch (err) {
-    console.warn("[webgl] renderer no disponible, se usa el backend DOM:", err);
-  }
+  attachTerminalRenderer(terminal);
   // Ligaduras: el addon requiere que el terminal ya esté abierto en el DOM.
   // Solo carga si el toggle está activo; cambios en caliente no se aplican
   // a sesiones ya abiertas (avisado en el hint de Preferencias).
@@ -12185,12 +12388,12 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     // Los Marker de xterm son la fuente de verdad después de que el scrollback
     // haya expulsado líneas: sincronizamos sus posiciones antes de incorporar
     // el marcador OSC nuevo, cuya línea usa el mismo sistema de coordenadas.
-    for (const block of sessionObj.commandBlocks.blocks) {
-      const entry = sessionObj.commandBlockMarkers.get(block.id);
-      if (entry?.marker && !entry.marker.isDisposed) block.promptLine = entry.marker.line;
-    }
+    syncCommandBlockLines(sessionObj);
     const line = terminal.buffer.active.baseY + terminal.buffer.active.cursorY;
-    handleOsc133(sessionObj.commandBlocks, data, line);
+    // La columna importa tanto como la línea: `B` llega en la misma fila que el
+    // prompt recién pintado, así que sin ella el comando copiado arrastraría el
+    // prompt entero.
+    handleOsc133(sessionObj.commandBlocks, data, line, terminal.buffer.active.cursorX);
 
     // `maxBlocks` puede desalojar el más antiguo aunque su Marker siga vivo.
     // Liberamos en paralelo su decoración para que las dos retenciones nunca
@@ -16029,11 +16232,11 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
     s.sftp.localCwd = localHome;
     await navigateSftpLocal(sessionId, localHome);
   } catch (err) {
-    toast(t("toast.proto_failed", { proto: protoLabel, err }), "error");
+    toast(t("toast.proto_failed", { proto: protoLabel, err: ipcErrorText(err) }), "error");
     appendSftpActivity(panel, {
       status: "error",
       label: `${protoLabel} falló`,
-      detail: String(err),
+      detail: ipcErrorText(err),
     });
     // Liberar los listeners ya registrados (sftp-log) antes de descartar el
     // estado; si no, cada intento fallido dejaba uno fugado para siempre.
@@ -16132,7 +16335,7 @@ async function toggleSftpElevated(sessionId) {
     toast(targetElevated ? "SFTP elevado activo" : "SFTP sin privilegios extra",
           targetElevated ? "success" : "info");
   } catch (err) {
-    toast(`No se pudo reconectar: ${err}`, "error");
+    toast(`No se pudo reconectar: ${ipcErrorText(err)}`, "error");
     // Intentar volver al modo previo para no dejar el panel sin sesión
     try {
       const fallbackSftpSessionId = crypto.randomUUID();
@@ -16161,7 +16364,7 @@ async function toggleSftpElevated(sessionId) {
       btn?.classList.toggle("active", wasElevated);
       await navigateSftp(sessionId, prevCwd || "/");
     } catch (err2) {
-      toast(t("toast.sftp_down", { err: err2 }), "error");
+      toast(t("toast.sftp_down", { err: ipcErrorText(err2) }), "error");
     }
   } finally {
     if (btn) btn.disabled = false;
@@ -20691,6 +20894,14 @@ function bindUIEvents() {
   document.getElementById("pref-metrics-alerts")
     ?.addEventListener("change", updateMetricsAlertFields);
 
+  // Las barras nativas anulan las superpuestas: se refleja al momento.
+  document.getElementById("pref-native-scrollbars")
+    ?.addEventListener("change", syncScrollbarPrefControls);
+
+  // Informe de diagnóstico (panel Sistema).
+  document.getElementById("btn-diag-copy")?.addEventListener("click", copyDiagnosticsSummary);
+  document.getElementById("btn-diag-export")?.addEventListener("click", exportDiagnosticsBundle);
+
   // Editor de reglas de resaltado
   document.getElementById("btn-highlight-add")
     ?.addEventListener("click", () => {
@@ -22000,6 +22211,14 @@ function buildPaletteSources() {
   if ((activeSessionId && sessions.get(activeSessionId)?.profileId) || activeProfileId()) {
     add("action:session-note", { kind: "action", title: t("palette.action_session_note"), icon: PALETTE_ICONS.note, run: () => openActiveSessionNote() });
   }
+  // Acciones de bloque: solo con una sesión de terminal viva que ya haya
+  // registrado algún bloque OSC 133 (si el shell no lo emite, no hay nada que
+  // copiar y la entrada solo estorbaría).
+  if (activeSessionId && sessions.get(activeSessionId)?.commandBlocks?.blocks?.length) {
+    add("action:copy-block-markdown", { kind: "action", title: t("palette.action_copy_block_markdown"), icon: PALETTE_ICONS.note, run: () => copyActiveBlockMarkdown() });
+    add("action:export-block-markdown", { kind: "action", title: t("palette.action_export_block_markdown"), icon: PALETTE_ICONS.note, run: () => exportActiveBlockMarkdown() });
+    add("action:diff-block", { kind: "action", title: t("palette.action_diff_block"), icon: PALETTE_ICONS.action, run: () => openBlockDiff(-1) });
+  }
   add("action:tunnels", { kind: "action", title: t("palette.action_tunnels"), icon: PALETTE_ICONS.tunnel, run: () => openGlobalTunnelsModal() });
   add("action:scripts", { kind: "action", title: t("palette.action_scripts"), icon: PALETTE_ICONS.script, run: () => openScriptsModal() });
   const healthFavs = profiles.filter((p) => isFavoriteProfile(p.id) && p.host);
@@ -22219,6 +22438,12 @@ function initCommandsAndPalette() {
   document.getElementById("health-overlay")?.addEventListener("mousedown", (e) => {
     if (e.target.id === "health-overlay") closeHealthModal();
   });
+  document.getElementById("btn-block-diff-close")?.addEventListener("click", closeBlockDiffModal);
+  document.getElementById("btn-block-diff-ok")?.addEventListener("click", closeBlockDiffModal);
+  document.getElementById("btn-block-diff-copy")?.addEventListener("click", copyBlockDiffUnified);
+  document.getElementById("block-diff-overlay")?.addEventListener("mousedown", (e) => {
+    if (e.target.id === "block-diff-overlay") closeBlockDiffModal();
+  });
   document.getElementById("btn-snippet-add")?.addEventListener("click", () => openSnippetEditor(null));
   document.getElementById("snippet-list")?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-snippet-action]");
@@ -22285,10 +22510,7 @@ function navigateCommandBlock(direction) {
   const markers = session?.commandBlockMarkers;
   if (!terminal || !tracker || !markers || terminal.buffer.active.type === "alternate") return false;
 
-  for (const block of tracker.blocks) {
-    const entry = markers.get(block.id);
-    if (entry?.marker && !entry.marker.isDisposed) block.promptLine = entry.marker.line;
-  }
+  syncCommandBlockLines(session);
 
   const fromLine = terminal.buffer.active.viewportY;
   let target = nextBlock(tracker, fromLine, direction);
@@ -22306,6 +22528,245 @@ function navigateCommandBlock(direction) {
   return false;
 }
 
+/**
+ * Reancla los bloques al scrollback real. Los `Marker` de xterm sí siguen a la
+ * poda; las líneas del tracker, no. Como la poda desplaza **todas** las líneas
+ * por igual, el desfase del prompt (única línea con marker) vale para todo el
+ * bloque: sin propagarlo, `commandLine`/`outputLine`/`endLine` apuntarían a
+ * texto ajeno en cuanto el buffer diera una vuelta.
+ * @param {any} session
+ */
+function syncCommandBlockLines(session) {
+  const tracker = session?.commandBlocks;
+  const markers = session?.commandBlockMarkers;
+  if (!tracker || !markers) return;
+  for (const block of tracker.blocks) {
+    const entry = markers.get(block.id);
+    if (!entry?.marker || entry.marker.isDisposed) continue;
+    const delta = entry.marker.line - block.promptLine;
+    if (!delta) continue;
+    block.promptLine += delta;
+    if (block.commandLine !== null) block.commandLine += delta;
+    if (block.outputLine !== null) block.outputLine += delta;
+    if (block.endLine !== null) block.endLine += delta;
+  }
+}
+
+/**
+ * Bloque de comando sobre el que actúan las acciones (copiar, exportar, diff):
+ * el que contiene el cursor y, si ese es el prompt vacío en el que el usuario
+ * está escribiendo, el último bloque con comando por encima.
+ * @param {any} session
+ * @returns {import("./modules/terminal/blocks.js").CommandBlock|null}
+ */
+function currentCommandBlock(session) {
+  const tracker = session?.commandBlocks;
+  const terminal = session?.terminal;
+  if (!tracker || !terminal || !tracker.blocks.length) return null;
+  syncCommandBlockLines(session);
+  const buffer = terminal.buffer.active;
+  const cursorLine = buffer.baseY + buffer.cursorY;
+  let block = blockAt(tracker, cursorLine);
+  if (block && block.commandLine === null) {
+    block = nextBlock(tracker, block.promptLine, -1) || block;
+  }
+  return block || tracker.blocks.at(-1) || null;
+}
+
+/**
+ * Texto (comando + salida) de un bloque leyendo el buffer de su terminal.
+ * @param {any} session
+ * @param {import("./modules/terminal/blocks.js").CommandBlock} block
+ */
+function commandBlockText(session, block) {
+  const buffer = session.terminal.buffer.active;
+  return extractBlockText(
+    block,
+    (line) => buffer.getLine(line)?.translateToString(true) ?? null,
+    {
+      lastLine: buffer.baseY + buffer.cursorY,
+      isWrapped: (line) => !!buffer.getLine(line)?.isWrapped,
+    },
+  );
+}
+
+/** Destino legible de una sesión para la cabecera del Markdown exportado. */
+function sessionBlockHost(session) {
+  if (!session) return "";
+  if (session.type === "local") return "localhost";
+  const profile = profiles.find((p) => p.id === session.profileId);
+  if (!profile) return "";
+  return `${profile.username ? `${profile.username}@` : ""}${profile.host || ""}`;
+}
+
+/**
+ * Resuelve el bloque de la sesión activa y avisa si no hay ninguno (shell sin
+ * integración OSC 133): la acción no puede fallar en silencio.
+ * @returns {{ session: any, block: import("./modules/terminal/blocks.js").CommandBlock }|null}
+ */
+function requireActiveCommandBlock() {
+  const session = activeSessionId ? sessions.get(activeSessionId) : null;
+  const block = session ? currentCommandBlock(session) : null;
+  if (!session || !block) {
+    toast(t("blocks.none"), "warning");
+    return null;
+  }
+  return { session, block };
+}
+
+/** Copia al portapapeles solo el comando del bloque actual. */
+async function copyActiveBlockCommand() {
+  const ctx = requireActiveCommandBlock();
+  if (!ctx) return;
+  const { command } = commandBlockText(ctx.session, ctx.block);
+  if (!command.trim()) { toast(t("blocks.empty_command"), "warning"); return; }
+  await writeSystemClipboardText(command);
+  toast(t("blocks.copied_command"), "success");
+}
+
+/** Copia al portapapeles solo la salida del bloque actual. */
+async function copyActiveBlockOutput() {
+  const ctx = requireActiveCommandBlock();
+  if (!ctx) return;
+  const { output } = commandBlockText(ctx.session, ctx.block);
+  if (!output.trim()) { toast(t("blocks.empty_output"), "warning"); return; }
+  await writeSystemClipboardText(output);
+  toast(t("blocks.copied_output"), "success");
+}
+
+/**
+ * Markdown autocontenido del bloque actual (comando, contexto y salida). El
+ * documento se escribe con etiquetas neutras en inglés: es formato de
+ * intercambio, igual que el runbook de los scripts.
+ * @param {any} session
+ * @param {import("./modules/terminal/blocks.js").CommandBlock} block
+ */
+function blockMarkdownFor(session, block) {
+  const { command, output } = commandBlockText(session, block);
+  return blockToMarkdown({
+    command,
+    output,
+    host: sessionBlockHost(session),
+    cwd: session.remoteCwd || "",
+    exitCode: block.exitCode,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/** Copia el bloque actual como Markdown. */
+async function copyActiveBlockMarkdown() {
+  const ctx = requireActiveCommandBlock();
+  if (!ctx) return;
+  await writeSystemClipboardText(blockMarkdownFor(ctx.session, ctx.block));
+  toast(t("blocks.copied_markdown"), "success");
+}
+
+/** Exporta el bloque actual a un fichero `.md` elegido por el usuario. */
+async function exportActiveBlockMarkdown() {
+  const ctx = requireActiveCommandBlock();
+  if (!ctx) return;
+  const { command } = commandBlockText(ctx.session, ctx.block);
+  const markdown = blockMarkdownFor(ctx.session, ctx.block);
+  let path;
+  try {
+    path = await saveDialog({
+      title: t("blocks.export_title"),
+      defaultPath: blockFileName(command),
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+  } catch (err) { toast(`${err}`, "error"); return; }
+  if (!path) return;
+  try {
+    await invoke("write_text_file", { path, contents: markdown });
+    toast(t("blocks.exported"), "success");
+  } catch (err) { toast(`${err}`, "error"); }
+}
+
+/* ── Diff entre bloques ───────────────────────────────────────────────────
+   Comparar la salida de dos ejecuciones consecutivas (`df -h`, `ps aux`,
+   `kubectl get pods`) es el uso natural de los bloques. El diff lo calcula el
+   módulo puro `terminal/diff.js`; aquí solo se resuelven los dos bloques y se
+   pinta el resultado. */
+
+/** Último diff calculado, para la acción «copiar en formato unificado». */
+let _blockDiffState = null;
+
+function closeBlockDiffModal() {
+  document.getElementById("block-diff-overlay")?.classList.add("hidden");
+}
+
+/**
+ * Compara el bloque actual con el vecino en la dirección dada.
+ * @param {1|-1} direction `-1` = con el anterior, `1` = con el siguiente.
+ */
+function openBlockDiff(direction) {
+  const ctx = requireActiveCommandBlock();
+  if (!ctx) return;
+  const tracker = ctx.session.commandBlocks;
+  const other = nextBlock(tracker, ctx.block.promptLine, direction);
+  if (!other) {
+    toast(t("blocks.diff_no_neighbour"), "warning");
+    return;
+  }
+  // El diff siempre se lee «del más antiguo al más nuevo», sea cual sea la
+  // dirección por la que se pidió.
+  const [older, newer] = direction === -1 ? [other, ctx.block] : [ctx.block, other];
+  const left = commandBlockText(ctx.session, older);
+  const right = commandBlockText(ctx.session, newer);
+  const result = diffLines(left.output, right.output);
+  _blockDiffState = {
+    result,
+    leftLabel: left.command || t("blocks.diff_unknown_command"),
+    rightLabel: right.command || t("blocks.diff_unknown_command"),
+  };
+  renderBlockDiff();
+}
+
+function renderBlockDiff() {
+  const overlay = document.getElementById("block-diff-overlay");
+  const body = document.getElementById("block-diff-body");
+  if (!overlay || !body || !_blockDiffState) return;
+  const { result, leftLabel, rightLabel } = _blockDiffState;
+
+  const leftEl = document.getElementById("block-diff-left-label");
+  const rightEl = document.getElementById("block-diff-right-label");
+  if (leftEl) leftEl.textContent = leftLabel;
+  if (rightEl) rightEl.textContent = rightLabel;
+  const summary = document.getElementById("block-diff-summary");
+  if (summary) {
+    summary.textContent = result.added === 0 && result.removed === 0
+      ? t("blocks.diff_identical")
+      : t("blocks.diff_summary", { added: result.added, removed: result.removed });
+  }
+  const warn = document.getElementById("block-diff-warning");
+  if (warn) warn.classList.toggle("hidden", !result.truncated);
+
+  const rows = pairDiffRows(result.rows).map((pair) => {
+    const cell = (row, side) => {
+      if (!row) return `<td class="diff-num"></td><td class="diff-cell diff-empty"></td>`;
+      const kind = row.type === "same" ? "same" : row.type === "add" ? "add" : "del";
+      const num = side === "left" ? row.leftLine : row.rightLine;
+      return `<td class="diff-num">${num ?? ""}</td>`
+        + `<td class="diff-cell diff-${kind}">${escHtml(row.text)}</td>`;
+    };
+    return `<tr>${cell(pair.left, "left")}${cell(pair.right, "right")}</tr>`;
+  }).join("");
+  body.innerHTML = rows
+    ? `<table class="diff-table">${rows}</table>`
+    : `<p class="prefs-panel-hint">${escHtml(t("blocks.diff_empty"))}</p>`;
+  overlay.classList.remove("hidden");
+}
+
+/** Copia el diff mostrado en formato unificado (pegable en un ticket). */
+async function copyBlockDiffUnified() {
+  if (!_blockDiffState) return;
+  await writeSystemClipboardText(diffToUnifiedText(_blockDiffState.result, {
+    leftLabel: _blockDiffState.leftLabel,
+    rightLabel: _blockDiffState.rightLabel,
+  }));
+  toast(t("blocks.diff_copied"), "success");
+}
+
 const SHORTCUT_ACTIONS = {
   paste_terminal:    { default: "Ctrl+Alt+V",     run: () => pasteIntoActiveTerminal() },
   copy_terminal:     { default: "Ctrl+Alt+C",     run: () => copyActiveSelection() },
@@ -22321,6 +22782,13 @@ const SHORTCUT_ACTIONS = {
   prev_pane:         { default: "Ctrl+Alt+ArrowLeft",  run: () => focusPaneByOffset(-1) },
   prev_command_block:{ default: "Alt+ArrowUp",    run: () => navigateCommandBlock(-1) },
   next_command_block:{ default: "Alt+ArrowDown",  run: () => navigateCommandBlock(1) },
+  // Acciones sobre el bloque actual. Sin atajo por defecto: son de uso puntual
+  // y cualquier combinación razonable ya la usan las TUIs.
+  copy_block_command:{ default: "",               run: () => copyActiveBlockCommand() },
+  copy_block_output: { default: "",               run: () => copyActiveBlockOutput() },
+  copy_block_markdown:{ default: "",              run: () => copyActiveBlockMarkdown() },
+  export_block_markdown:{ default: "",            run: () => exportActiveBlockMarkdown() },
+  diff_block_previous:{ default: "",              run: () => openBlockDiff(-1) },
   open_preferences:  { default: "Ctrl+,",         run: () => openSettingsModal() },
   zoom_in:           { default: "Ctrl+=",         run: () => adjustTerminalFontSize(+1) },
   zoom_out:          { default: "Ctrl+-",         run: () => adjustTerminalFontSize(-1) },

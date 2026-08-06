@@ -198,12 +198,11 @@ impl TmuxManager {
                     .collect();
                 let removed_panes = removed
                     .into_iter()
-                    .map(|id| {
-                        let state = self.panes.remove(&id).expect("pane recién listada");
-                        PaneBinding {
+                    .filter_map(|id| {
+                        self.panes.remove(&id).map(|state| PaneBinding {
                             pane: id,
                             logical_id: state.logical_id,
-                        }
+                        })
                     })
                     .collect();
                 vec![ModelUpdate::WindowClosed {
@@ -310,12 +309,11 @@ impl TmuxManager {
             .collect();
         let removed = gone
             .into_iter()
-            .map(|id| {
-                let state = self.panes.remove(&id).expect("pane recién listada");
-                PaneBinding {
+            .filter_map(|id| {
+                self.panes.remove(&id).map(|state| PaneBinding {
                     pane: id,
                     logical_id: state.logical_id,
-                }
+                })
             })
             .collect();
 

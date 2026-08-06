@@ -28,10 +28,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: npm
@@ -45,13 +45,13 @@ jobs:
         run: sed -n 's/^channel = "\(.*\)"/channel=\1/p' src-tauri/rust-toolchain.toml >> "$GITHUB_OUTPUT"
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: ${{ steps.rust.outputs.channel }}
           components: clippy
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
 
@@ -148,11 +148,11 @@ jobs:
 
     steps:
       # ── Checkout ──────────────────────────────────────────────
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # ── Node.js ───────────────────────────────────────────────
       - name: Setup Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: npm
@@ -167,13 +167,13 @@ jobs:
         run: sed -n 's/^channel = "\(.*\)"/channel=\1/p' src-tauri/rust-toolchain.toml >> "$GITHUB_OUTPUT"
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: ${{ steps.rust.outputs.channel }}
           targets: ${{ matrix.target }}
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
 
@@ -220,7 +220,7 @@ jobs:
       # definidos en el repo, las env vars quedan vacías y tauri-action
       # compila sin firmar, igual que antes. Solo tienen efecto en macOS.
       - name: Build
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN:              ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
@@ -394,6 +394,13 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     name: Publish release
+    # `id-token` + `attestations` los exige `attest-build-provenance` (firma
+    # con OIDC contra el registro de procedencia). Se conceden aquí y solo
+    # aquí: ningún otro job del workflow debe poder emitir procedencia.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     steps:
       # Red de seguridad del updater: todo artefacto que `latest.json` anuncia debe
@@ -437,6 +444,31 @@ jobs:
           done < <(jq -r '.platforms | to_entries[] | "\(.key) \(.value.url | split("/") | last)"' latest.json)
           [ "$missing" -eq 0 ]
 
+      # ── Manifiesto de checksums ────────────────────────────────────────
+      # Hasta ahora el `sha256` que el README invita a comprobar se leía de la
+      # propia página del release: quien pudiera alterar los binarios podría
+      # alterar también el número al lado. Un manifiesto **firmado** rompe esa
+      # circularidad — la firma la aporta la attestation del paso siguiente, que
+      # se emite fuera del release, en el registro de procedencia de GitHub.
+      - name: Generar SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist-assets
+          # `latest.json` no entra: lo genera tauri-action y ya va firmado con
+          # la clave del updater. `SHA256SUMS.txt` tampoco puede firmarse a sí
+          # mismo.
+          gh release download "${GITHUB_REF_NAME}" \
+            --dir dist-assets --clobber --repo "${GITHUB_REPOSITORY}" \
+            --exclude 'latest.json' --exclude 'SHA256SUMS.txt'
+          cd dist-assets
+          sha256sum * > ../SHA256SUMS.txt
+          cd ..
+          cat SHA256SUMS.txt
+          gh release upload "${GITHUB_REF_NAME}" SHA256SUMS.txt \
+            --clobber --repo "${GITHUB_REPOSITORY}"
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -444,6 +476,17 @@ jobs:
           gh release edit "${GITHUB_REF_NAME}" \
             --draft=false \
             --repo "${GITHUB_REPOSITORY}"
+
+      # Procedencia verificable: ata el manifiesto a este workflow, este commit
+      # y este runner. Como el manifiesto cubre todos los artefactos por hash,
+      # attestarlo a él los cubre a todos:
+      #   gh attestation verify Rustty_x.y.z_amd64.deb --repo <owner>/<repo>
+      # Va DESPUÉS de publicar a propósito: si la emisión fallara, el release ya
+      # está disponible y solo queda este job en rojo, no la entrega bloqueada.
+      - name: Attestation de procedencia del manifiesto
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: SHA256SUMS.txt
 
   # ── Publicar en winget (microsoft/winget-pkgs) ────────────────
   # Va aquí como job dependiente y no en un workflow aparte disparado por
@@ -471,7 +514,7 @@ jobs:
 
       - name: Submit Rustty to winget-pkgs
         if: steps.prep.outputs.skip != 'true'
-        uses: vedantmgoyal9/winget-releaser@v2
+        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
         with:
           identifier:       rustty.Rustty
           version:          ${{ steps.prep.outputs.version }}

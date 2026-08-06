@@ -9,19 +9,29 @@
  * consultas de navegación; el wiring con xterm (registrar el handler OSC,
  * traducir marcadores a líneas del buffer, colapsar/copiar) llega aparte.
  *
- * Sin DOM ni estado global: el `line` lo aporta el llamador (línea absoluta
- * del buffer en el momento del marcador). Tolerante a shells imperfectos:
- * un `A` con un bloque aún abierto lo cierra implícitamente (exit desconocido),
- * y `B`/`C`/`D` sin bloque abierto se ignoran sin romper nada.
+ * Sin DOM ni estado global: la posición (`line`, `col`) la aporta el llamador
+ * (coordenadas absolutas del buffer en el momento del marcador). Tolerante a
+ * shells imperfectos: un `A` con un bloque aún abierto lo cierra implícitamente
+ * (exit desconocido), y `B`/`C`/`D` sin bloque abierto se ignoran sin romper
+ * nada.
+ *
+ * Las **columnas** importan tanto como las líneas: `B` llega justo después de
+ * pintarse el prompt, en su misma fila, así que sin la columna el texto del
+ * comando arrastraría el prompt entero (`user@host:~$ `). Quien no la conozca
+ * puede omitirla (queda en 0) y el extractor degrada a línea completa.
  */
 
 /**
  * @typedef {object} CommandBlock
  * @property {number} id Identificador estable del bloque (creciente).
  * @property {number} promptLine Línea donde empezó el prompt (`A`).
+ * @property {number} promptCol Columna del `A`.
  * @property {number|null} commandLine Línea donde empezó el comando (`B`).
+ * @property {number} commandCol Columna del `B` (0 si no se conoce).
  * @property {number|null} outputLine Línea donde empezó la salida (`C`).
+ * @property {number} outputCol Columna del `C` (0 si no se conoce).
  * @property {number|null} endLine Línea del fin de comando (`D`), o null si sigue abierto.
+ * @property {number} endCol Columna del `D` (0 si no se conoce).
  * @property {number|null} exitCode Código de salida del `D;exit`, si lo dio.
  */
 
@@ -55,11 +65,13 @@ function openBlock(state) {
  * @param {BlockTracker} state
  * @param {string} data Payload tras `133;` (p. ej. `"A"` o `"D;127"`).
  * @param {number} line Línea absoluta del buffer en la que llega el marcador.
+ * @param {number} [col] Columna del cursor en ese momento (0 si se desconoce).
  * @returns {boolean} `true` si el marcador se ha entendido.
  */
-export function handleOsc133(state, data, line) {
+export function handleOsc133(state, data, line, col = 0) {
   const parts = String(data || "").split(";");
   const kind = parts[0];
+  const column = Number.isFinite(col) && col > 0 ? Math.trunc(col) : 0;
   switch (kind) {
     case "A": {
       const open = openBlock(state);
@@ -71,9 +83,13 @@ export function handleOsc133(state, data, line) {
       state.blocks.push({
         id: state.nextId++,
         promptLine: line,
+        promptCol: column,
         commandLine: null,
+        commandCol: 0,
         outputLine: null,
+        outputCol: 0,
         endLine: null,
+        endCol: 0,
         exitCode: null,
       });
       if (state.blocks.length > state.maxBlocks) {
@@ -83,18 +99,25 @@ export function handleOsc133(state, data, line) {
     }
     case "B": {
       const open = openBlock(state);
-      if (open && open.commandLine === null) open.commandLine = line;
+      if (open && open.commandLine === null) {
+        open.commandLine = line;
+        open.commandCol = column;
+      }
       return open !== null;
     }
     case "C": {
       const open = openBlock(state);
-      if (open && open.outputLine === null) open.outputLine = line;
+      if (open && open.outputLine === null) {
+        open.outputLine = line;
+        open.outputCol = column;
+      }
       return open !== null;
     }
     case "D": {
       const open = openBlock(state);
       if (!open) return false;
       open.endLine = line;
+      open.endCol = column;
       const exit = parts.length > 1 ? Number.parseInt(parts[1], 10) : NaN;
       open.exitCode = Number.isFinite(exit) ? exit : null;
       return true;
