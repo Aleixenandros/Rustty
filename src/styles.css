@@ -2902,7 +2902,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   .dashboard-favorites { grid-column: 1 / -1; }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 760px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
@@ -3921,6 +3921,13 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
   justify-content: space-between;
   padding: 18px 20px 14px;
   border-bottom: 1px solid var(--border-subtle);
+  /* Armazón unificado: la cabecera queda fija cuando el cuerpo del modal
+     hace scroll (en modales sin scroll, sticky es inerte). El fondo evita
+     que el contenido asome por debajo al desplazarse. */
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--surface-panel);
 }
 
 .modal-header h2 {
@@ -4325,6 +4332,18 @@ input[type="checkbox"] {
   gap: 8px;
   padding-top: 6px;
   border-top: 1px solid var(--border-subtle);
+}
+
+/* Armazón unificado: en el modal de conexión (cuerpo con scroll y resize),
+   el pie con el CTA principal queda siempre a la vista, sangrando sobre el
+   padding del formulario para tapar el contenido que pasa por debajo. */
+#form-connection .modal-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  background: var(--surface-panel);
+  margin: 0 -20px -18px;
+  padding: 10px 20px 14px;
 }
 
 /* ─── Toasts ─────────────────────────────────────────────────── */
@@ -7421,7 +7440,7 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
   white-space: nowrap;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 760px) {
   .sftp-row {
     grid-template-columns: 40px 1fr 70px auto;
   }
@@ -9967,4 +9986,54 @@ body.color-blind-safe .modal-summary-badge.warn::before {
 
 @media (max-width: 760px) {
   .script-run-creds { grid-template-columns: 1fr; align-items: stretch; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CHROME ADAPTATIVO — breakpoints compartidos
+   Escala única de la app: 1100 (ancho) · 980 (medio) · 760 (estrecho)
+   · 620 (mínimo). Los componentes cortan en estos valores, no en los
+   suyos propios; las acciones secundarias ceden antes de solaparse.
+════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 980px) {
+  /* La barra de estado prioriza conexión y latencia: el cwd remoto es lo
+     más largo y lo primero en ceder (sigue en el tooltip del diagnóstico). */
+  #status-bar .status-cwd,
+  #status-bar .status-cwd-sep {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  /* Toolbars del panel SFTP: envolver a segunda línea antes que solapar. */
+  .sftp-toolbar {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  /* Dimensiones del terminal: informativas; ceden ante la latencia. */
+  #status-bar .status-dims,
+  #status-bar #status-dims-wrap {
+    display: none;
+  }
+
+  /* Centro de actividad: ocupa todo el ancho disponible junto al rail. */
+  #activity-center-panel {
+    width: calc(100vw - 44px);
+  }
+}
+
+@media (max-width: 620px) {
+  /* Modales grandes a superficie completa: en una ventana mínima el marco
+     flotante solo resta espacio útil. */
+  #modal-connection,
+  #modal-prefs,
+  #modal-keepass {
+    width: 100vw;
+    min-width: 0;
+    max-width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+  }
 }
