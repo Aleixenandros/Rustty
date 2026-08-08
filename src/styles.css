@@ -90,6 +90,27 @@
   --border-subtle: var(--surface0);  /* borde de caja en reposo */
   --border-strong: var(--surface1);  /* borde de popover y separador marcado */
 
+  /* Primitivas de control: métricas y estados compartidos de botones,
+     icon-buttons, inputs, selects y chips. Cada panel las consume en vez de
+     resolver el mismo componente por su cuenta. */
+  --control-py: 8px;                  /* padding vertical de texto/inputs */
+  --control-px: 11px;                 /* padding horizontal de inputs/selects */
+  --control-px-btn: 18px;             /* padding horizontal de botones de texto */
+  --control-icon-size: 30px;          /* icon-button cuadrado estándar */
+  --control-icon-size-sm: 22px;       /* icon-button compacto (filas) */
+  --control-radius: var(--radius-sm);
+  --control-bg: var(--base);
+  --control-border: var(--border-strong);
+  --control-border-hover: var(--surface2);
+  --control-disabled-opacity: 0.45;
+
+  /* Filas seleccionables: estados compartidos de sidebar, SFTP, actividad,
+     KeePass, temas y selectores — mismo hover y misma selección en todas. */
+  --row-hover-bg: var(--surface0);
+  --row-selected-bg: color-mix(in srgb, var(--blue) 22%, transparent);
+  --row-selected-hover-bg: color-mix(in srgb, var(--blue) 28%, transparent);
+  --row-multi-bg: var(--surface1);   /* selección múltiple / foco transitorio */
+
   /* Movimiento */
   --motion-fast: 120ms;
   --motion-normal: 180ms;
@@ -912,7 +933,7 @@ body:not(.native-scrollbars) #connection-list::-webkit-scrollbar-thumb:hover {
 }
 
 .sidebar-sync-status:hover {
-  background: var(--surface0);
+  background: var(--row-hover-bg);
 }
 
 .sidebar-sync-copy {
@@ -965,14 +986,14 @@ body:not(.native-scrollbars) #connection-list::-webkit-scrollbar-thumb:hover {
 }
 
 .conn-item:hover {
-  background: var(--surface0);
+  background: var(--row-hover-bg);
 }
 
 /* `.selected` solo se aplica visualmente cuando no es la pestaña activa
    (multi-selección o foco transitorio de la sidebar). Si la conexión es la
    pestaña activa, gana `.active`. */
 .conn-item.selected:not(.active) {
-  background: var(--surface1);
+  background: var(--row-multi-bg);
 }
 
 /* Conexión con alguna sesión abierta que NO es la pestaña activa: indicador
@@ -1187,8 +1208,8 @@ body:not(.native-scrollbars) #connection-list::-webkit-scrollbar-thumb:hover {
 }
 
 .btn-icon-sm {
-  width: 22px;
-  height: 22px;
+  width: var(--control-icon-size-sm);
+  height: var(--control-icon-size-sm);
   border-radius: var(--radius-xs);
   display: flex;
   align-items: center;
@@ -3045,9 +3066,9 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   background: var(--blue);
   color: var(--crust);
   font-weight: 600;
-  padding: 8px 18px;
+  padding: var(--control-py) var(--control-px-btn);
   border: 1px solid var(--blue);
-  border-radius: var(--border-radius);
+  border-radius: var(--control-radius);
   transition: filter 0.15s, box-shadow 0.15s;
 }
 
@@ -3071,12 +3092,12 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 }
 
 .btn-secondary {
-  background: var(--surface0);
+  background: var(--surface-raised);
   color: var(--text);
   font-weight: 500;
-  padding: 8px 18px;
+  padding: var(--control-py) var(--control-px-btn);
   border: 1px solid var(--surface2);
-  border-radius: var(--border-radius);
+  border-radius: var(--control-radius);
   transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
 }
 
@@ -3091,10 +3112,54 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 25%, transparent);
 }
 
+/* Estados compartidos que faltaban en las primitivas: deshabilitado y peligro.
+   Antes cada panel (o nadie) los resolvía; `.btn-secondary.danger` se usaba en
+   el HTML sin estilo propio. */
+.btn-secondary:disabled,
+.btn-secondary[disabled],
+.btn-icon:disabled,
+.btn-icon[disabled],
+.btn-icon-sm:disabled,
+.btn-icon-sm[disabled] {
+  opacity: var(--control-disabled-opacity);
+  cursor: not-allowed;
+}
+
+.btn-secondary:disabled:hover,
+.btn-secondary[disabled]:hover {
+  background: var(--surface-raised);
+  border-color: var(--surface2);
+  color: var(--text);
+}
+
+.btn-icon:disabled:hover,
+.btn-icon[disabled]:hover,
+.btn-icon-sm:disabled:hover,
+.btn-icon-sm[disabled]:hover {
+  background: transparent;
+  color: var(--subtext0);
+}
+
+.btn-secondary.danger {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 45%, var(--surface2));
+}
+
+.btn-secondary.danger:hover {
+  background: var(--red);
+  border-color: var(--red);
+  color: var(--crust);
+}
+
+.btn-icon.danger:hover {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  color: var(--red);
+}
+
 .btn-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: var(--border-radius);
+  width: var(--control-icon-size);
+  height: var(--control-icon-size);
+  border-radius: var(--control-radius);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3444,8 +3509,8 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
   border: 1px solid transparent;
 }
 .palette-item.active {
-  background: var(--surface0);
-  border-color: var(--surface1);
+  background: var(--row-hover-bg);
+  border-color: var(--row-multi-bg);
 }
 .palette-item-icon {
   display: flex;
@@ -3914,10 +3979,10 @@ input[type="password"],
 input[type="number"],
 textarea,
 select {
-  background: var(--base);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--border-radius);
-  padding: 8px 11px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  padding: var(--control-py) var(--control-px);
   color: var(--text);
   font-size: 13px;
   outline: none;
@@ -3930,7 +3995,7 @@ input[type="password"]:hover,
 input[type="number"]:hover,
 textarea:hover,
 select:hover {
-  border-color: var(--surface2);
+  border-color: var(--control-border-hover);
 }
 
 .password-field {
@@ -6032,7 +6097,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 
 .theme-option:hover {
   border-color: var(--surface2);
-  background: var(--surface0);
+  background: var(--row-hover-bg);
   transform: translateY(-1px);
   box-shadow: var(--shadow-1);
 }
@@ -6946,11 +7011,11 @@ body.sftp-panel-resizing {
 }
 
 .sftp-row.selected {
-  background: color-mix(in srgb, var(--blue) 22%, transparent);
+  background: var(--row-selected-bg);
 }
 
 .sftp-row.selected:hover {
-  background: color-mix(in srgb, var(--blue) 28%, transparent);
+  background: var(--row-selected-hover-bg);
 }
 
 .sftp-toolbar {
@@ -7365,7 +7430,7 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
 }
 
 .sftp-row:hover {
-  background: var(--surface0);
+  background: var(--row-hover-bg);
 }
 
 .sftp-row.dragging {
