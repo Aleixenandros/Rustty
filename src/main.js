@@ -58,6 +58,7 @@ import {
   normalizeSftpConflictPolicy,
   recursiveConflictPolicyForTransfer as recursiveConflictPolicy,
 } from "./modules/sftp-conflicts.js";
+import { clampMenuPosition, menuNeedsScroll } from "./modules/menu-position.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
 import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { tabIndexForKey } from "./modules/tab-navigation.js";
@@ -6319,18 +6320,19 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
     restoreEl.classList.toggle("hidden", !hasSnapshot);
   }
 
-  // Posicionar fuera de pantalla para medir, luego ajustar
-  menu.style.left = "0px";
-  menu.style.top  = "0px";
-  menu.classList.remove("hidden");
-
-  const { width, height } = menu.getBoundingClientRect();
-  const finalX = Math.min(x, window.innerWidth  - width  - 6);
-  menu.style.left = finalX + "px";
-  menu.style.top  = Math.min(y, window.innerHeight - height - 6) + "px";
-  // Si el menú queda en la mitad derecha, abrir el submenú hacia la izquierda.
+  const { left: finalX, width } = positionFloatingMenu(menu, x, y);
   if (submenu) {
+    // Si el menú queda en la mitad derecha, abrir el submenú hacia la izquierda;
+    // y si su ítem cae en la mitad baja de la ventana, abrirlo hacia arriba
+    // (anclado por abajo) para que no se corte contra el borde inferior.
     submenu.classList.toggle("open-left", finalX + width + 190 > window.innerWidth);
+    const itemRect = connectAsEl && !connectAsEl.classList.contains("hidden")
+      ? connectAsEl.getBoundingClientRect()
+      : null;
+    submenu.classList.toggle(
+      "open-up",
+      !!itemRect && itemRect.top + itemRect.height / 2 > window.innerHeight / 2
+    );
   }
 
   onFloatingMenuOpened(menu);
@@ -17941,12 +17943,21 @@ function selectedSftpContextRows(sessionId, side) {
 }
 
 function positionFloatingMenu(menu, x, y) {
+  // Medir con la altura natural (sin el acotado de una apertura anterior).
+  menu.classList.remove("menu-overflow");
   menu.style.left = "0px";
   menu.style.top = "0px";
   menu.classList.remove("hidden");
-  const { width, height } = menu.getBoundingClientRect();
-  menu.style.left = `${Math.min(x, window.innerWidth - width - 6)}px`;
-  menu.style.top = `${Math.min(y, window.innerHeight - height - 6)}px`;
+  let { width, height } = menu.getBoundingClientRect();
+  if (menuNeedsScroll(height, window.innerHeight) || menuNeedsScroll(width, window.innerWidth)) {
+    // No cabe ni entero: acotarlo al viewport con scroll interno y re-medir.
+    menu.classList.add("menu-overflow");
+    ({ width, height } = menu.getBoundingClientRect());
+  }
+  const pos = clampMenuPosition(x, y, width, height, window.innerWidth, window.innerHeight);
+  menu.style.left = `${pos.left}px`;
+  menu.style.top = `${pos.top}px`;
+  return { ...pos, width, height };
 }
 
 function showSftpContextMenu(x, y, sessionId, side) {
@@ -21489,6 +21500,12 @@ function bindUIEvents() {
     }
   });
 
+  // Al redimensionar la ventana, cerrar los menús flotantes: su posición se
+  // calculó para el tamaño anterior y podrían quedar fuera del nuevo viewport.
+  window.addEventListener("resize", () => {
+    if (openFloatingMenuEl()) closeFloatingMenus();
+  });
+
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       const credentialOverlay = document.getElementById("credential-modal-overlay");
@@ -24863,12 +24880,7 @@ function showTabContextMenu(x, y, sessionId) {
   const pinLabel = menu.querySelector(".tabctx-pin-label");
   if (pinLabel) pinLabel.textContent = isPinned ? t("tabctx.unpin") : t("tabctx.pin");
 
-  menu.style.left = "0px";
-  menu.style.top  = "0px";
-  menu.classList.remove("hidden");
-  const { width, height } = menu.getBoundingClientRect();
-  menu.style.left = Math.min(x, window.innerWidth  - width  - 6) + "px";
-  menu.style.top  = Math.min(y, window.innerHeight - height - 6) + "px";
+  positionFloatingMenu(menu, x, y);
   onFloatingMenuOpened(menu);
 }
 

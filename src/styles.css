@@ -4973,6 +4973,19 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   user-select: none;
 }
 
+/* Un menú que no cabe en la ventana se acota a ella con scroll interno: el
+   menú vive dentro de la WebView y no puede sobresalir de la ventana del SO.
+   La clase la pone positionFloatingMenu solo cuando hace falta, porque el
+   overflow recorta el submenú absoluto en el caso normal. */
+#context-menu.menu-overflow,
+#tab-context-menu.menu-overflow,
+#sftp-context-menu.menu-overflow {
+  max-height: calc(100vh - 12px);
+  max-width: calc(100vw - 12px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .ctx-item {
   display: flex;
   align-items: center;
@@ -5034,7 +5047,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   padding: 4px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   min-width: 180px;
-  max-height: 320px;
+  max-height: min(320px, calc(100vh - 12px));
   overflow-y: auto;
   display: none;
   z-index: 10000;
@@ -5048,6 +5061,12 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   right: 100%;
   margin-left: 0;
   margin-right: 2px;
+}
+/* Apertura hacia arriba (anclado por abajo) cuando el ítem cae en la mitad
+   baja de la ventana: evita que el submenú se corte contra el borde inferior. */
+.ctx-submenu.open-up {
+  top: auto;
+  bottom: -5px;
 }
 
 .ctx-item.active {
