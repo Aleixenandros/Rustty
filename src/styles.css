@@ -10213,3 +10213,93 @@ html.uitext-xlarge {
   border-color: color-mix(in srgb, var(--green) 55%, transparent);
   background: color-mix(in srgb, var(--green) 12%, transparent);
 }
+
+/* ─── Papelera local ───────────────────────────────────────────── */
+#trash-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+#trash-modal {
+  width: 560px;
+  max-width: 95vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+}
+
+.trash-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-sm);
+}
+
+.trash-toolbar label { color: var(--subtext0); }
+.trash-toolbar select { width: auto; }
+.trash-toolbar-spacer { flex: 1; }
+
+.trash-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trash-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-page);
+}
+
+.trash-kind {
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  color: var(--subtext0);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.trash-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+}
+
+.trash-when {
+  color: var(--overlay1);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.trash-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.trash-actions .btn-secondary {
+  padding: 3px 10px;
+  font-size: var(--font-size-xs);
+}

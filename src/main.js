@@ -594,6 +594,7 @@ const DEFAULT_PREFS = {
   // Reduce padding/altura en sidebar, tabs y modales sin tocar xterm.
   uiDensity:       "comfortable",
   uiTextSize:      "normal",
+  trashRetentionDays: 30,
   // Modo daltónico: dots de estado se diferencian también por forma
   // (círculo / cuadrado / diamante) además de por color.
   colorBlindSafe:  false,
@@ -4848,16 +4849,22 @@ async function handleWorkspaceMenuClick(action, wsId) {
       scheduleProfileAutoSync();
     };
     if (inUse) {
-      // Un único comando en lote: con N `delete_profile` concurrentes, cada uno
-      // reescribía el catálogo entero y los borrados se pisaban entre sí
-      // (resucitando perfiles ya borrados).
+      // La misma vía común que deleteWorkspaceById: transacción única con
+      // tombstones, limpieza de credenciales y papelera.
       const ids = profiles.filter((p) => (p.workspace_id || "default") === cur.id).map((p) => p.id);
-      invoke("delete_profiles", { ids })
-        .catch((err) => console.error("[workspace] delete_profiles", err))
-        .then(async () => {
-          try { profiles = await invoke("get_profiles"); } catch {}
+      const wsTrashPayload = {
+        workspace: { ...cur },
+        folders: getWorkspaceFolders(cur.id),
+        profileTrashIds: [],
+      };
+      deleteProfilesData(ids)
+        .then(() => {
+          wsTrashPayload.profileTrashIds = lastDeletionTrashIds;
           finalize();
-        });
+          const wsTrashId = trashAdd("workspace", cur.name, wsTrashPayload);
+          showUndoDeleteToast(t("trash.workspace_deleted", { name: cur.name }), [wsTrashId]);
+        })
+        .catch((err) => console.error("[workspace] delete_profiles", err));
     } else {
       finalize();
     }
@@ -6521,6 +6528,9 @@ function handleContextMenuAction(action) {
     case "delete-ws":
       deleteWorkspaceById(ctxTarget.workspaceId);
       break;
+    case "open-trash":
+      openTrashModal();
+      break;
     case "export-folder":
       if (folderPath) exportConnections(folderPath, targetWs);
       break;
@@ -6583,18 +6593,28 @@ async function deleteWorkspaceById(wsId) {
     renderConnectionList();
     scheduleProfileAutoSync();
   };
+  const wsTrashPayload = {
+    workspace: { ...ws },
+    folders: getWorkspaceFolders(ws.id),
+    profileTrashIds: [],
+  };
   if (inUse) {
-    // Una sola transacción de borrado (ver `deleteWorkspace` en el menú): los
-    // borrados concurrentes se pisaban al reescribir cada uno el catálogo entero.
+    // Una sola transacción de borrado por la vía común (`deleteProfilesData`):
+    // registra tombstones de sync, limpia credenciales extra y deja copia en
+    // la papelera, igual que cualquier otro borrado de perfiles.
     const ids = profiles.filter((p) => (p.workspace_id || "default") === ws.id).map((p) => p.id);
-    invoke("delete_profiles", { ids })
-      .catch((err) => console.error("[workspace] delete_profiles", err))
-      .then(async () => {
-        try { profiles = await invoke("get_profiles"); } catch {}
+    deleteProfilesData(ids)
+      .then(() => {
+        wsTrashPayload.profileTrashIds = lastDeletionTrashIds;
         finalize();
-      });
+        const wsTrashId = trashAdd("workspace", ws.name, wsTrashPayload);
+        showUndoDeleteToast(t("trash.workspace_deleted", { name: ws.name }), [wsTrashId]);
+      })
+      .catch((err) => console.error("[workspace] delete_profiles", err));
   } else {
     finalize();
+    const wsTrashId = trashAdd("workspace", ws.name, wsTrashPayload);
+    showUndoDeleteToast(t("trash.workspace_deleted", { name: ws.name }), [wsTrashId]);
   }
 }
 
@@ -6776,19 +6796,35 @@ async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiv
   }
 
   const updatedAt = new Date().toISOString();
+  const moved = [];
+  const movedProfiles = [];
   for (const p of profiles) {
     if (profileWorkspaceId(p) !== workspaceId || !folderContainsPath(p.group, folderPath)) continue;
-    const updated = { ...p, group: null, updated_at: updatedAt };
-    await invoke("save_profile", { profile: updated }).catch(() => {});
-    profiles[profiles.findIndex((x) => x.id === p.id)] = updated;
+    moved.push({ id: p.id, group: p.group });
+    movedProfiles.push({ ...p, group: null, updated_at: updatedAt });
+  }
+  if (movedProfiles.length) {
+    // Una transacción, una escritura: nunca un bucle de save_profile de uno en uno.
+    await invoke("save_profiles", { profiles: movedProfiles }).catch(() => {});
+    for (const updated of movedProfiles) {
+      profiles[profiles.findIndex((x) => x.id === updated.id)] = updated;
+    }
   }
 
   // Eliminar la carpeta y todas sus subcarpetas de userFolders
   const folders = new Set(getWorkspaceFolders(workspaceId));
+  const removedFolders = [];
   for (const f of [...folders]) {
-    if (folderContainsPath(f, folderPath)) folders.delete(f);
+    if (folderContainsPath(f, folderPath)) { folders.delete(f); removedFolders.push(f); }
   }
   saveWorkspaceFolders(workspaceId, [...folders]);
+
+  const folderTrashId = trashAdd("folder", folderPath, {
+    workspaceId,
+    folders: removedFolders,
+    moved,
+  });
+  showUndoDeleteToast(t("trash.folder_deleted", { name: folderPath }), [folderTrashId]);
   openFolders.delete(folderPath);
 
   // Limpiar colores asignados a la carpeta y sus descendientes
@@ -13237,6 +13273,225 @@ function notifyResize(sessionId, _terminal, { force = false } = {}) {
  * No confirma, no re-renderiza ni avisa: eso lo hacen los invocadores para poder
  * agrupar varias bajas bajo un único diálogo/aviso. Devuelve `true` si se borró.
  */
+// ─── Papelera local con Deshacer ─────────────────────────────────────────────
+// Los borrados de organización (perfiles, carpetas, workspaces) dejan copia en
+// una papelera de localStorage con retención configurable y toast de Deshacer.
+// Restaurar re-guarda con `updated_at` nuevo: supera el tombstone de sync de
+// forma explícita, como pide el diseño LWW. Los secretos NUNCA pasan por aquí
+// (viven solo en el keyring): un perfil restaurado vuelve a pedir su
+// contraseña al conectar. Los borrados remotos (SFTP) quedan fuera a
+// propósito: allí no existe una papelera portable.
+const TRASH_STORAGE_KEY = "rustty.trash.v1";
+const TRASH_MAX_ENTRIES = 200;
+let lastDeletionTrashIds = [];
+
+function trashLoad() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TRASH_STORAGE_KEY) || "[]");
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function trashSave(entries) {
+  try { localStorage.setItem(TRASH_STORAGE_KEY, JSON.stringify(entries)); } catch { /* llena o inaccesible: la papelera es best-effort */ }
+}
+
+function trashRetentionDays() {
+  const n = Number(prefs.trashRetentionDays);
+  return Number.isFinite(n) && n >= 1 ? Math.min(365, Math.trunc(n)) : 30;
+}
+
+function trashPurgeExpired() {
+  const cutoff = Date.now() - trashRetentionDays() * 86400000;
+  const entries = trashLoad();
+  const kept = entries.filter((e) => (e.deletedAt || 0) >= cutoff);
+  if (kept.length !== entries.length) trashSave(kept);
+}
+
+function trashAdd(kind, label, payload) {
+  const entry = { id: crypto.randomUUID(), kind, label, deletedAt: Date.now(), payload };
+  const entries = trashLoad();
+  entries.unshift(entry);
+  if (entries.length > TRASH_MAX_ENTRIES) entries.length = TRASH_MAX_ENTRIES;
+  trashSave(entries);
+  return entry.id;
+}
+
+/**
+ * Restaura entradas de la papelera por id. Devuelve cuántas se restauraron.
+ * @param {string[]} entryIds
+ */
+async function restoreTrashEntries(entryIds) {
+  const wanted = new Set(entryIds);
+  const entries = trashLoad();
+  const targets = entries.filter((e) => wanted.has(e.id));
+  if (!targets.length) return 0;
+  let restored = 0;
+  let passwordProfiles = 0;
+  const updatedAt = new Date().toISOString();
+
+  const profilesToSave = [];
+  for (const entry of targets) {
+    if (entry.kind === "profile") {
+      const p = entry.payload;
+      if (!p?.id || profiles.some((x) => x.id === p.id)) { restored++; continue; }
+      profilesToSave.push({ ...p, updated_at: updatedAt });
+      if ((p.auth_type || "password") === "password") passwordProfiles++;
+      restored++;
+    } else if (entry.kind === "folder") {
+      const { workspaceId, folders: removed = [], moved = [] } = entry.payload || {};
+      const current = new Set(getWorkspaceFolders(workspaceId));
+      for (const f of removed) current.add(f);
+      saveWorkspaceFolders(workspaceId, [...current]);
+      for (const m of moved) {
+        const p = profiles.find((x) => x.id === m.id);
+        if (p) profilesToSave.push({ ...p, group: m.group, updated_at: updatedAt });
+      }
+      restored++;
+    } else if (entry.kind === "workspace") {
+      const { workspace, folders: wsFolders = [], profileTrashIds = [] } = entry.payload || {};
+      if (workspace?.id && !prefs.workspaces.some((w) => w.id === workspace.id)) {
+        prefs.workspaces.push(workspace);
+        if (wsFolders.length) saveWorkspaceFolders(workspace.id, wsFolders);
+        prefs._prefsUpdatedAt = new Date().toISOString();
+        savePrefs();
+      }
+      if (profileTrashIds.length) {
+        restored += await restoreTrashEntries(profileTrashIds);
+      }
+      restored++;
+    }
+  }
+
+  if (profilesToSave.length) {
+    await invoke("save_profiles", { profiles: profilesToSave });
+    for (const p of profilesToSave) {
+      const idx = profiles.findIndex((x) => x.id === p.id);
+      if (idx >= 0) profiles[idx] = p;
+      else profiles.push(p);
+    }
+  }
+
+  trashSave(trashLoad().filter((e) => !wanted.has(e.id)));
+  renderConnectionList();
+  scheduleProfileAutoSync();
+  if (passwordProfiles > 0) {
+    toast(t("trash.restored_password_hint"), "info", 6000);
+  }
+  return restored;
+}
+
+/** Toast de éxito con acción Deshacer sobre las entradas recién enviadas a la papelera. */
+function showUndoDeleteToast(message, entryIds) {
+  if (!entryIds.length) { toast(message, "success"); return; }
+  toast(message, "success", 8000, {
+    actionLabel: t("trash.undo"),
+    onAction: async () => {
+      try {
+        const n = await restoreTrashEntries(entryIds);
+        if (n > 0) toast(t("trash.restored", { n }), "success");
+      } catch (err) {
+        toast(`${err}`, "error");
+      }
+    },
+  });
+}
+
+// ─── Modal de la papelera ────────────────────────────────────────────────────
+
+function renderTrashModalList() {
+  const list = document.getElementById("trash-list");
+  if (!list) return;
+  trashPurgeExpired();
+  const entries = trashLoad();
+  list.textContent = "";
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = t("trash.empty_state");
+    list.appendChild(empty);
+    return;
+  }
+  for (const entry of entries) {
+    const row = document.createElement("div");
+    row.className = "trash-row";
+    const kind = document.createElement("span");
+    kind.className = "trash-kind";
+    kind.textContent = t(`trash.kind_${entry.kind}`);
+    const label = document.createElement("span");
+    label.className = "trash-label";
+    label.textContent = entry.label || "—";
+    label.title = entry.label || "";
+    const when = document.createElement("span");
+    when.className = "trash-when";
+    when.textContent = formatTime(entry.deletedAt);
+    const actions = document.createElement("span");
+    actions.className = "trash-actions";
+    const restoreBtn = document.createElement("button");
+    restoreBtn.type = "button";
+    restoreBtn.className = "btn-secondary";
+    restoreBtn.textContent = t("trash.restore");
+    restoreBtn.addEventListener("click", async () => {
+      try {
+        const n = await restoreTrashEntries([entry.id]);
+        if (n > 0) toast(t("trash.restored", { n }), "success");
+      } catch (err) {
+        toast(`${err}`, "error");
+      }
+      renderTrashModalList();
+    });
+    const purgeBtn = document.createElement("button");
+    purgeBtn.type = "button";
+    purgeBtn.className = "btn-secondary danger";
+    purgeBtn.textContent = t("trash.delete_forever");
+    purgeBtn.addEventListener("click", () => {
+      trashSave(trashLoad().filter((e) => e.id !== entry.id));
+      renderTrashModalList();
+    });
+    actions.append(restoreBtn, purgeBtn);
+    row.append(kind, label, when, actions);
+    list.appendChild(row);
+  }
+}
+
+function openTrashModal() {
+  const overlay = document.getElementById("trash-modal-overlay");
+  if (!overlay) return;
+  const retention = document.getElementById("trash-retention");
+  if (retention) retention.value = String(trashRetentionDays());
+  renderTrashModalList();
+  overlay.classList.remove("hidden");
+}
+
+function initTrashModal() {
+  const overlay = document.getElementById("trash-modal-overlay");
+  if (!overlay) return;
+  document.getElementById("trash-close")?.addEventListener("click", () => overlay.classList.add("hidden"));
+  overlay.addEventListener("mousedown", (e) => {
+    if (e.target === overlay) overlay.classList.add("hidden");
+  });
+  document.getElementById("trash-retention")?.addEventListener("change", (e) => {
+    const days = Number(e.target.value) || 30;
+    prefs.trashRetentionDays = days;
+    savePrefs();
+    trashPurgeExpired();
+    renderTrashModalList();
+  });
+  document.getElementById("trash-empty")?.addEventListener("click", async () => {
+    const ok = await confirmThemed({
+      title: t("trash.title"),
+      message: t("trash.empty_confirm"),
+      submitLabel: t("trash.empty_btn"),
+      danger: true,
+    });
+    if (!ok) return;
+    trashSave([]);
+    renderTrashModalList();
+  });
+}
+
 async function deleteProfileData(profileId) {
   return (await deleteProfilesData([profileId])) > 0;
 }
@@ -13269,6 +13524,10 @@ async function deleteProfilesData(profileIds) {
     sync.recordTombstone(prefs, "profiles", profile.id);
   }
 
+  lastDeletionTrashIds = targets.map((p) =>
+    trashAdd("profile", `${p.name} (${p.username}@${p.host})`, p)
+  );
+
   const borrados = new Set(targets.map((p) => p.id));
   profiles = profiles.filter((p) => !borrados.has(p.id));
   return targets.length;
@@ -13290,7 +13549,7 @@ async function deleteProfile(profileId) {
     savePrefs();
     renderConnectionList();
     scheduleProfileAutoSync();
-    toast(t("toast.conn_deleted"), "success");
+    showUndoDeleteToast(t("toast.conn_deleted"), lastDeletionTrashIds);
   } catch (err) {
     toast(t("toast.conn_delete_error", { err }), "error");
   }
@@ -13341,7 +13600,7 @@ async function deleteSelectedProfiles(targetId) {
   savePrefs();
   renderConnectionList();
   scheduleProfileAutoSync();
-  if (ok) toast(ok === 1 ? t("toast.conn_deleted_one", { n: ok }) : t("toast.conn_deleted_many", { n: ok }), "success");
+  if (ok) showUndoDeleteToast(ok === 1 ? t("toast.conn_deleted_one", { n: ok }) : t("toast.conn_deleted_many", { n: ok }), lastDeletionTrashIds);
 }
 
 /**
@@ -21482,6 +21741,8 @@ function bindUIEvents() {
 
   // Acciones del menú contextual
   initBlocksPanel();
+  initTrashModal();
+  trashPurgeExpired();
 
   // Semántica de menú para lectores de pantalla: cada botón de los menús
   // flotantes es un menuitem (el rol de contenedor vive en el HTML).

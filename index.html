@@ -437,6 +437,9 @@
         </span><span data-i18n="ctx.new_folder">Nueva carpeta</span>
       </button>
       <div class="ctx-sep ctx-sidebar-only"></div>
+      <button class="ctx-item ctx-sidebar-only" data-ctx="open-trash">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-restore"/></svg></span><span data-i18n="ctx.open_trash">Papelera…</span>
+      </button>
       <button class="ctx-item ctx-sidebar-only" data-ctx="open-data-dir">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-disk"/></svg></span><span data-i18n="ctx.open_data_dir">Abrir directorio de datos</span>
       </button>
@@ -1145,6 +1148,27 @@
     <!-- ══════════════════════════════════════════════════════
          PANEL: Centro de actividad global
     ══════════════════════════════════════════════════════ -->
+    <div id="trash-modal-overlay" class="hidden">
+      <div id="trash-modal" role="dialog" aria-modal="true" aria-labelledby="trash-title">
+        <div class="modal-header">
+          <h2 id="trash-title" data-i18n="trash.title">Papelera</h2>
+          <button class="btn-icon modal-close" id="trash-close" data-i18n-aria-label="trash.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+        </div>
+        <div class="trash-toolbar">
+          <label for="trash-retention" data-i18n="trash.retention">Conservar</label>
+          <select id="trash-retention">
+            <option value="7" data-i18n="trash.days_7">7 días</option>
+            <option value="30" data-i18n="trash.days_30">30 días</option>
+            <option value="90" data-i18n="trash.days_90">90 días</option>
+            <option value="365" data-i18n="trash.days_365">1 año</option>
+          </select>
+          <span class="trash-toolbar-spacer"></span>
+          <button type="button" class="btn-secondary danger" id="trash-empty" data-i18n="trash.empty_btn">Vaciar papelera</button>
+        </div>
+        <div id="trash-list" class="trash-list"></div>
+      </div>
+    </div>
+
     <div id="activity-center-overlay" class="hidden">
       <aside id="activity-center-panel" aria-label="Centro de actividad">
         <div class="activity-center-head">
