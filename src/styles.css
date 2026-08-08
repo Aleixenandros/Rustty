@@ -10367,3 +10367,25 @@ html.uitext-xlarge {
 .sftp-skeleton-row .skeleton:last-child {
   margin-left: auto;
 }
+
+/* CTA primario de cada tarjeta de backend de sync */
+.sync-backend-card-cta {
+  margin-top: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--surface2);
+  color: var(--subtext1);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.sync-backend-card-cta.primary {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: var(--crust);
+}
+
+.sync-backend-card:hover .sync-backend-card-cta:not(.primary) {
+  border-color: var(--blue);
+  color: var(--blue);
+}

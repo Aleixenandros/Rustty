@@ -2218,11 +2218,21 @@ function renderSyncBackendCards() {
           <span class="sync-backend-card-dot"></span>
           <span>${escHtml(lastText)}</span>
         </span>
+        <span class="sync-backend-card-cta ${isActive && enabled ? "primary" : ""}" data-cta="${isActive && enabled ? "sync-now" : "select"}">
+          ${escHtml(isActive && enabled ? t("prefs_sync.card_cta_sync_now") : t("prefs_sync.card_cta_use"))}
+        </span>
       </button>`;
   }).join("");
   grid.querySelectorAll(".sync-backend-card").forEach((card) => {
-    card.addEventListener("click", () => {
+    card.addEventListener("click", (e) => {
       const id = card.dataset.backend;
+      // CTA primario de la tarjeta activa: sincronizar ahora, sin pasar por
+      // el formulario. El resto de la tarjeta (y el CTA de las inactivas)
+      // selecciona el backend, como antes.
+      if (e.target.closest('[data-cta="sync-now"]')) {
+        syncRunNow();
+        return;
+      }
       const select = document.getElementById("sync-backend");
       if (!select || !id) return;
       select.value = id;
