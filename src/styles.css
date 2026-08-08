@@ -10389,3 +10389,51 @@ html.uitext-xlarge {
   border-color: var(--blue);
   color: var(--blue);
 }
+
+/* ─── Fondo de terminal opcional ──────────────────────────────── */
+#terminal-bg-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--xterm-bg);
+}
+
+#terminal-bg-layer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--term-bg-image);
+  background-size: cover;
+  background-position: center;
+  opacity: var(--term-bg-opacity, 0.25);
+  filter: var(--term-bg-blur, none);
+}
+
+/* Pausa del trabajo visual caro: sin blur durante el resize y capa oculta
+   con la ventana en segundo plano. */
+#terminal-bg-layer.bg-paused::after { filter: none; }
+#terminal-bg-layer.bg-hidden { visibility: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  #terminal-bg-layer::after { transition: none; }
+}
+
+.term-bg-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.term-bg-sliders {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px 12px;
+  max-width: 380px;
+}
+
+.term-bg-sliders label {
+  font-size: var(--font-size-sm);
+  color: var(--subtext0);
+}

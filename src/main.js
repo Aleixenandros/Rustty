@@ -595,6 +595,8 @@ const DEFAULT_PREFS = {
   uiDensity:       "comfortable",
   uiTextSize:      "normal",
   trashRetentionDays: 30,
+  terminalBgOpacity: 0.25,
+  terminalBgBlur: 0,
   // Modo daltónico: dots de estado se diferencian también por forma
   // (círculo / cuadrado / diamante) además de por color.
   colorBlindSafe:  false,
@@ -1563,9 +1565,10 @@ function resolveFontFamily() {
  * xterm en `minimumContrastRatio` (1 = desactivado, 4.5 = AA, 7 = AAA).
  */
 function terminalMinContrastRatio(level = prefs.terminalMinContrast) {
-  if (level === "aa") return 4.5;
-  if (level === "aaa") return 7;
-  return 1;
+  const base = level === "aa" ? 4.5 : level === "aaa" ? 7 : 1;
+  // Con imagen de fondo, el texto pisa una foto: garantizar al menos AA
+  // aunque el ajuste global esté desactivado. Sin imagen, se respeta tal cual.
+  return terminalBgActive() ? Math.max(base, 4.5) : base;
 }
 
 /** Luminancia relativa WCAG [0..1] de un color hex (#rgb / #rrggbb), o NaN. */
@@ -1596,11 +1599,134 @@ function highContrastInk(hexBg) {
  * cursor a una tinta de alto contraste con `cursorAccent` igual al fondo, para
  * que destaque en cualquier estilo (block / bar / underline).
  */
+// ─── Fondo de terminal opcional (imagen local, opacidad y blur) ──────────────
+// El blob vive SOLO en localStorage (nunca se sincroniza); prefs guarda los
+// ajustes numéricos. Con fondo activo, el tema del terminal pasa a fondo
+// transparente y la capa pinta color de tema + imagen debajo de xterm.
+const TERMINAL_BG_STORAGE_KEY = "rustty.terminalBg.v1";
+
+function terminalBgData() {
+  try { return localStorage.getItem(TERMINAL_BG_STORAGE_KEY) || ""; } catch { return ""; }
+}
+
+function terminalBgActive() {
+  return terminalBgData().length > 0;
+}
+
+function applyTerminalBackground() {
+  const container = document.getElementById("terminals-container");
+  if (!container) return;
+  let layer = document.getElementById("terminal-bg-layer");
+  const data = terminalBgData();
+  if (!data) {
+    layer?.remove();
+    return;
+  }
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.id = "terminal-bg-layer";
+    layer.setAttribute("aria-hidden", "true");
+    container.prepend(layer);
+  }
+  const opacity = Math.min(0.8, Math.max(0.05, Number(prefs.terminalBgOpacity) || 0.25));
+  const blur = Math.min(20, Math.max(0, Number(prefs.terminalBgBlur) || 0));
+  layer.style.setProperty("--term-bg-image", `url("${data}")`);
+  layer.style.setProperty("--term-bg-opacity", String(opacity));
+  layer.style.setProperty("--term-bg-blur", blur > 0 ? `blur(${blur}px)` : "none");
+}
+
+/** Pausa el trabajo visual caro del fondo en resize y con la ventana oculta. */
+function initTerminalBgPause() {
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    const layer = document.getElementById("terminal-bg-layer");
+    if (!layer) return;
+    layer.classList.add("bg-paused");
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => layer.classList.remove("bg-paused"), 200);
+  });
+  document.addEventListener("visibilitychange", () => {
+    document.getElementById("terminal-bg-layer")
+      ?.classList.toggle("bg-hidden", document.hidden);
+  });
+}
+
+async function chooseTerminalBackground() {
+  const file = await openDialog({
+    multiple: false,
+    filters: [{ name: "Imagen", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+  });
+  if (!file) return;
+  const path = Array.isArray(file) ? file[0] : file;
+  try {
+    const b64 = await invoke("read_file_base64", { path, maxBytes: 8 * 1024 * 1024 });
+    const ext = String(path).toLowerCase().split(".").pop();
+    const mime = ext === "png" ? "image/png"
+      : ext === "webp" ? "image/webp"
+      : ext === "gif" ? "image/gif"
+      : "image/jpeg";
+    let dataUrl = `data:${mime};base64,${b64}`;
+    if (mime === "image/gif") {
+      // Animadas: no se pueden redimensionar sin congelarlas; se acota el peso.
+      if (b64.length > 5_600_000) {
+        toast(t("prefs_appearance.bg_gif_too_big"), "warning");
+        return;
+      }
+    } else {
+      dataUrl = await downscaleImageDataUrl(dataUrl, 1920, 0.85);
+    }
+    try {
+      localStorage.setItem(TERMINAL_BG_STORAGE_KEY, dataUrl);
+    } catch {
+      toast(t("prefs_appearance.bg_store_error"), "error");
+      return;
+    }
+    applyTerminalBackground();
+    applyPrefsToAllTerminals();
+    toast(t("prefs_appearance.bg_set_hint"), "info", 6000);
+  } catch (err) {
+    toast(ipcErrorText(err), "error");
+  }
+}
+
+/**
+ * Reduce una imagen estática grande antes de persistirla (lado mayor acotado).
+ * @param {string} dataUrl
+ * @param {number} maxSide
+ * @param {number} quality
+ * @returns {Promise<string>}
+ */
+function downscaleImageDataUrl(dataUrl, maxSide, quality) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      if (scale >= 1) { resolve(dataUrl); return; }
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+function removeTerminalBackground() {
+  try { localStorage.removeItem(TERMINAL_BG_STORAGE_KEY); } catch { /* no-op */ }
+  applyTerminalBackground();
+  applyPrefsToAllTerminals();
+}
+
 function terminalThemeForCursor() {
   const theme = getTerminalTheme();
-  if (!prefs.terminalCursorHighVis) return theme;
+  // Con fondo personalizado, el terminal pinta transparente y el color del
+  // tema lo pone la capa del fondo (debajo de la imagen).
+  const base = terminalBgActive() ? { ...theme, background: "#00000000" } : theme;
+  if (!prefs.terminalCursorHighVis) return base;
   const ink = highContrastInk(theme?.background);
-  return { ...theme, cursor: ink, cursorAccent: theme?.background };
+  return { ...base, cursor: ink, cursorAccent: theme?.background };
 }
 
 /** Grosor del caret cuando el cursor es de alta visibilidad (solo estilo «bar»). */
@@ -1619,6 +1745,7 @@ function applyPrefsToTerminal(terminal) {
   terminal.options.scrollback    = prefs.scrollback;
   terminal.options.bellStyle     = prefs.bell;
   terminal.options.minimumContrastRatio = terminalMinContrastRatio();
+  try { terminal.options.allowTransparency = terminalBgActive(); } catch { /* opción de arranque en renderers antiguos */ }
   terminal.options.theme         = terminalThemeForCursor();
 }
 
@@ -1773,6 +1900,10 @@ function openSettingsModal() {
   if (_densitySel) _densitySel.value = ["compact", "spacious"].includes(prefs.uiDensity) ? prefs.uiDensity : "comfortable";
   const _textSizeSel = document.getElementById("pref-ui-text-size");
   if (_textSizeSel) _textSizeSel.value = ["large", "xlarge"].includes(prefs.uiTextSize) ? prefs.uiTextSize : "normal";
+  const _bgOpacity = document.getElementById("pref-term-bg-opacity");
+  if (_bgOpacity) _bgOpacity.value = String(Math.round((Number(prefs.terminalBgOpacity) || 0.25) * 100));
+  const _bgBlur = document.getElementById("pref-term-bg-blur");
+  if (_bgBlur) _bgBlur.value = String(Number(prefs.terminalBgBlur) || 0);
   syncUiZoomControl();
   const _cbSafe = document.getElementById("pref-color-blind-safe");
   if (_cbSafe) _cbSafe.checked = !!prefs.colorBlindSafe;
@@ -12349,6 +12480,7 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     bellStyle: prefs.bell,
     minimumContrastRatio: terminalMinContrastRatio(),
     cursorWidth: terminalCursorWidth(),
+    allowTransparency: terminalBgActive(),
     theme: terminalThemeForCursor(),
     allowProposedApi: true,
     linkHandler: terminalLinkOptions,
@@ -21834,6 +21966,20 @@ function bindUIEvents() {
   initBlocksPanel();
   initTrashModal();
   initFirstRunCenter();
+  applyTerminalBackground();
+  initTerminalBgPause();
+  document.getElementById("pref-term-bg-choose")?.addEventListener("click", () => chooseTerminalBackground());
+  document.getElementById("pref-term-bg-remove")?.addEventListener("click", () => removeTerminalBackground());
+  document.getElementById("pref-term-bg-opacity")?.addEventListener("change", (e) => {
+    prefs.terminalBgOpacity = Math.min(0.8, Math.max(0.05, (Number(e.target.value) || 25) / 100));
+    savePrefs();
+    applyTerminalBackground();
+  });
+  document.getElementById("pref-term-bg-blur")?.addEventListener("change", (e) => {
+    prefs.terminalBgBlur = Math.min(20, Math.max(0, Number(e.target.value) || 0));
+    savePrefs();
+    applyTerminalBackground();
+  });
   trashPurgeExpired();
 
   // Semántica de menú para lectores de pantalla: cada botón de los menús

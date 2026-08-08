@@ -354,6 +354,7 @@ pub fn run() {
             commands::get_data_dir,
             commands::write_text_file,
             commands::read_text_file,
+            commands::read_file_base64,
             asbru::parse_asbru,
             asbru::asbru_decrypt,
             commands::run_local_command,

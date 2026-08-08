@@ -2372,6 +2372,21 @@
               </div>
 
               <div class="settings-row">
+                <label data-i18n="prefs_appearance.bg_title">Fondo del terminal</label>
+                <div class="term-bg-controls">
+                  <button type="button" class="btn-secondary" id="pref-term-bg-choose" data-i18n="prefs_appearance.bg_choose">Elegir imagen…</button>
+                  <button type="button" class="btn-secondary" id="pref-term-bg-remove" data-i18n="prefs_appearance.bg_remove">Quitar</button>
+                </div>
+                <div class="term-bg-sliders">
+                  <label for="pref-term-bg-opacity" data-i18n="prefs_appearance.bg_opacity">Opacidad</label>
+                  <input id="pref-term-bg-opacity" type="range" min="5" max="80" step="5" value="25" />
+                  <label for="pref-term-bg-blur" data-i18n="prefs_appearance.bg_blur">Desenfoque</label>
+                  <input id="pref-term-bg-blur" type="range" min="0" max="20" step="1" value="0" />
+                </div>
+                <p class="settings-hint" data-i18n="prefs_appearance.bg_hint">Imagen local opcional tras el terminal, con opacidad y desenfoque a tu gusto. No se sincroniza, y con fondo activo el contraste mínimo del texto sube solo a AA.</p>
+              </div>
+
+              <div class="settings-row">
                 <label data-i18n="prefs_appearance.ui_zoom">Tamaño de la interfaz</label>
                 <div class="ui-zoom-control">
                   <button type="button" class="btn-secondary" id="pref-ui-zoom-out" data-i18n-aria-label="prefs_appearance.ui_zoom_out" aria-label="Reducir tamaño de la interfaz">−</button>

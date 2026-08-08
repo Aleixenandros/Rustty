@@ -1602,6 +1602,25 @@ pub fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, St
     read_text_capped(Path::new(&path), max_bytes.unwrap_or(DEFAULT_READ_LIMIT))
 }
 
+/// Lee un fichero binario acotado y lo devuelve en base64 (p. ej. la imagen de
+/// fondo del terminal). El tope evita cargar cualquier cosa gigante en la
+/// WebView; el llamador lo ajusta a lo que espera leer.
+#[tauri::command]
+pub fn read_file_base64(path: String, max_bytes: Option<u64>) -> Result<String, String> {
+    use base64::Engine as _;
+    let limit = max_bytes.unwrap_or(DEFAULT_READ_LIMIT);
+    let p = Path::new(&path);
+    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
+    if meta.len() > limit {
+        return Err(format!(
+            "el fichero supera el límite de {} de esta operación",
+            human_size(limit)
+        ));
+    }
+    let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
 /// Comando IPC que ejecuta un comando local del catálogo del usuario y devuelve
 /// código + stdout/stderr, **acotado** en tiempo y en salida y cancelable desde
 /// la UI con el mismo `run_id` (ver [`crate::local_command`]). El catálogo lo
