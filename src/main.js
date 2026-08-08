@@ -5318,6 +5318,9 @@ function renderDashboard() {
   renderDashboardWorkspaceChip();
   renderDashboardPinnedTiles();
   renderDashboardFavoritesTiles();
+
+  // Centro de primer inicio: solo cuando no hay ni un perfil guardado.
+  document.getElementById("dashboard-firstrun")?.classList.toggle("hidden", profiles.length > 0);
 }
 
 /**
@@ -13463,6 +13466,62 @@ function openTrashModal() {
   if (retention) retention.value = String(trashRetentionDays());
   renderTrashModalList();
   overlay.classList.remove("hidden");
+}
+
+/**
+ * Parsea un destino rápido `[usuario@]host[:puerto]`. Devuelve null si no es
+ * interpretable como destino SSH.
+ * @param {string} raw
+ */
+function parseQuickTarget(raw) {
+  const m = /^(?:([^@\s]+)@)?([A-Za-z0-9._-]+|\[[0-9A-Fa-f:]+\])(?::(\d{1,5}))?$/.exec(String(raw || "").trim());
+  if (!m) return null;
+  const port = m[3] ? Number(m[3]) : 22;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return { username: m[1] || "root", host: m[2].replace(/^\[|\]$/g, ""), port };
+}
+
+/** Conexión rápida del primer inicio: guarda un perfil mínimo y conecta. */
+async function quickConnectFromFirstRun() {
+  const input = document.getElementById("firstrun-quick-input");
+  const target = parseQuickTarget(input?.value);
+  if (!target) {
+    toast(t("firstrun.quick_invalid"), "warning");
+    input?.focus();
+    return;
+  }
+  const profile = {
+    id: crypto.randomUUID(),
+    name: target.host,
+    host: target.host,
+    port: target.port,
+    username: target.username,
+    connection_type: "ssh",
+    auth_type: "password",
+    follow_cwd: true,
+    updated_at: new Date().toISOString(),
+  };
+  try {
+    await invoke("save_profiles", { profiles: [profile] });
+    profiles.push(profile);
+    renderConnectionList();
+    renderDashboard();
+    scheduleProfileAutoSync();
+    connectProfile(profile.id);
+  } catch (err) {
+    toast(`${err}`, "error");
+  }
+}
+
+function initFirstRunCenter() {
+  document.getElementById("firstrun-quick-connect")?.addEventListener("click", () => quickConnectFromFirstRun());
+  document.getElementById("firstrun-quick-input")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") quickConnectFromFirstRun();
+  });
+  document.getElementById("firstrun-new")?.addEventListener("click", () => openNewConnectionModal());
+  document.getElementById("firstrun-import-ssh")?.addEventListener("click", () => importFromSshConfig());
+  document.getElementById("firstrun-import-other")?.addEventListener("click", () => importConnections());
+  document.getElementById("firstrun-restore")?.addEventListener("click", () => syncImportFile());
 }
 
 function initTrashModal() {
@@ -21742,6 +21801,7 @@ function bindUIEvents() {
   // Acciones del menú contextual
   initBlocksPanel();
   initTrashModal();
+  initFirstRunCenter();
   trashPurgeExpired();
 
   // Semántica de menú para lectores de pantalla: cada botón de los menús

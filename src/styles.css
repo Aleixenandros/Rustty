@@ -10303,3 +10303,49 @@ html.uitext-xlarge {
   padding: 3px 10px;
   font-size: var(--font-size-xs);
 }
+
+/* ─── Centro de primer inicio (dashboard sin perfiles) ─────────── */
+.dashboard-firstrun {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin: 8px auto 18px;
+  padding: 20px;
+  max-width: 560px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-1);
+}
+
+.firstrun-title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.firstrun-quick {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.firstrun-quick input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+
+.firstrun-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.firstrun-hint {
+  color: var(--overlay1);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  max-width: 460px;
+}

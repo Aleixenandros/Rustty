@@ -308,6 +308,23 @@
                 </div>
               </section>
 
+              <section id="dashboard-firstrun" class="dashboard-firstrun hidden">
+                <h2 class="firstrun-title" data-i18n="firstrun.title">Empieza a trabajar</h2>
+                <div class="firstrun-quick">
+                  <input id="firstrun-quick-input" type="text" autocomplete="off" spellcheck="false"
+                         placeholder="usuario@host[:puerto]" data-i18n-placeholder="firstrun.quick_ph"
+                         data-i18n-aria-label="firstrun.quick_ph" aria-label="usuario@host[:puerto]" />
+                  <button type="button" class="btn-primary" id="firstrun-quick-connect" data-i18n="firstrun.quick_connect">Conectar</button>
+                </div>
+                <div class="firstrun-actions">
+                  <button type="button" class="btn-secondary" id="firstrun-new" data-i18n="firstrun.new_profile">Crear perfil</button>
+                  <button type="button" class="btn-secondary" id="firstrun-import-ssh" data-i18n="firstrun.import_ssh">Importar ~/.ssh/config</button>
+                  <button type="button" class="btn-secondary" id="firstrun-import-other" data-i18n="firstrun.import_other">Importar de otro cliente</button>
+                  <button type="button" class="btn-secondary" id="firstrun-restore" data-i18n="firstrun.restore_backup">Restaurar copia de seguridad</button>
+                </div>
+                <p class="firstrun-hint" data-i18n="firstrun.hint">La conexión rápida guarda un perfil con ese destino y abre la sesión; la contraseña se pide al conectar y va solo al keyring.</p>
+              </section>
+
               <section id="dashboard-search-section" class="dashboard-section dashboard-search-section hidden">
                 <div class="dashboard-section-head">
                   <div>
