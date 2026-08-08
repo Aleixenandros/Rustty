@@ -59,6 +59,7 @@ import {
   recursiveConflictPolicyForTransfer as recursiveConflictPolicy,
 } from "./modules/sftp-conflicts.js";
 import { clampMenuPosition, menuNeedsScroll } from "./modules/menu-position.js";
+import { compilePromptRegex, segmentByPrompt, DEFAULT_PROMPT_PATTERN } from "./modules/terminal/prompt-fallback.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
 import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { tabIndexForKey } from "./modules/tab-navigation.js";
@@ -7164,6 +7165,8 @@ function openEditConnectionModal(profileId) {
   updatePersistSessionFields();
   const _fCmdNotifySecs = document.getElementById("f-cmd-notify-secs");
   if (_fCmdNotifySecs) _fCmdNotifySecs.value = profile.cmd_notify_secs ?? "";
+  const _fPromptRegex = document.getElementById("f-prompt-regex");
+  if (_fPromptRegex) _fPromptRegex.value = profile.prompt_regex || "";
   document.getElementById("f-allow-legacy").checked = !!profile.allow_legacy_algorithms;
   applyLegacyAlgorithmsUI(profile.legacy_algorithms ?? null);
   document.getElementById("f-agent-forwarding").checked = !!profile.agent_forwarding;
@@ -8612,6 +8615,7 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     persist_session_tool: document.getElementById("f-persist-tool")?.value || null,
     persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
     cmd_notify_secs: keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
+    prompt_regex: (document.getElementById("f-prompt-regex")?.value || "").trim() || null,
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     legacy_algorithms: collectLegacyAlgorithms(),
     agent_forwarding: document.getElementById("f-agent-forwarding").checked,
@@ -8837,6 +8841,7 @@ async function saveAndClose(shouldConnect) {
     persist_session_tool: document.getElementById("f-persist-tool")?.value || null,
     persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
     cmd_notify_secs:     keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
+    prompt_regex:        (document.getElementById("f-prompt-regex")?.value || "").trim() || null,
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     legacy_algorithms:   collectLegacyAlgorithms(),
     agent_forwarding:    document.getElementById("f-agent-forwarding").checked,
@@ -21461,6 +21466,8 @@ function bindUIEvents() {
   });
 
   // Acciones del menú contextual
+  initBlocksPanel();
+
   // Semántica de menú para lectores de pantalla: cada botón de los menús
   // flotantes es un menuitem (el rol de contenedor vive en el HTML).
   for (const menuId of FLOATING_MENU_IDS) {
@@ -22260,6 +22267,9 @@ function buildPaletteSources() {
   // Acciones de bloque: solo con una sesión de terminal viva que ya haya
   // registrado algún bloque OSC 133 (si el shell no lo emite, no hay nada que
   // copiar y la entrada solo estorbaría).
+  if (activeSessionId && sessions.get(activeSessionId)?.terminal) {
+    add("action:show-blocks-panel", { kind: "action", title: t("palette.action_show_blocks"), icon: PALETTE_ICONS.action, run: () => toggleBlocksPanel(true) });
+  }
   if (activeSessionId && sessions.get(activeSessionId)?.commandBlocks?.blocks?.length) {
     add("action:copy-block-markdown", { kind: "action", title: t("palette.action_copy_block_markdown"), icon: PALETTE_ICONS.note, run: () => copyActiveBlockMarkdown() });
     add("action:export-block-markdown", { kind: "action", title: t("palette.action_export_block_markdown"), icon: PALETTE_ICONS.note, run: () => exportActiveBlockMarkdown() });
@@ -22660,6 +22670,179 @@ function requireActiveCommandBlock() {
   return { session, block };
 }
 
+// ─── Panel de bloques: colapsar, filtrar y saltar a cada bloque ─────────────
+// Fuente: el tracker OSC 133 de la sesión activa; si el shell no emite las
+// marcas, cae a la segmentación por regex de prompt (perfil o patrón default).
+const blocksPanelExpanded = new Set();
+let blocksPanelFilter = "";
+
+function collectPanelBlocks(session) {
+  const tracker = session.commandBlocks;
+  if (tracker?.blocks?.length) {
+    syncCommandBlockLines(session);
+    return { blocks: tracker.blocks, fallback: false };
+  }
+  const profile = profiles.find((p) => p.id === session.profileId);
+  const regex = compilePromptRegex(profile?.prompt_regex)
+    || compilePromptRegex(DEFAULT_PROMPT_PATTERN);
+  const buffer = session.terminal.buffer.active;
+  const last = buffer.baseY + buffer.cursorY;
+  const first = Math.max(0, last - 5000);
+  const blocks = segmentByPrompt(
+    (line) => buffer.getLine(line)?.translateToString(true) ?? null,
+    first,
+    last,
+    regex,
+  );
+  return { blocks, fallback: true };
+}
+
+function scrollTerminalToPanelBlock(session, block) {
+  const terminal = session.terminal;
+  if (block.id > 0) {
+    const entry = session.commandBlockMarkers?.get(block.id);
+    if (entry?.marker && !entry.marker.isDisposed && entry.marker.line >= 0) {
+      terminal.scrollToLine(entry.marker.line);
+      return;
+    }
+  }
+  terminal.scrollToLine(block.promptLine);
+}
+
+function renderBlocksPanel() {
+  const panel = document.getElementById("blocks-panel");
+  const list = document.getElementById("blocks-panel-list");
+  if (!panel || !list || panel.classList.contains("hidden")) return;
+  const session = activeSessionId ? sessions.get(activeSessionId) : null;
+  list.textContent = "";
+  const badge = document.getElementById("blocks-panel-fallback");
+  if (!session?.terminal) {
+    badge?.classList.add("hidden");
+    const empty = document.createElement("div");
+    empty.className = "blocks-panel-empty";
+    empty.textContent = t("blocks.panel_empty");
+    list.appendChild(empty);
+    return;
+  }
+  const { blocks, fallback } = collectPanelBlocks(session);
+  badge?.classList.toggle("hidden", !fallback || blocks.length === 0);
+  const filter = blocksPanelFilter.trim().toLowerCase();
+  let shown = 0;
+  for (const block of blocks) {
+    const { command, output } = commandBlockText(session, block);
+    if (!command.trim() && !output.trim()) continue;
+    if (filter && !`${command}\n${output}`.toLowerCase().includes(filter)) continue;
+    shown++;
+    const row = document.createElement("div");
+    row.className = "block-row";
+
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "block-row-head";
+    head.title = t("blocks.goto_title");
+    const dot = document.createElement("span");
+    dot.className = "block-exit"
+      + (block.exitCode === 0 ? " ok" : block.exitCode != null ? " err" : "");
+    const cmd = document.createElement("span");
+    cmd.className = "block-cmd";
+    cmd.textContent = command.trim() || t("blocks.diff_unknown_command");
+    head.append(dot, cmd);
+    head.addEventListener("click", () => scrollTerminalToPanelBlock(session, block));
+
+    const actions = document.createElement("span");
+    actions.className = "block-row-actions";
+    const mkBtn = (titleKey, iconId, fn) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn-icon-sm";
+      b.title = t(titleKey);
+      b.innerHTML = `<svg class="row-icon-svg" aria-hidden="true"><use href="#${iconId}"/></svg>`;
+      b.addEventListener("click", (e) => { e.stopPropagation(); fn(); });
+      return b;
+    };
+    actions.append(
+      mkBtn("blocks.row_copy_command", "ci-duplicate", async () => {
+        if (!command.trim()) { toast(t("blocks.empty_command"), "warning"); return; }
+        await writeSystemClipboardText(command);
+        toast(t("blocks.copied_command"), "success");
+      }),
+      mkBtn("blocks.row_copy_output", "ci-export", async () => {
+        if (!output.trim()) { toast(t("blocks.empty_output"), "warning"); return; }
+        await writeSystemClipboardText(output);
+        toast(t("blocks.copied_output"), "success");
+      }),
+    );
+    head.appendChild(actions);
+    row.appendChild(head);
+
+    if (blocksPanelExpanded.has(block.id) && output.trim()) {
+      const pre = document.createElement("pre");
+      pre.className = "block-output";
+      pre.textContent = output;
+      row.appendChild(pre);
+    }
+    if (output.trim()) {
+      head.addEventListener("dblclick", () => {
+        if (blocksPanelExpanded.has(block.id)) blocksPanelExpanded.delete(block.id);
+        else blocksPanelExpanded.add(block.id);
+        renderBlocksPanel();
+      });
+      const toggle = mkBtn(
+        blocksPanelExpanded.has(block.id) ? "blocks.collapse_one" : "blocks.expand_one",
+        "ci-rows",
+        () => {
+          if (blocksPanelExpanded.has(block.id)) blocksPanelExpanded.delete(block.id);
+          else blocksPanelExpanded.add(block.id);
+          renderBlocksPanel();
+        },
+      );
+      actions.prepend(toggle);
+    }
+    list.appendChild(row);
+  }
+  if (!shown) {
+    const empty = document.createElement("div");
+    empty.className = "blocks-panel-empty";
+    empty.textContent = filter ? t("blocks.panel_no_match") : t("blocks.panel_empty");
+    list.appendChild(empty);
+  } else {
+    list.scrollTop = list.scrollHeight;
+  }
+}
+
+function toggleBlocksPanel(force) {
+  const panel = document.getElementById("blocks-panel");
+  if (!panel) return;
+  const show = force !== undefined ? !!force : panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !show);
+  if (show) {
+    renderBlocksPanel();
+    document.getElementById("blocks-panel-filter")?.focus();
+  }
+}
+
+function initBlocksPanel() {
+  document.getElementById("blocks-panel-close")?.addEventListener("click", () => toggleBlocksPanel(false));
+  document.getElementById("blocks-panel-filter")?.addEventListener("input", (e) => {
+    blocksPanelFilter = e.target.value || "";
+    renderBlocksPanel();
+  });
+  const toggleAll = document.getElementById("blocks-panel-toggle-all");
+  toggleAll?.addEventListener("click", () => {
+    const expandAll = toggleAll.getAttribute("aria-pressed") !== "true";
+    toggleAll.setAttribute("aria-pressed", expandAll ? "true" : "false");
+    toggleAll.title = t(expandAll ? "blocks.collapse_all" : "blocks.expand_all");
+    blocksPanelExpanded.clear();
+    if (expandAll) {
+      const session = activeSessionId ? sessions.get(activeSessionId) : null;
+      if (session?.terminal) {
+        for (const b of collectPanelBlocks(session).blocks) blocksPanelExpanded.add(b.id);
+      }
+    }
+    renderBlocksPanel();
+  });
+}
+
 /** Copia al portapapeles solo el comando del bloque actual. */
 async function copyActiveBlockCommand() {
   const ctx = requireActiveCommandBlock();
@@ -22835,6 +23018,7 @@ const SHORTCUT_ACTIONS = {
   copy_block_markdown:{ default: "",              run: () => copyActiveBlockMarkdown() },
   export_block_markdown:{ default: "",            run: () => exportActiveBlockMarkdown() },
   diff_block_previous:{ default: "",              run: () => openBlockDiff(-1) },
+  show_blocks_panel: { default: "",              run: () => toggleBlocksPanel() },
   open_preferences:  { default: "Ctrl+,",         run: () => openSettingsModal() },
   zoom_in:           { default: "Ctrl+=",         run: () => adjustTerminalFontSize(+1) },
   zoom_out:          { default: "Ctrl+-",         run: () => adjustTerminalFontSize(-1) },

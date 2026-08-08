@@ -195,6 +195,16 @@
           </div>
         </div>
         <div id="terminals-container">
+          <div id="blocks-panel" class="hidden" role="dialog" data-i18n-aria-label="blocks.panel_title">
+            <div class="blocks-panel-head">
+              <span class="blocks-panel-title" data-i18n="blocks.panel_title">Bloques de comando</span>
+              <span id="blocks-panel-fallback" class="blocks-fallback-badge hidden" data-i18n-title="blocks.fallback_hint">regex</span>
+              <input id="blocks-panel-filter" type="text" data-i18n-placeholder="blocks.filter_ph" placeholder="Filtrar bloques…" spellcheck="false" />
+              <button type="button" class="btn-icon-sm" id="blocks-panel-toggle-all" aria-pressed="false" data-i18n-title="blocks.expand_all" title="Expandir todo"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-rows"/></svg></button>
+              <button type="button" class="btn-icon-sm" id="blocks-panel-close" data-i18n-aria-label="blocks.close_panel" aria-label="Cerrar"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+            </div>
+            <div id="blocks-panel-list" class="blocks-panel-list"></div>
+          </div>
           <div id="status-bar" class="hidden" aria-hidden="true">
             <span class="status-conn">
               <span class="status-dot" id="status-dot" role="button" tabindex="0" title="Ver diagnóstico de conexión"></span>
@@ -962,6 +972,14 @@
               <input id="f-cmd-notify-secs" type="number" min="1" max="3600" step="1" placeholder="—" />
               <p class="form-hint" data-i18n="modal_conn.cmd_notify_secs_hint">
                 Umbral propio de este perfil para el aviso de fin de comando largo. Vacío = usar el umbral global de Preferencias → Terminal. Solo actúa si el aviso está activado allí.
+              </p>
+            </div>
+
+            <div class="form-row">
+              <label for="f-prompt-regex" data-i18n="modal_conn.prompt_regex">Regex de prompt (bloques sin OSC 133)</label>
+              <input id="f-prompt-regex" type="text" spellcheck="false" placeholder="[$#%❯] " />
+              <p class="form-hint" data-i18n="modal_conn.prompt_regex_hint">
+                Expresión regular que identifica la línea de prompt cuando el shell no emite OSC 133; el panel de bloques la usa para segmentar el buffer. Vacía = patrón por defecto.
               </p>
             </div>
 

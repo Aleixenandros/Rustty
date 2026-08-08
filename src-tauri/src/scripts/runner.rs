@@ -1634,6 +1634,7 @@ mod tests {
             persist_session_tool: None,
             persist_session_name: None,
             cmd_notify_secs: None,
+            prompt_regex: None,
             allow_legacy_algorithms: false,
             legacy_algorithms: None,
             agent_forwarding: false,

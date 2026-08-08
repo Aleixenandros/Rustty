@@ -190,6 +190,11 @@ pub struct ConnectionProfile {
     /// largo (OSC 133). `None` = usar el umbral global de Preferencias.
     #[serde(default)]
     pub cmd_notify_secs: Option<u32>,
+    /// Regex de prompt propia de este perfil, para el fallback de bloques de
+    /// comando cuando el shell no emite OSC 133. `None`/vacía = patrón por
+    /// defecto. Solo la consume el frontend (panel de bloques).
+    #[serde(default)]
+    pub prompt_regex: Option<String>,
     /// Si true, extiende las listas de algoritmos preferidos con variantes
     /// legacy (aes-cbc, 3des-cbc, dh-sha1, hmac-sha1, ssh-rsa) para poder
     /// conectar con servidores antiguos. Reduce la seguridad. Actúa como

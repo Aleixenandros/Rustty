@@ -10056,3 +10056,131 @@ html.uitext-xlarge {
   --font-size-md: 15px;
   --font-size-lg: 17px;
 }
+
+/* ─── Panel de bloques de comando (OSC 133 / fallback por regex) ── */
+#blocks-panel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  bottom: 34px;
+  width: min(440px, 60%);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-popover);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  z-index: 6;
+  overflow: hidden;
+}
+
+.blocks-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.blocks-panel-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.blocks-fallback-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  color: var(--subtext0);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  cursor: help;
+}
+
+#blocks-panel-filter {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: var(--font-size-sm);
+}
+
+.blocks-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.block-row {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-page);
+}
+
+.block-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.block-row-head:hover {
+  background: var(--row-hover-bg);
+}
+
+.block-exit {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--overlay0);
+}
+.block-exit.ok { background: var(--green); }
+.block-exit.err { background: var(--red); }
+
+.block-cmd {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.block-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.block-output {
+  margin: 0;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border-subtle);
+  max-height: 220px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--subtext1);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.blocks-panel-empty {
+  padding: 18px 12px;
+  color: var(--overlay0);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
