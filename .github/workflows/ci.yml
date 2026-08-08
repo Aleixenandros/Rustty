@@ -192,7 +192,13 @@ jobs:
     runs-on: ubuntu-latest
     name: Cadena de suministro
     steps:
+      # Historia completa: gitleaks escanea el rango de commits del push
+      # (`primero^..último`) y con la profundidad por defecto (1) el padre del
+      # primer commit no existe en el clon — un push de varios commits rompía
+      # el escaneo con «unknown revision» (pasó con los 14 de v1.69.0).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
       - name: Leer el toolchain fijado
         id: rust
