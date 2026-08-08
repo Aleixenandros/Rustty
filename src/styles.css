@@ -10349,3 +10349,21 @@ html.uitext-xlarge {
   text-align: center;
   max-width: 460px;
 }
+
+/* ─── Skeleton del listado SFTP (primera consumidora de la primitiva) ── */
+.sftp-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.sftp-skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sftp-skeleton-row .skeleton:last-child {
+  margin-left: auto;
+}

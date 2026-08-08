@@ -4422,15 +4422,18 @@ function renderConnectionList() {
   if (activeProfiles.length === 0 && userFolders.size === 0) {
     container.innerHTML = `
       <div class="empty-state empty-state--rich">
-        <div class="empty-state__icon" aria-hidden="true">⊕</div>
+        <div class="empty-state__icon" aria-hidden="true"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-plus-circle"/></svg></div>
         <div class="empty-state__title">${escHtml(t("sidebar.empty_title"))}</div>
         <p class="empty-state__hint">${escHtml(t("sidebar.empty_hint"))}</p>
         <div class="empty-state__actions">
           <button class="btn-link" id="btn-first-connection">${escHtml(t("sidebar.empty_cta"))}</button>
+          <button class="btn-link" id="btn-first-import">${escHtml(t("sidebar.empty_import"))}</button>
         </div>
       </div>`;
     container.querySelector("#btn-first-connection")
       ?.addEventListener("click", () => openNewConnectionModal());
+    container.querySelector("#btn-first-import")
+      ?.addEventListener("click", () => importConnections());
     renderDashboard();
     return;
   }
@@ -13513,6 +13516,25 @@ async function quickConnectFromFirstRun() {
   }
 }
 
+/**
+ * Filas skeleton para una carga de directorio SFTP: evitan el flash de
+ * "Cargando…" plano usando la primitiva .skeleton ya existente.
+ * @param {number} [n]
+ */
+function sftpSkeletonRowsHtml(n = 6) {
+  let rows = "";
+  for (let i = 0; i < n; i++) {
+    const w = 30 + ((i * 17) % 45);
+    rows += `
+      <div class="sftp-skeleton-row" aria-hidden="true">
+        <span class="skeleton" style="width:16px;height:16px"></span>
+        <span class="skeleton" style="width:${w}%;height:12px"></span>
+        <span class="skeleton" style="width:52px;height:12px"></span>
+      </div>`;
+  }
+  return `<div class="sftp-skeleton" aria-hidden="true">${rows}</div>`;
+}
+
 function initFirstRunCenter() {
   document.getElementById("firstrun-quick-connect")?.addEventListener("click", () => quickConnectFromFirstRun());
   document.getElementById("firstrun-quick-input")?.addEventListener("keydown", (e) => {
@@ -17236,7 +17258,7 @@ function buildSftpPanel(sessionId) {
         <span></span>
       </div>
       <div class="sftp-files" data-side="local" tabindex="0" role="listbox" aria-multiselectable="true">
-        <div class="sftp-empty">Cargando…</div>
+        ${sftpSkeletonRowsHtml()}
       </div>
     </div>
 
@@ -17284,7 +17306,7 @@ function buildSftpPanel(sessionId) {
         <span></span>
       </div>
       <div class="sftp-files" data-side="remote" tabindex="0" role="listbox" aria-multiselectable="true">
-        <div class="sftp-empty">Cargando…</div>
+        ${sftpSkeletonRowsHtml()}
       </div>
     </div>
 
