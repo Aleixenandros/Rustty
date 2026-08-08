@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { DICTIONARIES, SUPPORTED_LANGS } from "./i18n.js";
+import { SUPPORTED_LANGS } from "./i18n.js";
+import es from "./modules/i18n/es.json";
+import en from "./modules/i18n/en.json";
+import fr from "./modules/i18n/fr.json";
+import pt from "./modules/i18n/pt.json";
+import de from "./modules/i18n/de.json";
+
+const DICTIONARIES = { es, en, fr, pt, de };
 
 /** Aplana un diccionario anidado a claves con puntos (`toast.close`, …). */
 function flatten(obj, prefix = "") {

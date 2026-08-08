@@ -724,7 +724,8 @@ function loadPrefs() {
     detectLanguage,
   });
   userFolders = new Set(prefs.userFoldersByWorkspace[prefs.activeWorkspaceId] || []);
-  setLanguage(prefs.lang);
+  // setLanguage carga el catálogo perezoso del idioma; al llegar, repintar.
+  setLanguage(prefs.lang).then(() => applyTranslations());
   applyTranslations();
   registerAllCustomThemes();
   applyTheme(prefs.theme);
@@ -3881,8 +3882,7 @@ function savePrefsFromModal() {
   // re-detecte).
   const effectiveLang = prefs.lang || detectLanguage();
   if (effectiveLang !== getLanguage()) {
-    setLanguage(effectiveLang);
-    applyTranslations();
+    setLanguage(effectiveLang).then(() => applyTranslations());
   }
   // Los snapshots ya no son relevantes: las prefs guardadas son la verdad.
   _terminalThemeSnapshot = undefined;
