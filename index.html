@@ -209,6 +209,7 @@
             <span class="status-conn">
               <span class="status-dot" id="status-dot" role="button" tabindex="0" title="Ver diagnóstico de conexión"></span>
               <span id="status-user-host">—</span>
+              <span id="status-env" class="env-badge hidden"></span>
             </span>
             <span class="status-sep"></span>
             <span class="status-cwd hidden" id="status-cwd-wrap" title="Directorio remoto actual (OSC 7)">
@@ -737,6 +738,19 @@
           <div class="form-row" data-modal-pane="general">
             <label for="f-name" data-i18n="modal_conn.name">Nombre</label>
             <input id="f-name" type="text" data-i18n-placeholder="modal_conn.name_ph" placeholder="Mi servidor" required />
+          </div>
+
+          <div class="form-row" data-modal-pane="general">
+            <label for="f-environment" data-i18n="modal_conn.environment">Entorno</label>
+            <select id="f-environment">
+              <option value="" data-i18n="modal_conn.environment_none">Sin entorno</option>
+              <option value="prod">PROD</option>
+              <option value="stage">STAGE</option>
+              <option value="dev">DEV</option>
+            </select>
+            <p class="form-hint" data-i18n="modal_conn.environment_hint">
+              Muestra un badge del entorno en la pestaña, la barra lateral, el dashboard y la barra de estado, para distinguir producción de un vistazo.
+            </p>
           </div>
 
           <div class="form-row form-row-split" data-modal-pane="general">

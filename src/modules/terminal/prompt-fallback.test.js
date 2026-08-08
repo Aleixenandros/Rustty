@@ -10,7 +10,10 @@ const BUFFER = [
   "user@host:~$ ",
 ];
 
-/** Lector de líneas sobre un array, con la firma que espera segmentByPrompt. */
+/**
+ * Lector de líneas sobre un array, con la firma que espera segmentByPrompt.
+ * @param {string[]} lines
+ */
 function reader(lines) {
   return (line) => (line >= 0 && line < lines.length ? lines[line] : null);
 }

@@ -5347,7 +5347,7 @@ function renderDashboardPinnedTiles() {
     return `
       <div class="dashboard-fav-tile dashboard-pinned-tile${tintClass}" role="button" tabindex="0" data-profile-id="${escHtml(p.id)}" title="${escHtml(dashboardProfileHost(p))}"${tintAttr}>
         <span class="dashboard-fav-proto ${escHtml(proto.toLowerCase())}">${escHtml(proto)}</span>
-        <span class="dashboard-fav-name">${escHtml(p.name)}</span>
+        <span class="dashboard-fav-name">${escHtml(p.name)}</span>${envBadgeHtml(p)}
         <span class="dashboard-fav-host">${escHtml(dashboardProfileHost(p))}</span>
         ${sftpBtn}
       </div>`;
@@ -5455,7 +5455,7 @@ function renderDashboardResultRow(profile, lastConnectedAt) {
     <div class="dashboard-result-row" role="button" tabindex="0" data-profile-id="${escHtml(profile.id)}">
       <span class="dashboard-proto ${escHtml(protoClass)}">${escHtml(proto)}</span>
       <div>
-        <div class="dashboard-result-name">${escHtml(profile.name)}</div>
+        <div class="dashboard-result-name">${escHtml(profile.name)} ${envBadgeHtml(profile)}</div>
         <div class="dashboard-result-meta">${escHtml(dashboardProfileHost(profile))} · ${escHtml(profile.group || "Sin carpeta")}</div>
       </div>
       <span class="dashboard-result-time">${escHtml(formatDashboardTime(lastConnectedAt, t, { locale: getLanguage() }))}</span>
@@ -5758,6 +5758,7 @@ function renderConnectionItem(p, depth) {
         <div class="conn-item-name">
           ${escHtml(p.name)}
           <span class="conn-badge conn-badge-${escHtml(proto.className)}">${escHtml(proto.label)}</span>
+          ${envBadgeHtml(p)}
           ${notesBadge}
         </div>
         <div class="conn-item-host">${escHtml(p.username)}@${escHtml(p.host)}:${p.port}</div>
@@ -7167,6 +7168,8 @@ function openEditConnectionModal(profileId) {
   if (_fCmdNotifySecs) _fCmdNotifySecs.value = profile.cmd_notify_secs ?? "";
   const _fPromptRegex = document.getElementById("f-prompt-regex");
   if (_fPromptRegex) _fPromptRegex.value = profile.prompt_regex || "";
+  const _fEnvironment = document.getElementById("f-environment");
+  if (_fEnvironment) _fEnvironment.value = PROFILE_ENVIRONMENTS.includes(profile.environment) ? profile.environment : "";
   document.getElementById("f-allow-legacy").checked = !!profile.allow_legacy_algorithms;
   applyLegacyAlgorithmsUI(profile.legacy_algorithms ?? null);
   document.getElementById("f-agent-forwarding").checked = !!profile.agent_forwarding;
@@ -8616,6 +8619,7 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
     cmd_notify_secs: keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     prompt_regex: (document.getElementById("f-prompt-regex")?.value || "").trim() || null,
+    environment: document.getElementById("f-environment")?.value || null,
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     legacy_algorithms: collectLegacyAlgorithms(),
     agent_forwarding: document.getElementById("f-agent-forwarding").checked,
@@ -8842,6 +8846,7 @@ async function saveAndClose(shouldConnect) {
     persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
     cmd_notify_secs:     keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     prompt_regex:        (document.getElementById("f-prompt-regex")?.value || "").trim() || null,
+    environment:         document.getElementById("f-environment")?.value || null,
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     legacy_algorithms:   collectLegacyAlgorithms(),
     agent_forwarding:    document.getElementById("f-agent-forwarding").checked,
@@ -10066,6 +10071,7 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
   tab.innerHTML = `
     <span class="tab-dot ${initialStatus}"></span>
     <span class="tab-name">${escHtml(tabLabel)}</span>
+    ${envBadgeHtml(profile)}
     ${privateBadge}
     ${sftpBtn}
     ${tunnelBtn}
@@ -10963,6 +10969,8 @@ function clearStatusBar() {
   setStatusBarVisible(false);
   const userHostEl = document.getElementById("status-user-host");
   if (userHostEl) userHostEl.textContent = "—";
+  const envEl = document.getElementById("status-env");
+  if (envEl) { envEl.className = "env-badge hidden"; envEl.textContent = ""; }
   const latEl = document.getElementById("status-latency");
   if (latEl) latEl.textContent = "—";
   const logTrigger = document.getElementById("status-log-trigger");
@@ -11635,6 +11643,13 @@ function updateStatusBar() {
   const userHost = `${profile.username}@${profile.host}:${profile.port}`;
   const userHostEl = document.getElementById("status-user-host");
   if (userHostEl) userHostEl.textContent = userHost;
+  const envEl = document.getElementById("status-env");
+  if (envEl) {
+    const env = String(profile.environment || "").toLowerCase();
+    const valid = PROFILE_ENVIRONMENTS.includes(env);
+    envEl.className = valid ? `env-badge env-${env}` : "env-badge hidden";
+    envEl.textContent = valid ? env.toUpperCase() : "";
+  }
 
   const dot = document.getElementById("status-dot");
   if (dot) {
@@ -23671,6 +23686,19 @@ const NOTE_ICON_SVG = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidd
 // glifos ⇅ / ⇄ / ✕ para mantener grosor y tamaño coherentes con el resto del chrome.
 const TAB_SFTP_ICON_SVG = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13V3M5 3L3 5M5 3l2 2"/><path d="M11 3v10M11 13l2-2M11 13l-2-2"/></svg>`;
 const TAB_TUNNELS_ICON_SVG = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5H3M3 5l2-2M3 5l2 2"/><path d="M3 11h10M13 11l-2-2M13 11l-2 2"/></svg>`;
+/** Entornos con badge de identidad visual. El texto transmite el entorno. */
+const PROFILE_ENVIRONMENTS = ["prod", "stage", "dev"];
+
+/**
+ * HTML del badge de entorno de un perfil (cadena vacía si no tiene entorno).
+ * @param {any} profile
+ */
+function envBadgeHtml(profile) {
+  const env = String(profile?.environment || "").toLowerCase();
+  if (!PROFILE_ENVIRONMENTS.includes(env)) return "";
+  return `<span class="env-badge env-${env}">${env.toUpperCase()}</span>`;
+}
+
 const TAB_CLOSE_ICON_SVG = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
 
 // Iconos monocromo de los backends de sincronización (tarjetas de Preferencias

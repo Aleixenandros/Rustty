@@ -195,6 +195,12 @@ pub struct ConnectionProfile {
     /// defecto. Solo la consume el frontend (panel de bloques).
     #[serde(default)]
     pub prompt_regex: Option<String>,
+    /// Entorno del perfil (`prod` | `stage` | `dev`), para el badge de
+    /// identidad visual en pestañas, sidebar, dashboard y barra de estado.
+    /// `None` = sin badge. El texto del badge transmite el entorno; el color
+    /// solo lo refuerza.
+    #[serde(default)]
+    pub environment: Option<String>,
     /// Si true, extiende las listas de algoritmos preferidos con variantes
     /// legacy (aes-cbc, 3des-cbc, dh-sha1, hmac-sha1, ssh-rsa) para poder
     /// conectar con servidores antiguos. Reduce la seguridad. Actúa como

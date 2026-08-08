@@ -10184,3 +10184,32 @@ html.uitext-xlarge {
   font-size: var(--font-size-sm);
   text-align: center;
 }
+
+/* ─── Badge de entorno por perfil (PROD / STAGE / DEV) ─────────
+   El texto transmite el entorno; el color solo lo refuerza. */
+.env-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  line-height: 1.4;
+}
+.env-badge.env-prod {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 55%, transparent);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+.env-badge.env-stage {
+  color: var(--yellow);
+  border-color: color-mix(in srgb, var(--yellow) 55%, transparent);
+  background: color-mix(in srgb, var(--yellow) 12%, transparent);
+}
+.env-badge.env-dev {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 55%, transparent);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+}
