@@ -147,7 +147,7 @@
           <input type="search" id="sidebar-search" data-i18n-placeholder="sidebar.search_placeholder" placeholder="Buscar conexiones…" spellcheck="false" />
         </div>
 
-        <div id="connection-list">
+        <div id="connection-list" role="tree" data-i18n-aria-label="sidebar.tree_label">
           <div class="empty-state">
             <p data-i18n="sidebar.empty_no_conns">Sin conexiones guardadas</p>
             <button class="btn-link" id="btn-first-connection" data-i18n="sidebar.empty_add_first">Añadir la primera</button>
@@ -413,7 +413,7 @@
     <!-- ══════════════════════════════════════════════════════
          MENÚ CONTEXTUAL (clic derecho en el sidebar)
     ══════════════════════════════════════════════════════ -->
-    <div id="context-menu" class="hidden">
+    <div id="context-menu" class="hidden" role="menu" data-i18n-aria-label="ctx.menu_label">
       <!-- Siempre visible -->
       <button class="ctx-item" data-ctx="new-connection">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-plus-circle"/></svg></span><span data-i18n="ctx.new_conn_here">Nueva conexión aquí</span>
@@ -479,10 +479,10 @@
           </svg>
         </span><span data-i18n="ctx.connect_private">Abrir en privado</span>
       </button>
-      <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-connect-as-only hidden" id="ctx-connect-as">
+      <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-connect-as-only hidden" id="ctx-connect-as" aria-haspopup="menu">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span data-i18n="ctx.connect_as">Conectar con otro usuario</span>
         <span class="ctx-submenu-arrow">▸</span>
-        <div class="ctx-submenu" id="ctx-connect-as-submenu"></div>
+        <div class="ctx-submenu" id="ctx-connect-as-submenu" role="menu"></div>
       </div>
       <button class="ctx-item ctx-conn-only ctx-restore-only hidden" data-ctx="connect-restore" id="ctx-connect-restore">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-restore"/></svg></span><span data-i18n="ctx.connect_restore">Conectar y restaurar pantalla anterior</span>
@@ -577,7 +577,7 @@
     <!-- ══════════════════════════════════════════════════════
          MENÚ CONTEXTUAL (clic derecho en panel SFTP)
     ══════════════════════════════════════════════════════ -->
-    <div id="sftp-context-menu" class="ctx-menu hidden">
+    <div id="sftp-context-menu" class="ctx-menu hidden" role="menu" data-i18n-aria-label="ctx.menu_files_label">
       <button class="ctx-item" data-sftpctx="refresh">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg></span><span>Refrescar</span>
       </button>
@@ -612,7 +612,7 @@
     <!-- ══════════════════════════════════════════════════════
          MENÚ CONTEXTUAL (clic derecho en una pestaña)
     ══════════════════════════════════════════════════════ -->
-    <div id="tab-context-menu" class="ctx-menu hidden">
+    <div id="tab-context-menu" class="ctx-menu hidden" role="menu" data-i18n-aria-label="ctx.menu_tab_label">
       <!-- Grupo 1 · Edición rápida de la pestaña -->
       <button class="ctx-item" data-tabctx="rename">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="tabctx.rename">Renombrar pestaña…</span>

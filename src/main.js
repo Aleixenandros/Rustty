@@ -4562,14 +4562,14 @@ function renderAllWorkspacesTree() {
     const open = openFolders.has(`__ws__/${w.id}`) ? "open" : "";
     const childrenHidden = open ? "" : "hidden";
     const count = wsProfiles.length;
-    return `<div class="folder-item ws-folder-item" data-ws-root="${escHtml(w.id)}"${workspaceTintAttrs(w.id)}>
+    return `<div class="folder-item ws-folder-item" data-ws-root="${escHtml(w.id)}" role="treeitem" aria-expanded="${open ? "true" : "false"}"${workspaceTintAttrs(w.id)}>
       <div class="folder-header" data-folder-path="__ws__/${escHtml(w.id)}">
         <span class="folder-arrow ${open}">▶</span>
         <span class="folder-icon">${folderIconSvg()}</span>
         <span class="folder-name">${escHtml(w.name)}</span>
         <span class="folder-count">${count}</span>
       </div>
-      <div class="folder-children ${childrenHidden}">
+      <div class="folder-children ${childrenHidden}" role="group">
         ${inner}
       </div>
     </div>`;
@@ -5561,14 +5561,14 @@ function renderFolderNode(name, node, depth, workspaceId) {
   const tintAttrs = folderTintAttrs(path, workspaceId);
 
   return `
-    <div class="folder-item" data-folder-path="${escHtml(path)}" draggable="true"${tintAttrs}>
+    <div class="folder-item" data-folder-path="${escHtml(path)}" draggable="true" role="treeitem" aria-expanded="${isOpen ? "true" : "false"}"${tintAttrs}>
       <div class="folder-header" style="padding-left:${indent}px; padding-right:14px">
         <span class="folder-arrow ${isOpen ? "open" : ""}">▶</span>
         <span class="folder-icon">${folderIconSvg()}</span>
         <span class="folder-name">${escHtml(name)}</span>
         <span class="folder-count">${count}</span>
       </div>
-      <div class="folder-children${isOpen ? "" : " hidden"}">
+      <div class="folder-children${isOpen ? "" : " hidden"}" role="group">
         ${renderTreeNode(node, depth + 1, workspaceId)}
       </div>
     </div>`;
@@ -5735,6 +5735,7 @@ function renderConnectionItem(p, depth) {
          draggable="true"
          tabindex="0"
          role="treeitem"
+         aria-selected="${isActiveTab || isSelected ? "true" : "false"}"
          aria-label="${escHtml(`${p.name} — ${p.username}@${p.host}:${p.port}`)}"
          style="padding-left:${indent}px">
       <div class="conn-item-icon ${escHtml(proto.className)}${isOpen ? " connected" : ""}" title="${escHtml(proto.label)}">
@@ -5767,10 +5768,9 @@ function updateSidebarSelectionDom(container = document.getElementById("connecti
   const activeId = activeProfileId();
   container.querySelectorAll(".conn-item").forEach((el) => {
     const id = el.dataset.id;
-    el.classList.toggle(
-      "selected",
-      sidebarSelectedConnectionIds.has(id) || id === activeId
-    );
+    const isSel = sidebarSelectedConnectionIds.has(id) || id === activeId;
+    el.classList.toggle("selected", isSel);
+    el.setAttribute("aria-selected", isSel ? "true" : "false");
     // Estado abierto / pestaña activa / estado dominante. Sin esto, al
     // cambiar de pestaña sin re-renderizar la sidebar todas las conexiones
     // abiertas seguirían pintadas como activas.
@@ -5914,10 +5914,12 @@ function bindTreeEvents(container) {
         openFolders.delete(path);
         children.classList.add("hidden");
         arrow.classList.remove("open");
+        item.setAttribute("aria-expanded", "false");
       } else {
         openFolders.add(path);
         children.classList.remove("hidden");
         arrow.classList.add("open");
+        item.setAttribute("aria-expanded", "true");
       }
     });
   });
@@ -6299,6 +6301,7 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
     for (const c of extras) {
       const item = document.createElement("button");
       item.type = "button";
+      item.setAttribute("role", "menuitem");
       item.className = "ctx-item";
       item.dataset.ctx = "connect-as";
       item.dataset.credId = c.id;
@@ -16882,7 +16885,7 @@ function buildSftpPanel(sessionId) {
         <button type="button" class="sftp-sort-btn sftp-sort-modified" data-side="local" data-sftp-sort="modified">Fecha</button>
         <span></span>
       </div>
-      <div class="sftp-files" data-side="local" tabindex="0">
+      <div class="sftp-files" data-side="local" tabindex="0" role="listbox" aria-multiselectable="true">
         <div class="sftp-empty">Cargando…</div>
       </div>
     </div>
@@ -16930,7 +16933,7 @@ function buildSftpPanel(sessionId) {
         <button type="button" class="sftp-sort-btn sftp-sort-modified" data-side="remote" data-sftp-sort="modified">Fecha</button>
         <span></span>
       </div>
-      <div class="sftp-files" data-side="remote" tabindex="0">
+      <div class="sftp-files" data-side="remote" tabindex="0" role="listbox" aria-multiselectable="true">
         <div class="sftp-empty">Cargando…</div>
       </div>
     </div>
@@ -17281,6 +17284,8 @@ function renderSftpFiles(sessionId, side, entries) {
     const permsTip = permsOctal ? `${permsText} · ${permsOctal}` : permsText;
     return `
     <div class="sftp-row ${e.is_dir ? "is-dir" : "is-file"} ${sftpFileIconClass(e)}"
+         role="option"
+         aria-selected="false"
          draggable="${e.is_symlink ? "false" : "true"}"
          data-path="${escHtml(e.path)}"
          data-name="${escHtml(e.name)}"
@@ -17307,9 +17312,9 @@ function renderSftpFiles(sessionId, side, entries) {
     row.addEventListener("click", (e) => {
       if (e.target.closest(".sftp-row-btn")) return;
       if (!(e.ctrlKey || e.metaKey || e.altKey)) {
-        filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => r.classList.remove("selected"));
+        filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => setSftpRowSelected(r, false));
       }
-      row.classList.toggle("selected");
+      setSftpRowSelected(row, !row.classList.contains("selected"));
     });
 
     row.addEventListener("dragstart", (e) => {
@@ -17318,8 +17323,8 @@ function renderSftpFiles(sessionId, side, entries) {
         return;
       }
       if (!row.classList.contains("selected")) {
-        filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => r.classList.remove("selected"));
-        row.classList.add("selected");
+        filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => setSftpRowSelected(r, false));
+        setSftpRowSelected(row, true);
       }
       row.classList.add("dragging");
       const rows = selectedRows(sessionId, side).filter((r) => !r.isSymlink);
@@ -17336,8 +17341,8 @@ function renderSftpFiles(sessionId, side, entries) {
     row.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       if (!row.classList.contains("selected")) {
-        filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => r.classList.remove("selected"));
-        row.classList.add("selected");
+        filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => setSftpRowSelected(r, false));
+        setSftpRowSelected(row, true);
       }
       showSftpContextMenu(e.clientX, e.clientY, sessionId, side);
     });
@@ -17685,8 +17690,8 @@ function openSftpSearchResult(sessionId, side, row) {
     if (selName) {
       const r = filesDiv.querySelector(`.sftp-row[data-name="${CSS.escape(selName)}"]`);
       if (r) {
-        filesDiv.querySelectorAll(".sftp-row.selected").forEach((x) => x.classList.remove("selected"));
-        r.classList.add("selected");
+        filesDiv.querySelectorAll(".sftp-row.selected").forEach((x) => setSftpRowSelected(x, false));
+        setSftpRowSelected(r, true);
         r.scrollIntoView({ block: "nearest" });
       }
     }
@@ -17940,6 +17945,11 @@ async function initOsFileDrop() {
 function selectedSftpContextRows(sessionId, side) {
   const rows = selectedRows(sessionId, side);
   return rows.filter((row) => !row.isSymlink);
+}
+
+function setSftpRowSelected(row, on) {
+  row.classList.toggle("selected", on);
+  row.setAttribute("aria-selected", on ? "true" : "false");
 }
 
 function positionFloatingMenu(menu, x, y) {
@@ -21439,6 +21449,13 @@ function bindUIEvents() {
   });
 
   // Acciones del menú contextual
+  // Semántica de menú para lectores de pantalla: cada botón de los menús
+  // flotantes es un menuitem (el rol de contenedor vive en el HTML).
+  for (const menuId of FLOATING_MENU_IDS) {
+    document.getElementById(menuId)?.querySelectorAll("button").forEach((b) =>
+      b.setAttribute("role", "menuitem"));
+  }
+
   document.getElementById("context-menu").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-ctx]");
     if (!btn) return;
