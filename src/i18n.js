@@ -308,6 +308,10 @@ export const DICTIONARIES = {
       export: "Exportar informe…",
       exported: "Informe de diagnóstico exportado",
     },
+    layout: {
+      restore_offer: "{n} pestaña(s) de la última sesión listas para restaurar",
+      restore_action: "Reconectar todo",
+    },
     firstrun: {
       title: "Empieza a trabajar",
       quick_ph: "usuario@host[:puerto]",
@@ -1476,6 +1480,8 @@ export const DICTIONARIES = {
       rdp_display: "Ventana del escritorio remoto (RDP)",
       rdp_display_hint: "Valor por defecto de las sesiones RDP; cada perfil puede llevar el suyo. La ventana redimensionable deja maximizar y arrastrar, y el escritorio remoto sigue el tamaño: necesita Windows 8 / Server 2012 o superior. «Tamaño fijo» es el comportamiento anterior, para servidores que no lo admiten.",
       autostart_minimized: "Arrancar minimizado",
+      restore_work_tabs: "Ofrecer restaurar las pestañas de la última sesión",
+      restore_work_tabs_hint: "Guarda el orden de pestañas y sus perfiles (nunca el contenido del terminal, ni secretos, ni sesiones privadas) y al arrancar ofrece reconectarlas en lote.",
       autostart_minimized_hint: "Al arrancar con el sistema, oculta la ventana y mantiene solo el icono en la bandeja.",
       metrics_title: "Monitor de recursos",
       metrics_hint: "Muestra CPU, memoria, disco, red y procesos del servidor remoto por la propia conexión SSH, sin instalar nada. Solo Linux por ahora.",
@@ -2027,6 +2033,10 @@ export const DICTIONARIES = {
       copied: "Diagnostics summary copied",
       export: "Export report…",
       exported: "Diagnostics report exported",
+    },
+    layout: {
+      restore_offer: "{n} tab(s) from your last session ready to restore",
+      restore_action: "Reconnect all",
     },
     firstrun: {
       title: "Get to work",
@@ -3196,6 +3206,8 @@ export const DICTIONARIES = {
       rdp_display: "Remote desktop window (RDP)",
       rdp_display_hint: "Default for RDP sessions; each profile can override it. The resizable window can be maximised and dragged, and the remote desktop follows the size: needs Windows 8 / Server 2012 or newer. «Fixed size» is the previous behaviour, for servers that do not support it.",
       autostart_minimized: "Start minimized",
+      restore_work_tabs: "Offer to restore last session tabs",
+      restore_work_tabs_hint: "Saves the tab order and their profiles (never terminal contents, secrets or private sessions) and offers to reconnect them in bulk at startup.",
       autostart_minimized_hint: "When started with the system, hide the window and keep only the tray icon.",
       metrics_title: "Resource monitor",
       metrics_hint: "Shows CPU, memory, disk, network and processes of the remote server over the SSH connection itself, with nothing to install. Linux only for now.",
@@ -3747,6 +3759,10 @@ export const DICTIONARIES = {
       copied: "Résumé de diagnostic copié",
       export: "Exporter le rapport…",
       exported: "Rapport de diagnostic exporté",
+    },
+    layout: {
+      restore_offer: "{n} onglet(s) de la dernière session prêts à restaurer",
+      restore_action: "Tout reconnecter",
     },
     firstrun: {
       title: "Au travail",
@@ -4922,6 +4938,8 @@ export const DICTIONARIES = {
       rdp_display: "Fenêtre du bureau distant (RDP)",
       rdp_display_hint: "Valeur par défaut des sessions RDP ; chaque profil peut la remplacer. La fenêtre redimensionnable peut être agrandie et déplacée, et le bureau distant suit la taille : nécessite Windows 8 / Server 2012 ou plus récent. « Taille fixe » correspond au comportement précédent, pour les serveurs qui ne le prennent pas en charge.",
       autostart_minimized: "Démarrer réduit",
+      restore_work_tabs: "Proposer de restaurer les onglets de la dernière session",
+      restore_work_tabs_hint: "Enregistre l'ordre des onglets et leurs profils (jamais le contenu du terminal, ni secrets, ni sessions privées) et propose de les reconnecter en bloc au démarrage.",
       autostart_minimized_hint: "Au démarrage avec le système, cache la fenêtre et conserve uniquement l'icône dans la barre système.",
       metrics_title: "Moniteur de ressources",
       metrics_hint: "Affiche le CPU, la mémoire, le disque, le réseau et les processus du serveur distant via la connexion SSH elle-même, sans rien installer. Linux uniquement pour l'instant.",
@@ -5467,6 +5485,10 @@ export const DICTIONARIES = {
       copied: "Resumo de diagnóstico copiado",
       export: "Exportar relatório…",
       exported: "Relatório de diagnóstico exportado",
+    },
+    layout: {
+      restore_offer: "{n} separador(es) da última sessão prontos a restaurar",
+      restore_action: "Religar tudo",
     },
     firstrun: {
       title: "Mãos à obra",
@@ -6642,6 +6664,8 @@ export const DICTIONARIES = {
       rdp_display: "Janela do ambiente de trabalho remoto (RDP)",
       rdp_display_hint: "Valor por omissão das sessões RDP; cada perfil pode ter o seu. A janela redimensionável permite maximizar e arrastar, e o ambiente de trabalho remoto acompanha o tamanho: precisa de Windows 8 / Server 2012 ou superior. «Tamanho fixo» é o comportamento anterior, para servidores que não o suportam.",
       autostart_minimized: "Arrancar minimizado",
+      restore_work_tabs: "Oferecer restaurar os separadores da última sessão",
+      restore_work_tabs_hint: "Guarda a ordem dos separadores e os seus perfis (nunca o conteúdo do terminal, nem segredos, nem sessões privadas) e oferece religá-los em lote no arranque.",
       autostart_minimized_hint: "Ao arrancar com o sistema, oculta a janela e mantém apenas o ícone na bandeja.",
       metrics_title: "Monitor de recursos",
       metrics_hint: "Mostra CPU, memória, disco, rede e processos do servidor remoto pela própria ligação SSH, sem instalar nada. Apenas Linux por agora.",
@@ -7187,6 +7211,10 @@ export const DICTIONARIES = {
       copied: "Diagnose-Zusammenfassung kopiert",
       export: "Bericht exportieren…",
       exported: "Diagnosebericht exportiert",
+    },
+    layout: {
+      restore_offer: "{n} Tab(s) der letzten Sitzung bereit zur Wiederherstellung",
+      restore_action: "Alle neu verbinden",
     },
     firstrun: {
       title: "An die Arbeit",
@@ -8356,6 +8384,8 @@ export const DICTIONARIES = {
       rdp_display: "Fenster des Remotedesktops (RDP)",
       rdp_display_hint: "Standard für RDP-Sitzungen; jedes Profil kann davon abweichen. Das größenveränderbare Fenster lässt sich maximieren und ziehen, und der Remotedesktop folgt der Größe: benötigt Windows 8 / Server 2012 oder neuer. «Feste Größe» ist das bisherige Verhalten, für Server, die das nicht unterstützen.",
       autostart_minimized: "Minimiert starten",
+      restore_work_tabs: "Wiederherstellen der Tabs der letzten Sitzung anbieten",
+      restore_work_tabs_hint: "Speichert die Tab-Reihenfolge und ihre Profile (nie Terminalinhalte, Geheimnisse oder private Sitzungen) und bietet beim Start an, sie gesammelt neu zu verbinden.",
       autostart_minimized_hint: "Beim Systemstart das Fenster ausblenden und nur das Tray-Symbol anzeigen.",
       metrics_title: "Ressourcenmonitor",
       metrics_hint: "Zeigt CPU, Speicher, Datenträger, Netzwerk und Prozesse des entfernten Servers über die SSH-Verbindung selbst, ohne etwas zu installieren. Vorerst nur Linux.",

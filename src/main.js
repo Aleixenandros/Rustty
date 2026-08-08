@@ -597,6 +597,7 @@ const DEFAULT_PREFS = {
   trashRetentionDays: 30,
   terminalBgOpacity: 0.25,
   terminalBgBlur: 0,
+  restoreWorkTabs: false,
   // Modo daltónico: dots de estado se diferencian también por forma
   // (círculo / cuadrado / diamante) además de por color.
   colorBlindSafe:  false,
@@ -1904,6 +1905,8 @@ function openSettingsModal() {
   if (_bgOpacity) _bgOpacity.value = String(Math.round((Number(prefs.terminalBgOpacity) || 0.25) * 100));
   const _bgBlur = document.getElementById("pref-term-bg-blur");
   if (_bgBlur) _bgBlur.value = String(Number(prefs.terminalBgBlur) || 0);
+  const _restoreTabs = document.getElementById("pref-restore-work-tabs");
+  if (_restoreTabs) _restoreTabs.checked = !!prefs.restoreWorkTabs;
   syncUiZoomControl();
   const _cbSafe = document.getElementById("pref-color-blind-safe");
   if (_cbSafe) _cbSafe.checked = !!prefs.colorBlindSafe;
@@ -3795,6 +3798,7 @@ function savePrefsFromModal() {
     })(),
     uiDensity:       (() => { const v = document.getElementById("pref-ui-density")?.value; return v === "compact" || v === "spacious" ? v : "comfortable"; })(),
     uiTextSize:      (() => { const v = document.getElementById("pref-ui-text-size")?.value; return v === "large" || v === "xlarge" ? v : "normal"; })(),
+    restoreWorkTabs: document.getElementById("pref-restore-work-tabs")?.checked ?? false,
     uiZoom:          clampUiZoom(Number(previousPrefs.uiZoom ?? 1)),
     colorBlindSafe:  !!document.getElementById("pref-color-blind-safe")?.checked,
     uiContrast:      (() => {
@@ -4137,6 +4141,53 @@ function startKeepassAutoLock() {
 // INICIALIZACIÓN
 // ═══════════════════════════════════════════════════════════════
 
+// ─── Restaurar layout de trabajo (opt-in) ────────────────────────────────────
+// Guarda solo el orden de pestañas y los perfiles referenciados — nunca
+// buffers, secretos ni sesiones privadas — y al arrancar ofrece reconectar en
+// lote. Desactivado por defecto (máxima de producto).
+const WORK_LAYOUT_KEY = "rustty.workLayout.v1";
+
+function captureWorkLayout() {
+  if (!prefs.restoreWorkTabs) return;
+  const ordered = [];
+  document.querySelectorAll("#tabs-container .tab[data-session]").forEach((tab) => {
+    const s = sessions.get(tab.dataset.session);
+    if (!s?.profileId || s._closeOverride || s.isPrivate) return;
+    if (s._parentSessionId) return; // las shells hijas cuelgan de su raíz
+    if (!profiles.some((p) => p.id === s.profileId)) return;
+    ordered.push({ profileId: s.profileId });
+  });
+  try {
+    if (ordered.length) {
+      localStorage.setItem(WORK_LAYOUT_KEY, JSON.stringify({ tabs: ordered, savedAt: Date.now() }));
+    } else {
+      localStorage.removeItem(WORK_LAYOUT_KEY);
+    }
+  } catch { /* best-effort */ }
+}
+
+function offerWorkLayoutRestore() {
+  if (!prefs.restoreWorkTabs) return;
+  let layout = null;
+  try { layout = JSON.parse(localStorage.getItem(WORK_LAYOUT_KEY) || "null"); } catch { /* corrupto */ }
+  const ids = (layout?.tabs || [])
+    .map((entry) => entry.profileId)
+    .filter((id) => profiles.some((p) => p.id === id));
+  if (!ids.length) return;
+  toast(t("layout.restore_offer", { n: ids.length }), "info", 15000, {
+    actionLabel: t("layout.restore_action"),
+    onAction: () => {
+      for (const id of ids) connectProfile(id);
+    },
+  });
+}
+
+function initWorkLayoutCapture() {
+  if (!prefs.restoreWorkTabs) return;
+  setInterval(captureWorkLayout, 30000);
+  window.addEventListener("beforeunload", captureWorkLayout);
+}
+
 async function init() {
   loadPrefs();
   await registerBundledThemePacks();
@@ -4173,6 +4224,9 @@ async function init() {
   loadSnapshotIndex();
 
   if (_connListBoot) _connListBoot.removeAttribute("aria-busy");
+
+  offerWorkLayoutRestore();
+  initWorkLayoutCapture();
   renderConnectionList();
   bindUIEvents();
   await initTrayQuickLauncher().catch((e) => console.debug("[tray] init", e));
