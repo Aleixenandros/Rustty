@@ -10037,3 +10037,22 @@ body.color-blind-safe .modal-summary-badge.warn::before {
     border-radius: 0;
   }
 }
+
+/* ─── Tamaño mínimo del texto de la interfaz (Apariencia) ──────
+   Eleva los tokens tipográficos del chrome; el terminal y el zoom de UI
+   van aparte. Los elementos con tamaños fijos se irán sumando al sistema
+   de tokens, como el resto del slice estético. */
+html.uitext-large {
+  --font-size-base: 14px;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+}
+html.uitext-xlarge {
+  --font-size-base: 15px;
+  --font-size-xs: 13px;
+  --font-size-sm: 14px;
+  --font-size-md: 15px;
+  --font-size-lg: 17px;
+}

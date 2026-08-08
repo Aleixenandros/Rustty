@@ -592,6 +592,7 @@ const DEFAULT_PREFS = {
   // Densidad de la interfaz: "comfortable" (por defecto) o "compact".
   // Reduce padding/altura en sidebar, tabs y modales sin tocar xterm.
   uiDensity:       "comfortable",
+  uiTextSize:      "normal",
   // Modo daltónico: dots de estado se diferencian también por forma
   // (círculo / cuadrado / diamante) además de por color.
   colorBlindSafe:  false,
@@ -723,6 +724,7 @@ function loadPrefs() {
   registerAllCustomThemes();
   applyTheme(prefs.theme);
   applyUiDensity(prefs.uiDensity);
+  applyUiTextSize(prefs.uiTextSize);
   applyUiZoom(prefs.uiZoom);
   applyColorBlindSafe(prefs.colorBlindSafe);
   applyUiContrast(prefs.uiContrast);
@@ -855,6 +857,12 @@ function applyTheme(theme) {
  * Aplica la densidad de UI configurada (cómoda / compacta) al <body>.
  * Solo afecta al chrome: sidebar, tabs y modales. No toca el terminal.
  */
+function applyUiTextSize(size) {
+  const s = size === "large" || size === "xlarge" ? size : "normal";
+  document.documentElement.classList.toggle("uitext-large", s === "large");
+  document.documentElement.classList.toggle("uitext-xlarge", s === "xlarge");
+}
+
 function applyUiDensity(density) {
   const d = density === "compact" ? "compact" : density === "spacious" ? "spacious" : "comfortable";
   document.body.classList.toggle("density-compact", d === "compact");
@@ -1761,6 +1769,8 @@ function openSettingsModal() {
   document.getElementById("pref-cursor-style").value        = prefs.cursorStyle;
   const _densitySel = document.getElementById("pref-ui-density");
   if (_densitySel) _densitySel.value = ["compact", "spacious"].includes(prefs.uiDensity) ? prefs.uiDensity : "comfortable";
+  const _textSizeSel = document.getElementById("pref-ui-text-size");
+  if (_textSizeSel) _textSizeSel.value = ["large", "xlarge"].includes(prefs.uiTextSize) ? prefs.uiTextSize : "normal";
   syncUiZoomControl();
   const _cbSafe = document.getElementById("pref-color-blind-safe");
   if (_cbSafe) _cbSafe.checked = !!prefs.colorBlindSafe;
@@ -3641,6 +3651,7 @@ function savePrefsFromModal() {
       return LOCALCMD_OUTPUT_KB.includes(v) ? v : DEFAULT_PREFS.localCmdMaxOutputKb;
     })(),
     uiDensity:       (() => { const v = document.getElementById("pref-ui-density")?.value; return v === "compact" || v === "spacious" ? v : "comfortable"; })(),
+    uiTextSize:      (() => { const v = document.getElementById("pref-ui-text-size")?.value; return v === "large" || v === "xlarge" ? v : "normal"; })(),
     uiZoom:          clampUiZoom(Number(previousPrefs.uiZoom ?? 1)),
     colorBlindSafe:  !!document.getElementById("pref-color-blind-safe")?.checked,
     uiContrast:      (() => {
@@ -3732,6 +3743,7 @@ function savePrefsFromModal() {
   uiThemePreview = null;
   applyTheme(prefs.theme);
   applyUiDensity(prefs.uiDensity);
+  applyUiTextSize(prefs.uiTextSize);
   applyUiZoom(prefs.uiZoom);
   applyColorBlindSafe(prefs.colorBlindSafe);
   applyUiContrast(prefs.uiContrast);
