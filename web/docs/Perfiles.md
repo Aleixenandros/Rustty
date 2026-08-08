@@ -39,6 +39,31 @@ Plantillas integradas:
 
 También puedes marcar un perfil propio como plantilla desde su menú contextual (**Usar como plantilla**). Rustty lo listará en el mismo selector para reutilizar tipo de conexión, puerto, usuario, autenticación y opciones avanzadas comunes. El perfil original no se modifica.
 
+## Entorno del perfil (PROD / STAGE / DEV)
+
+Cada perfil puede declarar su **entorno** en el formulario de conexión. El badge
+correspondiente aparece en la pestaña, la barra lateral, el dashboard y la barra
+de estado, de modo que producción se distingue de un vistazo. El texto del badge
+transmite el entorno; el color solo lo refuerza (también en modo daltónico).
+
+## Papelera y Deshacer
+
+Borrar una conexión, una carpeta o un workspace muestra un aviso con **Deshacer**
+y deja una copia en la **papelera local** (menú contextual de la zona vacía de la
+barra lateral → *Papelera…*). Desde ahí puedes restaurar o eliminar
+definitivamente cada elemento, vaciarla y elegir la retención (de 7 días a 1
+año). Restaurar un elemento sincronizado lo re-guarda con fecha nueva, por lo que
+también reaparece en tus otros equipos. Las contraseñas nunca pasan por la
+papelera: viven solo en el almacén del sistema, y al reconectar un perfil
+restaurado se piden de nuevo.
+
+## Restaurar las pestañas de la última sesión
+
+Con la opción de **Preferencias → Sistema** activada (viene desactivada), Rustty
+recuerda el orden de pestañas y sus perfiles al cerrar —nunca el contenido del
+terminal, ni secretos, ni sesiones privadas— y al arrancar ofrece **reconectarlas
+en lote** desde un aviso.
+
 ## Selección múltiple y movimiento
 
 En la sidebar puedes seleccionar varias conexiones con **Ctrl/Cmd+click** y rangos con **Shift+click**. Al arrastrar una conexión seleccionada hacia una carpeta o workspace, Rustty mueve el lote completo de conexiones seleccionadas dentro del mismo workspace origen.

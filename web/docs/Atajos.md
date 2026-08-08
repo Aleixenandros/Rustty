@@ -50,6 +50,21 @@ bloque al que ir —o estás dentro de una aplicación de pantalla completa—,
 Rustty no consume `Alt+↑/↓`: las teclas llegan al servidor con normalidad. Las
 dos combinaciones se pueden cambiar o desactivar como cualquier otro atajo.
 
+### Panel de bloques de comando
+
+Desde la paleta de comandos (**Panel de bloques de comando**) o con un atajo
+propio (sin combinación de fábrica) se abre un panel lateral que lista los
+bloques de la sesión: cada fila muestra el comando y su estado de salida, se
+puede **colapsar o expandir** la salida (por bloque o en lote), **filtrar** por
+texto y **saltar** al punto exacto del terminal con un clic, además de copiar el
+comando o la salida de cada bloque.
+
+Si el shell no emite OSC 133, el panel **infiere los bloques con una regex de
+prompt** y lo señala con un distintivo «regex». La expresión se puede ajustar
+por perfil en la pestaña **Avanzado** del formulario de conexión (útil para
+prompts poco comunes o PowerShell remoto); vacía, se usa un patrón que cubre los
+prompts clásicos `usuario@host:~$` y los minimalistas `❯`.
+
 «Limpiar la línea del prompt» vacía de un tirón lo que tengas escrito en la línea de edición del shell (envía `Ctrl+A` + `Ctrl+K`, así borra toda la línea sin importar dónde esté el cursor). No trae combinación por defecto a propósito: `Ctrl+U` —el atajo nativo del shell para borrar hasta el inicio— lo usan también programas de pantalla completa como `vim` o `less`, así que Rustty te deja elegir tú la tecla desde **Preferencias → Atajos**. Recuerda que `Ctrl+U`, `Ctrl+K` y `Ctrl+W` siguen funcionando de forma nativa dentro del shell.
 
 ### Autocompletado en el editor de comandos

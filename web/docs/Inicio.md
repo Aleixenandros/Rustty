@@ -39,6 +39,13 @@
 
 ## Primeros pasos
 
+Al abrir Rustty sin ningún perfil guardado, el dashboard muestra un **centro de
+primer inicio**: una **conexión rápida** que acepta `usuario@host[:puerto]` y
+conecta al momento (guardando un perfil mínimo; la contraseña se pide al
+conectar y va solo al almacén del sistema), junto a accesos directos para crear
+un perfil, importar `~/.ssh/config` o la configuración de otro cliente, y
+restaurar una copia de seguridad.
+
 1. [Descarga](/descargas) el binario para tu plataforma.
 2. Abre Rustty, pulsa **+** en la barra lateral para crear tu primera conexión.
 3. Rellena host, usuario y método de autenticación. Pulsa **Guardar y conectar**.

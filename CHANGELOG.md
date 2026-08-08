@@ -2,6 +2,76 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [1.69.0] - 2026-08-08
+
+### Añadido
+
+- **Panel de bloques de comando**: una vista lateral del terminal que lista cada
+  bloque (comando y estado de salida), colapsa o expande su salida, filtra por
+  texto y salta al punto exacto del buffer con un clic, con copiar comando o
+  salida en cada fila. Está en la paleta de comandos y en Preferencias → Atajos,
+  sin combinación de fábrica. Si el shell no emite las marcas OSC 133, los
+  bloques se **infieren con una regex de prompt** —configurable por perfil en la
+  pestaña Avanzado— y el panel lo señala con un distintivo «regex».
+- **Papelera con Deshacer**: borrar conexiones, carpetas o workspaces deja copia
+  en una papelera local con retención configurable (de 7 días a 1 año) y ofrece
+  **Deshacer** en el propio aviso. Restaurar re-guarda el elemento con fecha
+  nueva, de modo que también se impone al borrado en la sincronización. Las
+  contraseñas nunca pasan por la papelera: al reconectar se piden de nuevo. Se
+  abre desde el menú contextual de la zona vacía de la barra lateral.
+- **Fondo de terminal opcional** (Preferencias → Apariencia): una imagen local
+  tras el terminal con opacidad y desenfoque a elegir. Las imágenes grandes se
+  reducen antes de guardarse y las animadas tienen tope de peso; el fondo se
+  pausa al redimensionar o al pasar la ventana a segundo plano, nunca se
+  sincroniza y, mientras está activo, el contraste mínimo del texto sube solo a
+  nivel AA para que la letra no se pierda sobre la foto.
+- **Badge de entorno por perfil**: marca un perfil como PROD, STAGE o DEV y el
+  distintivo aparece en la pestaña, la barra lateral, el dashboard y la barra de
+  estado. El texto transmite el entorno; el color solo lo refuerza.
+- **Centro de primer inicio**: sin perfiles guardados, el dashboard ofrece a un
+  clic la conexión rápida (`usuario@host[:puerto]`), crear un perfil, importar
+  `~/.ssh/config` o de otro cliente y restaurar una copia de seguridad.
+- **Restaurar las pestañas de la última sesión** (opt-in, Preferencias →
+  Sistema): guarda el orden de pestañas y sus perfiles —nunca el contenido del
+  terminal, ni secretos, ni sesiones privadas— y al arrancar ofrece
+  reconectarlas en lote desde un aviso.
+- **Tamaño del texto de la interfaz** (Preferencias → Apariencia): tres niveles
+  que suben el mínimo del chrome sin tocar el terminal ni el zoom.
+
+### Arreglado
+
+- **Los menús contextuales ya no se cortan en ventanas pequeñas**: se ajustan al
+  borde, hacen scroll interno cuando ni siquiera caben enteros y el submenú se
+  abre hacia la izquierda o hacia arriba según el espacio disponible. Al
+  redimensionar la ventana se cierran, en vez de quedar descolocados.
+- **Borrar un workspace registra los borrados en la sincronización**: los
+  perfiles de un workspace eliminado pasan ahora por la misma vía común que el
+  resto de borrados (transacción única, tombstones y limpieza de credenciales);
+  antes podían resucitar en otro equipo al sincronizar.
+
+### Cambiado
+
+- **Sistema visual consolidado**: superficies y bordes con nombre semántico,
+  escala única de radios, sombras multicapa en menús y modales, controles con
+  estados deshabilitado y peligro compartidos, y filas con el mismo hover y la
+  misma selección en todas las listas (sidebar, SFTP, temas, paleta).
+- **Chrome adaptativo**: cortes de ancho compartidos en toda la app; en ventanas
+  estrechas la barra de estado prioriza conexión y latencia, las toolbars SFTP
+  envuelven en vez de solapar y los modales grandes pasan a pantalla completa.
+  Sus cabeceras y pies quedan fijos cuando el cuerpo hace scroll.
+- **Lectores de pantalla**: los menús contextuales anuncian rol de menú y cada
+  entrada el suyo; el árbol de conexiones expone expansión y selección de cada
+  nodo, y el panel de archivos es una lista multiselección de verdad.
+- **Las tarjetas de Copias de seguridad llevan su acción directa**: «Sincronizar
+  ahora» en la activa y «Usar este backend» en las demás, sin pasar por el
+  formulario.
+- **El panel SFTP carga con skeletons** en lugar de un «Cargando…» plano, y la
+  barra lateral sin conexiones ofrece crear o importar directamente.
+- **Los idiomas se cargan bajo demanda**: los catálogos viven ahora en un
+  fichero JSON por idioma; francés, portugués y alemán solo se descargan al
+  activarlos. Español e inglés siguen en el arranque por ser la reserva de
+  cualquier clave que falte.
+
 ## [1.68.0] - 2026-08-06
 
 ### Añadido

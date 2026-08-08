@@ -28,6 +28,22 @@ Toda la interfaz es operable con teclado. Los menús contextuales (clic derecho 
 
 La barra de pestañas de sesión se expone a los lectores de pantalla como una lista de pestañas (`tablist`), con el estado de selección de cada una y una etiqueta descriptiva en sus botones (SFTP, túneles y cerrar).
 
+## Tamaño del texto de la interfaz
+
+En **Preferencias → Apariencia** puedes subir el tamaño mínimo del texto del
+chrome (menús, listas, barras) en tres niveles, sin tocar el tamaño de fuente
+del terminal ni el zoom general de la interfaz. Se suma a la densidad
+(Espaciosa / Cómoda / Compacta) y al modo de alto contraste.
+
+## Fondo del terminal
+
+También en **Apariencia** puedes poner una **imagen local** detrás del terminal,
+con opacidad y desenfoque a tu gusto. Las imágenes grandes se reducen antes de
+guardarse y las animadas tienen un tope de peso; el fondo se pausa mientras
+redimensionas la ventana o cuando pasa a segundo plano, y **nunca se
+sincroniza** entre equipos. Con un fondo activo, el contraste mínimo del texto
+sube automáticamente a nivel AA para que la letra siga leyéndose sobre la foto.
+
 ## Terminal
 
 En **Preferencias → Terminal** puedes ajustar:
