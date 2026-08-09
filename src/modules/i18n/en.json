@@ -591,7 +591,11 @@
     "unpin": "Unpin tab",
     "export_history": "Export history…",
     "rename": "Rename tab…",
-    "new_shell": "New tab on this connection"
+    "new_shell": "New tab on this connection",
+    "tmux_split_h": "Split pane into columns",
+    "tmux_split_v": "Split pane into rows",
+    "tmux_new_window": "New tmux window",
+    "tmux_kill_pane": "Close pane (kills its process)"
   },
   "shell_child": {
     "root_not_connected": "This tab's connection is no longer active",
@@ -761,7 +765,9 @@
     "proxy_jump_hint": "Connect to this bastion host first and tunnel an SSH channel to the actual target (ProxyJump). Reuses the profile credentials.",
     "cancel": "Cancel",
     "save_only": "Save",
-    "save_connect": "Save and connect"
+    "save_connect": "Save and connect",
+    "tmux_control": "tmux control mode (native tabs and panes)",
+    "tmux_control_hint": "The server's tmux session shows up as Rustty tabs and splits: persistence, several shells over a single connection and real panes. Requires tmux 3.2 or later on the server; without it a normal shell opens with a notice. Shares the classic reattach session name, and replaces it if both are checked."
   },
   "modal_credential": {
     "close": "Close",
@@ -961,7 +967,9 @@
     "highlight_pattern": "Pattern",
     "highlight_color": "Color",
     "highlight_bold": "Bold",
-    "highlight_add": "＋ Add rule"
+    "highlight_add": "＋ Add rule",
+    "tmux_scrollback": "Scrollback to recover on tmux reattach",
+    "tmux_scrollback_hint": "When attaching a control-mode session, each pane rehydrates up to this many lines of its history. 0 = recover nothing (instant attach)."
   },
   "prefs_appearance": {
     "title": "Appearance",
@@ -1725,5 +1733,16 @@
     "no_results": "No results",
     "limit_reached": "Result limit reached ({n})",
     "searching": "Searching…"
+  },
+  "tmux": {
+    "exit": "The tmux control session has ended",
+    "exit_reason": "The tmux control session has ended: {reason}",
+    "layout_unreadable": "tmux sent an unreadable layout; the window was not repainted",
+    "smaller_client_hint": "A smaller client is attached to this tmux session: it dictates the size. Close the other attach to get the full space back.",
+    "close_window_title": "Close tmux window",
+    "close_window_confirm": "Closing this window kills its processes ON THE SERVER (kill-window). Continue?",
+    "close_window_submit": "Close",
+    "kill_pane_title": "Close pane",
+    "kill_pane_confirm": "Closing the active pane kills its process ON THE SERVER (kill-pane). Continue?"
   }
 }

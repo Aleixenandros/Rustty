@@ -10437,3 +10437,58 @@ html.uitext-xlarge {
   font-size: var(--font-size-sm);
   color: var(--subtext0);
 }
+
+/* ─── Modo control de tmux: pestañas-ventana y árbol de panes ─── */
+.terminal-pane.tmux-window {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.tmux-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+.tmux-split-row { flex-direction: row; }
+.tmux-split-column { flex-direction: column; }
+
+.tmux-part {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+.tmux-cell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.tmux-cell .terminal-pane.tmux-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  border: 1px solid transparent;
+}
+
+.terminal-pane.tmux-pane.tmux-focused {
+  border-color: color-mix(in srgb, var(--blue) 55%, transparent);
+}
+
+/* El divisor pide el redimensionado a tmux; el layout que vuelve manda. */
+.tmux-divider {
+  flex: 0 0 4px;
+  background: var(--border-subtle);
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+.tmux-divider:hover { background: var(--blue); }
+.tmux-divider-row { cursor: col-resize; }
+.tmux-divider-column { cursor: row-resize; }

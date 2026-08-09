@@ -60,6 +60,8 @@ import {
 } from "./modules/sftp-conflicts.js";
 import { clampMenuPosition, menuNeedsScroll } from "./modules/menu-position.js";
 import { compilePromptRegex, segmentByPrompt, DEFAULT_PROMPT_PATTERN } from "./modules/terminal/prompt-fallback.js";
+import { layoutToTree, paneDims, layoutSize } from "./modules/tmux/layout-view.js";
+import { leafIds } from "./modules/panes/tree.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
 import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { tabIndexForKey } from "./modules/tab-navigation.js";
@@ -598,6 +600,7 @@ const DEFAULT_PREFS = {
   terminalBgOpacity: 0.25,
   terminalBgBlur: 0,
   restoreWorkTabs: false,
+  tmuxScrollbackLines: 2000,
   // Modo daltónico: dots de estado se diferencian también por forma
   // (círculo / cuadrado / diamante) además de por color.
   colorBlindSafe:  false,
@@ -1936,6 +1939,8 @@ function openSettingsModal() {
   const _ligEl = document.getElementById("pref-terminal-ligatures");
   if (_ligEl) _ligEl.checked = !!prefs.terminalLigatures;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
+  const _tmuxScroll = document.getElementById("pref-tmux-scrollback");
+  if (_tmuxScroll) _tmuxScroll.value = String(Number(prefs.tmuxScrollbackLines) ?? 2000);
   document.getElementById("pref-bell").value                = prefs.bell;
   document.getElementById("pref-rdp-display").value         = prefs.rdpDisplay || "window";
   const _metEnabled = document.getElementById("pref-metrics-enabled");
@@ -3774,6 +3779,10 @@ function savePrefsFromModal() {
     cmdDoneNotifySecs: Math.min(3600, Math.max(1, Number(document.getElementById("pref-cmd-notify-secs")?.value) || 15)),
     terminalLigatures: !!document.getElementById("pref-terminal-ligatures")?.checked,
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
+    tmuxScrollbackLines: (() => {
+      const v = parseInt(document.getElementById("pref-tmux-scrollback")?.value, 10);
+      return Number.isFinite(v) ? Math.min(50000, Math.max(0, v)) : DEFAULT_PREFS.tmuxScrollbackLines;
+    })(),
     bell:            document.getElementById("pref-bell").value,
     rdpDisplay:      document.getElementById("pref-rdp-display").value,
     metricsEnabled:  !!document.getElementById("pref-metrics-enabled")?.checked,
@@ -7400,6 +7409,8 @@ function openEditConnectionModal(profileId) {
   if (_fPersistTool) _fPersistTool.value = profile.persist_session_tool === "screen" ? "screen" : "tmux";
   const _fPersistName = document.getElementById("f-persist-name");
   if (_fPersistName) _fPersistName.value = profile.persist_session_name || "";
+  const _fTmuxControl = document.getElementById("f-tmux-control");
+  if (_fTmuxControl) _fTmuxControl.checked = !!profile.tmux_control;
   updatePersistSessionFields();
   const _fCmdNotifySecs = document.getElementById("f-cmd-notify-secs");
   if (_fCmdNotifySecs) _fCmdNotifySecs.value = profile.cmd_notify_secs ?? "";
@@ -8854,6 +8865,7 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     persist_session: document.getElementById("f-persist-session")?.checked ?? false,
     persist_session_tool: document.getElementById("f-persist-tool")?.value || null,
     persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
+    tmux_control: document.getElementById("f-tmux-control")?.checked ?? false,
     cmd_notify_secs: keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     prompt_regex: (document.getElementById("f-prompt-regex")?.value || "").trim() || null,
     environment: document.getElementById("f-environment")?.value || null,
@@ -9081,6 +9093,7 @@ async function saveAndClose(shouldConnect) {
     persist_session:     document.getElementById("f-persist-session")?.checked ?? false,
     persist_session_tool: document.getElementById("f-persist-tool")?.value || null,
     persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
+    tmux_control:        document.getElementById("f-tmux-control")?.checked ?? false,
     cmd_notify_secs:     keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     prompt_regex:        (document.getElementById("f-prompt-regex")?.value || "").trim() || null,
     environment:         document.getElementById("f-environment")?.value || null,
@@ -9700,6 +9713,10 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   try {
     const dataChannel = new Channel();
     session.unlisteners = await registerSshListeners(sessionId, session.terminal, dataChannel);
+    if (profile.tmux_control) {
+      session._tmuxControl = true;
+      session.unlisteners.push(...(await registerTmuxListeners(sessionId)));
+    }
     if (session._closing) {
       // La pestaña se cerró mientras registrábamos los listeners: deshacemos sin
       // llegar a conectar (el backend aún no tiene la sesión).
@@ -10272,6 +10289,438 @@ async function reconnectExternalSession(sessionId) {
  * Crea el elemento de pestaña cableado para selección/multi-selección.
  * El pane asociado debe existir en `sessions.get(sessionId).pane`.
  */
+// ═══════════════════════════════════════════════════════════════
+// MODO CONTROL DE TMUX (v2.0): ventanas → pestañas, panes → splits
+// ═══════════════════════════════════════════════════════════════
+// La conexión raíz habla el protocolo de control; cada ventana tmux es una
+// pestaña sintética (`type: "tmux-window"`) y cada pane una sesión lógica con
+// su propio xterm dentro del árbol de la ventana. INVARIANTE: a una pane
+// jamás se le escriben bytes crudos — la entrada viaja coalescida por frame a
+// `tmux_send_keys` (hex) y los tamaños en celdas los dicta tmux (la UI acata).
+
+function tmuxWindowTabId(connId, windowId) {
+  return `${connId}-w${windowId}`;
+}
+
+/** Mapa ventana → info de la conexión raíz (se crea perezosamente). */
+function tmuxWindowsOf(root) {
+  if (!root._tmuxWindows) root._tmuxWindows = new Map();
+  return root._tmuxWindows;
+}
+
+function hideTmuxRootTab(root) {
+  document.querySelector(`.tab[data-session="${CSS.escape(root.id)}"]`)?.classList.add("hidden");
+  const idx = viewSelection.indexOf(root.id);
+  if (idx >= 0) viewSelection.splice(idx, 1);
+}
+
+function showTmuxRootTab(root) {
+  document.querySelector(`.tab[data-session="${CSS.escape(root.id)}"]`)?.classList.remove("hidden");
+}
+
+/** Listeners de los eventos tmux-* de una conexión en modo control. */
+async function registerTmuxListeners(connId) {
+  const ul = [];
+  ul.push(await listen(eventName("tmuxWindowAdded", connId), (/** @type {{ payload: TmuxWindowEvent }} */ e) => {
+    const root = sessions.get(connId);
+    if (root) upsertTmuxWindow(root, e.payload || {});
+  }));
+  ul.push(await listen(eventName("tmuxWindowClosed", connId), (/** @type {{ payload: TmuxWindowEvent }} */ e) => {
+    const root = sessions.get(connId);
+    if (root) removeTmuxWindow(root, (e.payload || {}).window);
+  }));
+  ul.push(await listen(eventName("tmuxLayout", connId), (/** @type {{ payload: TmuxLayoutEvent }} */ e) => {
+    const root = sessions.get(connId);
+    if (root) applyTmuxLayout(root, e.payload || {});
+  }));
+  ul.push(await listen(eventName("tmuxPaneClosed", connId), (/** @type {{ payload: TmuxPaneClosedEvent }} */ e) => {
+    const root = sessions.get(connId);
+    const pane = (e.payload || {}).pane;
+    if (root && pane) destroyTmuxPane(root, pane.logicalId);
+  }));
+  ul.push(await listen(eventName("tmuxExit", connId), (/** @type {{ payload: TmuxExitEvent }} */ e) => {
+    const root = sessions.get(connId);
+    if (!root) return;
+    const reason = (e.payload || {}).reason;
+    toast(reason ? t("tmux.exit_reason", { reason }) : t("tmux.exit"), "info", 6000);
+    teardownTmuxControl(connId);
+  }));
+  // Tamaño del cliente (F4.3): al redimensionar la ventana de la app se
+  // re-declara en celdas, con debounce; tmux reorganiza y contesta con layouts.
+  let sizeTimer = null;
+  const onResize = () => {
+    clearTimeout(sizeTimer);
+    sizeTimer = setTimeout(() => {
+      const root = sessions.get(connId);
+      if (root) reportTmuxClientSize(root);
+    }, 250);
+  };
+  window.addEventListener("resize", onResize);
+  ul.push(() => window.removeEventListener("resize", onResize));
+  return ul;
+}
+
+function upsertTmuxWindow(root, payload) {
+  const windowId = payload.window;
+  if (!Number.isFinite(windowId)) return;
+  const wins = tmuxWindowsOf(root);
+  let info = wins.get(windowId);
+  if (!info) {
+    const tabId = tmuxWindowTabId(root.id, windowId);
+    const container = document.createElement("div");
+    container.className = "terminal-pane tmux-window";
+    container.dataset.session = tabId;
+    document.getElementById("terminals-container").appendChild(container);
+    sessions.set(tabId, {
+      id: tabId,
+      type: "tmux-window",
+      terminal: null,
+      pane: container,
+      unlisteners: [],
+      status: "connected",
+      private: root.private,
+      _tmux: { conn: root.id, window: windowId },
+    });
+    const profile = profiles.find((p) => p.id === root.profileId);
+    const name = payload.name || `${profile?.name || "tmux"} · ${windowId}`;
+    createTab(tabId, { name, connection_type: "ssh" }, "connected", { sftp: false, private: root.private });
+    info = { tabId, name, layout: null, panes: new Map() };
+    wins.set(windowId, info);
+    const showNow = viewSelection.length === 0 || viewSelection.includes(root.id);
+    hideTmuxRootTab(root);
+    if (showNow) selectSession(tabId, false);
+    renderConnectionList();
+  }
+  if (payload.name && payload.name !== info.name) {
+    info.name = payload.name;
+    const nameEl = document.querySelector(`.tab[data-session="${CSS.escape(info.tabId)}"] .tab-name`);
+    if (nameEl) nameEl.textContent = payload.name;
+  }
+}
+
+function applyTmuxLayout(root, payload) {
+  const wins = tmuxWindowsOf(root);
+  if (!wins.has(payload.window)) upsertTmuxWindow(root, { window: payload.window });
+  const info = wins.get(payload.window);
+  if (!info) return;
+  info.layout = payload.layout || null;
+  for (const ref of payload.added || []) ensureTmuxPane(root, payload.window, ref);
+  for (const ref of payload.removed || []) info.panes.delete(ref.pane);
+  renderTmuxWindow(root, payload.window);
+  maybeWarnSmallerTmuxClient(root, payload.layout);
+}
+
+function ensureTmuxPane(root, windowId, ref) {
+  const info = tmuxWindowsOf(root).get(windowId);
+  if (!info) return;
+  info.panes.set(ref.pane, ref.logicalId);
+  const existing = sessions.get(ref.logicalId);
+  if (existing) {
+    // break-pane: la pane cambia de ventana conservando sesión y scrollback.
+    if (existing._tmux) existing._tmux.window = windowId;
+    return;
+  }
+  createTmuxPaneSession(root, windowId, ref);
+}
+
+function createTmuxPaneSession(root, windowId, ref) {
+  const slot = document.createElement("div");
+  slot.className = "terminal-pane tmux-pane";
+  slot.dataset.session = ref.logicalId;
+  const termArea = document.createElement("div");
+  termArea.className = "term-area";
+  const xtermDiv = document.createElement("div");
+  xtermDiv.className = "xterm-container";
+  termArea.appendChild(xtermDiv);
+  slot.appendChild(termArea);
+
+  const terminal = new Terminal({
+    cursorBlink: prefs.cursorBlink,
+    cursorStyle: prefs.cursorStyle,
+    fontFamily: resolveFontFamily(),
+    fontSize: prefs.fontSize,
+    lineHeight: prefs.lineHeight,
+    letterSpacing: prefs.letterSpacing,
+    scrollback: prefs.scrollback,
+    bellStyle: prefs.bell,
+    minimumContrastRatio: terminalMinContrastRatio(),
+    cursorWidth: terminalCursorWidth(),
+    allowTransparency: terminalBgActive(),
+    theme: terminalThemeForCursor(),
+    allowProposedApi: true,
+    linkHandler: terminalLinkOptions,
+    scrollSensitivity: 3,
+    fastScrollSensitivity: 8,
+  });
+  terminal.open(xtermDiv);
+  attachTerminalRenderer(terminal);
+
+  const sessionObj = {
+    profileId: root.profileId,
+    id: ref.logicalId,
+    type: "ssh",
+    terminal,
+    fitAddon: null,
+    searchAddon: null,
+    pane: slot,
+    unlisteners: [],
+    status: "connected",
+    remoteCwd: null,
+    tunnels: new Map(),
+    connectionLogs: [],
+    commandBlocks: createBlockTracker(),
+    commandBlockMarkers: new Map(),
+    private: root.private,
+    _tmux: { conn: root.id, pane: ref.pane, window: windowId, input: "", flushScheduled: false },
+  };
+  sessions.set(ref.logicalId, sessionObj);
+  slot.addEventListener("mousedown", () => focusTmuxPane(ref.logicalId));
+  terminal.onData((data) => handleTerminalInput(sessionObj, data));
+  bindTmuxPaneChannel(sessionObj).catch((err) => console.error("[tmux] bind", err));
+}
+
+function focusTmuxPane(logicalId) {
+  const s = sessions.get(logicalId);
+  if (!s?._tmux) return;
+  activeSessionId = logicalId;
+  document.querySelectorAll(".tmux-pane.tmux-focused").forEach((el) =>
+    el.classList.remove("tmux-focused"));
+  s.pane.classList.add("tmux-focused");
+  s.terminal?.focus();
+  updateStatusBar();
+}
+
+/** Entrada de teclado coalescida por frame (F3.1): una IPC por pulsación
+ *  sería inaceptable; un frame agrupa lo tecleado sin latencia perceptible. */
+function queueTmuxInput(s, data) {
+  const tm = s._tmux;
+  tm.input += data;
+  if (tm.flushScheduled) return;
+  tm.flushScheduled = true;
+  requestAnimationFrame(() => {
+    tm.flushScheduled = false;
+    const chunk = tm.input;
+    tm.input = "";
+    if (!chunk || !sessions.has(s.id)) return;
+    invoke("tmux_send_keys", {
+      sessionId: tm.conn,
+      pane: tm.pane,
+      data: Array.from(new TextEncoder().encode(chunk)),
+    }).catch(() => {});
+  });
+}
+
+async function bindTmuxPaneChannel(s) {
+  // Hidratación del scrollback (F5.1), solo la primera vez y ANTES del caudal
+  // vivo. Perezosa de facto: la pane se crea cuando su layout aparece.
+  const lines = Math.min(50000, Math.max(0, Number(prefs.tmuxScrollbackLines) || 0));
+  if (lines > 0 && !s._tmuxHydrated) {
+    s._tmuxHydrated = true;
+    try {
+      const text = await invoke("tmux_capture_pane", {
+        sessionId: s._tmux.conn,
+        pane: s._tmux.pane,
+        lines,
+      });
+      if (text && sessions.has(s.id)) s.terminal.write(text.replace(/\n/g, "\r\n"));
+    } catch { /* sin scrollback no se bloquea el enganche */ }
+  }
+  const decoder = new TextDecoder();
+  const channel = new Channel();
+  channel.onmessage = (payload) => {
+    const live = sessions.get(s.id);
+    if (!live) return;
+    const text = decoder.decode(channelBytesToU8(payload));
+    enqueueTerminalOutput(live, applyHighlightRules(text, currentCompiledHighlightRules()));
+    if (live._tmux) markTabActivity(tmuxWindowTabId(live._tmux.conn, live._tmux.window));
+  };
+  await invoke("tmux_bind_pane", {
+    sessionId: s._tmux.conn,
+    paneSessionId: s.id,
+    onData: channel,
+  });
+  s._tmuxChannel = channel;
+}
+
+/** Reconexión (F5.3): el worker nuevo pierde los vínculos, así que cada pane
+ *  viva se reengancha con un Channel fresco. Los layouts llegan solos (el
+ *  backend los pide al enganchar). */
+function rebindTmuxPanes(connId) {
+  for (const s of sessions.values()) {
+    if (s._tmux?.conn === connId) {
+      bindTmuxPaneChannel(s).catch(() => {});
+    }
+  }
+}
+
+function renderTmuxWindow(root, windowId) {
+  const info = tmuxWindowsOf(root).get(windowId);
+  const winSession = info ? sessions.get(info.tabId) : null;
+  if (!info || !winSession) return;
+  const container = winSession.pane;
+  for (const logicalId of info.panes.values()) {
+    const ps = sessions.get(logicalId);
+    if (ps?.pane?.parentElement) ps.pane.parentElement.removeChild(ps.pane);
+  }
+  container.textContent = "";
+  if (!info.layout) return;
+  const tree = layoutToTree(info.layout, (pane) => `${root.id}-p${pane}`);
+  if (!tree) {
+    toast(t("tmux.layout_unreadable"), "warning");
+    return;
+  }
+  container.appendChild(buildTmuxSplitDom(tree));
+  // Los tamaños los dicta tmux: cada xterm se fija a sus celdas exactas.
+  for (const [pane, dim] of paneDims(info.layout)) {
+    const ps = sessions.get(`${root.id}-p${pane}`);
+    if (ps?.terminal && (ps.terminal.cols !== dim.cols || ps.terminal.rows !== dim.rows)) {
+      try { ps.terminal.resize(dim.cols, dim.rows); } catch { /* tamaño extremo */ }
+    }
+  }
+}
+
+function buildTmuxSplitDom(node) {
+  if (node.type === "leaf") {
+    const holder = document.createElement("div");
+    holder.className = "tmux-cell";
+    const ps = sessions.get(node.id);
+    if (ps) holder.appendChild(ps.pane);
+    return holder;
+  }
+  const split = document.createElement("div");
+  split.className = `tmux-split tmux-split-${node.dir}`;
+  node.children.forEach((child, i) => {
+    const part = document.createElement("div");
+    part.className = "tmux-part";
+    part.style.flex = `${node.ratios[i]} 1 0`;
+    part.appendChild(buildTmuxSplitDom(child));
+    split.appendChild(part);
+    if (i < node.children.length - 1) {
+      const divider = document.createElement("div");
+      divider.className = `tmux-divider tmux-divider-${node.dir}`;
+      attachTmuxDividerDrag(node, i, divider);
+      split.appendChild(divider);
+    }
+  });
+  return split;
+}
+
+/** Arrastrar un divisor pide a tmux el redimensionado (F4.2): se traduce el
+ *  desplazamiento a celdas sobre la primera hoja del lado izquierdo/superior
+ *  y tmux contesta con el layout nuevo (la UI nunca reparte por su cuenta). */
+function attachTmuxDividerDrag(node, index, divider) {
+  divider.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const horizontal = node.dir === "row";
+    const start = horizontal ? e.clientX : e.clientY;
+    const onUp = (ev) => {
+      document.removeEventListener("mouseup", onUp);
+      const firstLeafId = leafIds(node.children[index])[0];
+      const ps = firstLeafId ? sessions.get(firstLeafId) : null;
+      if (!ps?.terminal || !ps._tmux) return;
+      const el = ps.pane.querySelector(".xterm-container");
+      if (!el) return;
+      const cell = horizontal
+        ? el.clientWidth / Math.max(1, ps.terminal.cols)
+        : el.clientHeight / Math.max(1, ps.terminal.rows);
+      const delta = Math.round(((horizontal ? ev.clientX : ev.clientY) - start) / Math.max(1, cell));
+      if (!delta) return;
+      invoke("tmux_resize_pane", {
+        sessionId: ps._tmux.conn,
+        pane: ps._tmux.pane,
+        cols: horizontal ? Math.max(2, ps.terminal.cols + delta) : ps.terminal.cols,
+        rows: horizontal ? ps.terminal.rows : Math.max(2, ps.terminal.rows + delta),
+      }).catch(() => {});
+    };
+    document.addEventListener("mouseup", onUp);
+  });
+}
+
+function destroyTmuxPane(root, logicalId) {
+  const s = sessions.get(logicalId);
+  if (!s?._tmux) return;
+  const info = tmuxWindowsOf(root).get(s._tmux.window);
+  if (info) info.panes.delete(s._tmux.pane);
+  if (activeSessionId === logicalId) activeSessionId = null;
+  try { s.terminal?.dispose(); } catch { /* ya liberado */ }
+  s.pane?.remove();
+  sessions.delete(logicalId);
+}
+
+function removeTmuxWindow(root, windowId) {
+  const wins = tmuxWindowsOf(root);
+  const info = wins.get(windowId);
+  if (!info) return;
+  for (const logicalId of [...info.panes.values()]) destroyTmuxPane(root, logicalId);
+  const winSession = sessions.get(info.tabId);
+  winSession?.pane?.remove();
+  sessions.delete(info.tabId);
+  removeTab(info.tabId);
+  wins.delete(windowId);
+}
+
+/** Cierre total del modo control (%exit o cierre de la conexión): pestañas y
+ *  panes fuera, y la pestaña raíz vuelve para mostrar el estado final. */
+function teardownTmuxControl(connId) {
+  const root = sessions.get(connId);
+  if (!root) return;
+  for (const windowId of [...tmuxWindowsOf(root).keys()]) {
+    removeTmuxWindow(root, windowId);
+  }
+  showTmuxRootTab(root);
+  if (!viewSelection.length) selectSession(connId, false);
+}
+
+/** Tamaño del cliente en celdas, medido con la celda real de cualquier pane
+ *  viva (F4.3). tmux nunca hará una ventana mayor que este tamaño. */
+function reportTmuxClientSize(root) {
+  const wins = tmuxWindowsOf(root);
+  const first = wins.values().next().value;
+  if (!first) return;
+  const winSession = sessions.get(first.tabId);
+  const anyPaneId = first.panes.values().next().value;
+  const ps = anyPaneId ? sessions.get(anyPaneId) : null;
+  const el = ps?.pane?.querySelector(".xterm-container");
+  if (!winSession?.pane?.isConnected || !ps?.terminal || !el?.clientWidth) return;
+  const cellW = el.clientWidth / Math.max(1, ps.terminal.cols);
+  const cellH = el.clientHeight / Math.max(1, ps.terminal.rows);
+  const rect = winSession.pane.getBoundingClientRect();
+  const cols = Math.max(10, Math.floor(rect.width / Math.max(1, cellW)));
+  const rows = Math.max(5, Math.floor(rect.height / Math.max(1, cellH)));
+  const prev = root._tmuxClientSize;
+  if (prev && prev.cols === cols && prev.rows === rows) return;
+  root._tmuxClientSize = { cols, rows };
+  invoke("tmux_set_client_size", { sessionId: root.id, cols, rows }).catch(() => {});
+}
+
+/** F6.2: si el layout es claramente menor que el tamaño declarado, otro
+ *  cliente más pequeño manda sobre la sesión. Se avisa una vez, con motivo. */
+function maybeWarnSmallerTmuxClient(root, layout) {
+  const size = layoutSize(layout);
+  const declared = root._tmuxClientSize;
+  if (!size || !declared || root._tmuxSmallHintShown) return;
+  if (size.cols + 2 < declared.cols || size.rows + 2 < declared.rows) {
+    root._tmuxSmallHintShown = true;
+    toast(t("tmux.smaller_client_hint"), "info", 8000);
+  }
+}
+
+/** Pane objetivo de las acciones del menú de una pestaña-ventana tmux. */
+function tmuxActionPane(winTabId) {
+  const winSession = sessions.get(winTabId);
+  if (!winSession?._tmux) return null;
+  const root = sessions.get(winSession._tmux.conn);
+  const info = root ? tmuxWindowsOf(root).get(winSession._tmux.window) : null;
+  if (!info) return null;
+  const active = activeSessionId ? sessions.get(activeSessionId) : null;
+  if (active?._tmux?.conn === winSession._tmux.conn
+    && active._tmux.window === winSession._tmux.window) {
+    return active._tmux;
+  }
+  const firstId = info.panes.values().next().value;
+  return firstId ? sessions.get(firstId)?._tmux || null : null;
+}
+
 function createTab(sessionId, profile, initialStatus, { sftp = true, private: isPrivate = false } = {}) {
   const tab = document.createElement("div");
   tab.className = "tab";
@@ -10535,6 +10984,11 @@ function clearTabActivity(sessionId) {
  * Se usa tanto para la pane origen como para replicar en broadcast.
  */
 function sendTerminalInput(sessionObj, data) {
+  // Pane tmux: nunca bytes crudos — send-keys hex coalescido por frame (F3.1).
+  if (sessionObj._tmux) {
+    queueTmuxInput(sessionObj, data);
+    return;
+  }
   if (!sessionObj || sessionObj.status === "closed" || !sessionObj.terminal || sessionObj.type === "rdp") return;
   const cmd = sessionObj._closeOverride ? "local_shell_send_input" : "ssh_send_input";
   invoke(cmd, {
@@ -12997,6 +13451,7 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
   ul.push(await listen(eventName("sshConnected", sessionId), () => {
     const s = sessions.get(sessionId);
     if (s) s.status = "connected";
+    if (s?._tmuxControl && s._tmuxWindows?.size) rebindTmuxPanes(sessionId);
     // Apertura automática de SFTP si se pidió desde un tile fijado del dashboard.
     if (s && pendingSftpOpenProfiles.has(s.profileId)) {
       pendingSftpOpenProfiles.delete(s.profileId);
@@ -13086,6 +13541,7 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
   ul.push(await listen(eventName("sshClosed", sessionId), () => {
     const s = sessions.get(sessionId);
     if (s) s.status = "closed";
+    if (s._tmuxControl) teardownTmuxControl(sessionId);
     persistScreenSnapshot(s);
     appendConnectionLog(sessionId, {
       stage: "closed",
@@ -13261,6 +13717,21 @@ async function closeSession(sessionId, opts = {}) {
   const { skipConfirm = false } = opts;
   const s = sessions.get(sessionId);
   if (!s) return;
+
+  // Pestaña-ventana tmux: cerrar = kill-window en el SERVIDOR (mata procesos
+  // vivos). El desmontaje real llega por el evento tmux-window-closed.
+  if (s.type === "tmux-window") {
+    const ok = skipConfirm || await confirmThemed({
+      title: t("tmux.close_window_title"),
+      message: t("tmux.close_window_confirm"),
+      submitLabel: t("tmux.close_window_submit"),
+      danger: true,
+    });
+    if (!ok) return;
+    invoke("tmux_kill_window", { sessionId: s._tmux.conn, window: s._tmux.window })
+      .catch((err) => toast(`${err}`, "error"));
+    return;
+  }
 
   if (!skipConfirm && !(await confirmCloseSession(sessionId))) return;
 
@@ -21195,6 +21666,23 @@ function bindUIEvents() {
   // Despliega/oculta herramienta y nombre de la sesión persistente.
   document.getElementById("f-persist-session")
     ?.addEventListener("change", updatePersistSessionFields);
+  // Modo control y reenganche clásico son excluyentes: marcar uno desmarca el
+  // otro (el backend además prioriza el modo control si llegaran ambos).
+  document.getElementById("f-tmux-control")?.addEventListener("change", (e) => {
+    if (e.target.checked) {
+      const persist = document.getElementById("f-persist-session");
+      if (persist?.checked) {
+        persist.checked = false;
+        updatePersistSessionFields();
+      }
+    }
+  });
+  document.getElementById("f-persist-session")?.addEventListener("change", (e) => {
+    if (e.target.checked) {
+      const control = document.getElementById("f-tmux-control");
+      if (control) control.checked = false;
+    }
+  });
 
   // Confirmación al activar el reenvío del agente SSH: es peligroso heredarlo
   // silenciosamente, así que solo se habilita tras aceptar el aviso de seguridad.
@@ -25613,6 +26101,11 @@ function showTabContextMenu(x, y, sessionId) {
   tabCtxTargetId = sessionId;
   const menu = document.getElementById("tab-context-menu");
 
+  const ctxSessionForTmux = sessions.get(sessionId);
+  const isTmuxWindow = ctxSessionForTmux?.type === "tmux-window";
+  menu.querySelectorAll(".tabctx-tmux-only").forEach((el) =>
+    el.classList.toggle("hidden", !isTmuxWindow));
+
   const inView     = viewSelection.includes(sessionId);
   const viewSize   = viewSelection.length;
   const canAdd     = !inView && viewSize >= 1;
@@ -25791,6 +26284,40 @@ async function handleTabContextAction(action) {
   if (action === "duplicate-overrides") {
     const s = sessions.get(targetId);
     if (s?.profileId && s.type === "ssh") duplicateSessionWithOverrides(s.profileId);
+    return;
+  }
+  if (action === "tmux-split-h" || action === "tmux-split-v") {
+    const target = tmuxActionPane(targetId);
+    if (target) {
+      invoke("tmux_split_pane", {
+        sessionId: target.conn,
+        pane: target.pane,
+        horizontal: action === "tmux-split-h",
+      }).catch((err) => toast(`${err}`, "error"));
+    }
+    return;
+  }
+  if (action === "tmux-kill-pane") {
+    const target = tmuxActionPane(targetId);
+    if (!target) return;
+    const ok = await confirmThemed({
+      title: t("tmux.kill_pane_title"),
+      message: t("tmux.kill_pane_confirm"),
+      submitLabel: t("tmux.close_window_submit"),
+      danger: true,
+    });
+    if (ok) {
+      invoke("tmux_kill_pane", { sessionId: target.conn, pane: target.pane })
+        .catch((err) => toast(`${err}`, "error"));
+    }
+    return;
+  }
+  if (action === "tmux-new-window") {
+    const winSession = sessions.get(targetId);
+    if (winSession?._tmux) {
+      invoke("tmux_new_window", { sessionId: winSession._tmux.conn })
+        .catch((err) => toast(`${err}`, "error"));
+    }
     return;
   }
   if (action === "new-shell") {

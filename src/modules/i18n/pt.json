@@ -591,7 +591,11 @@
     "unpin": "Desfixar separador",
     "export_history": "Exportar histórico…",
     "rename": "Renomear separador…",
-    "new_shell": "Novo separador nesta ligação"
+    "new_shell": "Novo separador nesta ligação",
+    "tmux_split_h": "Dividir painel em colunas",
+    "tmux_split_v": "Dividir painel em linhas",
+    "tmux_new_window": "Nova janela tmux",
+    "tmux_kill_pane": "Fechar painel (mata o seu processo)"
   },
   "shell_child": {
     "root_not_connected": "A ligação deste separador já não está ativa",
@@ -761,7 +765,9 @@
     "proxy_jump_hint": "Conecta primeiro a este host bastion e abre um canal SSH ao destino real através dele (ProxyJump). Reutiliza as credenciais do perfil.",
     "cancel": "Cancelar",
     "save_only": "Guardar",
-    "save_connect": "Guardar e conectar"
+    "save_connect": "Guardar e conectar",
+    "tmux_control": "Modo de controlo do tmux (separadores e painéis nativos)",
+    "tmux_control_hint": "A sessão tmux do servidor aparece como separadores e divisões do Rustty: persistência, várias shells numa única ligação e painéis reais. Requer tmux 3.2 ou superior no servidor; sem ele abre-se uma shell normal com aviso. Partilha o nome de sessão do reengate clássico, que substitui se ambos estiverem marcados."
   },
   "modal_credential": {
     "close": "Fechar",
@@ -961,7 +967,9 @@
     "highlight_pattern": "Padrão",
     "highlight_color": "Cor",
     "highlight_bold": "Negrito",
-    "highlight_add": "＋ Adicionar regra"
+    "highlight_add": "＋ Adicionar regra",
+    "tmux_scrollback": "Scrollback a recuperar ao reengatar tmux",
+    "tmux_scrollback_hint": "Ao engatar uma sessão em modo de controlo, cada painel reidrata até este número de linhas da sua história. 0 = não recuperar nada (engate instantâneo)."
   },
   "prefs_appearance": {
     "tone_filter": "Filtrar por tonalidade",
@@ -1725,5 +1733,16 @@
     "no_results": "Sem resultados",
     "limit_reached": "Limite de resultados atingido ({n})",
     "searching": "A procurar…"
+  },
+  "tmux": {
+    "exit": "A sessão de controlo do tmux terminou",
+    "exit_reason": "A sessão de controlo do tmux terminou: {reason}",
+    "layout_unreadable": "o tmux enviou um layout ilegível; a janela não foi repintada",
+    "smaller_client_hint": "Um cliente mais pequeno está engatado a esta sessão tmux: é ele que dita o tamanho. Fecha o outro engate para recuperar todo o espaço.",
+    "close_window_title": "Fechar janela tmux",
+    "close_window_confirm": "Fechar esta janela mata os seus processos NO SERVIDOR (kill-window). Continuar?",
+    "close_window_submit": "Fechar",
+    "kill_pane_title": "Fechar painel",
+    "kill_pane_confirm": "Fechar o painel ativo mata o seu processo NO SERVIDOR (kill-pane). Continuar?"
   }
 }

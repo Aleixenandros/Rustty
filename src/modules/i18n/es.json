@@ -591,7 +591,11 @@
     "unpin": "Desanclar pestaña",
     "export_history": "Exportar historial…",
     "rename": "Renombrar pestaña…",
-    "new_shell": "Nueva pestaña en esta conexión"
+    "new_shell": "Nueva pestaña en esta conexión",
+    "tmux_split_h": "Dividir pane en columnas",
+    "tmux_split_v": "Dividir pane en filas",
+    "tmux_new_window": "Nueva ventana tmux",
+    "tmux_kill_pane": "Cerrar pane (mata su proceso)"
   },
   "shell_child": {
     "root_not_connected": "La conexión de esta pestaña ya no está activa",
@@ -761,7 +765,9 @@
     "proxy_jump_hint": "Conecta primero a este host bastión y abre un canal SSH al destino real a través suyo (ProxyJump). Reutiliza las credenciales del perfil.",
     "cancel": "Cancelar",
     "save_only": "Guardar",
-    "save_connect": "Guardar y conectar"
+    "save_connect": "Guardar y conectar",
+    "tmux_control": "Modo control de tmux (pestañas y panes nativos)",
+    "tmux_control_hint": "La sesión tmux del servidor se muestra como pestañas y splits de Rustty: persistencia, varias shells sobre una única conexión y panes reales. Necesita tmux 3.2 o superior en el servidor; sin él se abre un shell normal con aviso. Comparte el nombre de sesión del reenganche clásico, al que sustituye si ambos están marcados."
   },
   "modal_credential": {
     "close": "Cerrar",
@@ -961,7 +967,9 @@
     "highlight_pattern": "Patrón",
     "highlight_color": "Color",
     "highlight_bold": "Negrita",
-    "highlight_add": "＋ Añadir regla"
+    "highlight_add": "＋ Añadir regla",
+    "tmux_scrollback": "Scrollback al reenganchar tmux",
+    "tmux_scrollback_hint": "Al enganchar una sesión en modo control, cada pane rehidrata hasta estas líneas de su historia. 0 = no recuperar nada (enganche instantáneo)."
   },
   "prefs_appearance": {
     "title": "Apariencia",
@@ -1725,5 +1733,16 @@
     "no_results": "Sin resultados",
     "limit_reached": "Límite de resultados alcanzado ({n})",
     "searching": "Buscando…"
+  },
+  "tmux": {
+    "exit": "La sesión de control de tmux ha terminado",
+    "exit_reason": "La sesión de control de tmux ha terminado: {reason}",
+    "layout_unreadable": "tmux envió un layout ilegible; la ventana no se ha repintado",
+    "smaller_client_hint": "Otro cliente más pequeño está enganchado a esta sesión tmux: el tamaño lo dicta él. Cierra el otro attach para recuperar todo el espacio.",
+    "close_window_title": "Cerrar ventana tmux",
+    "close_window_confirm": "Cerrar esta ventana mata sus procesos EN EL SERVIDOR (kill-window). ¿Continuar?",
+    "close_window_submit": "Cerrar",
+    "kill_pane_title": "Cerrar pane",
+    "kill_pane_confirm": "Cerrar la pane activa mata su proceso EN EL SERVIDOR (kill-pane). ¿Continuar?"
   }
 }

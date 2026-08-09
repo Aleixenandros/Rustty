@@ -591,7 +591,11 @@
     "unpin": "Tab lösen",
     "export_history": "Verlauf exportieren…",
     "rename": "Tab umbenennen…",
-    "new_shell": "Neuer Tab auf dieser Verbindung"
+    "new_shell": "Neuer Tab auf dieser Verbindung",
+    "tmux_split_h": "Pane in Spalten teilen",
+    "tmux_split_v": "Pane in Zeilen teilen",
+    "tmux_new_window": "Neues tmux-Fenster",
+    "tmux_kill_pane": "Pane schließen (beendet ihren Prozess)"
   },
   "shell_child": {
     "root_not_connected": "Die Verbindung dieses Tabs ist nicht mehr aktiv",
@@ -761,7 +765,9 @@
     "proxy_jump_hint": "Verbindet zuerst mit diesem Bastion-Host und tunnelt einen SSH-Kanal zum eigentlichen Ziel (ProxyJump). Verwendet die Profil-Anmeldedaten erneut.",
     "cancel": "Abbrechen",
     "save_only": "Speichern",
-    "save_connect": "Speichern und verbinden"
+    "save_connect": "Speichern und verbinden",
+    "tmux_control": "tmux-Kontrollmodus (native Tabs und Panes)",
+    "tmux_control_hint": "Die tmux-Sitzung des Servers erscheint als Rustty-Tabs und -Splits: Persistenz, mehrere Shells über eine einzige Verbindung und echte Panes. Erfordert tmux 3.2 oder neuer auf dem Server; ohne ihn öffnet sich eine normale Shell mit Hinweis. Teilt den Sitzungsnamen des klassischen Reattach und ersetzt ihn, wenn beide angehakt sind."
   },
   "modal_credential": {
     "close": "Schließen",
@@ -961,7 +967,9 @@
     "highlight_pattern": "Muster",
     "highlight_color": "Farbe",
     "highlight_bold": "Fett",
-    "highlight_add": "＋ Regel hinzufügen"
+    "highlight_add": "＋ Regel hinzufügen",
+    "tmux_scrollback": "Scrollback beim tmux-Reattach",
+    "tmux_scrollback_hint": "Beim Verbinden einer Kontrollmodus-Sitzung stellt jede Pane bis zu dieser Zeilenzahl ihrer Historie wieder her. 0 = nichts wiederherstellen (sofortiges Verbinden)."
   },
   "prefs_appearance": {
     "title": "Aussehen",
@@ -1725,5 +1733,16 @@
     "no_results": "Keine Ergebnisse",
     "limit_reached": "Ergebnislimit erreicht ({n})",
     "searching": "Suche läuft…"
+  },
+  "tmux": {
+    "exit": "Die tmux-Kontrollsitzung ist beendet",
+    "exit_reason": "Die tmux-Kontrollsitzung ist beendet: {reason}",
+    "layout_unreadable": "tmux hat ein unlesbares Layout gesendet; das Fenster wurde nicht neu gezeichnet",
+    "smaller_client_hint": "Ein kleinerer Client ist mit dieser tmux-Sitzung verbunden: er bestimmt die Größe. Schließe den anderen Attach, um den vollen Platz zurückzubekommen.",
+    "close_window_title": "tmux-Fenster schließen",
+    "close_window_confirm": "Das Schließen dieses Fensters beendet seine Prozesse AUF DEM SERVER (kill-window). Fortfahren?",
+    "close_window_submit": "Schließen",
+    "kill_pane_title": "Pane schließen",
+    "kill_pane_confirm": "Das Schließen der aktiven Pane beendet ihren Prozess AUF DEM SERVER (kill-pane). Fortfahren?"
   }
 }

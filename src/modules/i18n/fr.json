@@ -591,7 +591,11 @@
     "unpin": "Désépingler l'onglet",
     "export_history": "Exporter l'historique…",
     "rename": "Renommer l'onglet…",
-    "new_shell": "Nouvel onglet sur cette connexion"
+    "new_shell": "Nouvel onglet sur cette connexion",
+    "tmux_split_h": "Diviser le panneau en colonnes",
+    "tmux_split_v": "Diviser le panneau en lignes",
+    "tmux_new_window": "Nouvelle fenêtre tmux",
+    "tmux_kill_pane": "Fermer le panneau (tue son processus)"
   },
   "shell_child": {
     "root_not_connected": "La connexion de cet onglet n'est plus active",
@@ -761,7 +765,9 @@
     "proxy_jump_hint": "Se connecte d'abord à cet hôte bastion et ouvre un canal SSH vers la cible réelle à travers lui (ProxyJump). Réutilise les identifiants du profil.",
     "cancel": "Annuler",
     "save_only": "Enregistrer",
-    "save_connect": "Enregistrer et connecter"
+    "save_connect": "Enregistrer et connecter",
+    "tmux_control": "Mode contrôle de tmux (onglets et panneaux natifs)",
+    "tmux_control_hint": "La session tmux du serveur s'affiche comme onglets et divisions de Rustty : persistance, plusieurs shells sur une seule connexion et panneaux réels. Nécessite tmux 3.2 ou supérieur sur le serveur ; sans lui, un shell normal s'ouvre avec un avis. Partage le nom de session du rattachement classique, qu'il remplace si les deux sont cochés."
   },
   "modal_credential": {
     "close": "Fermer",
@@ -961,7 +967,9 @@
     "highlight_pattern": "Motif",
     "highlight_color": "Couleur",
     "highlight_bold": "Gras",
-    "highlight_add": "＋ Ajouter une règle"
+    "highlight_add": "＋ Ajouter une règle",
+    "tmux_scrollback": "Historique à récupérer au rattachement tmux",
+    "tmux_scrollback_hint": "En attachant une session en mode contrôle, chaque panneau réhydrate jusqu'à ce nombre de lignes de son historique. 0 = ne rien récupérer (attache instantanée)."
   },
   "prefs_appearance": {
     "tone_filter": "Filtrer par tonalité",
@@ -1725,5 +1733,16 @@
     "no_results": "Aucun résultat",
     "limit_reached": "Limite de résultats atteinte ({n})",
     "searching": "Recherche…"
+  },
+  "tmux": {
+    "exit": "La session de contrôle tmux est terminée",
+    "exit_reason": "La session de contrôle tmux est terminée : {reason}",
+    "layout_unreadable": "tmux a envoyé une disposition illisible ; la fenêtre n'a pas été repeinte",
+    "smaller_client_hint": "Un client plus petit est attaché à cette session tmux : c'est lui qui dicte la taille. Fermez l'autre attache pour récupérer tout l'espace.",
+    "close_window_title": "Fermer la fenêtre tmux",
+    "close_window_confirm": "Fermer cette fenêtre tue ses processus SUR LE SERVEUR (kill-window). Continuer ?",
+    "close_window_submit": "Fermer",
+    "kill_pane_title": "Fermer le panneau",
+    "kill_pane_confirm": "Fermer le panneau actif tue son processus SUR LE SERVEUR (kill-pane). Continuer ?"
   }
 }
