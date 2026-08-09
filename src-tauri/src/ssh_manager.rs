@@ -18,7 +18,7 @@ use zeroize::Zeroizing;
 
 use crate::locks::MutexExt;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use std::borrow::Cow;
 
@@ -41,6 +41,7 @@ use crate::ipc::{event_name, EventKind};
 use crate::metrics;
 use crate::mux;
 use crate::profiles::{AuthType, ConnectionProfile, SshTunnelType};
+use crate::tmux::bridge::{BridgeOut, ControlBridge};
 
 /// Timeout TCP por defecto al abrir la conexión inicial. Sin techo russh
 /// puede colgarse minutos si el destino no responde (puerto filtrado, host
@@ -232,6 +233,22 @@ pub enum SessionCommand {
     /// Limpieza interna: la tarea de una shell hija terminó (canal cerrado por
     /// el servidor o `CloseShell`). Nunca llega del frontend.
     ShellClosed { shell_id: String },
+    /// Vincula el Channel binario de salida de una pane tmux (sesión lógica) a
+    /// la conexión en modo control. La salida llegada antes del bind se
+    /// entrega de golpe al vincular.
+    TmuxBindPane {
+        logical_id: String,
+        on_data: Channel<Response>,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// Comando tmux ya compuesto para el canal de control. Con `reply`, la
+    /// respuesta correlada (`%begin`/`%end`) vuelve por el oneshot; sin él es
+    /// fire-and-forget (p. ej. `send-keys`). INVARIANTE: por el canal de
+    /// control jamás viajan bytes crudos de teclado, solo comandos.
+    TmuxCommand {
+        command: String,
+        reply: Option<oneshot::Sender<Result<String, String>>>,
+    },
     /// Arranca un túnel sobre la conexión SSH ya autenticada.
     StartTunnel {
         config: SshTunnelConfig,
@@ -422,6 +439,73 @@ impl SshManager {
             },
         );
         Ok(())
+    }
+
+    /// Vincula el Channel binario de una pane tmux (sesión lógica) a su
+    /// conexión en modo control. La salida acumulada antes del bind se
+    /// entrega de golpe al vincular.
+    pub async fn tmux_bind_pane(
+        &self,
+        connection_id: &str,
+        logical_id: String,
+        on_data: Channel<Response>,
+    ) -> Result<(), String> {
+        let cmd_tx = {
+            let sessions = self.sessions.lock_recover();
+            sessions
+                .get(connection_id)
+                .ok_or_else(|| format!("Sesión SSH {connection_id} no encontrada"))?
+                .cmd_tx
+                .clone()
+        };
+        let (reply, rx) = oneshot::channel();
+        cmd_tx
+            .send(SessionCommand::TmuxBindPane {
+                logical_id,
+                on_data,
+                reply,
+            })
+            .map_err(|_| format!("Sesión SSH {connection_id} no disponible"))?;
+        rx.await.map_err(|_| "La sesión SSH no respondió".to_string())?
+    }
+
+    /// Envía un comando por el canal de control de tmux. Con `want_reply`, la
+    /// respuesta correlada vuelve (o el `%error` como Err); sin él es
+    /// fire-and-forget, la vía del teclado (`send-keys`).
+    pub async fn tmux_command(
+        &self,
+        connection_id: &str,
+        command: String,
+        want_reply: bool,
+    ) -> Result<Option<String>, String> {
+        let cmd_tx = {
+            let sessions = self.sessions.lock_recover();
+            sessions
+                .get(connection_id)
+                .ok_or_else(|| format!("Sesión SSH {connection_id} no encontrada"))?
+                .cmd_tx
+                .clone()
+        };
+        if want_reply {
+            let (tx, rx) = oneshot::channel();
+            cmd_tx
+                .send(SessionCommand::TmuxCommand {
+                    command,
+                    reply: Some(tx),
+                })
+                .map_err(|_| format!("Sesión SSH {connection_id} no disponible"))?;
+            rx.await
+                .map_err(|_| "La sesión de control no respondió".to_string())?
+                .map(Some)
+        } else {
+            cmd_tx
+                .send(SessionCommand::TmuxCommand {
+                    command,
+                    reply: None,
+                })
+                .map_err(|_| format!("Sesión SSH {connection_id} no disponible"))?;
+            Ok(None)
+        }
     }
 
     /// Envía bytes de entrada (teclas del usuario) a la sesión activa
@@ -1187,6 +1271,165 @@ async fn probe_remote_binary(
     Ok(status == Some(0))
 }
 
+/// Ejecuta un comando corto en el remoto por un canal `exec` aparte y devuelve
+/// su stdout (sondas tipo `tmux -V`). Mismo plazo y misma tolerancia al orden
+/// de mensajes que `probe_remote_binary`. `Err` si el exit status no es 0.
+async fn probe_remote_output(
+    handle: &client::Handle<host_keys::KnownHostsClient>,
+    cmd: &str,
+) -> Result<String, String> {
+    let mut channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| e.to_string())?;
+    channel.exec(false, cmd).await.map_err(|e| e.to_string())?;
+    let mut status: Option<u32> = None;
+    let mut out: Vec<u8> = Vec::new();
+    let read = async {
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                ChannelMsg::Data { data } => out.extend_from_slice(&data),
+                ChannelMsg::ExitStatus { exit_status } => {
+                    status = Some(exit_status);
+                    break;
+                }
+                ChannelMsg::Close | ChannelMsg::ExitSignal { .. } => break,
+                // Eof puede llegar antes que el exit status: se sigue leyendo.
+                _ => {}
+            }
+        }
+    };
+    tokio::time::timeout(MUX_PROBE_TIMEOUT, read)
+        .await
+        .map_err(|_| "plazo agotado".to_string())?;
+    if status == Some(0) {
+        Ok(String::from_utf8_lossy(&out).into_owned())
+    } else {
+        Err(format!("exit status {status:?}"))
+    }
+}
+
+// ─── Modo control de tmux: estado por conexión y despacho de salidas ─────────
+
+/// Tope del buffer de salida de una pane aún sin vincular. Si el frontend
+/// tarda en hacer el bind se conserva lo más RECIENTE (lo viejo se descarta),
+/// el mismo criterio que la cola del terminal caliente.
+const TMUX_PENDING_OUT_MAX: usize = 512 * 1024;
+
+/// Estado del modo control de UNA conexión (F2-F3): el puente puro más los
+/// vínculos con el mundo — Channels de pane, respuestas pendientes y el reloj
+/// monótono que el puente no tiene.
+struct ControlState {
+    bridge: ControlBridge,
+    epoch: Instant,
+    panes: HashMap<String, Channel<Response>>,
+    pending_out: HashMap<String, Vec<u8>>,
+    replies: HashMap<u64, oneshot::Sender<Result<String, String>>>,
+    /// Tag del `list-windows` inicial: tmux solo emite `%layout-change` ante
+    /// un cambio, así que al enganchar se piden los layouts y su respuesta se
+    /// reinyecta como notificaciones sintéticas (ver `dispatch_bridge_outs`).
+    boot_layout_tag: Option<u64>,
+}
+
+impl ControlState {
+    fn new(session_id: &str) -> Self {
+        ControlState {
+            bridge: ControlBridge::new(session_id),
+            epoch: Instant::now(),
+            panes: HashMap::new(),
+            pending_out: HashMap::new(),
+            replies: HashMap::new(),
+            boot_layout_tag: None,
+        }
+    }
+
+    fn now_ms(&self) -> u64 {
+        u64::try_from(self.epoch.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+}
+
+/// Aplica las salidas del puente al mundo: bytes a los Channels de pane,
+/// eventos `tmux-*` al frontend, respuestas a los oneshot. Devuelve `true` si
+/// la sesión de control terminó (`%exit`, desync o timeout): a partir de ahí
+/// no se escribe nada más en el canal.
+fn dispatch_bridge_outs(
+    outs: Vec<BridgeOut>,
+    state: &mut ControlState,
+    app_handle: &AppHandle,
+    session_id: &str,
+) -> bool {
+    let mut ended = false;
+    let mut queue: std::collections::VecDeque<BridgeOut> = outs.into();
+    while let Some(out) = queue.pop_front() {
+        match out {
+            BridgeOut::PaneOutput { pane, bytes } => {
+                if let Some(ch) = state.panes.get(&pane.logical_id) {
+                    let _ = ch.send(Response::new(bytes));
+                } else {
+                    let buf = state.pending_out.entry(pane.logical_id).or_default();
+                    buf.extend_from_slice(&bytes);
+                    if buf.len() > TMUX_PENDING_OUT_MAX {
+                        let excess = buf.len() - TMUX_PENDING_OUT_MAX;
+                        buf.drain(..excess);
+                    }
+                }
+            }
+            BridgeOut::Layout(payload) => {
+                let _ = app_handle.emit(&event_name(EventKind::TmuxLayout, session_id), payload);
+            }
+            BridgeOut::WindowUpsert(payload) => {
+                let _ =
+                    app_handle.emit(&event_name(EventKind::TmuxWindowAdded, session_id), payload);
+            }
+            BridgeOut::WindowClosed(payload) => {
+                let _ =
+                    app_handle.emit(&event_name(EventKind::TmuxWindowClosed, session_id), payload);
+            }
+            BridgeOut::PaneClosed(payload) => {
+                state.panes.remove(&payload.pane.logical_id);
+                state.pending_out.remove(&payload.pane.logical_id);
+                let _ =
+                    app_handle.emit(&event_name(EventKind::TmuxPaneClosed, session_id), payload);
+            }
+            BridgeOut::CommandDone { tag, success, output } => {
+                if state.boot_layout_tag == Some(tag) {
+                    // Respuesta del `list-windows` inicial: cada línea
+                    // `@id layout` se reinyecta como un `%layout-change`
+                    // sintético — así el modelo adopta las panes y el frontend
+                    // recibe los layouts aunque nada haya cambiado aún.
+                    state.boot_layout_tag = None;
+                    if success {
+                        for line in output.lines() {
+                            let mut parts = line.split_whitespace();
+                            let (Some(id), Some(layout)) = (parts.next(), parts.next()) else {
+                                continue;
+                            };
+                            if !id.starts_with('@') {
+                                continue;
+                            }
+                            let synth = format!("%layout-change {id} {layout}\n");
+                            queue.extend(state.bridge.feed(synth.as_bytes()));
+                        }
+                    }
+                } else if let Some(tx) = state.replies.remove(&tag) {
+                    let _ = tx.send(if success { Ok(output) } else { Err(output) });
+                }
+            }
+            BridgeOut::Ended(payload) => {
+                for (_, tx) in state.replies.drain() {
+                    let _ = tx.send(Err("la sesión de control terminó".to_string()));
+                }
+                let _ = app_handle.emit(&event_name(EventKind::TmuxExit, session_id), payload);
+                ended = true;
+            }
+            BridgeOut::Warning { message } => {
+                emit_connection_log(app_handle, session_id, "tmux_control", "warning", message);
+            }
+        }
+    }
+    ended
+}
+
 /// Lee el desenlace de un `kill` remoto ya lanzado y lo devuelve por `reply`:
 /// estado de salida 0 → `Ok`; cualquier otro estado o el plazo agotado → `Err`
 /// con lo que el remoto haya impreso (p. ej. «Operation not permitted» o «No
@@ -1701,7 +1944,69 @@ async fn run_session(
             .await;
     }
 
-    if let Err(e) = channel
+    // Modo control de tmux (opt-in por perfil): la conexión deja de transportar
+    // un terminal y pasa a hablar el protocolo de líneas de `tmux -C`. Exige
+    // tmux >= 3.2 en el remoto; sin él (o versión ilegible), degradación
+    // honesta a shell normal con aviso — nunca un fallo opaco (F6.1). La
+    // reconexión automática vuelve a pasar por aquí: re-attach gratis (F5.3).
+    let mut control: Option<ControlState> = None;
+    if profile.tmux_control {
+        match probe_remote_output(&handle, mux::version_probe_command()).await {
+            Ok(output) => match mux::parse_tmux_version(&output) {
+                Some(version) if mux::supports_control_mode(version) => {
+                    control = Some(ControlState::new(&session_id));
+                    emit_connection_log(
+                        &app_handle,
+                        &session_id,
+                        "tmux_control",
+                        "info",
+                        format!("Modo control de {}: ventanas y panes nativos", output.trim()),
+                    );
+                }
+                Some(version) => emit_connection_log(
+                    &app_handle,
+                    &session_id,
+                    "tmux_control",
+                    "warning",
+                    format!(
+                        "tmux {}.{} no llega al mínimo 3.2 del modo control: se abre un shell normal",
+                        version.0, version.1
+                    ),
+                ),
+                None => emit_connection_log(
+                    &app_handle,
+                    &session_id,
+                    "tmux_control",
+                    "warning",
+                    "tmux no está en el servidor (o su versión es ilegible): se abre un shell normal"
+                        .to_string(),
+                ),
+            },
+            Err(e) => emit_connection_log(
+                &app_handle,
+                &session_id,
+                "tmux_control",
+                "warning",
+                format!("No se pudo comprobar tmux ({e}): se abre un shell normal"),
+            ),
+        }
+    }
+
+    if control.is_some() {
+        // Sin PTY: el canal transporta protocolo, no un terminal. El nombre de
+        // la sesión se comparte con el attach clásico (persist_session_name).
+        let name = profile
+            .persist_session_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&profile.name);
+        if let Err(e) = channel.exec(true, mux::control_command(name).as_str()).await {
+            return SessionExit::Fatal(AppError::Ssh(format!(
+                "No se pudo abrir el modo control de tmux: {e}"
+            )));
+        }
+    } else if let Err(e) = channel
         .request_pty(true, "xterm-256color", cols, rows, 0, 0, &[])
         .await
     {
@@ -1715,7 +2020,7 @@ async fn run_session(
     // no ensuciar el canal interactivo. Si falta el binario o el sondeo falla:
     // degradación honesta a shell normal, con aviso en el log de conexión.
     let mut persist_cmd: Option<String> = None;
-    if profile.persist_session {
+    if control.is_none() && profile.persist_session {
         let tool = mux::normalize_tool(profile.persist_session_tool.as_deref());
         let name = profile
             .persist_session_name
@@ -1754,17 +2059,21 @@ async fn run_session(
         }
     }
 
-    match &persist_cmd {
-        Some(cmd) => {
-            if let Err(e) = channel.exec(true, cmd.as_str()).await {
-                return SessionExit::Fatal(AppError::Ssh(format!(
-                    "No se pudo abrir la sesión persistente: {e}"
-                )));
+    if control.is_none() {
+        match &persist_cmd {
+            Some(cmd) => {
+                if let Err(e) = channel.exec(true, cmd.as_str()).await {
+                    return SessionExit::Fatal(AppError::Ssh(format!(
+                        "No se pudo abrir la sesión persistente: {e}"
+                    )));
+                }
             }
-        }
-        None => {
-            if let Err(e) = channel.request_shell(true).await {
-                return SessionExit::Fatal(AppError::Ssh(format!("No se pudo abrir shell: {e}")));
+            None => {
+                if let Err(e) = channel.request_shell(true).await {
+                    return SessionExit::Fatal(AppError::Ssh(format!(
+                        "No se pudo abrir shell: {e}"
+                    )));
+                }
             }
         }
     }
@@ -1788,6 +2097,27 @@ async fn run_session(
         &profile.name,
     );
 
+    // Arranque del modo control: declarar el tamaño real del cliente (tmux no
+    // hará ventanas mayores) y pedir los layouts iniciales — tmux solo emite
+    // `%layout-change` ante un cambio, y un reenganche sin cambios no lo es.
+    if let Some(state) = control.as_mut() {
+        let now = state.now_ms();
+        if let Ok((_tag, bytes)) = state
+            .bridge
+            .command(&crate::tmux::bridge::cmd_set_client_size(cols, rows), now)
+        {
+            let _ = channel.data(&bytes[..]).await;
+        }
+        if let Ok((tag, bytes)) = state
+            .bridge
+            .command("list-windows -F \"#{window_id} #{window_layout}\"", now)
+        {
+            if channel.data(&bytes[..]).await.is_ok() {
+                state.boot_layout_tag = Some(tag);
+            }
+        }
+    }
+
     // 4. Bucle de E/S: multiplexa datos del servidor y comandos del frontend
     let mut exit_kind = SessionExit::ServerClosed;
     let mut tunnels: HashMap<String, ActiveTunnel> = HashMap::new();
@@ -1802,6 +2132,9 @@ async fn run_session(
     // Keepalive de aplicación togglable en vivo (ver `SessionCommand::SetKeepAlive`).
     // A 0 el temporizador queda inerte y su rama del `select!` se desactiva.
     let mut ka_timer = make_periodic_timer(keepalive_secs.load(Ordering::Relaxed));
+    // Con modo control activo, un tick por segundo para vencer comandos
+    // pendientes (`ControlClient::check_timeouts`); sin él, timer apagado.
+    let mut control_timer = make_periodic_timer(u32::from(control.is_some()));
     // Monitor de recursos: temporizador (misma mecánica que el keepalive) y la
     // muestra anterior, para derivar %CPU y tasas de red por delta. Se comparte
     // con las tareas de recogida por `Arc<Mutex>`; se reinicia al cambiar el
@@ -1813,6 +2146,16 @@ async fn run_session(
             msg = channel.wait() => {
                 match msg {
                     Some(ChannelMsg::Data { data }) => {
+                        if let Some(state) = control.as_mut() {
+                            // Modo control: los bytes son protocolo, no terminal.
+                            // El puente los digiere y aquí solo se despachan.
+                            let outs = state.bridge.feed(&data);
+                            if dispatch_bridge_outs(outs, state, &app_handle, &session_id) {
+                                exit_kind = SessionExit::UserDisconnect;
+                                break;
+                            }
+                            continue;
+                        }
                         if let Some(f) = log_file.as_mut() {
                             let _ = f.write_all(&data).await;
                         }
@@ -1822,6 +2165,19 @@ async fn run_session(
                         }
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        if control.is_some() {
+                            // stderr del propio tmux (p. ej. un aviso al
+                            // arrancar): NO es protocolo — al log de conexión,
+                            // nunca al parser (lo desincronizaría).
+                            emit_connection_log(
+                                &app_handle,
+                                &session_id,
+                                "tmux_control",
+                                "warning",
+                                String::from_utf8_lossy(&data).trim().to_string(),
+                            );
+                            continue;
+                        }
                         // stderr → lo mezclamos con stdout, como hacía ssh2.
                         if let Some(f) = log_file.as_mut() {
                             let _ = f.write_all(&data).await;
@@ -1854,6 +2210,19 @@ async fn run_session(
             // aquí el Option siempre es Some.
             _ = async { ka_timer.as_mut().unwrap().tick().await }, if ka_timer.is_some() => {
                 let _ = handle.send_keepalive(false).await;
+            }
+            // Vencimiento de comandos del modo control: un comando sin
+            // respuesta en su plazo cierra la sesión de control entera (si
+            // tmux no contesta, lo que escribamos podría ejecutarlo un shell).
+            _ = async { control_timer.as_mut().unwrap().tick().await }, if control_timer.is_some() => {
+                if let Some(state) = control.as_mut() {
+                    let now = state.now_ms();
+                    let outs = state.bridge.check_timeouts(now);
+                    if dispatch_bridge_outs(outs, state, &app_handle, &session_id) {
+                        exit_kind = SessionExit::UserDisconnect;
+                        break;
+                    }
+                }
             }
             // Muestra del monitor de recursos: abrimos un canal `exec` (round-trip
             // corto, como el open de un túnel) y delegamos la **lectura** de su
@@ -1924,6 +2293,60 @@ async fn run_session(
                         // tarea no emite): así el drain final no duplica.
                         if shells.remove(&shell_id).is_some() {
                             let _ = app_handle.emit(&event_name(EventKind::SshClosed, &shell_id), "");
+                        }
+                    }
+                    Some(SessionCommand::TmuxBindPane { logical_id, on_data, reply }) => {
+                        match control.as_mut() {
+                            Some(state) => {
+                                // La salida llegada antes del bind se entrega
+                                // de golpe: nada se pierde por llegar tarde.
+                                if let Some(buffered) = state.pending_out.remove(&logical_id) {
+                                    if !buffered.is_empty() {
+                                        let _ = on_data.send(Response::new(buffered));
+                                    }
+                                }
+                                state.panes.insert(logical_id, on_data);
+                                let _ = reply.send(Ok(()));
+                            }
+                            None => {
+                                let _ = reply.send(Err(
+                                    "la conexión no está en modo control de tmux".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                    Some(SessionCommand::TmuxCommand { command, reply }) => {
+                        match control.as_mut() {
+                            Some(state) if !state.bridge.is_closed() => {
+                                let now = state.now_ms();
+                                match state.bridge.command(&command, now) {
+                                    Ok((tag, bytes)) => {
+                                        if channel.data(&bytes[..]).await.is_err() {
+                                            if let Some(tx) = reply {
+                                                let _ = tx.send(Err(
+                                                    "no se pudo escribir en el canal de control"
+                                                        .to_string(),
+                                                ));
+                                            }
+                                        } else if let Some(tx) = reply {
+                                            state.replies.insert(tag, tx);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        if let Some(tx) = reply {
+                                            let _ =
+                                                tx.send(Err(format!("comando rechazado: {e:?}")));
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {
+                                if let Some(tx) = reply {
+                                    let _ = tx.send(Err(
+                                        "la sesión de control de tmux no está activa".to_string(),
+                                    ));
+                                }
+                            }
                         }
                     }
                     Some(SessionCommand::SetKeepAlive(secs)) => {
@@ -3699,4 +4122,159 @@ mod tests {
         ids.dedup();
         assert_eq!(ids.len(), info.len());
     }
+
+    /// Integración F7.3 (Fase 2): el `ControlBridge` — la pieza que consume el
+    /// worker en producción — contra un tmux real por un canal exec de un sshd
+    /// real, arrancado con el MISMO comando que produce `mux::control_command`
+    /// (con socket y config aislados). Cubre: arranque → ventana+layout con
+    /// ids deterministas, split correlado, teclado por `cmd_send_keys` (hex)
+    /// cuya salida vuelve como `PaneOutput` de SU pane, captura de scrollback
+    /// por `cmd_capture_pane`, y muerte del servidor → `Ended` + puente
+    /// cerrado que rechaza escribir.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd, ssh-keygen y tmux; se corre con --ignored"]
+    #[tokio::test]
+    async fn tmux_control_bridge_sobre_ssh_real() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+        use crate::tmux::bridge::{cmd_capture_pane, cmd_send_keys, cmd_split_pane, BridgeOut, ControlBridge};
+        use crate::tmux::client::SendError;
+
+        if std::process::Command::new("tmux").arg("-V").output().is_err() {
+            eprintln!("tmux no disponible; test omitido");
+            return;
+        }
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+        let handle = connect_and_auth(&server).await;
+
+        let socket = format!("rustty-it-{}", uuid::Uuid::new_v4());
+        let _tmux_guard = TmuxServerGuard(socket.clone());
+        let mut channel = handle.channel_open_session().await.expect("abrir canal");
+        // El comando de producción, con el aislamiento del test delante.
+        let control_cmd = crate::mux::control_command("rustty bridge");
+        assert_eq!(control_cmd, "exec tmux -C new-session -A -s rustty-bridge");
+        let cmd = control_cmd.replace("tmux -C", &format!("tmux -C -f /dev/null -L {socket}"));
+        channel.exec(true, cmd.as_str()).await.expect("exec tmux -C");
+
+        let mut bridge = ControlBridge::new("ssh-it");
+
+        /// Bombea el canal por el puente hasta que el predicado acepte una salida.
+        async fn pump_bridge(
+            channel: &mut russh::Channel<client::Msg>,
+            bridge: &mut ControlBridge,
+            mut pred: impl FnMut(&BridgeOut) -> bool,
+        ) -> Vec<BridgeOut> {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            let mut seen = Vec::new();
+            loop {
+                let msg = tokio::time::timeout_at(deadline, channel.wait())
+                    .await
+                    .unwrap_or_else(|_| panic!("plazo agotado esperando salidas; visto: {seen:?}"));
+                let Some(msg) = msg else {
+                    panic!("canal cerrado esperando salidas; visto: {seen:?}");
+                };
+                let bytes = match msg {
+                    ChannelMsg::Data { data } => data.to_vec(),
+                    ChannelMsg::ExtendedData { data, .. } => data.to_vec(),
+                    _ => continue,
+                };
+                let outs = bridge.feed(&bytes);
+                let hit = outs.iter().any(&mut pred);
+                seen.extend(outs);
+                if hit {
+                    return seen;
+                }
+            }
+        }
+
+        // Arranque: tmux anuncia la ventana pero NO su layout (solo lo emite
+        // ante un cambio) — la misma razón por la que el worker pide los
+        // layouts al enganchar. Aquí se fuerza el cambio declarando un tamaño
+        // de cliente distinto del 80x24 por defecto (la vía de producción de
+        // `cmd_set_client_size`).
+        let boot = pump_bridge(&mut channel, &mut bridge, |o| {
+            matches!(o, BridgeOut::WindowUpsert(_))
+        })
+        .await;
+        assert!(
+            !boot.iter().any(|o| matches!(o, BridgeOut::Layout(_))),
+            "premisa del arranque: sin layout hasta que algo cambie: {boot:?}"
+        );
+        let (_tag, bytes) = bridge
+            .command(&crate::tmux::bridge::cmd_set_client_size(120, 40), 0)
+            .expect("client size");
+        channel.data(&bytes[..]).await.expect("escribir client size");
+        let boot = pump_bridge(&mut channel, &mut bridge, |o| {
+            matches!(o, BridgeOut::Layout(_))
+        })
+        .await;
+        let first_pane = boot
+            .iter()
+            .find_map(|o| match o {
+                BridgeOut::Layout(l) => l.added.first().cloned(),
+                _ => None,
+            })
+            .expect("pane del arranque");
+        assert_eq!(
+            first_pane.logical_id,
+            format!("ssh-it-p{}", first_pane.pane),
+            "id lógico determinista"
+        );
+
+        // Split correlado: CommandDone con éxito + layout de dos panes.
+        let (split_tag, bytes) = bridge.command(&cmd_split_pane(first_pane.pane, true), 0).expect("split");
+        channel.data(&bytes[..]).await.expect("escribir split");
+        let seen = pump_bridge(&mut channel, &mut bridge, |o| {
+            matches!(o, BridgeOut::Layout(l) if l.layout.children.as_ref().is_some_and(|c| c.len() == 2))
+        })
+        .await;
+        assert!(
+            seen.iter().any(|o| matches!(o, BridgeOut::CommandDone { tag, success: true, .. } if *tag == split_tag)),
+            "falta el CommandDone del split: {seen:?}"
+        );
+
+        // Teclado por la vía de producción (`send-keys -H` compuesto): la
+        // salida vuelve como PaneOutput de ESA pane.
+        let keys = cmd_send_keys(first_pane.pane, b"echo hola-$((6*7))\r");
+        let (_tag, bytes) = bridge.command(&keys, 0).expect("send-keys");
+        channel.data(&bytes[..]).await.expect("escribir teclas");
+        let mut acc = String::new();
+        pump_bridge(&mut channel, &mut bridge, |o| {
+            if let BridgeOut::PaneOutput { pane, bytes } = o {
+                if pane.logical_id == first_pane.logical_id {
+                    acc.push_str(&String::from_utf8_lossy(bytes));
+                }
+            }
+            acc.contains("hola-42")
+        })
+        .await;
+
+        // Captura del scrollback (F5.1): el eco del comando está en el volcado.
+        let (cap_tag, bytes) = bridge.command(&cmd_capture_pane(first_pane.pane, 200), 0).expect("capture");
+        channel.data(&bytes[..]).await.expect("escribir capture");
+        let seen = pump_bridge(&mut channel, &mut bridge, |o| {
+            matches!(o, BridgeOut::CommandDone { tag, .. } if *tag == cap_tag)
+        })
+        .await;
+        let capture = seen
+            .iter()
+            .find_map(|o| match o {
+                BridgeOut::CommandDone { tag, success: true, output } if *tag == cap_tag => Some(output.clone()),
+                _ => None,
+            })
+            .expect("salida de capture-pane");
+        assert!(capture.contains("hola-42"), "la captura trae el scrollback: {capture:?}");
+
+        // Muerte del servidor: Ended + puente cerrado para siempre.
+        let (_tag, bytes) = bridge.command("kill-server", 0).expect("kill-server");
+        channel.data(&bytes[..]).await.expect("escribir kill");
+        pump_bridge(&mut channel, &mut bridge, |o| matches!(o, BridgeOut::Ended(_))).await;
+        assert!(bridge.is_closed());
+        assert_eq!(bridge.command("ls", 0), Err(SendError::Closed));
+    }
+
 }

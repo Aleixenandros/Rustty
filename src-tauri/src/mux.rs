@@ -66,6 +66,15 @@ pub fn attach_command(tool: &str, raw_name: &str) -> String {
     }
 }
 
+/// Comando del modo control (F2): `-C` habla el protocolo de líneas y
+/// `new-session -A` crea o reengancha la sesión con nombre — la misma
+/// semántica que el attach clásico, pero con ventanas y panes nativos en la
+/// app. El `exec` inicial sustituye al shell lanzador.
+pub fn control_command(raw_name: &str) -> String {
+    let name = sanitize_session_name(raw_name);
+    format!("exec tmux -C new-session -A -s {name}")
+}
+
 // ─── Versión de tmux (requisito del modo control, F0.2) ─────────────
 
 /// Versión mínima de tmux para el modo control (`-CC`) tal y como lo vamos a
@@ -104,6 +113,14 @@ pub fn supports_control_mode(version: (u32, u32)) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn control_command_sanea_el_nombre() {
+        assert_eq!(
+            super::control_command("mi servidor"),
+            "exec tmux -C new-session -A -s mi-servidor"
+        );
+    }
+
     use super::*;
 
     #[test]

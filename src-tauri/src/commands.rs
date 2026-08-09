@@ -17,6 +17,7 @@ use crate::local_command::{self, LocalCommandOutput, LocalCommandRegistry};
 use crate::local_shell_manager::LocalShellManager;
 use crate::notes::{NoteDoc, NoteSummary, NotesManager};
 use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
+use crate::tmux::bridge as tmux_cmds;
 use crate::rdp_manager::RdpManager;
 use crate::scripts::{HostPreview, RunOptions, Script, ScriptManager};
 use crate::sftp_manager::{FileEntry, SftpManager, TransferConflictPolicy};
@@ -654,6 +655,162 @@ pub async fn ssh_open_shell(
         )
         .await?;
     Ok(session_id)
+}
+
+// ─── Modo control de tmux (F2.2) ─────────────────────────────────────────────
+// Todos operan sobre el sessionId de la CONEXIÓN que habla el modo control.
+// INVARIANTE: la entrada de teclado va SIEMPRE como `send-keys -H` (jamás
+// bytes crudos al canal); los comandos los compone el backend (`tmux::bridge`)
+// con ids numéricos y quoting saneado — el frontend nunca concatena tmux.
+
+/// Vincula el caudal binario de una pane tmux (sesión lógica) a su conexión.
+#[tauri::command]
+pub async fn tmux_bind_pane(
+    ssh_state: State<'_, SshManager>,
+    on_data: Channel<Response>,
+    session_id: String,
+    pane_session_id: String,
+) -> Result<(), String> {
+    ssh_state
+        .tmux_bind_pane(&session_id, pane_session_id, on_data)
+        .await
+}
+
+/// Teclado hacia una pane (coalescido por frame en el frontend).
+#[tauri::command]
+pub async fn tmux_send_keys(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    pane: u64,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    ssh_state
+        .tmux_command(&session_id, tmux_cmds::cmd_send_keys(pane, &data), false)
+        .await
+        .map(|_| ())
+}
+
+/// Divide una pane (h = lado a lado).
+#[tauri::command]
+pub async fn tmux_split_pane(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    pane: u64,
+    horizontal: bool,
+) -> Result<(), String> {
+    ssh_state
+        .tmux_command(&session_id, tmux_cmds::cmd_split_pane(pane, horizontal), true)
+        .await
+        .map(|_| ())
+}
+
+/// Cierra una pane (mata su proceso en el servidor).
+#[tauri::command]
+pub async fn tmux_kill_pane(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    pane: u64,
+) -> Result<(), String> {
+    ssh_state
+        .tmux_command(&session_id, tmux_cmds::cmd_kill_pane(pane), true)
+        .await
+        .map(|_| ())
+}
+
+/// Nueva ventana tmux (pestaña nueva).
+#[tauri::command]
+pub async fn tmux_new_window(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+) -> Result<(), String> {
+    ssh_state
+        .tmux_command(&session_id, tmux_cmds::cmd_new_window(), true)
+        .await
+        .map(|_| ())
+}
+
+/// Cierra una ventana tmux entera (mata sus procesos en el servidor).
+#[tauri::command]
+pub async fn tmux_kill_window(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    window: u64,
+) -> Result<(), String> {
+    ssh_state
+        .tmux_command(&session_id, tmux_cmds::cmd_kill_window(window), true)
+        .await
+        .map(|_| ())
+}
+
+/// Renombra una ventana tmux (el quoting lo sanea el backend).
+#[tauri::command]
+pub async fn tmux_rename_window(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    window: u64,
+    name: String,
+) -> Result<(), String> {
+    ssh_state
+        .tmux_command(&session_id, tmux_cmds::cmd_rename_window(window, &name), true)
+        .await
+        .map(|_| ())
+}
+
+/// Redimensiona una pane a un tamaño absoluto en celdas.
+#[tauri::command]
+pub async fn tmux_resize_pane(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    pane: u64,
+    cols: u32,
+    rows: u32,
+) -> Result<(), String> {
+    ssh_state
+        .tmux_command(&session_id, tmux_cmds::cmd_resize_pane(pane, cols, rows), true)
+        .await
+        .map(|_| ())
+}
+
+/// Declara el tamaño del cliente (F4.3): tmux no hará ventanas mayores.
+#[tauri::command]
+pub async fn tmux_set_client_size(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    cols: u32,
+    rows: u32,
+) -> Result<(), String> {
+    ssh_state
+        .tmux_command(&session_id, tmux_cmds::cmd_set_client_size(cols, rows), true)
+        .await
+        .map(|_| ())
+}
+
+/// Scrollback de una pane para el reenganche (F5.1).
+#[tauri::command]
+pub async fn tmux_capture_pane(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    pane: u64,
+    lines: u32,
+) -> Result<String, String> {
+    ssh_state
+        .tmux_command(&session_id, tmux_cmds::cmd_capture_pane(pane, lines.min(50_000)), true)
+        .await
+        .map(|out| out.unwrap_or_default())
+}
+
+/// Escape hatch: un comando tmux tecleado por el usuario (F2.2). Se valida
+/// solo que sea UNA línea; el resto lo juzga tmux y su %error vuelve como Err.
+#[tauri::command]
+pub async fn tmux_command(
+    ssh_state: State<'_, SshManager>,
+    session_id: String,
+    command: String,
+) -> Result<String, String> {
+    ssh_state
+        .tmux_command(&session_id, command, true)
+        .await
+        .map(|out| out.unwrap_or_default())
 }
 
 /// Resuelve la contraseña almacenada del perfil (KeePass o keyring).

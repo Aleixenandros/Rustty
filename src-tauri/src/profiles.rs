@@ -186,6 +186,12 @@ pub struct ConnectionProfile {
     /// perfil. Se sanea a `[A-Za-z0-9_-]` antes de usarse (ver `mux`).
     #[serde(default)]
     pub persist_session_name: Option<String>,
+    /// Modo control de tmux (opt-in): la sesión tmux del servidor se muestra
+    /// como pestañas y splits nativos (una pestaña por ventana, un split por
+    /// pane). Excluyente con `persist_session` (si ambos, gana este). El
+    /// nombre de la sesión se comparte con `persist_session_name`.
+    #[serde(default)]
+    pub tmux_control: bool,
     /// Umbral en segundos, propio de este perfil, del aviso de fin de comando
     /// largo (OSC 133). `None` = usar el umbral global de Preferencias.
     #[serde(default)]

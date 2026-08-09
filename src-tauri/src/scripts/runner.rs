@@ -1633,6 +1633,7 @@ mod tests {
             persist_session: false,
             persist_session_tool: None,
             persist_session_name: None,
+            tmux_control: false,
             cmd_notify_secs: None,
             prompt_regex: None,
             environment: None,

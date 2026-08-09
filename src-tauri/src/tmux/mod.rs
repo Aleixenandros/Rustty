@@ -7,6 +7,7 @@
 //! `manager.rs` mantiene el modelo pane ↔ sesión lógica / ventana ↔ pestaña.
 //! Todo lo de este árbol se prueba con capturas reales de tmux, sin servidor.
 
+pub mod bridge;
 pub mod client;
 pub mod layout;
 pub mod manager;
