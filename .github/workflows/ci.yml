@@ -453,6 +453,13 @@ jobs:
             libssl-dev \
             pkg-config
 
+      # tmux para el test del modo control (`tmux_control_mode_real_sobre_ssh`
+      # y el wiring de la Fase 2+): se habla con un tmux real por SSH real.
+      - name: Install tmux + OpenSSH server
+        run: |
+          sudo apt-get install -y tmux openssh-server
+          tmux -V
+
       # El nombre del paquete cambia entre releases de Ubuntu y la rama mayor de
       # FreeRDP importa (la 3 es la que rompió la entrega de la contraseña), así
       # que se prueban ambos y se deja la versión en el log.
