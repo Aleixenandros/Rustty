@@ -2,6 +2,24 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.0.1] - 2026-08-09
+
+### Arreglado
+
+- **«Comprobar actualizaciones» fallaba con `ReferenceError: normalizeVersion`
+  justo cuando había una versión nueva que ofrecer** (desde v1.67.0: la función
+  se extrajo a un módulo y dos llamadas se quedaron sin su import; el fallo no
+  saltaba mientras estabas al día, por eso pasó inadvertido). **Si estás en
+  1.67.0–2.0.0, esta actualización hay que descargarla a mano una única vez**
+  desde [las descargas](https://rustty.es/descargas) o el release de GitHub; a
+  partir de 2.0.1 el updater vuelve a funcionar solo.
+- El mismo tipo de fallo, aún sin estrenar, en el modo control de tmux de
+  2.0.0: crear la primera pane refería opciones de enlaces de otra función y
+  habría reventado el pintado de la ventana.
+- Para que esta clase de error no vuelva a colarse, `main.js` entra ahora en
+  el lint con la regla que caza identificadores inexistentes (`no-undef`): un
+  `ReferenceError` de este tipo romperá el CI en vez de esperar al usuario.
+
 ## [2.0.0] - 2026-08-09
 
 ### Añadido

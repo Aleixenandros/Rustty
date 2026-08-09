@@ -21,15 +21,13 @@ export default [
       "packaging/**",
       "public/**",
       "src-tauri/**",
-      // God-files heredados, pendientes del refactor por dominios.
-      "src/main.js",
-      "src/i18n.js",
     ],
   },
 
-  // Frontend (navegador): módulos extraídos + sync.js.
+  // Frontend (navegador): módulos extraídos + sync.js + i18n.js (ya troceado).
   {
     files: ["src/**/*.js"],
+    ignores: ["src/main.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
@@ -84,6 +82,28 @@ export default [
     rules: {
       "no-unused-vars": "error",
       "prefer-const": "error",
+    },
+  },
+
+  // El god-file no entra al lint completo hasta su troceo por dominios, pero
+  // SÍ a `no-undef`: un identificador que no existe es un ReferenceError en
+  // runtime — así se rompió «Comprobar actualizaciones» en v1.67.0
+  // (`normalizeVersion` extraída a modules/version.js sin su import) y nada
+  // lo avisó, porque el fallo solo saltaba cuando HABÍA una versión nueva.
+  {
+    files: ["src/main.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: { ...globals.browser },
+    },
+    // Las directivas eslint-disable del fichero apuntan a reglas del lint
+    // completo que aún no le aplica: no avisar de que «sobran».
+    linterOptions: {
+      reportUnusedDisableDirectives: false,
+    },
+    rules: {
+      "no-undef": "error",
     },
   },
 ];

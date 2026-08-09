@@ -1,5 +1,14 @@
 # FAQ
 
+## Estoy en 1.67.0–2.0.0 y «Comprobar actualizaciones» da un error
+
+Esas versiones llevan un fallo por el que la comprobación falla con
+`ReferenceError: normalizeVersion` **precisamente cuando hay una versión nueva
+que ofrecer**. Descarga la última versión a mano una única vez desde
+[Descargas](/descargas) (o el release de GitHub) e instálala encima: perfiles,
+preferencias y copias se conservan tal cual. Desde la 2.0.1 el updater vuelve
+a funcionar con normalidad.
+
 ## ¿Rustty sube mis contraseñas a la nube?
 
 Solo si lo activas explícitamente. En **Preferencias → Copias de seguridad** puedes marcar **Contraseñas guardadas (cifradas E2E)**. Entonces Rustty lee las contraseñas/passphrases del keyring local, las cifra dentro de `rustty-sync.bin` con tu passphrase y las restaura en el keyring de otros equipos.

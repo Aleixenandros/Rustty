@@ -46,7 +46,7 @@ import { clampUiZoom } from "./modules/num.js";
 import { baseSlugifyThemeId } from "./modules/text.js";
 import { formatTime, formatRelativeTimeShort, formatDashboardTime } from "./modules/datetime.js";
 import { formatAccelerator } from "./modules/platform.js";
-import { compareVersions } from "./modules/version.js";
+import { compareVersions, normalizeVersion } from "./modules/version.js";
 import {
   groupActivityByDay,
   normalizeActivityItem,
@@ -10448,7 +10448,9 @@ function createTmuxPaneSession(root, windowId, ref) {
     allowTransparency: terminalBgActive(),
     theme: terminalThemeForCursor(),
     allowProposedApi: true,
-    linkHandler: terminalLinkOptions,
+    // Mismo abridor validado que el resto de terminales (los OSC 8 sin
+    // linkHandler abrirían con window.open, que el WebView no gestiona bien).
+    linkHandler: { activate: handleTerminalLink, allowNonHttpProtocols: true },
     scrollSensitivity: 3,
     fastScrollSensitivity: 8,
   });
