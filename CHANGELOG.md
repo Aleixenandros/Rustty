@@ -2,6 +2,41 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.0.0] - 2026-08-09
+
+### Añadido
+
+- **Modo control de tmux: la sesión tmux del servidor, como pestañas y panes
+  nativos**. Márcalo en el perfil (pestaña Avanzado) y cada **ventana** de la
+  sesión tmux es una pestaña de Rustty y cada **pane** un panel con su propio
+  terminal — con el chrome de siempre: temas, búsqueda, bloques de comando.
+  Cierra de una vez las tres promesas por las que la gente no suelta tmux:
+  - **Sesiones persistentes**: cierra la app o pierde la red; el trabajo sigue
+    vivo en el servidor y al volver te reenganchas donde estabas, con parte del
+    scrollback recuperado (líneas configurables en Preferencias → Terminal).
+  - **Varias shells sobre una única conexión**: ventanas y panes nuevos no
+    repiten handshake, ni autenticación, ni MFA.
+  - **Panes reales**: dividir en columnas o filas, cerrar panes y crear
+    ventanas desde el menú de la pestaña; arrastrar un divisor pide el
+    redimensionado a tmux y la app pinta el layout que tmux dicte.
+  Necesita tmux 3.2 o superior en el servidor; sin él, la conexión abre un
+  shell normal y lo dice claramente. Cerrar una ventana o un pane mata sus
+  procesos en el servidor, así que pide confirmación en rojo. La entrada de
+  teclado nunca viaja en crudo: va como `send-keys` agrupado por fotograma, y
+  si tmux muere no se escribe ni un byte más en el canal (acabaría en el
+  shell). Todo el protocolo está cubierto por tests contra un tmux real
+  hablando por un SSH real.
+
+### Cambiado
+
+- **Rustty pasa a versión 2**: el salto de major abre el programa v2 —
+  este modo control primero; el modelo de datos (credenciales independientes,
+  herencia por carpeta, clusters) y la rearquitectura interna llegarán como
+  2.x. Los perfiles, preferencias y copias de seguridad existentes se leen tal
+  cual: no hay migración que hacer.
+- El job de integración del CI instala tmux y el servidor OpenSSH para
+  ejercitar el modo control real en cada release.
+
 ## [1.69.0] - 2026-08-08
 
 ### Añadido

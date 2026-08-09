@@ -39,6 +39,32 @@ Plantillas integradas:
 
 También puedes marcar un perfil propio como plantilla desde su menú contextual (**Usar como plantilla**). Rustty lo listará en el mismo selector para reutilizar tipo de conexión, puerto, usuario, autenticación y opciones avanzadas comunes. El perfil original no se modifica.
 
+## Modo control de tmux (pestañas y panes nativos)
+
+Con la casilla **Modo control de tmux** del formulario (pestaña Avanzado), la
+sesión tmux del servidor se muestra dentro de Rustty como pestañas y splits
+nativos: cada **ventana** tmux es una pestaña y cada **pane** un panel con su
+propio terminal. Eso da las tres promesas de tmux sin salir de la app:
+**sesiones persistentes** (cierra Rustty o pierde la red: el trabajo sigue vivo
+en el servidor y al volver te reenganchas), **varias shells sobre una única
+conexión** (sin repetir autenticación ni MFA) y **panes reales**.
+
+Detalles a saber:
+
+- Necesita **tmux 3.2 o superior** en el servidor. Sin él, la conexión abre un
+  shell normal y lo avisa en el log de conexión.
+- El nombre de la sesión es el del reenganche clásico (o el nombre del perfil);
+  si marcas ambas casillas, gana el modo control.
+- Dividir, cerrar panes o crear ventanas se hace desde el menú contextual de la
+  pestaña; cerrar una ventana o un pane **mata sus procesos en el servidor**,
+  por eso pide confirmación.
+- Al reenganchar, cada pane recupera parte de su historia
+  (**Preferencias → Terminal → Scrollback al reenganchar tmux**; 0 = enganche
+  instantáneo sin historia).
+- Los tamaños los dicta tmux: si otro cliente más pequeño está attachado a la
+  misma sesión, el espacio lo limita él (Rustty lo avisa). La selección y la
+  búsqueda son las nativas del terminal de Rustty, no el copy-mode de tmux.
+
 ## Entorno del perfil (PROD / STAGE / DEV)
 
 Cada perfil puede declarar su **entorno** en el formulario de conexión. El badge
