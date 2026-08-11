@@ -3336,12 +3336,12 @@ dependencies = [
 
 [[package]]
 name = "keepass"
-version = "0.13.16"
+version = "0.13.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd9de0a6cd63e83eed9afd7985120db74cc167b7360fe1b77e7ef3f4ee501443"
+checksum = "e8014931bc1d5d427563b2c75e7b240a92353463e89cb2b4e21c98fb776c1c28"
 dependencies = [
  "aes 0.9.1",
- "base64 0.22.1",
+ "base64 0.23.0",
  "block-modes",
  "byteorder",
  "cbc 0.2.1",
@@ -3354,6 +3354,7 @@ dependencies = [
  "hex-literal",
  "hmac 0.13.0",
  "hybrid-array",
+ "indexmap 2.14.0",
  "js-sys",
  "quick-xml 0.41.0",
  "rust-argon2",
@@ -7147,7 +7148,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
