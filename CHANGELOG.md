@@ -2,6 +2,34 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.1.0] - 2026-08-11
+
+### Añadido
+
+- **Búsqueda de conexiones agrupada por relevancia** (sidebar y dashboard).
+  Los resultados dejan la lista plana alfabética: se ordenan por lo bien que
+  coinciden (nombre > servidor > usuario > protocolo > carpeta > nota; exacto >
+  prefijo > subcadena) y se agrupan en secciones — conexiones, **carpetas**
+  (cada carpeta coincidente es una única entrada con su recuento que al
+  pulsarla salta a esa carpeta en el árbol, en vez de volcar todas sus
+  conexiones sueltas) y coincidencias en notas. Cada resultado muestra su ruta
+  (workspace › carpeta) y resalta el texto que coincide.
+- El buscador ignora los acentos («produccion» encuentra «Producción»), admite
+  varias palabras que se combinan entre campos («rancher prod» encuentra la
+  subcarpeta `rancher/prod`, también pegando la ruta con barra), y funciona
+  igual con nombres con emoji o ligaduras pegadas de un PDF. Intro sigue el
+  orden visible: conecta la mejor conexión o, si solo coinciden carpetas, abre
+  la primera en el árbol.
+- Nueva preferencia en Apariencia, activada por defecto: «Agrupar los
+  resultados de búsqueda por relevancia». Desactivada, vuelve la lista plana
+  clásica de siempre.
+
+### Cambiado
+
+- Buscar un protocolo («ssh», «rdp», «ftp») sigue listando esas conexiones por
+  coincidencia exacta o de prefijo, pero ya no por subcadena: teclear «sh» ya
+  no arrastra todos los perfiles SSH a los resultados.
+
 ## [2.0.1] - 2026-08-09
 
 ### Arreglado
