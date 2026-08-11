@@ -427,6 +427,10 @@
     "empty_add_first": "Ajouter la première",
     "search_placeholder": "Rechercher des connexions…",
     "search_no_results": "Aucun résultat",
+    "search_section_connections": "Connexions",
+    "search_section_folders": "Dossiers",
+    "search_section_notes": "Correspondances dans les notes",
+    "search_folder_count_title": "Connexions dans le dossier",
     "workspace_title": "Changer d'espace",
     "workspace_new": "Nouvel espace…",
     "workspace_rename": "Renommer l'espace",
@@ -570,7 +574,10 @@
   "dashboard": {
     "pinned_title": "Épinglés",
     "open_sftp": "Ouvrir SFTP",
-    "no_activity": "Aucune activité"
+    "no_activity": "Aucune activité",
+    "connect": "Se connecter",
+    "open_folder": "Ouvrir",
+    "no_folder": "Sans dossier"
   },
   "tabctx": {
     "duplicate": "Dupliquer l'onglet",
@@ -997,6 +1004,8 @@
     "theme_io_hint": "Le nouveau format utilise des tokens simples comme base, text, blue ou red. Copiez le modèle, changez les couleurs puis importez-le.",
     "search_all_workspaces": "Rechercher des connexions dans tous les workspaces",
     "search_all_workspaces_hint": "Si cette option est désactivée, les recherches de l'accueil et de la barre latérale affichent uniquement les connexions du workspace actif.",
+    "search_grouped": "Regrouper les résultats de recherche par pertinence",
+    "search_grouped_hint": "Sépare les correspondances directes des dossiers correspondants (une seule entrée avec compteur) et des notes, avec le chemin de chaque résultat. Désactivée, la liste plate classique revient.",
     "density": "Densité de l'interface",
     "density_spacious": "Spacieux (plus lisible)",
     "density_comfortable": "Confortable",

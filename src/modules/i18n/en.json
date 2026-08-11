@@ -427,6 +427,10 @@
     "empty_add_first": "Add your first",
     "search_placeholder": "Search connections…",
     "search_no_results": "No results",
+    "search_section_connections": "Connections",
+    "search_section_folders": "Folders",
+    "search_section_notes": "Note matches",
+    "search_folder_count_title": "Connections in this folder",
     "workspace_title": "Switch workspace",
     "workspace_new": "New workspace…",
     "workspace_rename": "Rename workspace",
@@ -570,7 +574,10 @@
   "dashboard": {
     "pinned_title": "Pinned",
     "open_sftp": "Open SFTP",
-    "no_activity": "No activity"
+    "no_activity": "No activity",
+    "connect": "Connect",
+    "open_folder": "Open",
+    "no_folder": "No folder"
   },
   "tabctx": {
     "duplicate": "Duplicate tab",
@@ -1016,6 +1023,8 @@
     "color_blind_safe_hint": "Differentiates status dots (tabs, sync, status bar) by shape in addition to color.",
     "search_all_workspaces": "Search connections in all workspaces",
     "search_all_workspaces_hint": "If disabled, the home and sidebar searches only show connections from the active workspace.",
+    "search_grouped": "Group search results by relevance",
+    "search_grouped_hint": "Separates direct matches from matching folders (a single entry with a count) and from notes, showing each result's path. When disabled, the classic flat list returns.",
     "ui_zoom": "Interface size",
     "ui_zoom_in": "Increase interface size",
     "ui_zoom_out": "Decrease interface size",

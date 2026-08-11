@@ -427,6 +427,10 @@
     "empty_add_first": "Añadir la primera",
     "search_placeholder": "Buscar conexiones…",
     "search_no_results": "Sin resultados",
+    "search_section_connections": "Conexiones",
+    "search_section_folders": "Carpetas",
+    "search_section_notes": "Coincidencias en notas",
+    "search_folder_count_title": "Conexiones en la carpeta",
     "workspace_title": "Cambiar de perfil",
     "workspace_new": "Nuevo perfil…",
     "workspace_rename": "Renombrar perfil",
@@ -570,7 +574,10 @@
   "dashboard": {
     "pinned_title": "Anclados",
     "open_sftp": "Abrir SFTP",
-    "no_activity": "Sin actividad"
+    "no_activity": "Sin actividad",
+    "connect": "Conectar",
+    "open_folder": "Abrir",
+    "no_folder": "Sin carpeta"
   },
   "tabctx": {
     "duplicate": "Duplicar pestaña",
@@ -1016,6 +1023,8 @@
     "color_blind_safe_hint": "Diferencia los dots de estado (pestañas, sync, barra inferior) también por forma además de por color.",
     "search_all_workspaces": "Buscar conexiones en todos los workspaces",
     "search_all_workspaces_hint": "Si se desactiva, los buscadores del inicio y de la sidebar solo muestran conexiones del workspace activo.",
+    "search_grouped": "Agrupar los resultados de búsqueda por relevancia",
+    "search_grouped_hint": "Separa las coincidencias directas de las carpetas coincidentes (una entrada con recuento) y de las notas, con la ruta de cada resultado. Desactivado, vuelve la lista plana clásica.",
     "ui_zoom": "Tamaño de la interfaz",
     "ui_zoom_in": "Aumentar tamaño de la interfaz",
     "ui_zoom_out": "Reducir tamaño de la interfaz",

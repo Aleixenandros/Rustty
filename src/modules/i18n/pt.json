@@ -427,6 +427,10 @@
     "empty_add_first": "Adicionar a primeira",
     "search_placeholder": "Buscar conexões…",
     "search_no_results": "Sem resultados",
+    "search_section_connections": "Conexões",
+    "search_section_folders": "Pastas",
+    "search_section_notes": "Correspondências em notas",
+    "search_folder_count_title": "Conexões na pasta",
     "workspace_title": "Mudar de perfil",
     "workspace_new": "Novo perfil…",
     "workspace_rename": "Renomear perfil",
@@ -570,7 +574,10 @@
   "dashboard": {
     "pinned_title": "Fixados",
     "open_sftp": "Abrir SFTP",
-    "no_activity": "Sem atividade"
+    "no_activity": "Sem atividade",
+    "connect": "Conectar",
+    "open_folder": "Abrir",
+    "no_folder": "Sem pasta"
   },
   "tabctx": {
     "duplicate": "Duplicar separador",
@@ -997,6 +1004,8 @@
     "theme_io_hint": "O novo formato usa tokens simples como base, text, blue ou red. Copia o modelo, muda as cores e importa-o.",
     "search_all_workspaces": "Pesquisar conexões em todos os workspaces",
     "search_all_workspaces_hint": "Se estiver desativado, as pesquisas do início e da barra lateral mostram apenas conexões do workspace ativo.",
+    "search_grouped": "Agrupar os resultados da pesquisa por relevância",
+    "search_grouped_hint": "Separa as correspondências diretas das pastas correspondentes (uma única entrada com contagem) e das notas, com o caminho de cada resultado. Desativado, volta a lista plana clássica.",
     "density": "Densidade da interface",
     "density_spacious": "Espaçosa (mais legível)",
     "density_comfortable": "Confortável",

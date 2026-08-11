@@ -427,6 +427,10 @@
     "empty_add_first": "Füge deine erste hinzu",
     "search_placeholder": "Verbindungen suchen…",
     "search_no_results": "Keine Ergebnisse",
+    "search_section_connections": "Verbindungen",
+    "search_section_folders": "Ordner",
+    "search_section_notes": "Treffer in Notizen",
+    "search_folder_count_title": "Verbindungen im Ordner",
     "workspace_title": "Workspace wechseln",
     "workspace_new": "Neuer Workspace…",
     "workspace_rename": "Workspace umbenennen",
@@ -570,7 +574,10 @@
   "dashboard": {
     "pinned_title": "Angeheftet",
     "open_sftp": "SFTP öffnen",
-    "no_activity": "Keine Aktivität"
+    "no_activity": "Keine Aktivität",
+    "connect": "Verbinden",
+    "open_folder": "Öffnen",
+    "no_folder": "Ohne Ordner"
   },
   "tabctx": {
     "duplicate": "Tab duplizieren",
@@ -1016,6 +1023,8 @@
     "color_blind_safe_hint": "Unterscheidet Status-Punkte (Tabs, Sync, Statusleiste) zusätzlich zur Farbe durch die Form.",
     "search_all_workspaces": "Verbindungen in allen Workspaces suchen",
     "search_all_workspaces_hint": "Wenn deaktiviert, zeigen die Suche auf der Startseite und in der Seitenleiste nur Verbindungen aus dem aktiven Workspace.",
+    "search_grouped": "Suchergebnisse nach Relevanz gruppieren",
+    "search_grouped_hint": "Trennt direkte Treffer von passenden Ordnern (ein einzelner Eintrag mit Zähler) und von Notizen, mit dem Pfad jedes Ergebnisses. Deaktiviert kehrt die klassische flache Liste zurück.",
     "ui_zoom": "Größe der Oberfläche",
     "ui_zoom_in": "Oberfläche vergrößern",
     "ui_zoom_out": "Oberfläche verkleinern",

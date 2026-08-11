@@ -65,6 +65,7 @@ export function normalizePrefs(prefs, stored, deps) {
     prefs.sidebarViewMode = "current";
   }
   prefs.searchAllWorkspaces = prefs.searchAllWorkspaces !== false;
+  prefs.searchGroupedResults = prefs.searchGroupedResults !== false;
   prefs.sidebarCompact = Boolean(prefs.sidebarCompact);
   if (typeof prefs.foldersFirst !== "boolean") prefs.foldersFirst = true;
 

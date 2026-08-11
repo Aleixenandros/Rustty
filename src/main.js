@@ -42,6 +42,7 @@ import {
 } from "./modules/path-history.js";
 import { formatSize, formatDuration, formatSftpPermissions, formatSftpPermissionsOctal, formatOctalMode, formatSteppedNumber } from "./modules/format.js";
 import { escHtml } from "./modules/html.js";
+import { foldSearchText, groupConnectionSearch, matchSegments } from "./modules/connection-search.js";
 import { clampUiZoom } from "./modules/num.js";
 import { baseSlugifyThemeId } from "./modules/text.js";
 import { formatTime, formatRelativeTimeShort, formatDashboardTime } from "./modules/datetime.js";
@@ -560,6 +561,10 @@ const DEFAULT_PREFS = {
   // Si está activo, las búsquedas de conexiones recorren todos los workspaces.
   // Si se desactiva, solo consultan el workspace activo.
   searchAllWorkspaces: true,
+  // Resultados de búsqueda agrupados por relevancia: conexiones directas,
+  // carpetas coincidentes (una entrada con recuento) y coincidencias en notas.
+  // Desactivado, vuelve la lista plana alfabética clásica.
+  searchGroupedResults: true,
   // Densidad compacta para listas largas de conexiones en la sidebar.
   sidebarCompact:  false,
   // Zoom de la UI (rail, sidebar, tabs, status, modales) sin afectar al
@@ -1931,6 +1936,8 @@ function openSettingsModal() {
   if (_terminalRenderer) _terminalRenderer.value = prefs.terminalRenderer === "dom" ? "dom" : "auto";
   const _searchAllWorkspaces = document.getElementById("pref-search-all-workspaces");
   if (_searchAllWorkspaces) _searchAllWorkspaces.checked = prefs.searchAllWorkspaces !== false;
+  const _searchGrouped = document.getElementById("pref-search-grouped");
+  if (_searchGrouped) _searchGrouped.checked = prefs.searchGroupedResults !== false;
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
   const _cmdNotify = document.getElementById("pref-cmd-notify");
   if (_cmdNotify) _cmdNotify.checked = !!prefs.cmdDoneNotify;
@@ -3825,6 +3832,7 @@ function savePrefsFromModal() {
       return v === "dom" ? "dom" : "auto";
     })(),
     searchAllWorkspaces: document.getElementById("pref-search-all-workspaces")?.checked ?? true,
+    searchGroupedResults: document.getElementById("pref-search-grouped")?.checked ?? true,
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
     keepassAutoLockMinutes: Number(document.getElementById("pref-keepass-autolock")?.value) || 0,
@@ -4599,11 +4607,17 @@ function renderConnectionList() {
 
   const sidebarQuery = _sidebarSearchQuery.trim();
   if (sidebarQuery) {
-    const matches = sidebarSearchCandidates(sidebarQuery);
-    container.innerHTML = matches.length
-      ? matches.map((profile) => renderConnectionItem(profile, 0)).join("")
-      : `<div class="empty-state sidebar-empty-search">${escHtml(t("sidebar.search_no_results"))}</div>`;
+    if (prefs.searchGroupedResults !== false) {
+      container.innerHTML = renderSidebarSearchResults(sidebarQuery);
+    } else {
+      // Lista plana clásica (pref desactivada): cualquier coincidencia, alfabética.
+      const matches = sidebarSearchCandidates(sidebarQuery);
+      container.innerHTML = matches.length
+        ? matches.map((profile) => renderConnectionItem(profile, 0)).join("")
+        : `<div class="empty-state sidebar-empty-search">${escHtml(t("sidebar.search_no_results"))}</div>`;
+    }
     bindTreeEvents(container);
+    bindSidebarSearchFolderRows(container);
     renderDashboard();
     return;
   }
@@ -5080,23 +5094,6 @@ async function handleWorkspaceMenuClick(action, wsId) {
   }
 }
 
-function profileMatchesSidebarQuery(profile, query) {
-  // Incluye los metadatos de la nota (título, tags y extracto) para que buscar
-  // por contenido de runbook encuentre la conexión asociada.
-  const note = notesIndex.get(profile.id);
-  const haystack = [
-    profile.name,
-    profile.host,
-    profile.username,
-    profile.group,
-    profile.connection_type || "ssh",
-    note?.title,
-    (note?.tags || []).join(" "),
-    note?.excerpt,
-  ].filter(Boolean).join(" ").toLowerCase();
-  return haystack.includes(query);
-}
-
 function loadRecentConnections() {
   try {
     const raw = JSON.parse(localStorage.getItem(RECENT_CONNECTIONS_STORAGE_KEY) || "[]");
@@ -5435,18 +5432,6 @@ async function initTrayQuickLauncher() {
   scheduleTrayQuickLauncherUpdate();
 }
 
-function profileMatchesDashboardQuery(profile, query) {
-  if (!query) return true;
-  const haystack = [
-    profile.name,
-    profile.host,
-    profile.username,
-    profile.group,
-    profile.connection_type || "ssh",
-  ].filter(Boolean).join(" ").toLowerCase();
-  return haystack.includes(query.toLowerCase());
-}
-
 function dashboardProfileHost(profile) {
   const user = profile.username ? `${profile.username}@` : "";
   const port = profile.port ? `:${profile.port}` : "";
@@ -5457,26 +5442,35 @@ function dashboardProtocol(profile) {
   return (profile.connection_type || "ssh").toUpperCase();
 }
 
+/**
+ * Con consulta, las coincidencias van por relevancia (mismo criterio que la
+ * sidebar); con la agrupación desactivada, lista plana alfabética clásica.
+ * En modo clásico el dashboard no incluye coincidencias por nota: nunca las
+ * tuvo (ese haystack era solo de la sidebar) y la pref promete fidelidad.
+ */
+function dashboardSearchMatches(query, grouped = groupedConnectionSearch(query)) {
+  if (prefs.searchGroupedResults !== false) {
+    return [...grouped.connections, ...grouped.notes];
+  }
+  return [...grouped.connections, ...grouped.folderOnly]
+    .sort((a, b) => a.profile.name.localeCompare(b.profile.name));
+}
+
 function getDashboardCandidates(query = "") {
   const recent = getRecentProfiles().filter(
     (item) => query
       ? connectionSearchIncludesProfile(item.profile)
       : profileBelongsToActiveWorkspace(item.profile)
   );
-  const recentIds = new Set(recent.map((item) => item.profile.id));
-  const scoped = query
-    ? profiles.filter(connectionSearchIncludesProfile)
-    : profiles.filter(profileBelongsToActiveWorkspace);
   if (query) {
-    return scoped
-      .filter((profile) => profileMatchesDashboardQuery(profile, query))
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((profile) => ({
-        profile,
-        lastConnectedAt: recent.find((item) => item.profile.id === profile.id)?.lastConnectedAt || null,
-      }));
+    return dashboardSearchMatches(query).map(({ profile }) => ({
+      profile,
+      lastConnectedAt: recent.find((item) => item.profile.id === profile.id)?.lastConnectedAt || null,
+    }));
   }
-  const rest = scoped
+  const recentIds = new Set(recent.map((item) => item.profile.id));
+  const rest = profiles
+    .filter(profileBelongsToActiveWorkspace)
     .filter((profile) => !recentIds.has(profile.id))
     .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "") || a.name.localeCompare(b.name))
     .map((profile) => ({ profile, lastConnectedAt: null }));
@@ -5489,17 +5483,34 @@ function renderDashboard() {
 
   const search = document.getElementById("dashboard-search");
   const query = search?.value?.trim() || "";
-  const candidates = getDashboardCandidates(query);
   const searchSection = document.getElementById("dashboard-search-section");
   const searchResults = document.getElementById("dashboard-search-results");
   if (searchSection && searchResults) {
     searchSection.classList.toggle("hidden", !query);
     if (query) {
-      const visible = candidates.slice(0, 8);
-      searchResults.innerHTML = visible.length
-        ? visible.map(({ profile, lastConnectedAt }) => renderDashboardResultRow(profile, lastConnectedAt)).join("")
-        : `<div class="dashboard-empty-line">No hay coincidencias</div>`;
+      const grouped = groupedConnectionSearch(query);
+      const useGroups = prefs.searchGroupedResults !== false;
+      const matches = dashboardSearchMatches(query, grouped);
+      const noteIds = useGroups ? new Set(grouped.notes.map((m) => m.profile.id)) : null;
+      const recentById = new Map(getRecentProfiles().map((item) => [item.profile.id, item.lastConnectedAt]));
+      const rows = matches.slice(0, 8).map((match) => renderDashboardResultRow(
+        match.profile,
+        recentById.get(match.profile.id) || null,
+        useGroups ? grouped.tokens : null,
+        noteIds?.has(match.profile.id)
+          ? noteMatchText(notesIndex.get(match.profile.id), grouped.tokens)
+          : "",
+      ));
+      if (useGroups) {
+        for (const folder of grouped.folders.slice(0, 4)) {
+          rows.push(renderDashboardFolderRow(folder, grouped.tokens));
+        }
+      }
+      searchResults.innerHTML = rows.length
+        ? rows.join("")
+        : `<div class="dashboard-empty-line">${escHtml(t("sidebar.search_no_results"))}</div>`;
       bindDashboardCards(searchResults);
+      bindDashboardFolderRows(searchResults);
     } else {
       searchResults.innerHTML = "";
     }
@@ -5665,19 +5676,56 @@ function renderDashboardFavoritesTiles() {
   bindDashboardCards(root);
 }
 
-function renderDashboardResultRow(profile, lastConnectedAt) {
+function renderDashboardResultRow(profile, lastConnectedAt, tokens = null, noteText = "") {
   const proto = dashboardProtocol(profile);
   const protoClass = proto.toLowerCase();
+  const hl = (/** @type {string} */ text) => (tokens ? highlightHtml(text, tokens) : escHtml(text));
+  const folderHtml = profile.group ? hl(profile.group) : escHtml(t("dashboard.no_folder"));
+  const noteHtml = noteText ? ` · ${hl(noteText)}` : "";
   return `
     <div class="dashboard-result-row" role="button" tabindex="0" data-profile-id="${escHtml(profile.id)}">
       <span class="dashboard-proto ${escHtml(protoClass)}">${escHtml(proto)}</span>
       <div>
-        <div class="dashboard-result-name">${escHtml(profile.name)} ${envBadgeHtml(profile)}</div>
-        <div class="dashboard-result-meta">${escHtml(dashboardProfileHost(profile))} · ${escHtml(profile.group || "Sin carpeta")}</div>
+        <div class="dashboard-result-name">${hl(profile.name)} ${envBadgeHtml(profile)}</div>
+        <div class="dashboard-result-meta">${hl(dashboardProfileHost(profile))} · ${folderHtml}${noteHtml}</div>
       </div>
       <span class="dashboard-result-time">${escHtml(formatDashboardTime(lastConnectedAt, t, { locale: getLanguage() }))}</span>
-      <button class="dashboard-connect" data-dashboard-connect="${escHtml(profile.id)}">Conectar</button>
+      <button class="dashboard-connect" data-dashboard-connect="${escHtml(profile.id)}">${escHtml(t("dashboard.connect"))}</button>
     </div>`;
+}
+
+/**
+ * Fila de carpeta coincidente en el buscador del dashboard: una entrada con
+ * recuento que salta a la carpeta en la sidebar, en vez de volcar todas sus
+ * conexiones como resultados sueltos.
+ */
+function renderDashboardFolderRow(folder, tokens) {
+  const context = searchFolderContext(folder);
+  return `
+    <div class="dashboard-result-row" role="button" tabindex="0"
+         data-search-folder="${escHtml(folder.path)}"
+         data-search-folder-ws="${escHtml(folder.workspaceId)}"
+         title="${escHtml(folder.path)}">
+      <span class="dashboard-proto dashboard-proto-folder">${folderIconSvg()}</span>
+      <div>
+        <div class="dashboard-result-name">${highlightHtml(folder.name, tokens)}</div>
+        ${context ? `<div class="dashboard-result-meta">${escHtml(context)}</div>` : ""}
+      </div>
+      <span class="dashboard-result-time" title="${escHtml(t("sidebar.search_folder_count_title"))}">${folder.count}</span>
+      <button class="dashboard-connect">${escHtml(t("dashboard.open_folder"))}</button>
+    </div>`;
+}
+
+function bindDashboardFolderRows(root) {
+  root.querySelectorAll("[data-search-folder]").forEach((el) => {
+    const open = () => revealSearchFolder(el.dataset.searchFolderWs, el.dataset.searchFolder);
+    el.addEventListener("click", open);
+    el.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      open();
+    });
+  });
 }
 
 function renderDashboardActivityRow(profile, lastConnectedAt) {
@@ -5719,16 +5767,196 @@ function focusDashboardSearch() {
   return true;
 }
 
+/**
+ * Lista plana clásica de candidatos (pref de agrupación desactivada):
+ * cualquier coincidencia —incluidas las que solo llegan por carpeta o nota—
+ * en orden alfabético. El modo agrupado consulta groupedConnectionSearch.
+ */
 function sidebarSearchCandidates(query = "") {
-  const q = String(query || "").trim().toLowerCase();
-  return profiles
-    .filter(connectionSearchIncludesProfile)
-    .filter((profile) => !q || profileMatchesSidebarQuery(profile, q))
+  const grouped = groupedConnectionSearch(query);
+  return [...grouped.connections, ...grouped.folderOnly, ...grouped.notes]
+    .map((match) => match.profile)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function connectionSearchIncludesProfile(profile) {
   return prefs.searchAllWorkspaces !== false || profileBelongsToActiveWorkspace(profile);
+}
+
+/**
+ * Búsqueda agrupada sobre el scope configurado (todos los workspaces o solo el
+ * activo). Incluye las carpetas manuales por workspace para que una carpeta
+ * vacía también pueda encontrarse por nombre.
+ */
+function groupedConnectionSearch(query) {
+  const scoped = profiles.filter(connectionSearchIncludesProfile);
+  const folders = [];
+  const byWorkspace = prefs.userFoldersByWorkspace || {};
+  for (const [workspaceId, paths] of Object.entries(byWorkspace)) {
+    if (prefs.searchAllWorkspaces === false && workspaceId !== getActiveWorkspaceId()) continue;
+    for (const path of paths || []) folders.push({ path, workspaceId });
+  }
+  return groupConnectionSearch({ profiles: scoped, folders, notes: notesIndex, query });
+}
+
+function workspaceDisplayName(workspaceId) {
+  return prefs.workspaces.find((w) => w.id === workspaceId)?.name || "Default";
+}
+
+/** Ruta de contexto de un resultado: workspace (si no es el activo) › carpeta. */
+function searchContextLabel(profile) {
+  const parts = [];
+  const workspaceId = profileWorkspaceId(profile);
+  if (workspaceId !== getActiveWorkspaceId()) parts.push(workspaceDisplayName(workspaceId));
+  if (profile.group) parts.push(...profile.group.split("/").filter(Boolean));
+  return parts.join(" › ");
+}
+
+/**
+ * Primer campo de la nota (título, tags, extracto) que de verdad contiene
+ * algún token: es el que se muestra como contexto para que la fila de
+ * «coincidencias en notas» enseñe la coincidencia, no un título ajeno a ella.
+ */
+function noteMatchText(note, tokens) {
+  if (!note) return "";
+  const candidates = [note.title, ...(note.tags || []), note.excerpt].filter(Boolean);
+  return candidates.find((text) => (tokens || []).some((token) => foldSearchText(text).includes(token)))
+    || note.title || note.excerpt || "";
+}
+
+/** Texto con las coincidencias envueltas en <mark class="search-hit">, ya escapado. */
+function highlightHtml(text, tokens) {
+  return matchSegments(String(text ?? ""), tokens || [])
+    .map((seg) => (seg.hit ? `<mark class="search-hit">${escHtml(seg.text)}</mark>` : escHtml(seg.text)))
+    .join("");
+}
+
+/**
+ * Resultados agrupados de la sidebar: coincidencias directas por relevancia,
+ * carpetas coincidentes como entrada única con recuento (en vez de volcar
+ * todas sus conexiones sueltas) y coincidencias en notas, cada resultado con
+ * su ruta y el texto coincidente resaltado.
+ */
+function renderSidebarSearchResults(query) {
+  const grouped = groupedConnectionSearch(query);
+  const sections = [];
+  if (grouped.connections.length) {
+    sections.push(searchSection(
+      t("sidebar.search_section_connections"),
+      grouped.connections.map((match) => renderConnectionItem(match.profile, 0, {
+        searchTokens: grouped.tokens,
+        searchContext: searchContextLabel(match.profile),
+      })).join(""),
+    ));
+  }
+  if (grouped.folders.length) {
+    sections.push(searchSection(
+      t("sidebar.search_section_folders"),
+      grouped.folders.map((folder) => renderSearchFolderRow(folder, grouped.tokens)).join(""),
+    ));
+  }
+  if (grouped.notes.length) {
+    sections.push(searchSection(
+      t("sidebar.search_section_notes"),
+      grouped.notes.map((match) => renderConnectionItem(match.profile, 0, {
+        searchTokens: grouped.tokens,
+        searchContext: searchContextLabel(match.profile),
+        searchNote: noteMatchText(notesIndex.get(match.profile.id), grouped.tokens),
+      })).join(""),
+    ));
+  }
+  if (!sections.length) {
+    return `<div class="empty-state sidebar-empty-search">${escHtml(t("sidebar.search_no_results"))}</div>`;
+  }
+  return sections.join("");
+}
+
+/**
+ * Sección de resultados dentro del contenedor role="tree": tree → group →
+ * treeitem (el mismo patrón válido que usan las folder-children del árbol).
+ * El título visual va aria-hidden porque el group ya anuncia su aria-label.
+ */
+function searchSection(label, itemsHtml) {
+  return `
+    <div role="group" aria-label="${escHtml(label)}">
+      <div class="sidebar-search-section-title" aria-hidden="true">${escHtml(label)}</div>
+      ${itemsHtml}
+    </div>`;
+}
+
+/** Ruta de contexto de una carpeta coincidente (workspace › carpetas padre). */
+function searchFolderContext(folder) {
+  const parts = [];
+  if (folder.workspaceId !== getActiveWorkspaceId()) parts.push(workspaceDisplayName(folder.workspaceId));
+  parts.push(...folder.path.split("/").filter(Boolean).slice(0, -1));
+  return parts.join(" › ");
+}
+
+function renderSearchFolderRow(folder, tokens) {
+  const context = searchFolderContext(folder);
+  return `
+    <div class="search-folder-row" role="treeitem" aria-selected="false" tabindex="0"
+         data-search-folder="${escHtml(folder.path)}"
+         data-search-folder-ws="${escHtml(folder.workspaceId)}"
+         title="${escHtml(folder.path)}">
+      <span class="folder-icon">${folderIconSvg()}</span>
+      <span class="search-folder-info">
+        <span class="search-folder-name">${highlightHtml(folder.name, tokens)}</span>
+        ${context ? `<span class="search-folder-path">${escHtml(context)}</span>` : ""}
+      </span>
+      <span class="folder-count">${folder.count}</span>
+    </div>`;
+}
+
+function bindSidebarSearchFolderRows(container) {
+  container.querySelectorAll(".search-folder-row").forEach((row) => {
+    const open = () => revealSearchFolder(row.dataset.searchFolderWs, row.dataset.searchFolder);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      open();
+    });
+  });
+}
+
+/**
+ * Salta de un resultado de búsqueda a la carpeta real: limpia los buscadores,
+ * cambia de workspace si hace falta, expande la ruta en el árbol y hace
+ * scroll hasta ella (mismo patrón que `syncSidebarToActiveSession`).
+ */
+function revealSearchFolder(workspaceId, path) {
+  if (!path) return;
+  const targetWorkspace = workspaceId || "default";
+  const sidebarSearch = document.getElementById("sidebar-search");
+  if (sidebarSearch) sidebarSearch.value = "";
+  _sidebarSearchQuery = "";
+  const dashboardSearch = document.getElementById("dashboard-search");
+  if (dashboardSearch) dashboardSearch.value = "";
+  toggleSidebarTools(false);
+
+  if (document.body.classList.contains("sidebar-collapsed")) {
+    document.body.classList.remove("sidebar-collapsed");
+    localStorage.setItem("rustty-sidebar-collapsed", "0");
+    refitVisibleTerminalsSoon();
+  }
+
+  if (prefs.sidebarViewMode === "favorites") prefs.sidebarViewMode = "current";
+  if (prefs.sidebarViewMode === "current" && getActiveWorkspaceId() !== targetWorkspace) {
+    prefs.activeWorkspaceId = targetWorkspace;
+    userFolders = new Set(getWorkspaceFolders(targetWorkspace));
+  }
+  if (prefs.sidebarViewMode === "all") openFolders.add(`__ws__/${targetWorkspace}`);
+  openFolderPath(path);
+  savePrefs();
+  renderConnectionList();
+  updateRailActiveState();
+  requestAnimationFrame(() => {
+    // Acotado al workspace destino: en vista "all" puede existir una carpeta
+    // homónima en otro workspace y el selector plano scrollearía a la primera.
+    const el = findSidebarFolderItem(document.getElementById("connection-list"), path, targetWorkspace);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
 }
 
 function refitVisibleTerminalsSoon() {
@@ -5942,12 +6170,26 @@ function profileSidebarState(profileId) {
   return { isOpen, isActiveTab, dominantState: dominant };
 }
 
-function renderConnectionItem(p, depth) {
+/**
+ * @param {{ searchTokens?: string[], searchContext?: string, searchNote?: string }} [opts]
+ *   Solo en resultados de búsqueda: tokens para resaltar coincidencias,
+ *   ruta de contexto (workspace › carpeta) y extracto de la nota coincidente.
+ */
+function renderConnectionItem(p, depth, opts = {}) {
   const { isOpen, isActiveTab, dominantState } = profileSidebarState(p.id);
   const isSelected = activeProfileId() === p.id || sidebarSelectedConnectionIds.has(p.id);
   const connType = p.connection_type || "ssh";
   const proto = connectionProtocolMeta(connType);
   const indent = 14 + depth * 12;
+  const hl = (/** @type {string} */ text) => (opts.searchTokens
+    ? highlightHtml(text, opts.searchTokens)
+    : escHtml(text));
+  const contextLine = opts.searchContext
+    ? `<div class="conn-item-context">${escHtml(opts.searchContext)}</div>`
+    : "";
+  const noteLine = opts.searchNote
+    ? `<div class="conn-item-context conn-item-context--note"><span class="conn-item-context-icon">${NOTE_ICON_SVG}</span>${hl(opts.searchNote)}</div>`
+    : "";
   const noteSummary = notesIndex.get(p.id);
   const notesBadge = noteSummary
     ? `<span class="conn-notes-badge" data-action="open-note" data-id="${p.id}" title="${escHtml(noteSummary.excerpt || t("notes.has_note"))}">${NOTE_ICON_SVG}</span>`
@@ -5973,12 +6215,13 @@ function renderConnectionItem(p, depth) {
       </div>
       <div class="conn-item-info">
         <div class="conn-item-name">
-          ${escHtml(p.name)}
+          ${hl(p.name)}
           <span class="conn-badge conn-badge-${escHtml(proto.className)}">${escHtml(proto.label)}</span>
           ${envBadgeHtml(p)}
           ${notesBadge}
         </div>
-        <div class="conn-item-host">${escHtml(p.username)}@${escHtml(p.host)}:${p.port}</div>
+        <div class="conn-item-host">${hl(p.username)}@${hl(p.host)}:${p.port}</div>
+        ${contextLine}${noteLine}
       </div>
       <div class="conn-item-actions">
         <button class="btn-icon-sm conn-fav${isFavoriteProfile(p.id) ? " on" : ""}" data-action="toggle-favorite" data-id="${p.id}" title="${escHtml(t("ctx.toggle_favorite"))}"><svg class="row-icon-svg${isFavoriteProfile(p.id) ? " filled" : ""}" aria-hidden="true"><use href="#ci-star"/></svg></button>
@@ -21765,8 +22008,9 @@ function bindUIEvents() {
       // popover de búsqueda: así la lista no se re-renderiza en el primer clic
       // y el doble clic para conectar puede completarse. El popover y el filtro
       // se cierran/limpian al conectar (connectProfile) o al clicar fuera de la
-      // lista.
-      if (e.target.closest(".conn-item")) return;
+      // lista. Los encabezados de sección y las filas de carpeta de los
+      // resultados agrupados tampoco deben descartar la búsqueda.
+      if (e.target.closest(".conn-item, .search-folder-row, .sidebar-search-section-title")) return;
       toggleSidebarTools(false);
     });
   }
@@ -21788,6 +22032,30 @@ function bindUIEvents() {
         return;
       }
       if (e.key === "Enter") {
+        if (prefs.searchGroupedResults !== false) {
+          // Mismo orden que el render: conexiones → carpetas → notas.
+          const grouped = groupedConnectionSearch(sidebarSearch.value);
+          const direct = grouped.connections[0];
+          if (direct) {
+            connectProfile(direct.profile.id);
+            toggleSidebarTools(false);
+            e.preventDefault();
+            return;
+          }
+          const folder = grouped.folders[0];
+          if (folder) {
+            revealSearchFolder(folder.workspaceId, folder.path);
+            e.preventDefault();
+            return;
+          }
+          const note = grouped.notes[0];
+          if (note) {
+            connectProfile(note.profile.id);
+            toggleSidebarTools(false);
+            e.preventDefault();
+          }
+          return;
+        }
         const first = sidebarSearchCandidates(sidebarSearch.value)[0];
         if (first) {
           connectProfile(first.id);
@@ -21875,8 +22143,18 @@ function bindUIEvents() {
   document.getElementById("dashboard-search")
     ?.addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
-      const first = getDashboardCandidates(e.currentTarget.value.trim())[0]?.profile;
-      if (first) connectProfile(first.id);
+      const query = e.currentTarget.value.trim();
+      const first = getDashboardCandidates(query)[0]?.profile;
+      if (first) {
+        connectProfile(first.id);
+        return;
+      }
+      // Sin conexiones coincidentes: mismo fallback que la sidebar, saltar a
+      // la primera carpeta coincidente del modo agrupado.
+      if (query && prefs.searchGroupedResults !== false) {
+        const folder = groupedConnectionSearch(query).folders[0];
+        if (folder) revealSearchFolder(folder.workspaceId, folder.path);
+      }
     });
   document.querySelectorAll("[data-dashboard-action]").forEach((btn) => {
     btn.addEventListener("click", () => {

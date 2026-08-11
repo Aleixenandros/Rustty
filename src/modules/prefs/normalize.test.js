@@ -49,7 +49,7 @@ describe("normalizePrefs", () => {
 
   it("sanea listas, modos y booleanos", () => {
     const p = normalizePrefs(
-      { favorites: "no", sidebarViewMode: "zzz", sidebarCompact: 1, searchAllWorkspaces: false },
+      { favorites: "no", sidebarViewMode: "zzz", sidebarCompact: 1, searchAllWorkspaces: false, searchGroupedResults: false },
       null,
       deps
     );
@@ -57,7 +57,10 @@ describe("normalizePrefs", () => {
     expect(p.sidebarViewMode).toBe("current");
     expect(p.sidebarCompact).toBe(true);
     expect(p.searchAllWorkspaces).toBe(false);
+    expect(p.searchGroupedResults).toBe(false);
     expect(p.foldersFirst).toBe(true);
+    // Sin valor guardado (o basura), la agrupación queda activada por defecto.
+    expect(normalizePrefs({}, null, deps).searchGroupedResults).toBe(true);
   });
 
   it("siembra las reglas de highlight solo cuando toca", () => {

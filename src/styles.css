@@ -870,6 +870,102 @@ body.sidebar-collapsed #sidebar-resize-handle {
   font-size: 12px;
 }
 
+/* ─── Resultados de búsqueda agrupados (sidebar) ─────────────── */
+.sidebar-search-section-title {
+  padding: 10px 14px 3px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--overlay1);
+}
+
+/* Resaltado del texto coincidente en los resultados de búsqueda. El subrayado
+   interior mantiene la marca visible sobre filas ya teñidas de amarillo
+   (estados connecting/reconnecting) donde el fondo translúcido se camufla. */
+mark.search-hit {
+  background: color-mix(in srgb, var(--yellow) 30%, transparent);
+  box-shadow: inset 0 -2px 0 var(--yellow);
+  color: inherit;
+  border-radius: 2px;
+}
+
+/* Línea de contexto de un resultado: workspace › carpeta, o nota coincidente. */
+.conn-item-context {
+  font-size: 10px;
+  color: var(--overlay1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conn-item-context--note {
+  font-style: italic;
+}
+
+.conn-item-context-icon {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+
+#connection-list.compact .conn-item-context {
+  display: none;
+}
+
+/* Carpeta coincidente como entrada única con recuento. */
+.search-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.search-folder-row:hover,
+.search-folder-row:focus-visible {
+  background: var(--row-hover-bg);
+}
+
+.search-folder-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.search-folder-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-folder-path {
+  font-size: 10px;
+  color: var(--overlay1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Densidad compacta: mismas proporciones que .conn-item / .folder-name. */
+#connection-list.compact .search-folder-row {
+  gap: 4px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+#connection-list.compact .search-folder-name {
+  font-size: 12px;
+}
+
+#connection-list.compact .search-folder-path {
+  display: none;
+}
+
 /* ─── Drag & drop en la sidebar ──────────────────────────────── */
 .conn-item.dragging,
 .folder-item.dragging {
@@ -2866,6 +2962,20 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 }
 
 .dashboard-proto.ssh { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 55%, var(--surface1)); }
+
+/* Chip de las filas de carpeta en los resultados del buscador del dashboard. */
+.dashboard-proto.dashboard-proto-folder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--yellow);
+  border-color: color-mix(in srgb, var(--yellow) 55%, var(--surface1));
+}
+
+.dashboard-proto-folder .folder-icon-svg {
+  width: 13px;
+  height: 13px;
+}
 .dashboard-proto.rdp { color: var(--peach); border-color: color-mix(in srgb, var(--peach) 55%, var(--surface1)); }
 .dashboard-proto.ftp,
 .dashboard-proto.ftps { color: var(--teal); border-color: color-mix(in srgb, var(--teal) 55%, var(--surface1)); }
