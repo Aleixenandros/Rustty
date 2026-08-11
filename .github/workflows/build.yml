@@ -486,7 +486,7 @@ jobs:
       # Va DESPUÉS de publicar a propósito: si la emisión fallara, el release ya
       # está disponible y solo queda este job en rojo, no la entrega bloqueada.
       - name: Attestation de procedencia del manifiesto
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: SHA256SUMS.txt
 
