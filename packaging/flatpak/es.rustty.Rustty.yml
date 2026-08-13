@@ -69,10 +69,10 @@ modules:
     sources:
       - type: git
         url: https://github.com/Aleixenandros/Rustty.git
-        tag: v2.1.0
+        tag: v2.2.0
         # `commit` lo rellena el workflow de publicación: Flathub exige el SHA
         # explícito para que el tag no pueda reescribirse bajo sus pies.
-        commit: PENDIENTE
+        commit: 8f65245a6d597e2f3d0a5929350846bbb7f93881
       - cargo-sources.json
       - node-sources.json
 
