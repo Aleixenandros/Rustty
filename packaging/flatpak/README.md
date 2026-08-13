@@ -150,16 +150,59 @@ flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
 Esto lo hace una persona con la cuenta de GitHub del proyecto; no está
 automatizado y no debería estarlo.
 
-1. Fork de [`flathub/flathub`](https://github.com/flathub/flathub) y rama a
-   partir de **`new-pr`** (no de `master`).
-2. Deja en la raíz de esa rama: `es.rustty.Rustty.yml`, `cargo-sources.json` y
-   `node-sources.json`.
-3. Abre el PR **contra la rama `new-pr`**. El bot construye y comenta el
-   resultado; los revisores preguntarán por los permisos —`--filesystem=home` y
-   `org.freedesktop.Flatpak` son los dos que siempre se discuten—, y las
-   justificaciones de arriba son la respuesta.
-4. Al aceptarse, Flathub crea `github.com/flathub/es.rustty.Rustty` e invita a
-   la cuenta como mantenedora.
+**Requisito previo:** la cuenta de GitHub necesita **2FA activo**. Al aprobarse
+el envío, Flathub manda una invitación de escritura que caduca en una semana y
+que no se puede aceptar sin doble factor.
+
+### 1. Preparar los ficheros
+
+El manifest debe apuntar al tag publicado, con su SHA explícito, y las fuentes
+offline tienen que salir de los lockfiles de **ese** tag:
+
+```bash
+scripts/flatpak-gen-sources.sh
+# y en el manifest: tag: vX.Y.Z + commit: $(git rev-list -n1 vX.Y.Z)
+```
+
+### 2. Validar como lo hará su CI
+
+`flathub-build` aplica las mismas comprobaciones que el bot de Flathub, así que
+lo que pase aquí pasa allí:
+
+```bash
+flatpak run --command=flathub-build org.flatpak.Builder es.rustty.Rustty.yml
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest es.rustty.Rustty.yml
+```
+
+### 3. Abrir el PR
+
+```bash
+# Fork de https://github.com/flathub/flathub/fork
+# IMPORTANTE: desmarcar «Copy the master branch only», o no habrá rama `new-pr`.
+git clone --branch=new-pr git@github.com:<tu-usuario>/flathub.git && cd flathub
+git checkout -b add-es-rustty-rustty new-pr
+```
+
+En la raíz van **cuatro** ficheros: `es.rustty.Rustty.yml`,
+`cargo-sources.json`, `node-sources.json` y `modules/libayatana-appindicator.yml`.
+El `.desktop`, el `metainfo.xml` y los iconos **no**: los toma `flatpak-builder`
+del propio checkout de Rustty (la fuente `git` del módulo principal).
+
+El PR va **contra la rama `new-pr`**, nunca contra `master`, y se titula
+`Add es.rustty.Rustty`. No hay que mergear `master` en la rama en ningún
+momento. Para lanzar una build de prueba, comentar `bot, build` en el PR.
+
+### 4. La revisión
+
+Los dos permisos que se discuten siempre son `--filesystem=home` y
+`--talk-name=org.freedesktop.Flatpak`; las justificaciones están más arriba en
+este documento y en los comentarios del manifest.
+
+Al aceptarse, Flathub crea `github.com/flathub/es.rustty.Rustty` e invita a la
+cuenta como mantenedora. **Después** hay que dar de alta el secreto
+`FLATHUB_TOKEN` en este repositorio para que
+[`flathub.yml`](../../.github/workflows/flathub.yml) publique las siguientes
+versiones solo.
 
 ## Publicar cada nueva versión (ya automatizado)
 
