@@ -81,7 +81,7 @@ fontdb = "0.23"
 # en formato estándar. `chrono` para timestamps de los items con LWW.
 # `reqwest` con rustls (sin openssl) para WebDAV/APIs cloud. `urlencoding`
 # para escapar rutas/queries y `sha2`/`base64` para PKCE OAuth.
-age = "0.11"
+age = "0.12"
 # gzip del JSON del estado ANTES de cifrar: `age` no comprime y el estado
 # (perfiles + temas + notas) crece rápido. La lectura acepta ambos formatos
 # (el gzip se detecta por su magic tras descifrar); ya estaba en el árbol
