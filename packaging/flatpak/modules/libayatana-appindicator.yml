@@ -14,6 +14,11 @@ name: libayatana-appindicator
 buildsystem: cmake-ninja
 config-opts:
   - -DCMAKE_BUILD_TYPE=Release
+  # Sin esto, CMake instala en `/app/lib64` en x86_64 y el módulo siguiente no
+  # encuentra el `.pc` del anterior, que busca en `/app/lib/pkgconfig`. No se
+  # nota con el `flatpak-builder` moderno —fija el libdir por su cuenta— pero sí
+  # con el 1.2.2 de Ubuntu 22.04, que es el que usa el CI del bundle.
+  - -DCMAKE_INSTALL_LIBDIR=lib
   - -DENABLE_BINDINGS_MONO=OFF
   - -DENABLE_BINDINGS_VALA=OFF
   - -DENABLE_TESTS=OFF
@@ -95,6 +100,7 @@ modules:
     buildsystem: cmake-ninja
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib
       - -DENABLE_TESTS=OFF
       - -DENABLE_COVERAGE=OFF
     sources:
@@ -109,6 +115,7 @@ modules:
     buildsystem: cmake-ninja
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_LIBDIR=lib
       - -DENABLE_TESTS=OFF
       - -DENABLE_COVERAGE=OFF
     sources:
