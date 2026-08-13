@@ -1,37 +1,107 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream de Rustty para Flathub.
+
+  El idioma por defecto es el inglés (lo que ve quien no tenga traducción) y el
+  español va en `xml:lang="es"`. Al revés, Flathub mostraría castellano a todo
+  el mundo.
+
+  Valídalo antes de publicar:
+    flatpak run org.freedesktop.appstream-glib validate es.rustty.Rustty.metainfo.xml
+-->
 <component type="desktop-application">
   <id>es.rustty.Rustty</id>
   <name>Rustty</name>
-  <summary>Cliente de acceso remoto multiplataforma (SSH/SFTP/RDP)</summary>
+
+  <summary>SSH, SFTP and RDP client</summary>
+  <summary xml:lang="es">Cliente de SSH, SFTP y RDP</summary>
+
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>Apache-2.0</project_license>
+
   <developer id="es.rustty">
     <name>Aleixenandros</name>
   </developer>
 
   <description>
     <p>
-      Rustty es un cliente de acceso remoto de escritorio escrito en Rust y Tauri 2.
-      Permite gestionar sesiones SSH interactivas, transferencias SFTP con cola y
-      reanudación, conexiones RDP (vía cliente externo) y consolas locales.
+      Rustty is a desktop remote access client written in Rust. It manages
+      interactive SSH sessions, SFTP transfers with a resumable queue, RDP
+      connections through an external client, and local consoles — all from a
+      single window with tabs and split panes.
     </p>
-    <p>Características principales:</p>
+    <p xml:lang="es">
+      Rustty es un cliente de acceso remoto de escritorio escrito en Rust.
+      Gestiona sesiones SSH interactivas, transferencias SFTP con cola y
+      reanudación, conexiones RDP mediante cliente externo y consolas locales,
+      todo desde una única ventana con pestañas y paneles divididos.
+    </p>
+    <p>Main features:</p>
+    <p xml:lang="es">Características principales:</p>
+    <!--
+      La lista va una sola vez: AppStream traduce cada `li` por separado, no el
+      `ul` entero (traducirlo como bloque es error de validación).
+    -->
     <ul>
-      <li>Backend SSH/SFTP puro en Rust (russh / russh-sftp), sin libssh2.</li>
-      <li>Soporte de ProxyJump (bastion / jump host) con TOFU independiente.</li>
-      <li>Túneles SSH locales, remotos y dinámicos (SOCKS) por sesión.</li>
-      <li>Panel SFTP con vista local/remoto, drag &amp; drop y cola de transferencias.</li>
-      <li>Sincronización opcional en la nube (Google Drive, iCloud, WebDAV, NAS) cifrada end-to-end.</li>
-      <li>Más de 230 temas precargados y editor visual de paletas.</li>
-      <li>Soporte de KeePass (.kdbx) y keyring del sistema para credenciales.</li>
+      <li>Pure Rust SSH and SFTP backend (russh / russh-sftp), no libssh2.</li>
+      <li xml:lang="es">Backend SSH/SFTP puro en Rust (russh / russh-sftp), sin libssh2.</li>
+      <li>ProxyJump support (bastion / jump host) with its own host key verification.</li>
+      <li xml:lang="es">Soporte de ProxyJump (bastion / jump host) con verificación de host key propia.</li>
+      <li>Local, remote and dynamic (SOCKS) SSH tunnels per session.</li>
+      <li xml:lang="es">Túneles SSH locales, remotos y dinámicos (SOCKS) por sesión.</li>
+      <li>SFTP panel with local and remote views, drag and drop, and a transfer queue.</li>
+      <li xml:lang="es">Panel SFTP con vista local y remota, arrastrar y soltar, y cola de transferencias.</li>
+      <li>Native tmux control mode: remote windows and panes become real tabs and panes.</li>
+      <li xml:lang="es">Modo control de tmux nativo: las ventanas y paneles remotos son pestañas y paneles reales.</li>
+      <li>Per-session resource monitor: CPU, memory and processes without installing an agent.</li>
+      <li xml:lang="es">Monitor de recursos por sesión: CPU, memoria y procesos sin instalar ningún agente.</li>
+      <li>Optional end-to-end encrypted cloud sync (Google Drive, iCloud, WebDAV, NAS).</li>
+      <li xml:lang="es">Sincronización opcional en la nube cifrada de extremo a extremo (Google Drive, iCloud, WebDAV, NAS).</li>
+      <li>Over 230 bundled themes and a visual palette editor.</li>
+      <li xml:lang="es">Más de 230 temas precargados y editor visual de paletas.</li>
+      <li>KeePass (.kdbx) files and the system keyring for credentials.</li>
+      <li xml:lang="es">Archivos KeePass (.kdbx) y keyring del sistema para las credenciales.</li>
     </ul>
   </description>
 
   <launchable type="desktop-id">es.rustty.Rustty.desktop</launchable>
 
+  <!--
+    Flathub descarga estas imágenes de la URL, no del paquete: tienen que
+    apuntar a una referencia inmutable (un tag), nunca a una rama.
+  -->
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/Aleixenandros/Rustty/v2.2.0/images/Captura1.png</image>
+      <caption>Connection list and start screen</caption>
+      <caption xml:lang="es">Lista de conexiones y pantalla de inicio</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Aleixenandros/Rustty/v2.2.0/images/Captura5.png</image>
+      <caption>Several terminals as tabs and split panes</caption>
+      <caption xml:lang="es">Varios terminales como pestañas y paneles divididos</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Aleixenandros/Rustty/v2.2.0/images/Captura4.png</image>
+      <caption>Theme picker for the interface and the terminal</caption>
+      <caption xml:lang="es">Selector de tema de la interfaz y del terminal</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Aleixenandros/Rustty/v2.2.0/images/Captura3.png</image>
+      <caption>Preferences, with the interface available in five languages</caption>
+      <caption xml:lang="es">Preferencias, con la interfaz disponible en cinco idiomas</caption>
+    </screenshot>
+  </screenshots>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#eff1f5</color>
+    <color type="primary" scheme_preference="dark">#1e1e2e</color>
+  </branding>
+
   <url type="homepage">https://rustty.es</url>
   <url type="bugtracker">https://github.com/Aleixenandros/Rustty/issues</url>
   <url type="vcs-browser">https://github.com/Aleixenandros/Rustty</url>
+  <url type="contact">https://github.com/Aleixenandros/Rustty/issues</url>
 
   <categories>
     <category>Network</category>
@@ -39,22 +109,70 @@
     <category>System</category>
   </categories>
 
+  <keywords>
+    <keyword>SSH</keyword>
+    <keyword>SFTP</keyword>
+    <keyword>RDP</keyword>
+    <keyword>terminal</keyword>
+    <keyword>tmux</keyword>
+  </keywords>
+
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+
+  <requires>
+    <display_length compare="ge">800</display_length>
+  </requires>
+
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="1.12.0" date="2026-05-27">
+    <release version="2.2.0" date="2026-08-13">
       <description>
-        <p>Autocompletado de rutas y creación de archivos en el panel SFTP. Cierre automático del panel al desconectar y nuevo icono de ojo para la contraseña.</p>
+        <p>
+          Ready for Flathub, with the system tray bundled so it works the same
+          as in every other package. Fixed the SFTP panel failing to open from
+          an SSH session.
+        </p>
+        <p xml:lang="es">
+          Lista para Flathub, con la bandeja del sistema incluida para que
+          funcione igual que en el resto de formatos. Corregido el panel SFTP,
+          que fallaba al abrirse desde una sesión SSH.
+        </p>
       </description>
     </release>
-    <release version="1.10.1" date="2026-05-26">
+    <release version="2.1.0" date="2026-08-11">
       <description>
-        <p>Fix del aviso de host key cambiada (incluye rotación de algoritmo). Zoom de terminal con Ctrl+Rueda.</p>
+        <p>
+          Connection search now groups results by relevance: matching folders
+          appear as a single entry with a count that jumps to the tree, and each
+          result shows its path and why it matched.
+        </p>
+        <p xml:lang="es">
+          La búsqueda de conexiones agrupa por relevancia: las carpetas
+          coincidentes salen como una entrada con recuento que salta al árbol, y
+          cada resultado enseña su ruta y por qué coincide.
+        </p>
       </description>
     </release>
-    <release version="1.10.0" date="2026-05-26">
+    <release version="2.0.1" date="2026-08-09">
       <description>
-        <p>Ligaduras tipográficas, perfiles de atajos (Vim/Tmux), botón de búsqueda en la sidebar y confirmaciones destructivas tipadas.</p>
+        <p>Fixed the update check, which failed right when a new version was available.</p>
+        <p xml:lang="es">Arreglada la comprobación de actualizaciones, que fallaba justo cuando había versión nueva.</p>
+      </description>
+    </release>
+    <release version="2.0.0" date="2026-08-09">
+      <description>
+        <p>
+          The server's tmux session now lives as native tabs and panes, with
+          persistence, reattach with scrollback, and a single authentication.
+        </p>
+        <p xml:lang="es">
+          La sesión tmux del servidor vive como pestañas y paneles nativos, con
+          persistencia, reenganche con historia y una sola autenticación.
+        </p>
       </description>
     </release>
   </releases>

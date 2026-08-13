@@ -3422,7 +3422,31 @@ async function platformSupportsUpdater() {
   return false;
 }
 
+/** Caché de `runningInFlatpak`: no cambia en toda la sesión. */
+let _isFlatpak = null;
+
+/**
+ * Dentro de Flatpak la versión instalada la gobierna el remote (Flathub), no
+ * las releases de GitHub: comprobar allí llevaría al usuario a descargar un
+ * paquete distinto del que tiene.
+ * @returns {Promise<boolean>}
+ */
+async function runningInFlatpak() {
+  if (_isFlatpak === null) {
+    try {
+      _isFlatpak = await invoke("is_flatpak");
+    } catch {
+      _isFlatpak = false;
+    }
+  }
+  return _isFlatpak;
+}
+
 async function checkForUpdates({ interactive = true } = {}) {
+  if (await runningInFlatpak()) {
+    if (interactive) setAboutUpdateStatus(t("prefs_about.update_flatpak_managed"));
+    return;
+  }
   if (await platformSupportsUpdater()) {
     const handled = await checkForUpdatesViaUpdater({ interactive });
     if (handled) return;
@@ -17463,6 +17487,12 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
       local: { key: "name", direction: "asc" },
       remote: { key: "name", direction: "asc" },
     },
+    // Igual que `entries` y `sort`: estado por lado, creado aquí y no a la
+    // primera navegación. Cuando se creaba tarde, abrir SFTP desde una sesión
+    // SSH reventaba con «undefined is not an object»: la primera navegación
+    // remota escribía en `history[side]` antes de que nada hubiera creado el
+    // contenedor.
+    history: { local: createPathHistory(), remote: createPathHistory() },
     transfers: new Map(),
     transferQueue: [],
     transferProcessing: false,
@@ -18470,15 +18500,32 @@ async function navigateSftpLocal(sessionId, path, { record = true } = {}) {
 
 // ─── Historial y migas de navegación del panel SFTP ─────────────────────────
 
-/** Historial del lado pedido, creándolo la primera vez. */
+/**
+ * Historial del lado pedido. El contenedor lo crea `openSftpPanel` junto al
+ * resto del estado; esta red de seguridad cubre un `s.sftp` construido por otra
+ * vía, para que la navegación nunca sea la que descubra que falta.
+ */
 function sftpHistory(s, side) {
   s.sftp.history = s.sftp.history || { local: createPathHistory(), remote: createPathHistory() };
   return s.sftp.history[side];
 }
 
+/**
+ * Reemplaza el historial de un lado.
+ *
+ * Existe para que nadie vuelva a escribir `s.sftp.history[side] = f(sftpHistory(…))`:
+ * en esa forma JavaScript resuelve el destino **antes** de llamar a la derecha,
+ * así que la función que crea el contenedor llegaba tarde y la asignación
+ * explotaba contra `undefined`.
+ */
+function setSftpHistory(s, side, history) {
+  sftpHistory(s, side);
+  s.sftp.history[side] = history;
+}
+
 /** Apunta una ruta recién abierta y refresca los botones Atrás/Adelante. */
 function recordSftpPath(s, side, path, record) {
-  if (record) s.sftp.history[side] = pushPath(sftpHistory(s, side), path);
+  if (record) setSftpHistory(s, side, pushPath(sftpHistory(s, side), path));
   updateSftpNavButtons(s.sftp.panel, s, side);
 }
 
@@ -18486,7 +18533,7 @@ function recordSftpPath(s, side, path, record) {
 function forgetSftpPath(sessionId, side, path) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
-  s.sftp.history[side] = dropPath(sftpHistory(s, side), path);
+  setSftpHistory(s, side, dropPath(sftpHistory(s, side), path));
   updateSftpNavButtons(s.sftp.panel, s, side);
 }
 
@@ -18506,7 +18553,7 @@ function navigateSftpHistory(sessionId, side, direction) {
   const move = direction === "back" ? goBackPath : goForwardPath;
   const { history, path } = move(sftpHistory(s, side));
   if (!path) return;
-  s.sftp.history[side] = history;
+  setSftpHistory(s, side, history);
   // `record: false`: este movimiento navega **por** el historial, no lo amplía.
   if (side === "local") navigateSftpLocal(sessionId, path, { record: false });
   else navigateSftpRemote(sessionId, path, { record: false });

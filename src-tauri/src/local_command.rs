@@ -228,7 +228,9 @@ fn read_capped<R: Read>(mut reader: R, cap: usize) -> (Vec<u8>, bool) {
 /// y stdin cerrado (no es interactivo: un comando que pregunte no debe quedarse
 /// esperando a un teclado que no existe).
 fn spawn_shell(command: &str) -> std::io::Result<std::process::Child> {
-    use std::process::{Command, Stdio};
+    #[cfg(windows)]
+    use std::process::Command;
+    use std::process::Stdio;
     #[cfg(windows)]
     let mut cmd = {
         let mut c = Command::new("cmd");
@@ -241,10 +243,19 @@ fn spawn_shell(command: &str) -> std::io::Result<std::process::Child> {
     };
     #[cfg(not(windows))]
     let mut cmd = {
-        let mut c = Command::new("sh");
+        // Bajo Flatpak el comando se ejecuta en el host: el catálogo es «su
+        // shell», y las órdenes que el usuario guarda (`ping`, `scp`, abrir su
+        // editor…) son herramientas de su sistema, no del runtime.
+        let mut c = crate::sandbox::host_command("sh", crate::sandbox::HostSpawn::default());
         c.arg("-c").arg(command);
         // Grupo de procesos propio: así la señal de terminación alcanza también
         // a los nietos (pipelines, procesos en segundo plano del shell).
+        //
+        // Dentro del sandbox el grupo es el de `flatpak-spawn`, no el del árbol
+        // real: la terminación llega porque `flatpak-spawn` reenvía la señal al
+        // proceso del host, y `--watch-bus` lo mata igualmente si Rustty muere.
+        // Un nieto que el shell haya dejado suelto en el host puede sobrevivir
+        // a la cancelación; fuera de Flatpak el comportamiento es el de antes.
         use std::os::unix::process::CommandExt;
         c.process_group(0);
         c

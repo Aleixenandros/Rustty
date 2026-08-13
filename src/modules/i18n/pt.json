@@ -1476,6 +1476,7 @@
     "checking_updates": "A verificar…",
     "update_available": "Nova versão {version} disponível",
     "update_current": "Rustty está atualizado",
+    "update_flatpak_managed": "As atualizações são geridas pelo Flatpak: usa a tua loja de software ou «flatpak update».",
     "update_error": "Não foi possível verificar",
     "open_release": "Há uma nova versão ({version}). Abrir a página de downloads?",
     "update_install_prompt": "Nova versão {version} disponível. Descarregar e instalar agora?",

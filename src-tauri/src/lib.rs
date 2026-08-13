@@ -37,6 +37,7 @@ mod rdp_manager;
 mod ssh_fixture;
 #[cfg(all(test, target_os = "linux"))]
 mod webdav_fixture;
+mod sandbox;
 mod scripts;
 mod sftp_manager;
 mod ssh_manager;
@@ -253,6 +254,7 @@ pub fn run() {
             commands::autostart_is_enabled,
             commands::is_launched_minimized,
             commands::is_appimage,
+            commands::is_flatpak,
             app_tray::tray_update_quick_launcher,
             // ── Perfiles de conexión
             commands::get_profiles,

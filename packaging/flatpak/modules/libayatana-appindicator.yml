@@ -1,0 +1,121 @@
+# Bandeja del sistema para los dos manifests de Rustty.
+#
+# El runtime de GNOME no trae AppIndicator, y `libappindicator-sys` (que llega
+# vía el crate `tray-icon` de Tauri) **entra en pánico** cuando el `dlopen`
+# falla: no es que la bandeja se pierda, es que la aplicación muere al arrancar.
+#
+# Se compila la cadena entera como submódulos, en orden:
+#   libdbusmenu → ayatana-ido → libayatana-indicator → libayatana-appindicator
+#
+# Todo va sin estáticas, sin documentación, sin tests y sin bindings de Vala o
+# Mono: dentro del sandbox no hay red para las herramientas que esas partes
+# arrastran, y no aportan nada a un binario que solo hace `dlopen`.
+name: libayatana-appindicator
+buildsystem: cmake-ninja
+config-opts:
+  - -DCMAKE_BUILD_TYPE=Release
+  - -DENABLE_BINDINGS_MONO=OFF
+  - -DENABLE_BINDINGS_VALA=OFF
+  - -DENABLE_TESTS=OFF
+  - -DENABLE_COVERAGE=OFF
+  # La documentación viene activada por defecto y su paso `scangobj` enlaza un
+  # binario de prueba contra las tres bibliotecas anteriores, que aún no están
+  # en la ruta del enlazador; falla ahí, con la biblioteca ya compilada. No
+  # aporta nada a un `dlopen`, así que se apaga.
+  - -DENABLE_GTKDOC=OFF
+sources:
+  - type: archive
+    url: https://github.com/AyatanaIndicators/libayatana-appindicator/archive/refs/tags/0.5.94.tar.gz
+    sha256: 884a6bc77994c0b58c961613ca4c4b974dc91aa0f804e70e92f38a542d0d0f90
+cleanup:
+  - /include
+  - "*.la"
+
+modules:
+  # Herramienta de build, no llega al paquete final (`cleanup: "*"`). El
+  # `configure` de libdbusmenu la exige (`IT_PROG_INTLTOOL`) y el SDK no la
+  # trae; Perl y XML::Parser, sus únicas dependencias, sí están.
+  - name: intltool
+    cleanup:
+      - "*"
+    sources:
+      - type: archive
+        url: https://launchpad.net/intltool/trunk/0.51.0/+download/intltool-0.51.0.tar.gz
+        sha256: 67c74d94196b153b774ab9f89b2fa6c6ba79352407037c8c14d5aeb334e959cd
+        # Mismo motivo que en libdbusmenu: Launchpad no siempre es alcanzable.
+        mirror-urls:
+          - https://deb.debian.org/debian/pool/main/i/intltool/intltool_0.51.0.orig.tar.gz
+
+  - name: libdbusmenu
+    buildsystem: autotools
+    config-opts:
+      - --disable-static
+      - --disable-dumper
+      - --disable-gtk-doc
+      - --disable-vala
+      - --enable-introspection=no
+      - --with-gtk=3
+      # OJO: **nada de `--disable-tests`**. El `configure.ac` define
+      # `AM_CONDITIONAL([HAVE_VALGRIND])` dentro del `AS_IF` de los tests, así
+      # que al desactivarlos la condicional nunca se define y `configure` aborta
+      # con «conditional "HAVE_VALGRIND" was never defined». Es un fallo de
+      # upstream. Los tests se compilan pero no se ejecutan (nadie llama a `make
+      # check`), y sus tres dependencias —json-glib, gio-unix y valgrind— ya
+      # vienen en el SDK de GNOME.
+    build-options:
+      # El tarball es de 2016: compilarlo con un GCC actual saca avisos que
+      # `-Werror` convertiría en errores.
+      env:
+        CFLAGS: -Wno-error
+    sources:
+      # Tiene que ser **este** tarball, el de release de Launchpad: trae el
+      # `configure` ya generado. Los `orig.tar` de Debian y Ubuntu son
+      # instantáneas de bzr sin `configure`, y regenerarlo aquí no es viable —el
+      # `configure.ac` usa macros que autoconf ya retiró (`AC_ISC_POSIX`,
+      # `AM_CONFIG_HEADER`, `AC_PROG_LIBTOOL`) y pide `intltoolize` y
+      # `gtkdocize`, que el SDK de GNOME no incluye—.
+      #
+      # El mirror es el lookaside de Fedora, que sirve el fichero idéntico
+      # (mismo sha256). Hace falta porque `launchpad.net` responde con un 303
+      # hacia `launchpadlibrarian.net`, y ese host se queda a 0 B/s en algunas
+      # redes; `flatpak-builder` aborta a los 60 s.
+      - type: archive
+        url: https://launchpad.net/libdbusmenu/16.04/16.04.0/+download/libdbusmenu-16.04.0.tar.gz
+        sha256: b9cc4a2acd74509435892823607d966d424bd9ad5d0b00938f27240a1bfa878a
+        mirror-urls:
+          - https://pkgs.fedoraproject.org/repo/pkgs/libdbusmenu/libdbusmenu-16.04.0.tar.gz/3c05d53053b3ea69384b5f93d7a4c7c4/libdbusmenu-16.04.0.tar.gz
+    cleanup:
+      - /include
+      - /libexec
+      - /share/doc
+      - /share/gtk-doc
+      - "*.la"
+
+  - name: ayatana-ido
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DENABLE_TESTS=OFF
+      - -DENABLE_COVERAGE=OFF
+    sources:
+      - type: archive
+        url: https://github.com/AyatanaIndicators/ayatana-ido/archive/refs/tags/0.10.4.tar.gz
+        sha256: bd59abd5f1314e411d0d55ce3643e91cef633271f58126be529de5fb71c5ab38
+    cleanup:
+      - /include
+      - "*.la"
+
+  - name: libayatana-indicator
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DENABLE_TESTS=OFF
+      - -DENABLE_COVERAGE=OFF
+    sources:
+      - type: archive
+        url: https://github.com/AyatanaIndicators/libayatana-indicator/archive/refs/tags/0.9.4.tar.gz
+        sha256: a18d3c682e29afd77db24366f8475b26bda22b0e16ff569a2ec71cd6eb4eac95
+    cleanup:
+      - /include
+      - /libexec
+      - "*.la"

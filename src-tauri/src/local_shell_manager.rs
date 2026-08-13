@@ -4,7 +4,7 @@ use std::sync::{mpsc, Arc, Mutex};
 
 use crate::locks::MutexExt;
 
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{native_pty_system, PtySize};
 use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter};
 
@@ -68,8 +68,19 @@ impl LocalShellManager {
             })
             .map_err(|e| format!("Error al abrir PTY: {e}"))?;
 
+        // cwd inicial: la ruta configurada si existe como directorio; en otro
+        // caso (vacía, inexistente o no es carpeta) caemos a la carpeta personal.
+        let resolved_cwd = cwd
+            .filter(|p| !p.trim().is_empty())
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_dir())
+            .or_else(dirs::home_dir);
+
         let shell = get_default_shell();
-        let mut cmd = CommandBuilder::new(&shell);
+        // Dentro de Flatpak el shell nace en el host (`flatpak-spawn --host`):
+        // el del contenedor no tiene los dotfiles ni las herramientas del
+        // usuario. Fuera del sandbox esto es un `CommandBuilder` normal.
+        let mut cmd = crate::sandbox::host_pty_command(&shell, resolved_cwd.as_deref());
         cmd.env("TERM", "xterm-256color");
         // Color verdadero en apps que lo detectan por COLORTERM (vim, bat, delta…).
         cmd.env("COLORTERM", "truecolor");
@@ -84,17 +95,6 @@ impl LocalShellManager {
             cmd.env("LANG", "C.UTF-8");
             cmd.env("LC_CTYPE", "C.UTF-8");
         }
-        // cwd inicial: la ruta configurada si existe como directorio; en otro
-        // caso (vacía, inexistente o no es carpeta) caemos a la carpeta personal.
-        let resolved_cwd = cwd
-            .filter(|p| !p.trim().is_empty())
-            .map(std::path::PathBuf::from)
-            .filter(|p| p.is_dir())
-            .or_else(dirs::home_dir);
-        if let Some(dir) = resolved_cwd {
-            cmd.cwd(dir);
-        }
-
         let mut child = pair
             .slave
             .spawn_command(cmd)
@@ -267,13 +267,15 @@ fn get_default_shell() -> String {
     }
     #[cfg(not(windows))]
     {
-        // `$SHELL` es el login shell real del usuario; caemos a bash y luego a
-        // sh para no quedarnos sin consola en sistemas mínimos.
-        if let Ok(shell) = std::env::var("SHELL") {
-            if !shell.is_empty() {
-                return shell;
-            }
+        // `$SHELL` es el login shell real del usuario. Dentro de Flatpak esa
+        // variable describe el contenedor, así que `host_login_shell` la
+        // sustituye por la del sistema anfitrión (`getent passwd`).
+        if let Some(shell) = crate::sandbox::host_login_shell() {
+            return shell;
         }
+        // Caemos a bash y luego a sh para no quedarnos sin consola en sistemas
+        // mínimos. Bajo Flatpak estas rutas son las del runtime, pero solo se
+        // llega aquí si la consulta al host ya ha fallado.
         for candidate in ["/bin/bash", "/bin/sh"] {
             if std::path::Path::new(candidate).exists() {
                 return candidate.to_string();
@@ -303,6 +305,12 @@ fn find_in_path(exe: &str) -> bool {
 /// En Windows devolvemos siempre `false`: la detección de hijos de un proceso
 /// PTY requeriría toolhelp32 o WMI, lo que añade complejidad innecesaria.
 /// El comportamiento de Windows queda documentado aquí como limitación conocida.
+///
+/// Bajo Flatpak la respuesta también es siempre `false`: el hijo del PTY es
+/// `flatpak-spawn`, y el shell real vive en el espacio de PIDs del host, que
+/// `pgrep` no alcanza desde el sandbox. Es la misma degradación conservadora
+/// que en Windows —no se avisa de procesos activos al cerrar la consola—, no
+/// un cierre forzado de nada.
 #[cfg(unix)]
 fn has_child_processes(pid: u32) -> bool {
     match std::process::Command::new("pgrep")

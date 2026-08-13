@@ -1,55 +1,107 @@
-# Manifest mínimo de Flatpak para Rustty.
+# Manifest de Flatpak para Rustty — apto para Flathub.
 #
-# Estrategia: parte del binario y los assets ya compilados por tauri-action
-# (no recompila Rust dentro del sandbox). El CI los coloca en este directorio
-# antes de invocar `flatpak-builder`. Este enfoque NO cumple las reglas de
-# Flathub (reproducibilidad sin red, fuentes verificables); cuando llegue
-# ese momento migraremos a un manifest con `flatpak-cargo-generator` y
-# `flatpak-node-generator`.
+# Compila **desde fuente y sin red**, como exige Flathub: las dependencias de
+# Cargo y de npm entran como fuentes declaradas (`cargo-sources.json` y
+# `node-sources.json`), generadas por `scripts/flatpak-gen-sources.sh` a partir
+# de `Cargo.lock` y `package-lock.json`.
+#
+# Runtime: `org.gnome.Platform`, no `org.freedesktop.Platform`. Tauri 2 en Linux
+# enlaza contra `libwebkit2gtk-4.1`, que solo trae el runtime de GNOME; sobre el
+# de freedesktop la app compila pero no arranca.
+#
+# El emparejamiento de versiones no es libre: GNOME 50 se apoya en freedesktop
+# 25.08, así que las extensiones del SDK van en esa misma serie. La de
+# `rust-stable//25.08` trae Rust 1.97.1, compatible con el 1.97.0 que fija
+# `src-tauri/rust-toolchain.toml` (dentro del sandbox no hay rustup que instale
+# el canal exacto, así que el toolchain lo pone la extensión).
 app-id: es.rustty.Rustty
-runtime: org.freedesktop.Platform
-runtime-version: "24.08"
-sdk: org.freedesktop.Sdk
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node24
 command: rustty
 
 finish-args:
-  # Red para SSH/SFTP/RDP/sync; sandbox de IPC para clipboard y portales.
-  - --share=ipc
+  # Red: es toda la razón de ser de la app (SSH, SFTP, RDP, FTP, sincronización).
   - --share=network
+  - --share=ipc
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
-  # KeePass, claves SSH, known_hosts → necesitan acceso al $HOME del usuario.
-  - --filesystem=home
-  # Acceso al keyring (gnome-keyring / kwallet) para guardar contraseñas.
+  # Portapapeles y notificaciones del sistema.
+  - --talk-name=org.freedesktop.Notifications
+  # Keyring del sistema para las contraseñas guardadas (GNOME Keyring / KWallet).
   - --talk-name=org.freedesktop.secrets
   - --talk-name=org.kde.kwalletd5
   - --talk-name=org.kde.kwalletd6
-  # Notificaciones del sistema (transferencias SFTP completas, errores).
-  - --talk-name=org.freedesktop.Notifications
-  # Portales para abrir URLs externas (web-links addon de xterm).
-  - --talk-name=org.freedesktop.portal.OpenURI
-  - --talk-name=org.freedesktop.portal.Desktop
-  # XDG dialogs (open/save) — portales de freedesktop.
-  - --talk-name=org.freedesktop.portal.FileChooser
+  # Acceso al $HOME: un cliente SSH necesita las claves y la configuración que
+  # el usuario ya tiene fuera de la app —`~/.ssh/id_*`, `~/.ssh/known_hosts`,
+  # `~/.ssh/config`, bases KeePass `.kdbx`— y el panel SFTP transfiere archivos
+  # arbitrarios en ambos sentidos. Los portales no sirven aquí: `known_hosts` se
+  # lee y reescribe sin intervención del usuario en cada conexión, y la cola de
+  # transferencias abre decenas de rutas por sesión.
+  - --filesystem=home
+  # `flatpak-spawn --host`: la consola local y los clientes externos (xfreerdp,
+  # visor VNC, telnet) son programas del sistema del usuario, no del runtime.
+  # Un cliente de terminal que abriera el `sh` del contenedor —sin sus dotfiles
+  # ni sus herramientas— no cumpliría su función. Es la misma vía que usan los
+  # emuladores de terminal ya publicados en Flathub (Ptyxis, Black Box).
+  - --talk-name=org.freedesktop.Flatpak
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node24/bin
+  env:
+    CARGO_HOME: /run/build/rustty/cargo
+    # `vendored-openssl` y demás crates que compilan C respetan estas rutas.
+    CARGO_NET_OFFLINE: "true"
 
 modules:
+  # Bandeja del sistema: sin AppIndicator la app **entra en pánico** al
+  # arrancar (`libappindicator-sys` no maneja el fallo del `dlopen`). El módulo
+  # es compartido con el manifest del bundle, para que no puedan divergir.
+  - modules/libayatana-appindicator.yml
+
+  # ── Rustty ──────────────────────────────────────────────────────
   - name: rustty
     buildsystem: simple
     sources:
-      - type: file
-        path: rustty
-      - type: file
-        path: icon-512.png
-      - type: file
-        path: es.rustty.Rustty.desktop
+      - type: git
+        url: https://github.com/Aleixenandros/Rustty.git
+        tag: v2.1.0
+        # `commit` lo rellena el workflow de publicación: Flathub exige el SHA
+        # explícito para que el tag no pueda reescribirse bajo sus pies.
+        commit: PENDIENTE
+      - cargo-sources.json
+      - node-sources.json
+
     build-commands:
-      - install -Dm755 rustty /app/bin/rustty
-      - install -Dm644 icon-512.png /app/share/icons/hicolor/512x512/apps/es.rustty.Rustty.png
-      - install -Dm644 es.rustty.Rustty.desktop /app/share/applications/es.rustty.Rustty.desktop
-      # NOTA: el `metainfo.xml` queda fuera a propósito hasta que migremos a
-      # `org.flatpak.Builder` (flatpak-builder modernizado vía Flatpak), que sí
-      # trae `appstream-compose`. La versión del paquete `flatpak-builder` en
-      # Ubuntu 22.04 (1.2.2) intenta lanzarlo automáticamente y rompe el build.
-      # El fichero `es.rustty.Rustty.metainfo.xml` se mantiene en el repo para
-      # cuando preparemos la submission a Flathub.
+      # ── Frontend ────────────────────────────────────────────────
+      # `npm ci --offline` consume el caché que `flatpak-node-generator` dejó
+      # montado en `flatpak-node/npm-cache`.
+      - npm ci --offline --cache=./flatpak-node/npm-cache
+      # `npm run build` = `sync-version` + `vite build` → genera `dist/`.
+      - npm run build
+
+      # ── Binario ─────────────────────────────────────────────────
+      # `cargo build` directo en vez de `tauri build`: el bundler de Tauri
+      # generaría .deb/.rpm/AppImage que aquí sobran, y su `beforeBuildCommand`
+      # volvería a lanzar vite. `tauri-build` solo necesita que `dist/` exista,
+      # cosa que el paso anterior ya garantiza.
+      - cargo --offline build --release --manifest-path src-tauri/Cargo.toml
+      - install -Dm755 src-tauri/target/release/rustty /app/bin/rustty
+
+      # ── Metadatos de escritorio ─────────────────────────────────
+      - install -Dm644 src-tauri/icons/icon.png
+        /app/share/icons/hicolor/512x512/apps/es.rustty.Rustty.png
+      - install -Dm644 src-tauri/icons/128x128.png
+        /app/share/icons/hicolor/128x128/apps/es.rustty.Rustty.png
+      - install -Dm644 src-tauri/icons/64x64.png
+        /app/share/icons/hicolor/64x64/apps/es.rustty.Rustty.png
+      - install -Dm644 src-tauri/icons/32x32.png
+        /app/share/icons/hicolor/32x32/apps/es.rustty.Rustty.png
+      - install -Dm644 packaging/flatpak/es.rustty.Rustty.desktop
+        /app/share/applications/es.rustty.Rustty.desktop
+      - install -Dm644 packaging/flatpak/es.rustty.Rustty.metainfo.xml
+        /app/share/metainfo/es.rustty.Rustty.metainfo.xml

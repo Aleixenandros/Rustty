@@ -1,0 +1,60 @@
+# Manifest del bundle `.flatpak` que acompaña a cada release de GitHub.
+#
+# NO es el de Flathub: ese es `es.rustty.Rustty.yml` y compila desde fuente sin
+# red. Este parte del binario que `tauri-action` ya construyó en el runner, así
+# que tarda segundos en vez de una hora. Sirve a quien instala Flatpak a mano,
+# sin pasar por Flathub.
+#
+# Lo que sí comparte con el de Flathub —y no es negociable— es el runtime:
+# Tauri 2 enlaza contra `libwebkit2gtk-4.1`, que solo trae `org.gnome.Platform`.
+# Con `org.freedesktop.Platform` el bundle se genera pero la app no arranca.
+#
+# El CI deja `rustty` e `icon-512.png` en este directorio antes de invocar a
+# `flatpak-builder` (ver `.github/workflows/build.yml`).
+app-id: es.rustty.Rustty
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+command: rustty
+
+# Los permisos se mantienen alineados con el manifest de Flathub: si divergen,
+# la app se comporta distinto según de dónde se instale. Ver allí la
+# justificación de `--filesystem=home` y de `org.freedesktop.Flatpak`.
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.kwalletd5
+  - --talk-name=org.kde.kwalletd6
+  - --filesystem=home
+  - --talk-name=org.freedesktop.Flatpak
+
+modules:
+  # Mismo módulo que el manifest de Flathub: sin AppIndicator la app entra en
+  # pánico al arrancar, venga de donde venga el binario.
+  - modules/libayatana-appindicator.yml
+
+  - name: rustty
+    buildsystem: simple
+    sources:
+      - type: file
+        path: rustty
+      - type: file
+        path: icon-512.png
+      - type: file
+        path: es.rustty.Rustty.desktop
+    build-commands:
+      - install -Dm755 rustty /app/bin/rustty
+      - install -Dm644 icon-512.png
+        /app/share/icons/hicolor/512x512/apps/es.rustty.Rustty.png
+      - install -Dm644 es.rustty.Rustty.desktop
+        /app/share/applications/es.rustty.Rustty.desktop
+      # El `metainfo.xml` se queda fuera **a propósito**. El CI construye este
+      # bundle en Ubuntu 22.04, cuyo `flatpak-builder` (1.2.2) lanza
+      # `appstream-compose` en cuanto lo encuentra y rompe el build. La ficha
+      # AppStream solo hace falta en Flathub, y allí la instala el otro manifest
+      # con un flatpak-builder moderno.

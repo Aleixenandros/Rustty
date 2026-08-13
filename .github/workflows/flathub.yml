@@ -1,0 +1,168 @@
+# Publicación en Flathub.
+#
+# Flathub no se construye desde este repositorio: cada aplicación tiene el suyo
+# en `github.com/flathub/<app-id>`, y es un push a su rama `master` lo que
+# dispara la build oficial. Este workflow es el puente: regenera las fuentes
+# offline (`cargo-sources.json`, `node-sources.json`), fija el manifest al
+# commit exacto del tag y abre un PR en ese repositorio.
+#
+# El PR no se mergea solo a propósito: el bot de Flathub lo construye primero y
+# publica el resultado en un remote de prueba, así se ve si la build pasa antes
+# de que llegue a los usuarios.
+#
+# ── Requisitos previos (una sola vez) ────────────────────────────────────────
+#   1. Que la app esté aceptada en Flathub (PR inicial a `flathub/flathub`,
+#      rama `new-pr`). Ver `packaging/flatpak/README.md`.
+#   2. Un secreto de repositorio `FLATHUB_TOKEN`: un Personal Access Token con
+#      permiso `repo` sobre `flathub/es.rustty.Rustty`. El `GITHUB_TOKEN` por
+#      defecto no vale, porque el destino es otra organización.
+
+name: Flathub
+
+on:
+  # Manual: es lo habitual, para publicar cuando la release ya está verificada.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag a publicar (p. ej. v2.1.0)"
+        required: true
+        type: string
+  # Automático al publicar una release en GitHub.
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  APP_ID: es.rustty.Rustty
+  FLATHUB_REPO: flathub/es.rustty.Rustty
+
+jobs:
+  actualizar-manifest:
+    name: Abrir PR en Flathub
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Resolver el tag
+        id: tag
+        env:
+          # Vía input (workflow_dispatch) o vía el tag de la release.
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-$RELEASE_TAG}"
+          [ -n "$TAG" ] || { echo "Sin tag que publicar" >&2; exit 1; }
+          echo "tag=$TAG"           >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}"   >> "$GITHUB_OUTPUT"
+
+      - name: Checkout de Rustty en el tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          # Necesario para resolver el SHA del tag.
+          fetch-depth: 0
+
+      - name: Resolver el commit del tag
+        id: commit
+        run: |
+          set -euo pipefail
+          # El SHA del *commit*, no el del objeto tag: es lo que espera
+          # `flatpak-builder` en el campo `commit` de una fuente `git`.
+          SHA="$(git rev-list -n1 "${{ steps.tag.outputs.tag }}")"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Comprobar que la versión del tag coincide con package.json
+        run: |
+          set -euo pipefail
+          PKG="$(node -p "require('./package.json').version")"
+          WANT="${{ steps.tag.outputs.version }}"
+          if [ "$PKG" != "$WANT" ]; then
+            echo "El tag dice $WANT y package.json dice $PKG" >&2
+            exit 1
+          fi
+
+      - name: Generar fuentes offline (cargo + node)
+        run: ./scripts/flatpak-gen-sources.sh
+
+      - name: Fijar el manifest al commit del tag
+        run: |
+          set -euo pipefail
+          MANIFEST="packaging/flatpak/${APP_ID}.yml"
+          # Sustituciones ancladas al principio de línea para no tocar nada más
+          # del manifest (comentarios incluidos).
+          sed -i \
+            -e "s|^\( *\)tag: .*|\1tag: ${{ steps.tag.outputs.tag }}|" \
+            -e "s|^\( *\)commit: .*|\1commit: ${{ steps.commit.outputs.sha }}|" \
+            "$MANIFEST"
+          echo "── Fuente git resultante ──"
+          grep -A3 "type: git" "$MANIFEST"
+
+      - name: Validar los metadatos AppStream
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y appstream desktop-file-utils
+          appstreamcli validate --no-net "packaging/flatpak/${APP_ID}.metainfo.xml"
+          desktop-file-validate "packaging/flatpak/${APP_ID}.desktop"
+
+      - name: Checkout del repositorio de Flathub
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          repository: ${{ env.FLATHUB_REPO }}
+          token: ${{ secrets.FLATHUB_TOKEN }}
+          path: flathub-repo
+          # La rama de trabajo de los repos de Flathub es `master`.
+          ref: master
+
+      - name: Copiar manifest y fuentes
+        run: |
+          set -euo pipefail
+          # El repositorio de Flathub lleva el manifest, los módulos que este
+          # incluye y las fuentes generadas. El `.desktop`, el `metainfo.xml` y
+          # los iconos NO: los toma `flatpak-builder` del propio checkout de
+          # Rustty (la fuente `git` del módulo principal).
+          cp "packaging/flatpak/${APP_ID}.yml"        flathub-repo/
+          cp packaging/flatpak/cargo-sources.json     flathub-repo/
+          cp packaging/flatpak/node-sources.json      flathub-repo/
+          mkdir -p flathub-repo/modules
+          cp packaging/flatpak/modules/*.yml          flathub-repo/modules/
+
+      - name: Abrir el PR
+        working-directory: flathub-repo
+        env:
+          GH_TOKEN: ${{ secrets.FLATHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "El manifest de Flathub ya está en $TAG; nada que hacer."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="update-$VERSION"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "Rustty $VERSION"
+          # `--force`: si un intento anterior de la misma versión quedó a medias,
+          # la rama se reescribe en lugar de fallar.
+          git push --force origin "$BRANCH"
+
+          # Si ya hay un PR abierto para esta rama, el push de arriba lo
+          # actualiza y no hace falta crear otro.
+          if [ -z "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            # El cuerpo se compone aparte: dentro de `gh pr create` la
+            # indentación del YAML acabaría literalmente en el texto del PR.
+            BODY=$(printf '%s\n\n%s\n' \
+              "Actualización automática a [$TAG](https://github.com/${{ github.repository }}/releases/tag/$TAG)." \
+              "Fuentes de Cargo y npm regeneradas desde los lockfiles del tag.")
+            gh pr create \
+              --title "Rustty $VERSION" \
+              --body "$BODY" \
+              --base master \
+              --head "$BRANCH"
+          fi

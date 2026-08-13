@@ -3074,6 +3074,15 @@ pub fn is_appimage() -> bool {
         .unwrap_or(false)
 }
 
+/// Indica si la app corre dentro del sandbox de Flatpak. El frontend lo usa
+/// para no ofrecer comprobación de actualizaciones: en Flatpak la versión la
+/// gestiona el remote (Flathub) y avisar de releases de GitHub llevaría al
+/// usuario a descargar un paquete que no es el que tiene instalado.
+#[tauri::command]
+pub fn is_flatpak() -> bool {
+    crate::sandbox::in_flatpak()
+}
+
 // ─── Notas Markdown por conexión («runbooks») ───────────────────────────────
 
 /// Lee la nota Markdown de un perfil. `None` si no existe.

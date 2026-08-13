@@ -181,9 +181,7 @@ Rustty necesita **WebKitGTK 4.1** y **libayatana-appindicator** en tiempo de eje
   flatpak run es.rustty.Rustty
   ```
 
-  Requiere el runtime `org.freedesktop.Platform 24.08` (Flatpak lo descarga la primera vez).
-
-  Si tu distribución no incluye WebKitGTK 4.1 por defecto, instálalo primero (ver "Requisitos previos" más abajo).
+  Requiere el runtime `org.gnome.Platform 50` (Flatpak lo descarga la primera vez). WebKitGTK viene dentro del runtime, así que aquí no hace falta instalarlo en el sistema.
 
 ### Windows
 

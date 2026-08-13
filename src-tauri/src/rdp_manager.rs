@@ -599,16 +599,12 @@ fn spawn_rdp_client(
     display: RdpDisplay,
     _cred_injected: bool,
 ) -> Result<SpawnedRdpClient, String> {
-    // Detectar qué binario está disponible
+    // Detectar qué binario está disponible. Bajo Flatpak la búsqueda y el
+    // lanzamiento van contra el host: el cliente RDP es del sistema del
+    // usuario, no del runtime.
     let binary = ["xfreerdp3", "xfreerdp", "rdesktop"]
         .iter()
-        .find(|&&bin| {
-            std::process::Command::new("which")
-                .arg(bin)
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        })
+        .find(|&&bin| crate::sandbox::host_which(bin))
         .copied()
         .ok_or_else(|| {
             "Cliente RDP no encontrado. Instala xfreerdp:\n  sudo dnf install freerdp  # Fedora\n  sudo apt install freerdp2-x11  # Debian/Ubuntu".to_string()
@@ -620,7 +616,35 @@ fn spawn_rdp_client(
     // lo advierte).
     let secret = password.filter(|p| !p.is_empty());
 
-    let mut cmd = std::process::Command::new(binary);
+    // FreeRDP 3 dejó de aceptar la contraseña por una tubería: `/from-stdin`
+    // exige que stdin sea un terminal —hace `tcgetattr`/`tcsetattr` para apagar
+    // el eco— y sobre un pipe falla («Inappropriate ioctl for device») y cancela
+    // la conexión: `nla_client_setup_identity: ERRCONNECT_CONNECT_CANCELLED`.
+    // La vía que sí soporta es `FREERDP_ASKPASS`, un programa que escribe la
+    // contraseña por stdout; el nuestro es un `cat` del `memfd` heredado, así el
+    // secreto sigue sin pasar por argv, entorno ni disco. Si el `memfd` falla
+    // queda el `/from-stdin` de más abajo, que es lo que entiende FreeRDP 2.
+    //
+    // El `memfd` se prepara antes de construir el comando porque bajo Flatpak
+    // hay que declarar el descriptor a reenviar (`--forward-fd`) delante del
+    // nombre del programa.
+    let askpass_secret = match secret {
+        Some(pass) if binary != "rdesktop" => secret_memfd(pass).ok(),
+        _ => None,
+    };
+    let forward_fds: &[i32] = if askpass_secret.is_some() {
+        &[ASKPASS_FD]
+    } else {
+        &[]
+    };
+
+    let mut cmd = crate::sandbox::host_command(
+        binary,
+        crate::sandbox::HostSpawn {
+            forward_fds,
+            ..Default::default()
+        },
+    );
     if binary == "rdesktop" {
         cmd.arg("-u").arg(username);
         if let Some(d) = domain.filter(|d| !d.is_empty()) {
@@ -656,18 +680,6 @@ fn spawn_rdp_client(
         cmd.stdin(std::process::Stdio::piped());
     }
 
-    // FreeRDP 3 dejó de aceptar la contraseña por una tubería: `/from-stdin`
-    // exige que stdin sea un terminal —hace `tcgetattr`/`tcsetattr` para apagar
-    // el eco— y sobre un pipe falla («Inappropriate ioctl for device») y cancela
-    // la conexión: `nla_client_setup_identity: ERRCONNECT_CONNECT_CANCELLED`.
-    // La vía que sí soporta es `FREERDP_ASKPASS`, un programa que escribe la
-    // contraseña por stdout; el nuestro es un `cat` del `memfd` heredado, así el
-    // secreto sigue sin pasar por argv, entorno ni disco. Si el `memfd` falla
-    // queda el `/from-stdin` de arriba, que es lo que entiende FreeRDP 2.
-    let askpass_secret = match secret {
-        Some(pass) if binary != "rdesktop" => secret_memfd(pass).ok(),
-        _ => None,
-    };
     if let Some(file) = &askpass_secret {
         inherit_secret_fd(&mut cmd, file);
         cmd.env("FREERDP_ASKPASS", ASKPASS_COMMAND);

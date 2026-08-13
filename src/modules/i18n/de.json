@@ -1470,6 +1470,7 @@
     "checking_updates": "Suche…",
     "update_available": "Neue Version {version} verfügbar",
     "update_current": "Rustty ist aktuell",
+    "update_flatpak_managed": "Aktualisierungen übernimmt Flatpak: nutze deine Software-Verwaltung oder „flatpak update“.",
     "update_error": "Konnte nicht prüfen",
     "open_release": "Eine neue Version ({version}) ist verfügbar. Download-Seite öffnen?",
     "update_install_prompt": "Neue Version {version} verfügbar. Jetzt herunterladen und installieren?",

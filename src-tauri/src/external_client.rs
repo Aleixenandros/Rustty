@@ -205,7 +205,7 @@ fn spawn_vnc_client(host: &str, port: u16) -> Result<SpawnedExternalClient, Stri
         })?;
 
     // `host::port` (doble dos puntos) indica puerto TCP literal en TigerVNC.
-    let child = std::process::Command::new(binary)
+    let child = crate::sandbox::host_command(binary, crate::sandbox::HostSpawn::default())
         .arg(format!("{host}::{port}"))
         .spawn()
         .map_err(|e| format!("Error al lanzar {binary}: {e}"))?;
@@ -271,7 +271,7 @@ fn spawn_telnet_client(host: &str, port: u16) -> Result<SpawnedExternalClient, S
             "No se encontró un emulador de terminal para lanzar telnet (probado: gnome-terminal, konsole, xterm…).".to_string()
         })?;
 
-    let mut cmd = std::process::Command::new(term);
+    let mut cmd = crate::sandbox::host_command(term, crate::sandbox::HostSpawn::default());
     // gnome-terminal moderno separa el comando con `--`; el resto usa `-e`.
     if term == "gnome-terminal" {
         cmd.arg("--").arg("telnet").arg(host).arg(port.to_string());
@@ -317,13 +317,11 @@ fn spawn_telnet_client(host: &str, port: u16) -> Result<SpawnedExternalClient, S
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
 
+/// Bajo Flatpak la búsqueda va contra el `PATH` del host, que es donde estos
+/// visores están instalados y donde se van a ejecutar.
 #[cfg(target_os = "linux")]
 fn which_exists(bin: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(bin)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    crate::sandbox::host_which(bin)
 }
 
 #[cfg(target_os = "windows")]

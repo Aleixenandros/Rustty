@@ -62,9 +62,50 @@ struct TrayWorkspaceItem {
 
 pub fn setup(app: &mut App) {
     app.manage(TrayState::default());
+    #[cfg(target_os = "linux")]
+    if !appindicator_disponible() {
+        // Sin este corte la app **muere al arrancar**: `libappindicator-sys`
+        // entra en pánico cuando su `dlopen` falla, y un panic no lo captura el
+        // `Err` de abajo. Pasa en cualquier sistema sin AppIndicator instalado,
+        // y siempre dentro de Flatpak (ningún runtime la trae).
+        eprintln!(
+            "AppIndicator no está disponible: Rustty arranca sin bandeja del sistema. \
+             Instala libayatana-appindicator3 para tenerla."
+        );
+        return;
+    }
     if let Err(err) = build_tray(app) {
         eprintln!("No se pudo crear la bandeja del sistema: {err}");
     }
+}
+
+/// ¿Se puede cargar AppIndicator? Se comprueba con `dlopen` **antes** de que lo
+/// intente `libappindicator-sys`, porque este último no maneja el fallo: llama
+/// a `panic!` y se lleva por delante el arranque de la aplicación.
+///
+/// Los nombres y el orden son los mismos que prueba esa biblioteca, para que la
+/// respuesta coincida con lo que hará ella.
+#[cfg(target_os = "linux")]
+fn appindicator_disponible() -> bool {
+    const CANDIDATOS: [&std::ffi::CStr; 4] = [
+        c"libayatana-appindicator3.so.1",
+        c"libappindicator3.so.1",
+        c"libayatana-appindicator3.so",
+        c"libappindicator3.so",
+    ];
+    CANDIDATOS.iter().any(|nombre| {
+        // SAFETY: `nombre` es un literal C con terminador nul, y el handle se
+        // cierra en cuanto se comprueba. `RTLD_LAZY` no ejecuta constructores
+        // de símbolos que no se usen.
+        unsafe {
+            let handle = libc::dlopen(nombre.as_ptr(), libc::RTLD_LAZY);
+            if handle.is_null() {
+                return false;
+            }
+            libc::dlclose(handle);
+            true
+        }
+    })
 }
 
 fn build_tray(app: &mut App) -> tauri::Result<()> {

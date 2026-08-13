@@ -2,6 +2,48 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.2.0] - 2026-08-13
+
+### Añadido
+
+- **Rustty preparada para Flathub.** El manifest `packaging/flatpak/es.rustty.Rustty.yml`
+  compila desde fuente y sin red, como exige Flathub, con las dependencias de
+  Cargo y npm declaradas por `scripts/flatpak-gen-sources.sh` a partir de los
+  lockfiles. El workflow `.github/workflows/flathub.yml` abre el PR de
+  actualización en el repositorio de Flathub en cada release. El envío inicial
+  sigue siendo manual y está documentado en `packaging/flatpak/README.md`.
+- Dentro del sandbox, la consola local, el cliente RDP, los visores externos
+  (VNC, telnet) y los comandos locales del catálogo se ejecutan en el sistema
+  del usuario mediante `flatpak-spawn --host`, no dentro del contenedor: son
+  sus herramientas y su shell, con sus dotfiles. Fuera de Flatpak nada cambia.
+- Ficha de aplicación completa: descripción e interfaz en inglés por defecto
+  con traducción al español, capturas, colores de marca y notas de versión.
+- La versión Flatpak lleva su propia copia de AppIndicator, así que la bandeja
+  del sistema funciona igual que en el resto de formatos.
+
+### Corregido
+
+- **Abrir el panel SFTP desde una sesión SSH fallaba** con «No se pudo listar:
+  TypeError: undefined is not an object». El historial de rutas que estrenó la
+  1.60.0 se creaba en la primera navegación, pero esa misma navegación
+  intentaba escribir en él antes: JavaScript resuelve el destino de una
+  asignación antes de llamar a la función de la derecha, y era esa función la
+  que creaba el contenedor. Ahora nace con el resto del estado del panel.
+
+- **El paquete `.flatpak` de las releases no arrancaba** desde la v1.10.2, por
+  dos motivos que se sumaban. Se construía sobre `org.freedesktop.Platform`, que
+  no incluye `libwebkit2gtk-4.1` —la biblioteca contra la que enlaza Tauri en
+  Linux—; y ningún runtime trae AppIndicator, cuya ausencia no degrada la
+  bandeja sino que tumba la aplicación al arrancar. El bundle se generaba sin
+  error y la aplicación moría al abrirse. Ahora usa `org.gnome.Platform` y
+  empaqueta la biblioteca de bandeja.
+
+### Cambiado
+
+- Bajo Flatpak, Rustty ya no comprueba actualizaciones: la versión la gestiona
+  el repositorio (Flathub) y avisar de las releases de GitHub llevaba a
+  descargar un paquete distinto del instalado.
+
 ## [2.1.0] - 2026-08-11
 
 ### Añadido

@@ -299,11 +299,11 @@ jobs:
           gh release upload "${{ github.ref_name }}" "$OUT" --clobber --repo "$GITHUB_REPOSITORY"
 
       # ── Extras de Linux: paquete Flatpak ──────────────────────
-      # Versión mínima: usa el binario y assets ya compilados por tauri-action,
-      # no recompila Rust dentro del sandbox. No es Flathub-ready (sin lockfiles
-      # de cargo/npm) — el objetivo aquí es ofrecer un .flatpak instalable.
-      # Cuando se cree la cuenta de Flathub migraremos a un manifest con
-      # flatpak-cargo-generator / flatpak-node-generator.
+      # Bundle instalable a mano, a partir del binario que tauri-action acaba de
+      # compilar (no recompila Rust dentro del sandbox). La publicación en
+      # Flathub va por otro camino —`.github/workflows/flathub.yml`, con el
+      # manifest `es.rustty.Rustty.yml` que compila desde fuente sin red—; aquí
+      # se usa `es.rustty.Rustty.bundle.yml`.
       - name: Build Flatpak (Linux)
         if: matrix.platform == 'ubuntu-22.04'
         env:
@@ -315,14 +315,16 @@ jobs:
           BIN="src-tauri/target/${{ matrix.target }}/release/rustty"
           ICON="src-tauri/icons/icon.png"
 
-          # Instalar flatpak + flatpak-builder y añadir el remote flathub
-          # (para descargar runtime/sdk org.freedesktop.Platform 24.08).
+          # Instalar flatpak + flatpak-builder y añadir el remote flathub.
+          # Runtime GNOME, no freedesktop: es el único que trae
+          # `libwebkit2gtk-4.1`, contra el que enlaza Tauri 2. Con el de
+          # freedesktop el bundle se generaba igual pero la app no arrancaba.
           sudo apt-get install -y flatpak flatpak-builder
           sudo flatpak remote-add --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install -y --noninteractive flathub \
-            org.freedesktop.Platform//24.08 \
-            org.freedesktop.Sdk//24.08
+            org.gnome.Platform//50 \
+            org.gnome.Sdk//50
 
           # Copiar binario + icono al directorio del manifest. Flatpak-builder
           # rechaza rutas fuera del directorio del manifest cuando
@@ -342,7 +344,7 @@ jobs:
             --repo="$REPO_DIR" \
             --default-branch=stable \
             "$BUILD_DIR" \
-            "$FP_DIR/es.rustty.Rustty.yml"
+            "$FP_DIR/es.rustty.Rustty.bundle.yml"
 
           flatpak build-bundle "$REPO_DIR" "$OUT" es.rustty.Rustty stable
 
