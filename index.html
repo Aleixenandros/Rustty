@@ -2861,6 +2861,14 @@
 
               <div class="settings-row">
                 <label class="checkbox-label">
+                  <input type="checkbox" id="pref-rdp-cert-change-prompt" />
+                  <span data-i18n="prefs_security.rdp_cert_change_prompt">Preguntar si el certificado de un servidor RDP cambia</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_security.rdp_cert_change_prompt_hint">Equivalente para RDP: el cliente externo recuerda el certificado de cada servidor y, si cambia, cancela la conexión sin poder preguntar nada. Con esto activo, Rustty muestra las dos huellas y deja decidir: aceptar olvida el certificado guardado y reconecta en la misma pestaña; rechazar no toca nada. Si lo desactivas, el aviso se limita a explicar cómo borrarlo a mano.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
                   <input type="checkbox" id="pref-strict-ftps-cert" />
                   <span data-i18n="prefs_security.strict_ftps_cert">Confirmar el certificado FTPS en la primera conexión</span>
                 </label>

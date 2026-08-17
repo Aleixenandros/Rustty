@@ -874,6 +874,14 @@
     "advice": "Acceptez SEULEMENT si vous attendiez ce changement et pouvez vérifier la nouvelle empreinte par un canal de confiance. Accepter remplace l'ancienne entrée et la connexion continue ; refuser ne modifie rien.",
     "accept": "Accepter la nouvelle clé"
   },
+  "modal_rdp_cert_changed": {
+    "title": "Le certificat du serveur RDP a changé !",
+    "intro": "Le certificat de {host}:{port} ne correspond PAS à celui que le client RDP avait enregistré. Cela peut venir d'une réinstallation ou du renouvellement du certificat du serveur… ou de quelqu'un qui intercepte la connexion (attaque de l'intermédiaire).",
+    "stored": "Enregistrée :\n{fingerprint}",
+    "received": "Reçue maintenant :\n{fingerprint}",
+    "advice": "Acceptez SEULEMENT si vous attendiez ce changement et pouvez vérifier la nouvelle empreinte par un canal de confiance. Accepter oublie le certificat enregistré et la connexion est relancée dans cet onglet ; refuser ne modifie rien.",
+    "accept": "Accepter le nouveau certificat"
+  },
   "key_setup": {
     "title": "Accès sans mot de passe",
     "intro": "Rustty préparera l'accès par clé SSH à « {name} » ({host}) : il utilisera votre clé ~/.ssh/id_ed25519 (créée si absente), l'installera sur le serveur en s'authentifiant avec le mot de passe actuel et vérifiera qu'elle fonctionne AVANT de modifier le profil.",
@@ -1110,6 +1118,8 @@
     "strict_host_key_hint": "Lors de la première connexion à un serveur, affiche l'empreinte de sa clé et demande confirmation avant de l'enregistrer. Si vous désactivez, la première clé est acceptée et mémorisée automatiquement (TOFU) : pratique, mais un intermédiaire présent dès cette première connexion passerait inaperçu.",
     "host_key_change_prompt": "Demander si la clé d'un serveur change",
     "host_key_change_prompt_hint": "Si la clé d'un serveur connu change (signe classique d'un intermédiaire, mais aussi d'une réinstallation), affiche un avertissement avec les empreintes et laisse décider : accepter remplace l'ancienne entrée et la connexion continue ; refuser ne modifie rien. Si vous désactivez, le changement est toujours refusé et known_hosts doit être modifié à la main.",
+    "rdp_cert_change_prompt": "Demander si le certificat d'un serveur RDP change",
+    "rdp_cert_change_prompt_hint": "L'équivalent pour RDP : le client externe mémorise le certificat de chaque serveur et, s'il change, annule la connexion sans pouvoir rien demander. Avec cette option active, Rustty affiche les deux empreintes et vous laisse décider : accepter oublie le certificat enregistré et reconnecte dans le même onglet ; refuser ne modifie rien. Si vous la désactivez, l'avertissement se contente d'expliquer comment le supprimer à la main.",
     "strict_ftps_cert": "Confirmer le certificat FTPS à la première connexion",
     "strict_ftps_cert_hint": "Les serveurs FTPS avec un certificat auto-signé (un NAS, une machine interne) sont acceptés par empreinte comme les clés SSH : la première fois, l’empreinte du certificat est affichée et une confirmation est demandée ; ensuite, un changement de certificat est rejeté. Si vous désactivez, la première empreinte est mémorisée automatiquement.",
     "broadcast_ask_title": "Coller le mot de passe en broadcast",
@@ -1691,7 +1701,9 @@
     "rdp_closed": "Session RDP \"{name}\" fermée",
     "rdp_started": "Session RDP \"{name}\" démarrée",
     "rdp_failed": "La session RDP \"{name}\" s'est terminée avec une erreur :",
-    "rdp_cert_changed": "Le certificat du serveur RDP de \"{name}\" a changé depuis la dernière connexion. Si vous faites confiance à ce changement, supprimez l'entrée de l'hôte dans ~/.config/freerdp/known_hosts2 et reconnectez-vous.",
+    "rdp_cert_changed": "Le certificat du serveur RDP de \"{name}\" a changé depuis la dernière connexion et le client l'a annulée. Si vous faites confiance à ce changement, supprimez le certificat enregistré de l'hôte dans le magasin FreeRDP (dossier ~/.config/freerdp/server/, ou sa ligne dans known_hosts2 avec FreeRDP 2) et reconnectez-vous.",
+    "rdp_cert_rejected": "Connexion à {host} annulée : le nouveau certificat n'a pas été accepté.",
+    "rdp_cert_forget_failed": "Impossible d'oublier le certificat RDP enregistré : {error}",
     "rdp_no_password": "Le serveur RDP de \"{name}\" a demandé des identifiants que Rustty n'a pas pu fournir : le client Linux n'accepte plus la saisie du mot de passe. Enregistrez le mot de passe dans le profil et reconnectez-vous.",
     "keepalive_on": "Keepalive activé : la session sera maintenue active.",
     "keepalive_off": "Keepalive désactivé.",

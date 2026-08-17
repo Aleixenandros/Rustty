@@ -461,6 +461,13 @@ const DEFAULT_PREFS = {
   // de un certificado nuevo; desactivado la aprende en silencio. La política vive
   // en el backend (`ftps_certs`); esta pref la fija con `set_ftps_cert_policy`.
   strictFtpsCert:  true,
+  // Certificado RDP CAMBIADO: el TOFU lo hace el cliente externo (xfreerdp con
+  // `/cert:tofu`), que ante un cambio aborta sin preguntar —no tiene terminal
+  // donde hacerlo—. Activo (default), Rustty enseña las dos huellas y, si el
+  // usuario acepta, olvida el certificado guardado (`rdp_forget_cert`) y
+  // reconecta, igual que con una host key SSH cambiada. Desactivado, el aviso
+  // clásico con las instrucciones para borrarlo a mano.
+  rdpCertChangePrompt: true,
   // Cómo abre la ventana el cliente RDP por defecto: "window" (redimensionable,
   // la resolución sigue al tamaño), "fullscreen", "workarea" o "fixed" (el
   // tamaño clavado de siempre, para servidores sin Display Control). Cada perfil
@@ -1883,6 +1890,8 @@ function openSettingsModal() {
   if (hostKeyChangePromptEl) hostKeyChangePromptEl.checked = prefs.hostKeyChangePrompt !== false;
   const strictFtpsCertEl = document.getElementById("pref-strict-ftps-cert");
   if (strictFtpsCertEl) strictFtpsCertEl.checked = prefs.strictFtpsCert !== false;
+  const rdpCertChangeEl = document.getElementById("pref-rdp-cert-change-prompt");
+  if (rdpCertChangeEl) rdpCertChangeEl.checked = prefs.rdpCertChangePrompt !== false;
   const onWakeEl = document.getElementById("pref-on-wake");
   if (onWakeEl) onWakeEl.value = prefs.onWakeAction || "check";
   const shareHistEl = document.getElementById("pref-share-command-history");
@@ -3777,6 +3786,7 @@ function savePrefsFromModal() {
     strictHostKey:     document.getElementById("pref-strict-host-key")?.checked ?? true,
     hostKeyChangePrompt: document.getElementById("pref-hostkey-change-prompt")?.checked ?? true,
     strictFtpsCert:    document.getElementById("pref-strict-ftps-cert")?.checked ?? true,
+    rdpCertChangePrompt: document.getElementById("pref-rdp-cert-change-prompt")?.checked ?? true,
     onWakeAction:      document.getElementById("pref-on-wake")?.value || "check",
     shareCommandHistory: !!document.getElementById("pref-share-command-history")?.checked,
     captureScreen: document.getElementById("pref-capture-screen")?.checked ?? true,
@@ -10102,6 +10112,68 @@ async function openShellInConnection(fromSessionId) {
 // CONEXIÓN RDP
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * El cliente RDP abortó porque el certificado del servidor ya no es el que
+ * recordaba (su TOFU, `/cert:tofu`). Como no tiene terminal donde preguntar,
+ * preguntamos nosotros: mismo trato que una host key SSH cambiada. Aceptar
+ * olvida el certificado guardado y relanza la sesión **en su misma pestaña**;
+ * rechazar no toca nada.
+ *
+ * Con la preferencia desactivada —o si el certificado guardado no aparece por
+ * ninguna parte— queda el aviso de siempre con las instrucciones manuales.
+ *
+ * @param {string} sessionId
+ * @param {any} profile
+ * @param {RdpClosedEvent} info
+ */
+async function handleRdpCertChanged(sessionId, profile, info) {
+  const host = info.host || profile.host;
+  const port = info.port || profile.port;
+  if (prefs.rdpCertChangePrompt === false || !host || !port) {
+    toast(t("toast.rdp_cert_changed", { name: profile.name }), "error", 12000);
+    return;
+  }
+
+  const message = [t("modal_rdp_cert_changed.intro", { host, port })];
+  // Las huellas son lo único con lo que el usuario puede juzgar el cambio, pero
+  // ninguna está garantizada: la recibida sale de la salida del cliente y la
+  // recordada, de su almacén. Se enseña lo que haya.
+  if (info.storedFingerprint || info.fingerprint) message.push("");
+  if (info.storedFingerprint) {
+    message.push(t("modal_rdp_cert_changed.stored", { fingerprint: info.storedFingerprint }));
+  }
+  if (info.fingerprint) {
+    message.push(t("modal_rdp_cert_changed.received", { fingerprint: info.fingerprint }));
+  }
+  message.push("", t("modal_rdp_cert_changed.advice"));
+
+  const accept = await confirmThemed({
+    title: t("modal_rdp_cert_changed.title"),
+    message: message.join("\n"),
+    submitLabel: t("modal_rdp_cert_changed.accept"),
+    danger: true,
+  });
+  if (!accept) {
+    toast(t("toast.rdp_cert_rejected", { host }), "warning");
+    return;
+  }
+
+  let forgotten = false;
+  try {
+    forgotten = await invoke("rdp_forget_cert", { host, port });
+  } catch (e) {
+    toast(t("toast.rdp_cert_forget_failed", { error: String(e) }), "error", 12000);
+    return;
+  }
+  if (!forgotten) {
+    // El cliente lo guarda en un sitio que no conocemos: reconectar volvería a
+    // fallar igual, así que se devuelve el camino manual en vez de un bucle.
+    toast(t("toast.rdp_cert_changed", { name: profile.name }), "error", 12000);
+    return;
+  }
+  await reconnectExternalSession(sessionId);
+}
+
 async function connectRdp(profileId, { passwordOverride = null, credId = null, reuse = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
@@ -10185,9 +10257,11 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null, r
     // El backend adjunta el motivo del cierre (ver RdpClosedEvent en
     // modules/ipc/events.js): sin código es un cierre limpio; con código,
     // el proceso externo murió con error y el detalle explica por qué.
-    const info = /** @type {{code?: string|null, detail?: string|null}} */ (event?.payload) || {};
+    const info = /** @type {RdpClosedEvent} */ (event?.payload) || {};
     if (info.code === "cert-changed") {
-      toast(t("toast.rdp_cert_changed", { name: profile.name }), "error", 12000);
+      // No es un callejón sin salida: se pregunta, como con una host key SSH
+      // cambiada, y si el usuario acepta se olvida el certificado y se reconecta.
+      void handleRdpCertChanged(sessionId, profile, info);
     } else if (info.code === "no-password") {
       toast(t("toast.rdp_no_password", { name: profile.name }), "error", 12000);
     } else if (info.code) {

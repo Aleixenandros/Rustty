@@ -25,6 +25,11 @@ pub struct RdpHandle {
     output_readers: Vec<std::thread::JoinHandle<()>>,
     /// Host cuya credencial `TERMSRV/<host>` inyectamos (solo Windows).
     cred_host: Option<String>,
+    /// A dónde conectaba esta sesión. Viaja en el evento de cierre para que la
+    /// UI pueda ofrecer «olvidar el certificado» sin volver a resolver el perfil
+    /// (que lleva `${…}` sin sustituir y puede haber cambiado entre medias).
+    host: String,
+    port: u16,
 }
 
 struct SpawnedRdpClient {
@@ -40,10 +45,22 @@ struct SpawnedRdpClient {
 /// cliente se quedó esperando unas credenciales que nadie podía teclear;
 /// `"error"` cualquier otra terminación con fallo (el detalle lleva la cola de
 /// salida del cliente).
+///
+/// Con `"cert-changed"` viajan además las dos huellas —la que el cliente tenía
+/// guardada y la que acaba de recibir— y el `host:puerto` al que apuntaba el
+/// intento: es lo que necesita el diálogo que deja aceptar el cambio, el mismo
+/// trato que una host key SSH cambiada.
 #[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct RdpClosePayload {
     code: Option<&'static str>,
     detail: Option<String>,
+    host: Option<String>,
+    port: Option<u16>,
+    /// Huella recibida del servidor, extraída de la salida del cliente.
+    fingerprint: Option<String>,
+    /// Huella que el cliente tenía recordada para ese `host:puerto`.
+    stored_fingerprint: Option<String>,
 }
 
 /// Guardia de una credencial `TERMSRV/<host>` inyectada en el Gestor de
@@ -236,6 +253,8 @@ impl RdpManager {
                 output_tail: spawned.output_tail,
                 output_readers: spawned.output_readers,
                 cred_host,
+                host: host.to_string(),
+                port,
             },
         );
 
@@ -272,7 +291,8 @@ impl RdpManager {
                 if let Some(h) = handle.cred_host.take() {
                     release_windows_credential(&cred_guards, &h);
                 }
-                let payload = close_payload(status, handle.output_tail.as_ref());
+                let payload =
+                    close_payload(status, handle.output_tail.as_ref(), &handle.host, handle.port);
                 let _ = app_handle.emit(&event_name(EventKind::RdpClosed, &sid), payload);
                 break;
             }
@@ -321,26 +341,47 @@ impl RdpManager {
 fn close_payload(
     status: Option<std::process::ExitStatus>,
     output_tail: Option<&Arc<Mutex<String>>>,
+    host: &str,
+    port: u16,
 ) -> RdpClosePayload {
     if status.is_some_and(|s| s.success()) {
         return RdpClosePayload {
             code: None,
             detail: None,
+            host: None,
+            port: None,
+            fingerprint: None,
+            stored_fingerprint: None,
         };
     }
     let tail = output_tail
         .map(|t| t.lock_recover().clone())
         .unwrap_or_default();
-    let code = if is_cert_changed(&tail) {
+    let cert_changed = is_cert_changed(&tail);
+    let code = if cert_changed {
         "cert-changed"
     } else if is_credential_prompt_failure(&tail) {
         "no-password"
     } else {
         "error"
     };
+    // Las huellas solo se resuelven en el caso que las usa: leer el almacén del
+    // cliente en cada cierre sería trabajo en disco para nada.
+    let (fingerprint, stored_fingerprint) = if cert_changed {
+        (
+            crate::rdp_certs::presented_fingerprint(&tail),
+            crate::rdp_certs::stored_fingerprint(host, port),
+        )
+    } else {
+        (None, None)
+    };
     RdpClosePayload {
         code: Some(code),
         detail: extract_error_detail(&tail),
+        host: Some(host.to_string()),
+        port: Some(port),
+        fingerprint,
+        stored_fingerprint,
     }
 }
 
@@ -1063,7 +1104,10 @@ The certificate for host.example.com:3389 has changed\n";
     fn falta_de_credencial_no_se_confunde_con_otros_fallos() {
         let status = std::process::Command::new("false").status().unwrap();
         let tail = Arc::new(Mutex::new(FREERDP_NO_PASSWORD.to_string()));
-        assert_eq!(close_payload(Some(status), Some(&tail)).code, Some("no-password"));
+        assert_eq!(
+            close_payload(Some(status), Some(&tail), "10.0.0.5", 3389).code,
+            Some("no-password")
+        );
 
         // Un fallo de red o un certificado cambiado siguen con su propio código.
         assert!(!is_credential_prompt_failure(FREERDP_CONNECT_FAIL));
@@ -1140,6 +1184,108 @@ The certificate for host.example.com:3389 has changed\n";
         assert!(!tail.contains("contraseña de prueba"));
     }
 
+    /// El certificado cambiado, de punta a punta y con el cliente de verdad: se
+    /// reconoce en la salida, viajan las dos huellas y `rdp_certs::forget` deja
+    /// el almacén como si nunca hubiera visto el host.
+    ///
+    /// Lo que prueba es el contrato con FreeRDP, que ninguna de las dos partes
+    /// controla: la frase del aviso y **dónde** guarda lo que recuerda. Si una
+    /// versión nueva cambia cualquiera de las dos, el diálogo de «confía en el
+    /// cambio» se quedaría sin huellas o borraría un fichero que ya no es el que
+    /// manda; aquí se ve, y no en una conexión de un usuario.
+    ///
+    /// Ignorado por defecto: necesita `xfreerdp` y un display (`xvfb-run`).
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita xfreerdp y un display; se corre con --ignored"]
+    #[test]
+    fn certificado_cambiado_se_reconoce_y_se_puede_olvidar() {
+        use crate::{rdp_certs, rdp_fixture};
+
+        let server = rdp_fixture::start().expect("levantar el servidor de pruebas");
+        let host = server.addr.ip().to_string();
+        let port = server.addr.port();
+
+        // Sembrar el almacén del cliente con un certificado que NO es el que el
+        // fixture va a presentar: para xfreerdp eso es un host conocido cuyo
+        // certificado ha cambiado. El puerto es efímero, así que la entrada es
+        // solo de este test y no pisa nada del usuario.
+        let sembrado = rdp_fixture::self_signed_pem();
+        let pem = rdp_certs::cert_paths(&host, port)
+            .into_iter()
+            .next()
+            .expect("ruta del almacén de FreeRDP");
+        std::fs::create_dir_all(pem.parent().expect("carpeta del almacén"))
+            .expect("crear el almacén");
+        std::fs::write(&pem, &sembrado).expect("sembrar el certificado");
+        let huella_sembrada = rdp_certs::stored_fingerprint(&host, port);
+        assert!(
+            huella_sembrada.is_some(),
+            "el certificado sembrado tiene que leerse desde el almacén"
+        );
+
+        let mut spawned = spawn_rdp_client(
+            &host,
+            port,
+            "usuario",
+            None,
+            Some("contraseña de prueba"),
+            RdpDisplay::default(),
+            false,
+        )
+        .expect("lanzar el cliente RDP");
+
+        // El cliente se rinde solo al no poder confirmar el certificado; el
+        // plazo es por si acaso (runner cargado, arranque de X11).
+        let limite = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let status = loop {
+            match spawned.child.try_wait() {
+                Ok(Some(s)) => break Some(s),
+                Ok(None) if std::time::Instant::now() >= limite => {
+                    let _ = spawned.child.kill();
+                    let _ = spawned.child.wait();
+                    break None;
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                Err(_) => break None,
+            }
+        };
+        // Como en el vigilante de `launch`: sin el join la cola puede no tener
+        // todavía las últimas líneas, que son justo las del aviso.
+        for reader in spawned.output_readers.drain(..) {
+            let _ = reader.join();
+        }
+
+        let tail = spawned
+            .output_tail
+            .as_ref()
+            .map(|t| t.lock_recover().clone())
+            .unwrap_or_default();
+        let payload = close_payload(status, spawned.output_tail.as_ref(), &host, port);
+
+        assert_eq!(
+            payload.code,
+            Some("cert-changed"),
+            "el aviso de certificado cambiado no se reconoció. Salida:\n{tail}"
+        );
+        assert_eq!(
+            payload.stored_fingerprint, huella_sembrada,
+            "la huella recordada tiene que salir del PEM sembrado. Salida:\n{tail}"
+        );
+        let recibida = payload
+            .fingerprint
+            .unwrap_or_else(|| panic!("sin huella recibida. Salida:\n{tail}"));
+        assert_ne!(
+            Some(&recibida),
+            huella_sembrada.as_ref(),
+            "la huella recibida es la del fixture, no la sembrada"
+        );
+
+        // Y aceptar el cambio deja al cliente listo para reaprender.
+        assert!(rdp_certs::forget(&host, port).expect("olvidar el certificado"));
+        assert!(!pem.exists());
+        assert_eq!(rdp_certs::stored_fingerprint(&host, port), None);
+    }
+
     /// El contrato con FreeRDP 3: la orden de `FREERDP_ASKPASS`, ejecutada como
     /// la ejecuta él (por el shell, sin stdin útil), imprime la contraseña que
     /// dejamos en el `memfd` heredado. Si alguien cambia el descriptor, la orden
@@ -1169,13 +1315,13 @@ The certificate for host.example.com:3389 has changed\n";
     fn cierre_limpio_no_lleva_codigo() {
         // En Unix un ExitStatus de éxito se obtiene ejecutando un proceso real.
         let status = std::process::Command::new("true").status().unwrap();
-        let payload = close_payload(Some(status), None);
+        let payload = close_payload(Some(status), None, "10.0.0.5", 3389);
         assert!(payload.code.is_none());
         assert!(payload.detail.is_none());
 
         let status = std::process::Command::new("false").status().unwrap();
         let tail = Arc::new(Mutex::new(FREERDP_CONNECT_FAIL.to_string()));
-        let payload = close_payload(Some(status), Some(&tail));
+        let payload = close_payload(Some(status), Some(&tail), "10.0.0.5", 3389);
         assert_eq!(payload.code, Some("error"));
         assert!(payload.detail.unwrap().contains("Failed to connect"));
     }

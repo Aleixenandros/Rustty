@@ -874,6 +874,14 @@
     "advice": "Aceita APENAS se esperavas esta mudança e podes verificar a nova impressão digital por um canal de confiança. Ao aceitar, a entrada antiga é substituída e a ligação continua; ao rejeitar, nada é alterado.",
     "accept": "Aceitar a chave nova"
   },
+  "modal_rdp_cert_changed": {
+    "title": "O certificado do servidor RDP mudou!",
+    "intro": "O certificado de {host}:{port} NÃO coincide com o que o cliente RDP tinha registado. Pode dever-se a uma reinstalação ou à renovação do certificado do servidor… ou a alguém a intercetar a ligação (ataque de intermediário).",
+    "stored": "Registada:\n{fingerprint}",
+    "received": "Recebida agora:\n{fingerprint}",
+    "advice": "Aceita APENAS se esperavas esta mudança e podes verificar a nova impressão digital por um canal de confiança. Ao aceitar, o certificado guardado é esquecido e a ligação é relançada neste mesmo separador; ao rejeitar, nada é alterado.",
+    "accept": "Aceitar o certificado novo"
+  },
   "key_setup": {
     "title": "Acesso sem palavra-passe",
     "intro": "O Rustty preparará o acesso por chave SSH a «{name}» ({host}): usará a tua chave ~/.ssh/id_ed25519 (criada se não existir), instalá-la-á no servidor autenticando com a palavra-passe atual e verificará que funciona ANTES de alterar o perfil.",
@@ -1110,6 +1118,8 @@
     "strict_host_key_hint": "Ao ligares pela primeira vez a um servidor, mostra a impressão digital da sua chave e pede confirmação antes de a guardar. Se desativares, a primeira chave é aceite e memorizada automaticamente (TOFU): cómodo, mas um intermediário presente nessa primeira ligação passaria despercebido.",
     "host_key_change_prompt": "Perguntar se a chave de um servidor mudar",
     "host_key_change_prompt_hint": "Se a chave de um servidor conhecido mudar (sinal clássico de um intermediário, mas também de uma reinstalação), mostra um aviso com as impressões digitais e deixa decidir: aceitar substitui a entrada antiga e a ligação continua; rejeitar não altera nada. Se desativares, a mudança é sempre rejeitada e o known_hosts tem de ser editado à mão.",
+    "rdp_cert_change_prompt": "Perguntar se o certificado de um servidor RDP mudar",
+    "rdp_cert_change_prompt_hint": "O equivalente para RDP: o cliente externo memoriza o certificado de cada servidor e, se mudar, cancela a ligação sem poder perguntar nada. Com isto ativo, o Rustty mostra as duas impressões digitais e deixa-te decidir: aceitar esquece o certificado guardado e volta a ligar no mesmo separador; rejeitar não altera nada. Se o desativares, o aviso limita-se a explicar como o apagar à mão.",
     "strict_ftps_cert": "Confirmar o certificado FTPS na primeira ligação",
     "strict_ftps_cert_hint": "Os servidores FTPS com certificado autoassinado (um NAS, um equipamento interno) são aceites por impressão digital tal como as chaves SSH: a primeira vez mostra-se a impressão do certificado e pede-se confirmação; depois, uma mudança de certificado é rejeitada. Se desativares, a primeira impressão é memorizada automaticamente.",
     "broadcast_ask_title": "Colar palavra-passe em broadcast",
@@ -1691,7 +1701,9 @@
     "rdp_closed": "Sessão RDP \"{name}\" fechada",
     "rdp_started": "Sessão RDP \"{name}\" iniciada",
     "rdp_failed": "A sessão RDP \"{name}\" terminou com um erro:",
-    "rdp_cert_changed": "O certificado do servidor RDP de \"{name}\" mudou desde a última ligação. Se confias na mudança, remove a entrada do host em ~/.config/freerdp/known_hosts2 e volta a ligar.",
+    "rdp_cert_changed": "O certificado do servidor RDP de \"{name}\" mudou desde a última ligação e o cliente cancelou-a. Se confias na mudança, apaga o certificado guardado do host no arquivo do FreeRDP (pasta ~/.config/freerdp/server/, ou a sua linha em known_hosts2 no FreeRDP 2) e volta a ligar.",
+    "rdp_cert_rejected": "Ligação a {host} cancelada: o certificado novo não foi aceite.",
+    "rdp_cert_forget_failed": "Não foi possível esquecer o certificado RDP guardado: {error}",
     "rdp_no_password": "O servidor RDP de \"{name}\" pediu credenciais e o Rustty não as pôde fornecer: o cliente de Linux já não aceita que se escreva a palavra-passe. Guarda a palavra-passe no perfil e volta a ligar.",
     "keepalive_on": "Keepalive ativado: a sessão será mantida ativa.",
     "keepalive_off": "Keepalive desativado.",

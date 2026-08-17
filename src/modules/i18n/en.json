@@ -874,6 +874,14 @@
     "advice": "Accept ONLY if you expected this change and can verify the new fingerprint through a trusted channel. Accepting replaces the old entry and the connection continues; rejecting changes nothing.",
     "accept": "Accept the new key"
   },
+  "modal_rdp_cert_changed": {
+    "title": "The RDP server's certificate has changed!",
+    "intro": "The certificate of {host}:{port} does NOT match the one the RDP client had recorded. This can happen after a reinstall or a certificate renewal on the server… or if someone is intercepting the connection (man-in-the-middle attack).",
+    "stored": "Recorded:\n{fingerprint}",
+    "received": "Received now:\n{fingerprint}",
+    "advice": "Accept ONLY if you expected this change and can verify the new fingerprint through a trusted channel. Accepting forgets the stored certificate and the connection is relaunched in this same tab; rejecting changes nothing.",
+    "accept": "Accept the new certificate"
+  },
   "key_setup": {
     "title": "Passwordless access",
     "intro": "Rustty will set up SSH key access to “{name}” ({host}): it will use your ~/.ssh/id_ed25519 key (created if missing), install it on the server by authenticating with the current password, and check that it works BEFORE changing the profile.",
@@ -1110,6 +1118,8 @@
     "strict_host_key_hint": "The first time you connect to a server, show its key fingerprint and ask for confirmation before storing it. If you turn this off, the first key is accepted and remembered automatically (TOFU): convenient, but a man-in-the-middle present on that first connection would go unnoticed.",
     "host_key_change_prompt": "Ask when a server's key changes",
     "host_key_change_prompt_hint": "If the key of a known server changes (the classic sign of a man-in-the-middle, but also of a reinstall), show a warning with both fingerprints and let you decide: accepting replaces the old entry and the connection continues; rejecting changes nothing. If you turn this off, the change is always rejected and known_hosts must be edited by hand.",
+    "rdp_cert_change_prompt": "Ask if an RDP server's certificate changes",
+    "rdp_cert_change_prompt_hint": "The RDP equivalent: the external client remembers each server's certificate and, if it changes, cancels the connection without being able to ask anything. With this on, Rustty shows both fingerprints and lets you decide: accepting forgets the stored certificate and reconnects in the same tab; rejecting changes nothing. If you turn it off, the warning just explains how to delete it by hand.",
     "strict_ftps_cert": "Confirm the FTPS certificate on first connection",
     "strict_ftps_cert_hint": "FTPS servers with a self-signed certificate (a NAS, an internal machine) are accepted by fingerprint just like SSH keys: the first time the certificate fingerprint is shown and confirmation is asked; afterwards, a certificate change is rejected. If you turn this off, the first fingerprint is remembered automatically.",
     "broadcast_ask_title": "Paste password in broadcast",
@@ -1685,7 +1695,9 @@
     "rdp_closed": "RDP session \"{name}\" closed",
     "rdp_started": "RDP session \"{name}\" started",
     "rdp_failed": "RDP session \"{name}\" ended with an error:",
-    "rdp_cert_changed": "The RDP server certificate for \"{name}\" has changed since the last connection. If you trust the change, remove the host entry from ~/.config/freerdp/known_hosts2 and reconnect.",
+    "rdp_cert_changed": "The RDP server certificate for \"{name}\" has changed since the last connection and the client cancelled it. If you trust the change, delete the host's stored certificate from the FreeRDP store (the ~/.config/freerdp/server/ folder, or its line in known_hosts2 with FreeRDP 2) and reconnect.",
+    "rdp_cert_rejected": "Connection to {host} cancelled: the new certificate was not accepted.",
+    "rdp_cert_forget_failed": "Could not forget the stored RDP certificate: {error}",
     "rdp_no_password": "The RDP server for \"{name}\" asked for credentials and Rustty could not supply them: the Linux client no longer accepts a typed password. Save the password in the profile and reconnect.",
     "keepalive_on": "Keepalive on: the session will be kept alive.",
     "keepalive_off": "Keepalive off.",

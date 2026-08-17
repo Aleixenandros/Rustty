@@ -874,6 +874,14 @@
     "advice": "Akzeptiere NUR, wenn du diese Änderung erwartet hast und den neuen Fingerabdruck über einen vertrauenswürdigen Kanal prüfen kannst. Beim Akzeptieren wird der alte Eintrag ersetzt und die Verbindung fortgesetzt; beim Ablehnen wird nichts geändert.",
     "accept": "Neuen Schlüssel akzeptieren"
   },
+  "modal_rdp_cert_changed": {
+    "title": "Das Zertifikat des RDP-Servers hat sich geändert!",
+    "intro": "Das Zertifikat von {host}:{port} stimmt NICHT mit dem überein, das der RDP-Client gespeichert hatte. Das kann an einer Neuinstallation oder an der Erneuerung des Serverzertifikats liegen … oder daran, dass jemand die Verbindung abfängt (Man-in-the-Middle-Angriff).",
+    "stored": "Gespeichert:\n{fingerprint}",
+    "received": "Jetzt empfangen:\n{fingerprint}",
+    "advice": "Akzeptiere NUR, wenn du diese Änderung erwartet hast und den neuen Fingerabdruck über einen vertrauenswürdigen Kanal prüfen kannst. Beim Akzeptieren wird das gespeicherte Zertifikat vergessen und die Verbindung im selben Tab neu gestartet; beim Ablehnen wird nichts geändert.",
+    "accept": "Neues Zertifikat akzeptieren"
+  },
   "key_setup": {
     "title": "Zugriff ohne Passwort",
     "intro": "Rustty richtet den SSH-Schlüsselzugriff auf „{name}“ ({host}) ein: dein Schlüssel ~/.ssh/id_ed25519 wird verwendet (und erstellt, falls er fehlt), per Passwort-Anmeldung auf dem Server installiert und VOR der Änderung des Profils geprüft.",
@@ -1110,6 +1118,8 @@
     "strict_host_key_hint": "Bei der ersten Verbindung zu einem Server wird der Fingerabdruck seines Schlüssels angezeigt und vor dem Speichern bestätigt. Wenn du das deaktivierst, wird der erste Schlüssel automatisch akzeptiert und gemerkt (TOFU): bequem, aber ein Angreifer in der Mitte bliebe bei dieser ersten Verbindung unbemerkt.",
     "host_key_change_prompt": "Nachfragen, wenn sich der Schlüssel eines Servers ändert",
     "host_key_change_prompt_hint": "Ändert sich der Schlüssel eines bekannten Servers (das klassische Zeichen eines Man-in-the-Middle, aber auch einer Neuinstallation), wird eine Warnung mit beiden Fingerabdrücken angezeigt: Akzeptieren ersetzt den alten Eintrag und die Verbindung läuft weiter; Ablehnen ändert nichts. Wenn deaktiviert, wird die Änderung immer abgelehnt und known_hosts muss von Hand bearbeitet werden.",
+    "rdp_cert_change_prompt": "Fragen, wenn sich das Zertifikat eines RDP-Servers ändert",
+    "rdp_cert_change_prompt_hint": "Das Gegenstück für RDP: Der externe Client merkt sich das Zertifikat jedes Servers und bricht die Verbindung ab, wenn es sich ändert — ohne fragen zu können. Ist dies aktiv, zeigt Rustty beide Fingerabdrücke und lässt dich entscheiden: Beim Akzeptieren wird das gespeicherte Zertifikat vergessen und im selben Tab neu verbunden; beim Ablehnen wird nichts geändert. Deaktiviert erklärt der Hinweis nur, wie man es von Hand löscht.",
     "strict_ftps_cert": "FTPS-Zertifikat bei der ersten Verbindung bestätigen",
     "strict_ftps_cert_hint": "FTPS-Server mit selbstsigniertem Zertifikat (ein NAS, ein internes Gerät) werden per Fingerabdruck akzeptiert wie SSH-Schlüssel: beim ersten Mal wird der Zertifikat-Fingerabdruck angezeigt und um Bestätigung gebeten; danach wird ein Zertifikatwechsel abgelehnt. Wenn du das deaktivierst, wird der erste Fingerabdruck automatisch gemerkt.",
     "broadcast_ask_title": "Passwort im Broadcast einfügen",
@@ -1685,7 +1695,9 @@
     "rdp_closed": "RDP-Sitzung \"{name}\" geschlossen",
     "rdp_started": "RDP-Sitzung \"{name}\" gestartet",
     "rdp_failed": "RDP-Sitzung \"{name}\" wurde mit einem Fehler beendet:",
-    "rdp_cert_changed": "Das Zertifikat des RDP-Servers von \"{name}\" hat sich seit der letzten Verbindung geändert. Wenn du der Änderung vertraust, entferne den Host-Eintrag aus ~/.config/freerdp/known_hosts2 und verbinde dich erneut.",
+    "rdp_cert_changed": "Das Zertifikat des RDP-Servers von \"{name}\" hat sich seit der letzten Verbindung geändert und der Client hat abgebrochen. Wenn du der Änderung vertraust, lösche das gespeicherte Zertifikat des Hosts aus dem FreeRDP-Speicher (Ordner ~/.config/freerdp/server/ bzw. dessen Zeile in known_hosts2 bei FreeRDP 2) und verbinde dich erneut.",
+    "rdp_cert_rejected": "Verbindung zu {host} abgebrochen: Das neue Zertifikat wurde nicht akzeptiert.",
+    "rdp_cert_forget_failed": "Das gespeicherte RDP-Zertifikat konnte nicht vergessen werden: {error}",
     "rdp_no_password": "Der RDP-Server von \"{name}\" hat Anmeldedaten angefordert, die Rustty nicht liefern konnte: Der Linux-Client akzeptiert keine eingetippten Passwörter mehr. Speichere das Passwort im Profil und verbinde dich erneut.",
     "keepalive_on": "Keepalive aktiviert: Die Sitzung wird aktiv gehalten.",
     "keepalive_off": "Keepalive deaktiviert.",

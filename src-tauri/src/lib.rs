@@ -32,6 +32,7 @@ mod profiles;
 mod ftp_fixture;
 #[cfg(all(test, target_os = "linux"))]
 mod rdp_fixture;
+mod rdp_certs;
 mod rdp_manager;
 #[cfg(all(test, target_os = "linux"))]
 mod ssh_fixture;
@@ -326,6 +327,7 @@ pub fn run() {
             // ── Sesiones RDP
             commands::rdp_connect,
             commands::rdp_disconnect,
+            commands::rdp_forget_cert,
             // ── Sesiones VNC / Telnet (lanzador externo)
             commands::vnc_connect,
             commands::vnc_disconnect,

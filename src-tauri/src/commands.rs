@@ -1023,6 +1023,19 @@ pub fn rdp_disconnect(rdp_state: State<'_, RdpManager>, session_id: String) -> R
     rdp_state.disconnect(&session_id)
 }
 
+/// Olvida el certificado que el cliente RDP recordaba para `host:puerto`, de
+/// modo que la siguiente conexión lo vuelva a aprender (TOFU).
+///
+/// Lo llama el frontend **solo** después de que el usuario haya visto las dos
+/// huellas en el diálogo de certificado cambiado y haya aceptado el cambio: es
+/// el equivalente de reemplazar la entrada de `known_hosts` cuando una host key
+/// SSH cambia. Devuelve `false` si no había nada guardado (el cliente ya no
+/// recordaba ese host, o lo guarda en un sitio que no conocemos).
+#[tauri::command]
+pub fn rdp_forget_cert(host: String, port: u16) -> Result<bool, String> {
+    crate::rdp_certs::forget(&host, port)
+}
+
 // ─── Comandos VNC ────────────────────────────────────────────────────────────
 
 /// Lanza el visor VNC externo del sistema y devuelve el session_id.

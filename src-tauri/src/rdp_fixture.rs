@@ -114,6 +114,16 @@ fn server_config() -> rustls::ServerConfig {
         .expect("configurar el certificado del fixture")
 }
 
+/// Certificado autofirmado suelto, en PEM. No lo usa el servidor: sirve para
+/// sembrar el almacén del cliente con un certificado **distinto** del que el
+/// fixture presenta y provocar así el aviso de «el certificado ha cambiado».
+pub fn self_signed_pem() -> String {
+    rcgen::generate_simple_self_signed(vec!["otro.fakerdp.test".to_string()])
+        .expect("emitir un certificado suelto")
+        .cert
+        .pem()
+}
+
 /// `true` si la carga CredSSP lleva un mensaje NTLM, la señal de que el cliente
 /// obtuvo usuario y contraseña y arrancó la autenticación.
 pub fn contains_ntlmssp(payload: &[u8]) -> bool {

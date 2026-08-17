@@ -2,6 +2,30 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.3.0] - 2026-08-17
+
+### Cambiado
+
+- **Un certificado RDP cambiado ya no bloquea la conexión: se pregunta.** El
+  cliente de escritorio remoto recuerda el certificado de cada servidor y, si
+  cambia, cancela la sesión sin poder preguntar nada; hasta ahora Rustty se
+  limitaba a avisar y a mandar al usuario a borrar un fichero a mano. Ahora
+  muestra la huella que tenía registrada y la que acaba de recibir y deja
+  decidir, igual que con la clave de un servidor SSH: al aceptar el cambio,
+  olvida el certificado guardado y vuelve a conectar en la misma pestaña; al
+  rechazarlo, no se modifica nada. La preferencia **«Preguntar si el certificado
+  de un servidor RDP cambia»** (activa por defecto, pestaña Seguridad) devuelve
+  el aviso con instrucciones manuales a quien lo prefiera.
+
+### Corregido
+
+- Las instrucciones de ese aviso nombraban `~/.config/freerdp/known_hosts2`, que
+  **ya no existe** en FreeRDP 3: el certificado de cada servidor vive ahora en
+  `~/.config/freerdp/server/`. Rustty atiende las dos formas del almacén —la de
+  FreeRDP 3 y la de FreeRDP 2— y las dos rutas de configuración posibles, para
+  que también funcione desde Flatpak, donde el cliente se ejecuta en el sistema
+  del usuario.
+
 ## [2.2.0] - 2026-08-13
 
 ### Añadido

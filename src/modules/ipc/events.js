@@ -185,6 +185,13 @@ export function eventName(kind, suffix) {
  *   guardada); `"error"` = cualquier otro fallo.
  * @property {string|null} detail Cola de salida del cliente externo (solo
  *   Linux) con las líneas de error, para diagnóstico.
+ * @property {string|null} [host] Host al que apuntaba el intento (ausente en un
+ *   cierre limpio).
+ * @property {number|null} [port] Puerto del intento.
+ * @property {string|null} [fingerprint] Solo con `"cert-changed"`: huella del
+ *   certificado que el servidor acaba de presentar, si el cliente la imprimió.
+ * @property {string|null} [storedFingerprint] Solo con `"cert-changed"`: huella
+ *   que el cliente tenía recordada para ese host.
  */
 
 /**
