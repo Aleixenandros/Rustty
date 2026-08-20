@@ -2,6 +2,46 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.4.0] - 2026-08-20
+
+### Añadido
+
+- **El panel de archivos aguanta carpetas enormes.** Hasta ahora el listado
+  completo se dibujaba de golpe, con seis escuchadores de ratón por fila: un
+  directorio con decenas de miles de ficheros —un `/usr/lib`, una carpeta de
+  fotos, un servidor de correo— dejaba la ventana congelada varios segundos y a
+  veces sin recuperarse. Ahora solo se dibujan las filas que caben en pantalla y
+  el resto aparece al desplazarse, con la barra de scroll midiendo siempre el
+  directorio entero. Por debajo de 200 entradas —el caso de todos los días— nada
+  cambia: se sigue pintando el listado completo.
+- La selección de ficheros vive ahora aparte de lo que se ve, así que
+  seleccionar, desplazarse y borrar o descargar sigue actuando sobre todo lo
+  marcado, aunque esas filas ya no estén en pantalla. Cada fila anuncia además su
+  posición y el total a los lectores de pantalla.
+
+### Corregido
+
+- **Navegar rápido ya no te devolvía a la carpeta anterior.** Si un directorio
+  tardaba en listarse y mientras tanto se entraba en otro, el listado que llegaba
+  tarde se pintaba encima y el panel «volvía» solo a la carpeta que se acababa de
+  dejar. Cada navegación lleva ahora su marca y la respuesta atrasada se
+  descarta.
+- La comprobación de si un nombre ya existe en el destino miraba las filas
+  dibujadas, de modo que con un filtro de búsqueda puesto podía dar por libre un
+  nombre que sí estaba y sobrescribirlo sin preguntar. Ahora mira el listado
+  completo.
+- **Los botones del panel de archivos, los túneles y la búsqueda del terminal
+  hablan tu idioma.** Cuarenta y nueve textos —«Directorio padre», «Nueva
+  carpeta», «Puerto local», «Coincidir mayúsculas/minúsculas»…— seguían en
+  castellano en las cinco traducciones; ya salen en inglés, francés, portugués y
+  alemán.
+
+### Cambiado
+
+- Las dependencias del proyecto y las herramientas de compilación suben a su
+  última versión, incluidas las que iban a dejar de funcionar cuando GitHub
+  retire el motor Node 20 de sus servidores de integración.
+
 ## [2.3.0] - 2026-08-17
 
 ### Cambiado
