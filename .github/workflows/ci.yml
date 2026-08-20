@@ -219,7 +219,7 @@ jobs:
       # `cargo-deny` y `cargo-cyclonedx` como binarios precompilados: compilarlos
       # desde fuente en cada run costaría más que todo el resto del job.
       - name: Install cargo-deny + cargo-cyclonedx
-        uses: taiki-e/install-action@cb33e69fad06166ca28a42b2575e4dadabf62ee8 # v2
+        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: cargo-deny,cargo-cyclonedx
 
@@ -253,7 +253,7 @@ jobs:
           npm sbom --sbom-format cyclonedx --omit dev > sbom/frontend.cdx.json
 
       - name: Publicar el SBOM
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: sbom
           path: sbom/
@@ -262,7 +262,7 @@ jobs:
       # Escaneo de secretos sobre el árbol y su historia. Va al final para que
       # los checks de dependencias se vean aunque este falle.
       - name: Escaneo de secretos (gitleaks)
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
@@ -308,7 +308,7 @@ jobs:
             pkg-config
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cb33e69fad06166ca28a42b2575e4dadabf62ee8 # v2
+        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: cargo-llvm-cov
 
@@ -331,7 +331,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publicar el informe
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: coverage-rust
           path: |
