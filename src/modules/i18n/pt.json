@@ -459,7 +459,8 @@
     "empty_hint": "Cria o teu primeiro perfil SSH, RDP, SFTP ou FTP para começar.",
     "empty_cta": "Adicionar a primeira",
     "favorites_empty_hint": "Marca uma conexão como favorita a partir do menu contextual para que apareça aqui.",
-    "loading": "A carregar conexões…"
+    "loading": "A carregar conexões…",
+    "folder_name": "Nome da pasta"
   },
   "rail": {
     "view_profiles": "Perfis",
@@ -1650,7 +1651,12 @@
   "terminal": {
     "closed": "Conexão fechada",
     "closed_hint": "(prime Enter para reconectar)",
-    "shell_ended": "Console terminada"
+    "shell_ended": "Console terminada",
+    "search_placeholder": "Procurar…",
+    "search_prev": "Anterior (Shift+Enter)",
+    "search_next": "Seguinte (Enter)",
+    "search_close": "Fechar (Esc)",
+    "search_match_case": "Diferenciar maiúsculas"
   },
   "toast": {
     "no_data_dir": "Não foi possível obter a pasta de dados",
@@ -1740,12 +1746,38 @@
   },
   "sftp": {
     "symlinks_skipped": "{n} ligações simbólicas ignoradas (não são copiadas)",
-    "view_log": "Ver registo"
+    "view_log": "Ver registo",
+    "empty_folder": "Pasta vazia",
+    "loading_path": "A carregar {path}…",
+    "rename_title": "Renomear (F2)",
+    "delete_title": "Eliminar",
+    "close_panel": "Fechar o painel SFTP",
+    "panel": "Painel SFTP",
+    "download_selection": "Transferir a seleção para local",
+    "upload_selection": "Enviar a seleção para o remoto",
+    "clear_activity": "Limpar atividade",
+    "clear_log": "Limpar registo",
+    "clear_completed": "Limpar concluídas",
+    "clear": "Limpar",
+    "resize_logs": "Redimensionar registos SFTP",
+    "resize_panel": "Redimensionar painel SFTP",
+    "sudo_reconnect": "Voltar a ligar SFTP como root (sudo -n sftp-server). Requer NOPASSWD em /etc/sudoers",
+    "follow_cwd": "Seguir a pasta atual do terminal (OSC 7)",
+    "sudo_badge": "Sessão SFTP com privilégios elevados (sudo)",
+    "transfer_dismiss": "Descartar / cancelar",
+    "transfer_pause": "Pausar",
+    "transfer_resume": "Retomar",
+    "transfer_retry": "Tentar de novo"
   },
   "sftp_nav": {
     "back": "Anterior",
     "forward": "Seguinte",
-    "breadcrumb_label": "Caminho atual"
+    "breadcrumb_label": "Caminho atual",
+    "up": "Pasta acima",
+    "home": "Início",
+    "refresh": "Atualizar",
+    "mkdir": "Nova pasta",
+    "touch": "Novo ficheiro"
   },
   "sftp_search": {
     "placeholder": "Procurar por nome…",
@@ -1766,5 +1798,16 @@
     "close_window_submit": "Fechar",
     "kill_pane_title": "Fechar painel",
     "kill_pane_confirm": "Fechar o painel ativo mata o seu processo NO SERVIDOR (kill-pane). Continuar?"
+  },
+  "tunnels": {
+    "panel": "Túneis SSH",
+    "close_panel": "Fechar painel",
+    "stop": "Fechar túnel",
+    "bind_host": "Anfitrião de escuta",
+    "type": "Tipo de túnel",
+    "remote_host": "Anfitrião de destino",
+    "remote_port": "Porta de destino",
+    "local_port": "Porta local",
+    "optional_name": "Nome opcional"
   }
 }

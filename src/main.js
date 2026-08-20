@@ -42,6 +42,15 @@ import {
 } from "./modules/path-history.js";
 import { formatSize, formatDuration, formatSftpPermissions, formatSftpPermissionsOctal, formatOctalMode, formatSteppedNumber } from "./modules/format.js";
 import { escHtml } from "./modules/html.js";
+import {
+  visibleRange as sftpVisibleRange,
+  filterEntries as filterSftpEntries,
+  selectionAfterClick as sftpSelectionAfterClick,
+  selectionForRowAction as sftpSelectionForRowAction,
+  pruneSelection as pruneSftpSelection,
+  VIRTUAL_THRESHOLD as SFTP_VIRTUAL_THRESHOLD,
+  FALLBACK_ROW_HEIGHT as SFTP_FALLBACK_ROW_HEIGHT,
+} from "./modules/sftp/list-view.js";
 import { foldSearchText, groupConnectionSearch, matchSegments } from "./modules/connection-search.js";
 import { clampUiZoom } from "./modules/num.js";
 import { baseSlugifyThemeId } from "./modules/text.js";
@@ -6259,8 +6268,8 @@ function renderConnectionItem(p, depth, opts = {}) {
       </div>
       <div class="conn-item-actions">
         <button class="btn-icon-sm conn-fav${isFavoriteProfile(p.id) ? " on" : ""}" data-action="toggle-favorite" data-id="${p.id}" title="${escHtml(t("ctx.toggle_favorite"))}"><svg class="row-icon-svg${isFavoriteProfile(p.id) ? " filled" : ""}" aria-hidden="true"><use href="#ci-star"/></svg></button>
-        <button class="btn-icon-sm" data-action="edit" data-id="${p.id}" title="Editar"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></button>
-        <button class="btn-icon-sm danger" data-action="delete" data-id="${p.id}" title="Eliminar"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+        <button class="btn-icon-sm" data-action="edit" data-id="${p.id}" title="${escHtml(t("ctx.edit"))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></button>
+        <button class="btn-icon-sm danger" data-action="delete" data-id="${p.id}" title="${escHtml(t("ctx.delete"))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
       </div>
     </div>`;
 }
@@ -7128,7 +7137,7 @@ function startInlineFolderCreation(parentPath = null, workspaceId = getActiveWor
   wrapper.style.paddingLeft = `${indent}px`;
   wrapper.innerHTML = `
     <span class="folder-icon">${folderIconSvg()}</span>
-    <input type="text" placeholder="Nombre de carpeta" data-prefix="${escHtml(prefix)}" />`;
+    <input type="text" placeholder="${escHtml(t("sidebar.folder_name"))}" data-prefix="${escHtml(prefix)}" />`;
 
   // Si hay carpeta padre, abrir la carpeta padre e insertar al principio de sus hijos
   if (parentPath) {
@@ -11083,8 +11092,8 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
   tab.setAttribute("aria-label", tabLabel);
   tab.setAttribute("role", "tab");
   tab.setAttribute("aria-selected", sessionId === activeSessionId ? "true" : "false");
-  const sftpBtn = sftp ? `<button class="tab-sftp" title="Panel SFTP" aria-label="Panel SFTP">${TAB_SFTP_ICON_SVG}</button>` : "";
-  const tunnelBtn = sftp ? `<button class="tab-tunnels" title="Túneles SSH" aria-label="Túneles SSH">${TAB_TUNNELS_ICON_SVG}</button>` : "";
+  const sftpBtn = sftp ? `<button class="tab-sftp" title="${escHtml(t("sftp.panel"))}" aria-label="${escHtml(t("sftp.panel"))}">${TAB_SFTP_ICON_SVG}</button>` : "";
+  const tunnelBtn = sftp ? `<button class="tab-tunnels" title="${escHtml(t("tunnels.panel"))}" aria-label="${escHtml(t("tunnels.panel"))}">${TAB_TUNNELS_ICON_SVG}</button>` : "";
   // Botón de nota/runbook solo para sesiones de un perfil guardado real
   // (excluye consolas locales, cuyo perfil es sintético `local-…`).
   const isSavedProfile = !!profile?.id && profiles.some((p) => p.id === profile.id);
@@ -11466,13 +11475,17 @@ function queueTerminalEchoSuppression(sessionObj, needle) {
 /* ─── Editor de reglas de resaltado en Preferencias ─── */
 const HIGHLIGHT_COLOR_OPTIONS = ["red", "yellow", "green", "blue", "magenta", "cyan", "white"];
 
+/** Ejemplo del campo «patrón» de una regla de resaltado. */
+// i18n-exempt: es una expresión regular de muestra, no texto de interfaz.
+const HL_PATTERN_EXAMPLE = "ERROR|FAIL";
+
 function renderHighlightRulesEditor() {
   const body = document.getElementById("highlight-rules-body");
   if (!body) return;
   const rules = Array.isArray(prefs.highlightRules) ? prefs.highlightRules : [];
   body.innerHTML = rules.map((rule, idx) => `
     <tr data-rule-idx="${idx}">
-      <td><input type="text" class="hl-pattern" value="${escHtml(rule.pattern || "")}" placeholder="ERROR|FAIL" spellcheck="false" /></td>
+      <td><input type="text" class="hl-pattern" value="${escHtml(rule.pattern || "")}" placeholder="${HL_PATTERN_EXAMPLE}" spellcheck="false" /></td>
       <td>
         <select class="hl-color">
           ${HIGHLIGHT_COLOR_OPTIONS.map((c) =>
@@ -11481,7 +11494,7 @@ function renderHighlightRulesEditor() {
         </select>
       </td>
       <td><input type="checkbox" class="hl-bold"${rule.bold ? " checked" : ""} /></td>
-      <td><button type="button" class="btn-icon-sm danger hl-delete" title="Eliminar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button></td>
+      <td><button type="button" class="btn-icon-sm danger hl-delete" title="${escHtml(t("ctx.delete"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button></td>
     </tr>`).join("");
 }
 
@@ -17211,19 +17224,19 @@ function buildTunnelPanel(sessionId) {
         <div class="tunnel-title">Túneles SSH</div>
         <div class="tunnel-subtitle">Port forwarding sobre la sesión activa</div>
       </div>
-      <button class="tunnel-close" type="button" title="Cerrar panel"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+      <button class="tunnel-close" type="button" title="${escHtml(t("tunnels.close_panel"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>
     <form class="tunnel-form">
-      <select name="type" title="Tipo de túnel">
+      <select name="type" title="${escHtml(t("tunnels.type"))}">
         <option value="local">Local (-L)</option>
         <option value="remote">Remoto (-R)</option>
         <option value="dynamic">SOCKS (-D)</option>
       </select>
-      <input name="bindHost" type="text" value="127.0.0.1" title="Host de escucha" />
-      <input name="localPort" type="number" min="1" max="65535" placeholder="Puerto local" required />
-      <input name="remoteHost" type="text" placeholder="Host destino" />
-      <input name="remotePort" type="number" min="1" max="65535" placeholder="Puerto destino" />
-      <input name="name" type="text" placeholder="Nombre opcional" />
+      <input name="bindHost" type="text" value="127.0.0.1" title="${escHtml(t("tunnels.bind_host"))}" />
+      <input name="localPort" type="number" min="1" max="65535" placeholder="${escHtml(t("tunnels.local_port"))}" required />
+      <input name="remoteHost" type="text" placeholder="${escHtml(t("tunnels.remote_host"))}" />
+      <input name="remotePort" type="number" min="1" max="65535" placeholder="${escHtml(t("tunnels.remote_port"))}" />
+      <input name="name" type="text" placeholder="${escHtml(t("tunnels.optional_name"))}" />
       <label class="tunnel-check"><input name="save" type="checkbox" /> Guardar</label>
       <label class="tunnel-check"><input name="autoStart" type="checkbox" /> Auto</label>
       <button type="submit" class="btn-primary">Abrir</button>
@@ -17382,7 +17395,7 @@ function renderTunnelList(sessionId) {
         <small>${escHtml(describeTunnel(tun))}</small>
       </span>
       <span class="tunnel-traffic">↑ ${formatSize(tun.bytesUp || 0)} · ↓ ${formatSize(tun.bytesDown || 0)}</span>
-      <button type="button" class="tunnel-stop" title="Cerrar túnel"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+      <button type="button" class="tunnel-stop" title="${escHtml(t("tunnels.stop"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>`).join("");
   list.querySelectorAll(".tunnel-stop").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -18237,25 +18250,25 @@ function buildSftpPanel(sessionId) {
   panel.dataset.session = sessionId;
   applySftpRemoteSide(panel);
   panel.innerHTML = `
-    <div class="sftp-resize-handle" title="Redimensionar panel SFTP"></div>
+    <div class="sftp-resize-handle" title="${escHtml(t("sftp.resize_panel"))}"></div>
     <div class="sftp-header">
       <span class="sftp-header-title">SFTP</span>
-      <button class="sftp-nav-btn sftp-close-btn" data-sftp-act="close" title="Cerrar panel SFTP" aria-label="Cerrar panel SFTP"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+      <button class="sftp-nav-btn sftp-close-btn" data-sftp-act="close" title="${escHtml(t("sftp.close_panel"))}" aria-label="${escHtml(t("sftp.close_panel"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>
     <div class="sftp-side sftp-side-local" data-side="local">
       <div class="sftp-side-title">Local</div>
       <div class="sftp-toolbar">
         <button class="sftp-nav-btn" data-sftp-nav="back" data-side="local" title="${escHtml(t("sftp_nav.back"))}" aria-label="${escHtml(t("sftp_nav.back"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-left"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="forward" data-side="local" title="${escHtml(t("sftp_nav.forward"))}" aria-label="${escHtml(t("sftp_nav.forward"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></button>
-        <button class="sftp-nav-btn" data-sftp-nav="up" data-side="local" title="Directorio padre"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
-        <button class="sftp-nav-btn" data-sftp-nav="home" data-side="local" title="Inicio"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></button>
-        <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="local" title="Refrescar">⟳</button>
+        <button class="sftp-nav-btn" data-sftp-nav="up" data-side="local" title="${escHtml(t("sftp_nav.up"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
+        <button class="sftp-nav-btn" data-sftp-nav="home" data-side="local" title="${escHtml(t("sftp_nav.home"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></button>
+        <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="local" title="${escHtml(t("sftp_nav.refresh"))}">⟳</button>
         <div class="sftp-path-wrap" data-side="local">
           <nav class="sftp-breadcrumb" data-side="local" aria-label="${escHtml(t("sftp_nav.breadcrumb_label"))}"></nav>
           <input class="sftp-path hidden" data-side="local" type="text" spellcheck="false" />
         </div>
-        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="local" title="Nueva carpeta" aria-label="Nueva carpeta">${SFTP_ICON_FOLDER_PLUS}</button>
-        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="local" title="Nuevo archivo" aria-label="Nuevo archivo">${SFTP_ICON_FILE_PLUS}</button>
+        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="local" title="${escHtml(t("sftp_nav.mkdir"))}" aria-label="${escHtml(t("sftp_nav.mkdir"))}">${SFTP_ICON_FOLDER_PLUS}</button>
+        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="local" title="${escHtml(t("sftp_nav.touch"))}" aria-label="${escHtml(t("sftp_nav.touch"))}">${SFTP_ICON_FILE_PLUS}</button>
         <button class="sftp-nav-btn sftp-search-toggle" data-sftp-act="search-toggle" data-side="local" title="${escHtml(t("sftp_search.toggle_title"))}" aria-label="${escHtml(t("sftp_search.toggle_title"))}" aria-expanded="false">${SFTP_ICON_SEARCH}</button>
       </div>
       <div class="sftp-search-bar hidden" data-side="local">
@@ -18279,31 +18292,31 @@ function buildSftpPanel(sessionId) {
     </div>
 
     <div class="sftp-divider">
-      <button class="sftp-xfer-btn" data-sftp-xfer="download" title="Descargar selección al local"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></button>
-      <button class="sftp-xfer-btn" data-sftp-xfer="upload" title="Subir selección al remoto"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-left"/></svg></button>
+      <button class="sftp-xfer-btn" data-sftp-xfer="download" title="${escHtml(t("sftp.download_selection"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></button>
+      <button class="sftp-xfer-btn" data-sftp-xfer="upload" title="${escHtml(t("sftp.upload_selection"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-left"/></svg></button>
     </div>
 
     <div class="sftp-side sftp-side-remote" data-side="remote">
       <div class="sftp-side-title">
         <span>Remoto</span>
-        <span class="sftp-sudo-badge hidden" data-sftp-sudo-badge title="Sesión SFTP con privilegios elevados (sudo)">sudo</span>
+        <span class="sftp-sudo-badge hidden" data-sftp-sudo-badge title="${escHtml(t("sftp.sudo_badge"))}">sudo</span>
       </div>
       <div class="sftp-toolbar">
         <button class="sftp-nav-btn" data-sftp-nav="back" data-side="remote" title="${escHtml(t("sftp_nav.back"))}" aria-label="${escHtml(t("sftp_nav.back"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-left"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="forward" data-side="remote" title="${escHtml(t("sftp_nav.forward"))}" aria-label="${escHtml(t("sftp_nav.forward"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></button>
-        <button class="sftp-nav-btn" data-sftp-nav="up" data-side="remote" title="Directorio padre"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
-        <button class="sftp-nav-btn" data-sftp-nav="home" data-side="remote" title="Inicio"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></button>
-        <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="remote" title="Refrescar">⟳</button>
+        <button class="sftp-nav-btn" data-sftp-nav="up" data-side="remote" title="${escHtml(t("sftp_nav.up"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
+        <button class="sftp-nav-btn" data-sftp-nav="home" data-side="remote" title="${escHtml(t("sftp_nav.home"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></button>
+        <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="remote" title="${escHtml(t("sftp_nav.refresh"))}">⟳</button>
         <button class="sftp-nav-btn sftp-follow-btn" data-sftp-nav="follow"
-                title="Seguir el cwd del terminal (OSC 7)">CWD</button>
+                title="${escHtml(t("sftp.follow_cwd"))}">CWD</button>
         <button class="sftp-nav-btn sftp-sudo-btn" data-sftp-nav="sudo"
-                title="Reconectar SFTP elevado (sudo -n sftp-server). Requiere NOPASSWD en /etc/sudoers">sudo</button>
+                title="${escHtml(t("sftp.sudo_reconnect"))}">sudo</button>
         <div class="sftp-path-wrap" data-side="remote">
           <nav class="sftp-breadcrumb" data-side="remote" aria-label="${escHtml(t("sftp_nav.breadcrumb_label"))}"></nav>
           <input class="sftp-path hidden" data-side="remote" type="text" spellcheck="false" />
         </div>
-        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="remote" title="Nueva carpeta" aria-label="Nueva carpeta">${SFTP_ICON_FOLDER_PLUS}</button>
-        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="remote" title="Nuevo archivo" aria-label="Nuevo archivo">${SFTP_ICON_FILE_PLUS}</button>
+        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="mkdir" data-side="remote" title="${escHtml(t("sftp_nav.mkdir"))}" aria-label="${escHtml(t("sftp_nav.mkdir"))}">${SFTP_ICON_FOLDER_PLUS}</button>
+        <button class="sftp-nav-btn sftp-action-btn" data-sftp-act="touch" data-side="remote" title="${escHtml(t("sftp_nav.touch"))}" aria-label="${escHtml(t("sftp_nav.touch"))}">${SFTP_ICON_FILE_PLUS}</button>
         <button class="sftp-nav-btn sftp-search-toggle" data-sftp-act="search-toggle" data-side="remote" title="${escHtml(t("sftp_search.toggle_title"))}" aria-label="${escHtml(t("sftp_search.toggle_title"))}" aria-expanded="false">${SFTP_ICON_SEARCH}</button>
       </div>
       <div class="sftp-search-bar hidden" data-side="remote">
@@ -18327,13 +18340,13 @@ function buildSftpPanel(sessionId) {
     </div>
 
     <div class="sftp-transfers-wrap">
-      <div class="sftp-log-resize-handle" title="Redimensionar logs SFTP"></div>
+      <div class="sftp-log-resize-handle" title="${escHtml(t("sftp.resize_logs"))}"></div>
       <div class="sftp-log-tabs">
         <button class="sftp-log-tab active" data-sftp-log-tab="transfers">Transferencias</button>
         <button class="sftp-log-tab" data-sftp-log-tab="activity">Actividad</button>
         <span class="sftp-log-spacer"></span>
-        <button class="sftp-transfers-clear" title="Limpiar completadas">Limpiar</button>
-        <button class="sftp-activity-clear hidden" title="Limpiar actividad">Limpiar log</button>
+        <button class="sftp-transfers-clear" title="${escHtml(t("sftp.clear_completed"))}">${escHtml(t("sftp.clear"))}</button>
+        <button class="sftp-activity-clear hidden" title="${escHtml(t("sftp.clear_activity"))}">${escHtml(t("sftp.clear_log"))}</button>
       </div>
       <div class="sftp-log-pane active" data-sftp-log-pane="transfers">
         <div class="sftp-transfers">
@@ -18498,6 +18511,22 @@ function localParentPath(p) {
 }
 
 /**
+ * Marca de generación de la navegación de un lado. Cada `navigate*` toma una
+ * nueva y, al volver del listado, comprueba que sigue siendo la vigente: así el
+ * listado que llega tarde se descarta en vez de pisar la carpeta a la que el
+ * usuario ya ha ido.
+ */
+function beginSftpNavigation(s, side) {
+  s.sftp.nav = s.sftp.nav || { local: 0, remote: 0 };
+  s.sftp.nav[side] = (s.sftp.nav[side] || 0) + 1;
+  return s.sftp.nav[side];
+}
+
+function isCurrentSftpNavigation(s, side, token) {
+  return (s.sftp?.nav?.[side] || 0) === token;
+}
+
+/**
  * Abre `path` en el lado remoto. `record: false` lo usa la propia navegación por
  * historial: volver Atrás no debe apilar una entrada nueva, o el botón Adelante
  * nunca llegaría a activarse.
@@ -18507,14 +18536,19 @@ async function navigateSftpRemote(sessionId, path, { record = true } = {}) {
   if (!s?.sftp?.sftpSessionId) return;
   const panel = s.sftp.panel;
   const filesDiv = panel.querySelector('.sftp-files[data-side="remote"]');
+  const nav = beginSftpNavigation(s, "remote");
 
-  setSftpStatus(panel, `Cargando ${path}…`);
+  setSftpStatus(panel, t("sftp.loading_path", { path }));
 
   try {
     const entries = await invoke("sftp_list_dir", {
       sessionId: s.sftp.sftpSessionId,
       path,
     });
+    // Listar un directorio enorme por SSH tarda; si mientras tanto el usuario ya
+    // se ha ido a otro sitio, este listado es de una carpeta que ya no está
+    // delante y pintarlo la haría "volver" sola.
+    if (!isCurrentSftpNavigation(s, "remote", nav)) return;
     s.sftp.cwd = path;
     recordSftpPath(s, "remote", path, record);
     setSftpPathDisplay(sessionId, "remote", path);
@@ -18522,6 +18556,7 @@ async function navigateSftpRemote(sessionId, path, { record = true } = {}) {
     renderSftpFiles(sessionId, "remote", entries);
     clearSftpStatus(panel);
   } catch (err) {
+    if (!isCurrentSftpNavigation(s, "remote", nav)) return;
     const msg = String(err);
     const isPerm = /permission|denied|13/i.test(msg);
     if (isPerm) {
@@ -18553,15 +18588,18 @@ async function navigateSftpLocal(sessionId, path, { record = true } = {}) {
   if (!s?.sftp) return;
   const panel = s.sftp.panel;
   const filesDiv = panel.querySelector('.sftp-files[data-side="local"]');
+  const nav = beginSftpNavigation(s, "local");
 
   try {
     const entries = await invoke("local_list_dir", { path });
+    if (!isCurrentSftpNavigation(s, "local", nav)) return;
     s.sftp.localCwd = path;
     recordSftpPath(s, "local", path, record);
     setSftpPathDisplay(sessionId, "local", path);
     resetSftpSearch(sessionId, "local");
     renderSftpFiles(sessionId, "local", entries);
   } catch (err) {
+    if (!isCurrentSftpNavigation(s, "local", nav)) return;
     appendSftpActivity(panel, {
       status: "error",
       label: "Listar Local",
@@ -18672,25 +18710,59 @@ function toggleSftpPathEditor(sessionId, side, editing) {
   }
 }
 
-function renderSftpFiles(sessionId, side, entries) {
-  const s = sessions.get(sessionId);
-  const filesDiv = s.sftp.panel.querySelector(`.sftp-files[data-side="${side}"]`);
-  s.sftp.entries = s.sftp.entries || { local: [], remote: [] };
-  s.sftp.entries[side] = Array.isArray(entries) ? [...entries] : [];
-  updateSftpSortHeaders(s.sftp.panel, side, s.sftp.sort?.[side]);
-  const sorted = sortSftpEntries(s.sftp.entries[side], s.sftp.sort?.[side]);
-  if (sorted.length === 0) {
-    filesDiv.innerHTML = `<div class="sftp-empty">Carpeta vacía</div>`;
-    return;
+/**
+ * Estado de vista del listado de un lado del panel: filas pintables (ya
+ * ordenadas y filtradas), selección y altura de fila medida.
+ *
+ * La selección vive **fuera del DOM** a propósito. Con el listado virtualizado
+ * la fila de un fichero seleccionado puede no existir como nodo —está fuera del
+ * viewport—, así que preguntarle al DOM quién está seleccionado devolvería una
+ * respuesta incompleta y una operación masiva se dejaría ficheros por el camino.
+ */
+function sftpView(s, side) {
+  s.sftp.view = s.sftp.view || { local: null, remote: null };
+  if (!s.sftp.view[side]) {
+    s.sftp.view[side] = {
+      mode: "list",   // "list" = directorio actual; "search" = resultados recursivos
+      rows: [],       // entradas visibles tras ordenar y filtrar
+      selected: new Set(), // rutas seleccionadas
+      rowHeight: 0,   // altura real de fila, medida al primer pintado
+      virtual: false, // si el listado se pinta por tramos
+      range: null,    // último tramo pintado
+      rafId: 0,
+    };
   }
-  filesDiv.innerHTML = sorted.map((e) => {
-    const permsText = formatSftpPermissions(e.permissions);
-    const permsOctal = formatSftpPermissionsOctal(e.permissions);
-    const permsTip = permsOctal ? `${permsText} · ${permsOctal}` : permsText;
-    return `
-    <div class="sftp-row ${e.is_dir ? "is-dir" : "is-file"} ${sftpFileIconClass(e)}"
+  return s.sftp.view[side];
+}
+
+/** Marca en el DOM las filas cuya ruta está en la selección del estado. */
+function syncSftpSelectionClasses(filesDiv, selected) {
+  filesDiv.querySelectorAll(".sftp-row").forEach((row) => {
+    setSftpRowSelected(row, selected.has(row.dataset.path));
+  });
+}
+
+/** Sustituye la selección de un lado y refleja el cambio en las filas pintadas. */
+function setSftpSelection(sessionId, side, next) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const view = sftpView(s, side);
+  view.selected = next;
+  const filesDiv = s.sftp.panel?.querySelector(`.sftp-files[data-side="${side}"]`);
+  if (filesDiv) syncSftpSelectionClasses(filesDiv, next);
+}
+
+/** HTML de una fila del listado del directorio actual. */
+function sftpRowHtml(e, selected, pos, total) {
+  const permsText = formatSftpPermissions(e.permissions);
+  const permsOctal = formatSftpPermissionsOctal(e.permissions);
+  const permsTip = permsOctal ? `${permsText} · ${permsOctal}` : permsText;
+  return `
+    <div class="sftp-row ${e.is_dir ? "is-dir" : "is-file"} ${sftpFileIconClass(e)}${selected ? " selected" : ""}"
          role="option"
-         aria-selected="false"
+         aria-selected="${selected ? "true" : "false"}"
+         aria-posinset="${pos}"
+         aria-setsize="${total}"
          draggable="${e.is_symlink ? "false" : "true"}"
          data-path="${escHtml(e.path)}"
          data-name="${escHtml(e.name)}"
@@ -18703,89 +18775,249 @@ function renderSftpFiles(sessionId, side, entries) {
       <span class="sftp-size">${e.is_dir ? "" : formatSize(e.size)}</span>
       <span class="sftp-modified">${formatTime(e.modified)}</span>
       <span class="sftp-row-actions">
-        <button class="sftp-row-btn" data-op="rename" title="Renombrar (F2)"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-edit"/></svg></button>
-        <button class="sftp-row-btn danger" data-op="delete" title="Eliminar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+        <button class="sftp-row-btn" data-op="rename" title="${escHtml(t("sftp.rename_title"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-edit"/></svg></button>
+        <button class="sftp-row-btn danger" data-op="delete" title="${escHtml(t("sftp.delete_title"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
       </span>
       <div class="sftp-row-progress" aria-hidden="true"><span class="sftp-row-progress-bar"></span></div>
     </div>
   `;
-  }).join("");
+}
 
-  filesDiv.querySelectorAll(".sftp-row").forEach((row) => {
-    // Selección con click. Ctrl/Cmd/Alt toggle multi (Alt útil en entornos
-    // como GNOME donde el WM intercepta Ctrl+Click sobre algunas zonas).
-    row.addEventListener("click", (e) => {
-      if (e.target.closest(".sftp-row-btn")) return;
-      if (!(e.ctrlKey || e.metaKey || e.altKey)) {
-        filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => setSftpRowSelected(r, false));
-      }
-      setSftpRowSelected(row, !row.classList.contains("selected"));
+/**
+ * Publica un listado nuevo en un lado del panel: lo guarda, lo ordena, le
+ * aplica el filtro de búsqueda vigente y lo pinta desde arriba.
+ */
+function renderSftpFiles(sessionId, side, entries) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const filesDiv = s.sftp.panel?.querySelector(`.sftp-files[data-side="${side}"]`);
+  if (!filesDiv) return;
+  s.sftp.entries = s.sftp.entries || { local: [], remote: [] };
+  s.sftp.entries[side] = Array.isArray(entries) ? [...entries] : [];
+  updateSftpSortHeaders(s.sftp.panel, side, s.sftp.sort?.[side]);
+  const sorted = sortSftpEntries(s.sftp.entries[side], s.sftp.sort?.[side]);
+  const view = sftpView(s, side);
+  view.mode = "list";
+  view.rows = filterSftpEntries(sorted, sftpSearchState(s, side).term);
+  view.selected = pruneSftpSelection(view.selected, view.rows.map((e) => e.path));
+  filesDiv.scrollTop = 0;
+  paintSftpRows(sessionId, side);
+}
+
+/**
+ * Pinta el tramo visible del listado.
+ *
+ * Por debajo de `SFTP_VIRTUAL_THRESHOLD` entradas se pinta entero, que es el
+ * caso de todos los días y así el scroll no depende de ninguna aritmética. Por
+ * encima solo se pintan las filas del viewport (más un margen), y dos rellenos
+ * ocupan el sitio de las que faltan para que la barra de scroll siga midiendo
+ * el directorio completo.
+ */
+function paintSftpRows(sessionId, side, remeasured = false) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const filesDiv = s.sftp.panel?.querySelector(`.sftp-files[data-side="${side}"]`);
+  if (!filesDiv) return;
+  const view = sftpView(s, side);
+  ensureSftpRowDelegation(filesDiv, sessionId, side);
+
+  const rows = view.rows;
+  if (rows.length === 0) {
+    const term = sftpSearchState(s, side).term;
+    view.virtual = false;
+    view.range = null;
+    filesDiv.innerHTML = `<div class="sftp-empty">${escHtml(term ? t("sftp_search.no_results") : t("sftp.empty_folder"))}</div>`;
+    return;
+  }
+
+  const virtual = rows.length > SFTP_VIRTUAL_THRESHOLD;
+  view.virtual = virtual;
+  const rowHeight = view.rowHeight || SFTP_FALLBACK_ROW_HEIGHT;
+  const range = virtual
+    ? sftpVisibleRange({
+      scrollTop: filesDiv.scrollTop,
+      viewportHeight: filesDiv.clientHeight,
+      rowHeight,
+      total: rows.length,
+    })
+    : { start: 0, end: rows.length, padTop: 0, padBottom: 0 };
+  view.range = range;
+
+  const html = [];
+  for (let i = range.start; i < range.end; i++) {
+    html.push(sftpRowHtml(rows[i], view.selected.has(rows[i].path), i + 1, rows.length));
+  }
+  filesDiv.innerHTML =
+    // `role="presentation"`: el contenedor solo existe para sostener los
+    // rellenos del scroll; sin él, este div se colaría entre el `listbox` y sus
+    // `option` y rompería la relación para el lector de pantalla.
+    `<div class="sftp-rows" role="presentation" style="padding-top:${range.padTop}px;padding-bottom:${range.padBottom}px">${html.join("")}</div>`;
+
+  // La altura de fila no está fijada en CSS —depende del tema, de la tipografía
+  // y del zoom de la interfaz—, así que se mide sobre una fila de verdad en cada
+  // pintado: si el usuario cambia el zoom, la aritmética se recalibra sola. Si el
+  // panel estaba oculto no hay medida posible y se sigue con la estimación.
+  const measured = filesDiv.querySelector(".sftp-row")?.getBoundingClientRect().height || 0;
+  if (measured > 0 && Math.abs(measured - view.rowHeight) > 0.5) {
+    view.rowHeight = measured;
+    // Con la medida buena el tramo visible cambia; se repinta una sola vez
+    // (`remeasured` corta cualquier ida y vuelta).
+    if (virtual && !remeasured) {
+      paintSftpRows(sessionId, side, true);
+      return;
+    }
+  }
+
+  restoreSftpRowProgress(filesDiv);
+}
+
+/** Repinta si el scroll ha dejado atrás el tramo pintado. */
+function onSftpScroll(sessionId, side) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const view = sftpView(s, side);
+  if (!view.virtual || view.rafId) return;
+  view.rafId = requestAnimationFrame(() => {
+    view.rafId = 0;
+    const cur = sessions.get(sessionId);
+    if (!cur?.sftp) return;
+    const div = cur.sftp.panel.querySelector(`.sftp-files[data-side="${side}"]`);
+    if (!div || !view.virtual) return;
+    const next = sftpVisibleRange({
+      scrollTop: div.scrollTop,
+      viewportHeight: div.clientHeight,
+      rowHeight: view.rowHeight || SFTP_FALLBACK_ROW_HEIGHT,
+      total: view.rows.length,
     });
+    // Repintar en cada píxel de scroll destruiría y recrearía las mismas filas.
+    if (view.range && next.start === view.range.start && next.end === view.range.end) return;
+    paintSftpRows(sessionId, side);
+  });
+}
 
-    row.addEventListener("dragstart", (e) => {
-      if (row.dataset.isSymlink === "true") {
-        e.preventDefault();
-        return;
-      }
-      if (!row.classList.contains("selected")) {
-        filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => setSftpRowSelected(r, false));
-        setSftpRowSelected(row, true);
-      }
-      row.classList.add("dragging");
-      const rows = selectedRows(sessionId, side).filter((r) => !r.isSymlink);
-      setSftpDragPayload({ sessionId, sourceSide: side, rows });
-      e.dataTransfer.effectAllowed = side === "local" ? "copyMove" : "copy";
-      e.dataTransfer.setData("text/plain", rows.map((r) => r.name).join("\n"));
+/**
+ * Instala **una vez** los escuchadores del listado, delegados en el contenedor.
+ *
+ * Antes cada fila cargaba con cinco escuchadores propios: un directorio de
+ * 30.000 ficheros son 150.000 registros que hay que crear al pintar y tirar al
+ * navegar. Delegando, el coste es fijo y las filas pueden aparecer y
+ * desaparecer con el scroll sin volver a cablear nada.
+ */
+function ensureSftpRowDelegation(filesDiv, sessionId, side) {
+  if (filesDiv.dataset.sftpDelegated === "1") return;
+  filesDiv.dataset.sftpDelegated = "1";
+
+  filesDiv.addEventListener("scroll", () => onSftpScroll(sessionId, side), { passive: true });
+
+  // Redimensionar el panel (el divisor, la ventana) cambia cuántas filas caben.
+  if (typeof ResizeObserver === "function") {
+    const ro = new ResizeObserver(() => {
+      const s = sessions.get(sessionId);
+      if (!s?.sftp) return;
+      if (sftpView(s, side).virtual) paintSftpRows(sessionId, side);
     });
+    ro.observe(filesDiv);
+  }
 
-    row.addEventListener("dragend", () => {
-      row.classList.remove("dragging");
-      clearSftpDragPayload();
-    });
-
-    row.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      if (!row.classList.contains("selected")) {
-        filesDiv.querySelectorAll(".sftp-row.selected").forEach((r) => setSftpRowSelected(r, false));
-        setSftpRowSelected(row, true);
-      }
-      showSftpContextMenu(e.clientX, e.clientY, sessionId, side);
-    });
-
-    // Doble clic: entrar en carpeta. En remoto: descargar archivo al cwd local. En local: subir al cwd remoto.
-    row.addEventListener("dblclick", () => {
+  filesDiv.addEventListener("click", (ev) => {
+    const row = ev.target.closest(".sftp-row");
+    if (!row) return;
+    if (row.classList.contains("sftp-search-result")) {
+      filesDiv.querySelectorAll(".sftp-search-result.active").forEach((r) => r.classList.remove("active"));
+      row.classList.add("active");
+      return;
+    }
+    const btn = ev.target.closest(".sftp-row-btn");
+    if (btn) {
+      ev.stopPropagation();
       const isDir = row.dataset.isDir === "true";
-      if (side === "remote") {
-        if (isDir) navigateSftpRemote(sessionId, row.dataset.path);
-        else transferRows(sessionId, "download", [{
-          path: row.dataset.path,
-          name: row.dataset.name,
-          isDir: false,
-          isSymlink: false,
-        }]);
-      } else {
-        if (isDir) navigateSftpLocal(sessionId, row.dataset.path);
-        else transferRows(sessionId, "upload", [{
-          path: row.dataset.path,
-          name: row.dataset.name,
-          isDir: false,
-          isSymlink: false,
-        }]);
+      if (btn.dataset.op === "rename") {
+        promptRename(sessionId, side, row.dataset.path, row.dataset.name);
+      } else if (btn.dataset.op === "delete") {
+        confirmDelete(sessionId, side, row.dataset.path, row.dataset.name, isDir);
       }
-    });
+      return;
+    }
+    const s = sessions.get(sessionId);
+    if (!s?.sftp) return;
+    const view = sftpView(s, side);
+    // Alt cuenta como modificador de multi-selección: en entornos como GNOME el
+    // gestor de ventanas se queda con Ctrl+clic sobre algunas zonas.
+    const toggle = ev.ctrlKey || ev.metaKey || ev.altKey;
+    setSftpSelection(sessionId, side, sftpSelectionAfterClick(view.selected, row.dataset.path, toggle));
+  });
 
-    row.querySelectorAll(".sftp-row-btn").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const op = btn.dataset.op;
-        const isDir = row.dataset.isDir === "true";
-        if (op === "rename") {
-          promptRename(sessionId, side, row.dataset.path, row.dataset.name);
-        } else if (op === "delete") {
-          confirmDelete(sessionId, side, row.dataset.path, row.dataset.name, isDir);
-        }
-      });
-    });
+  filesDiv.addEventListener("dblclick", (ev) => {
+    const row = ev.target.closest(".sftp-row");
+    if (!row) return;
+    if (row.classList.contains("sftp-search-result")) {
+      openSftpSearchResult(sessionId, side, row);
+      return;
+    }
+    const isDir = row.dataset.isDir === "true";
+    const rowData = {
+      path: row.dataset.path,
+      name: row.dataset.name,
+      isDir: false,
+      isSymlink: false,
+    };
+    if (side === "remote") {
+      if (isDir) navigateSftpRemote(sessionId, row.dataset.path);
+      else transferRows(sessionId, "download", [rowData]);
+    } else {
+      if (isDir) navigateSftpLocal(sessionId, row.dataset.path);
+      else transferRows(sessionId, "upload", [rowData]);
+    }
+  });
+
+  filesDiv.addEventListener("contextmenu", (ev) => {
+    const row = ev.target.closest(".sftp-row");
+    if (!row || row.classList.contains("sftp-search-result")) return;
+    ev.preventDefault();
+    const s = sessions.get(sessionId);
+    if (!s?.sftp) return;
+    const view = sftpView(s, side);
+    setSftpSelection(sessionId, side, sftpSelectionForRowAction(view.selected, row.dataset.path));
+    showSftpContextMenu(ev.clientX, ev.clientY, sessionId, side);
+  });
+
+  filesDiv.addEventListener("dragstart", (ev) => {
+    const row = ev.target.closest(".sftp-row");
+    if (!row || row.classList.contains("sftp-search-result")) return;
+    if (row.dataset.isSymlink === "true") {
+      ev.preventDefault();
+      return;
+    }
+    const s = sessions.get(sessionId);
+    if (!s?.sftp) return;
+    const view = sftpView(s, side);
+    setSftpSelection(sessionId, side, sftpSelectionForRowAction(view.selected, row.dataset.path));
+    row.classList.add("dragging");
+    const rows = selectedRows(sessionId, side).filter((r) => !r.isSymlink);
+    setSftpDragPayload({ sessionId, sourceSide: side, rows });
+    ev.dataTransfer.effectAllowed = side === "local" ? "copyMove" : "copy";
+    ev.dataTransfer.setData("text/plain", rows.map((r) => r.name).join("\n"));
+  });
+
+  filesDiv.addEventListener("dragend", (ev) => {
+    ev.target?.closest?.(".sftp-row")?.classList.remove("dragging");
+    clearSftpDragPayload();
+  });
+}
+
+/**
+ * Devuelve al DOM las barras de progreso de las transferencias en vuelo: al
+ * repintar por scroll, la fila que estaba descargando vuelve a nacer limpia.
+ */
+function restoreSftpRowProgress(filesDiv) {
+  const progress = filesDiv._sftpProgress;
+  if (!progress?.size) return;
+  filesDiv.querySelectorAll(".sftp-row").forEach((row) => {
+    const pct = progress.get(row.dataset.name);
+    if (pct == null) return;
+    row.classList.add("is-transferring");
+    const bar = row.querySelector(".sftp-row-progress-bar");
+    if (bar) bar.style.width = `${pct}%`;
   });
 }
 
@@ -18937,25 +19169,20 @@ function applySftpCurrentDirFilter(sessionId, side) {
   const panel = s.sftp.panel;
   const filesDiv = panel.querySelector(`.sftp-files[data-side="${side}"]`);
   const st = sftpSearchState(s, side);
-  // Si veníamos de un resultado recursivo, restauramos el listado normal.
-  if (filesDiv.querySelector(".sftp-search-result") || filesDiv.querySelector(".sftp-search-empty")) {
+  const view = sftpView(s, side);
+  // Si veníamos de un resultado recursivo, restauramos el listado normal; el
+  // repintado ya aplica el término vigente.
+  if (view.mode === "search") {
     renderSftpFiles(sessionId, side, s.sftp.entries?.[side] || []);
-  }
-  const term = st.term.toLocaleLowerCase();
-  const rows = filesDiv.querySelectorAll(".sftp-row");
-  if (!term) {
-    rows.forEach((r) => r.classList.remove("sftp-filtered-out"));
-    setSftpSearchStatus(panel, side, "");
+    setSftpSearchStatus(panel, side, view.rows.length === 0 && st.term ? t("sftp_search.no_results") : "");
     return;
   }
-  let visible = 0;
-  rows.forEach((r) => {
-    const name = (r.dataset.name || "").toLocaleLowerCase();
-    const hit = name.includes(term);
-    r.classList.toggle("sftp-filtered-out", !hit);
-    if (hit) visible++;
-  });
-  setSftpSearchStatus(panel, side, visible === 0 ? t("sftp_search.no_results") : "");
+  const sorted = sortSftpEntries(s.sftp.entries?.[side] || [], s.sftp.sort?.[side]);
+  view.rows = filterSftpEntries(sorted, st.term);
+  view.selected = pruneSftpSelection(view.selected, view.rows.map((e) => e.path));
+  if (filesDiv) filesDiv.scrollTop = 0;
+  paintSftpRows(sessionId, side);
+  setSftpSearchStatus(panel, side, view.rows.length === 0 && st.term ? t("sftp_search.no_results") : "");
 }
 
 // Recorre subdirectorios en BFS desde el cwd con límites y cancelación.
@@ -19024,11 +19251,19 @@ function renderSftpSearchResults(sessionId, side, base, results, limitHit) {
   if (!s?.sftp) return;
   const panel = s.sftp.panel;
   const filesDiv = panel.querySelector(`.sftp-files[data-side="${side}"]`);
+  const view = sftpView(s, side);
+  // Los resultados recursivos son otra vista: la selección del directorio ya no
+  // está delante del usuario, y dejarla viva haría que el menú contextual
+  // operase sobre ficheros que no se ven.
+  view.mode = "search";
+  view.virtual = false;
+  view.selected = new Set();
   if (!results.length) {
     filesDiv.innerHTML = `<div class="sftp-empty sftp-search-empty">${escHtml(t("sftp_search.no_results"))}</div>`;
     setSftpSearchStatus(panel, side, "");
     return;
   }
+  ensureSftpRowDelegation(filesDiv, sessionId, side);
   const sep = side === "local" ? null : "/";
   filesDiv.innerHTML = results.map((e) => {
     const rel = sftpRelativePath(base, e.path, sep);
@@ -19044,14 +19279,6 @@ function renderSftpSearchResults(sessionId, side, base, results, limitHit) {
       <span class="sftp-modified">${formatTime(e.modified)}</span>
     </div>`;
   }).join("");
-
-  filesDiv.querySelectorAll(".sftp-search-result").forEach((row) => {
-    row.addEventListener("dblclick", () => openSftpSearchResult(sessionId, side, row));
-    row.addEventListener("click", () => {
-      filesDiv.querySelectorAll(".sftp-search-result.active").forEach((r) => r.classList.remove("active"));
-      row.classList.add("active");
-    });
-  });
 
   setSftpSearchStatus(
     panel,
@@ -19076,6 +19303,30 @@ function sftpRelativePath(base, full, sep) {
   return full;
 }
 
+/**
+ * Deja seleccionada la entrada `name` del listado y la trae a la vista. Si el
+ * listado está virtualizado, primero lleva el scroll a su posición para que la
+ * fila llegue a existir.
+ */
+function revealSftpEntry(sessionId, side, name) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const view = sftpView(s, side);
+  const idx = view.rows.findIndex((e) => e.name === name);
+  if (idx < 0) return;
+  setSftpSelection(sessionId, side, new Set([view.rows[idx].path]));
+  const filesDiv = s.sftp.panel?.querySelector(`.sftp-files[data-side="${side}"]`);
+  if (!filesDiv) return;
+  if (view.virtual) {
+    const rowHeight = view.rowHeight || SFTP_FALLBACK_ROW_HEIGHT;
+    filesDiv.scrollTop = Math.max(0, idx * rowHeight - filesDiv.clientHeight / 2);
+    paintSftpRows(sessionId, side);
+  }
+  filesDiv
+    .querySelector(`.sftp-row[data-name="${cssAttrEscape(name)}"]`)
+    ?.scrollIntoView({ block: "nearest" });
+}
+
 // Navega a la carpeta contenedora del resultado y lo deja seleccionado.
 function openSftpSearchResult(sessionId, side, row) {
   const fullPath = row.dataset.path;
@@ -19088,18 +19339,11 @@ function openSftpSearchResult(sessionId, side, row) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
   const after = () => {
-    // Tras renderizar el destino, seleccionamos la fila correspondiente.
-    const panel = s.sftp.panel;
-    const filesDiv = panel.querySelector(`.sftp-files[data-side="${side}"]`);
-    const selName = isDir ? null : name;
-    if (selName) {
-      const r = filesDiv.querySelector(`.sftp-row[data-name="${CSS.escape(selName)}"]`);
-      if (r) {
-        filesDiv.querySelectorAll(".sftp-row.selected").forEach((x) => setSftpRowSelected(x, false));
-        setSftpRowSelected(r, true);
-        r.scrollIntoView({ block: "nearest" });
-      }
-    }
+    // Tras renderizar el destino, seleccionamos la entrada correspondiente y la
+    // traemos a la vista (que en un directorio virtualizado puede ni estar
+    // pintada todavía).
+    if (isDir) return;
+    revealSftpEntry(sessionId, side, name);
   };
   // resetSftpSearch se dispara dentro de navigate*, limpiando la caja.
   const nav = side === "local"
@@ -19175,17 +19419,26 @@ function setupSftpSortHeaders(panel, sessionId) {
   });
 }
 
+/**
+ * Filas seleccionadas de un lado, **en el orden en que se ven**.
+ *
+ * Se lee del estado, no del DOM: con el listado virtualizado la fila de un
+ * fichero seleccionado puede estar sin pintar, y un borrado múltiple que
+ * preguntara al DOM se dejaría fuera justo lo que no cabe en pantalla.
+ */
 function selectedRows(sessionId, side) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return [];
-  const filesDiv = s.sftp.panel.querySelector(`.sftp-files[data-side="${side}"]`);
-  return Array.from(filesDiv.querySelectorAll(".sftp-row.selected")).map((row) => ({
-    path: row.dataset.path,
-    name: row.dataset.name,
-    isDir: row.dataset.isDir === "true",
-    isSymlink: row.dataset.isSymlink === "true",
-    permissions: row.dataset.permissions ? Number(row.dataset.permissions) : null,
-  }));
+  const view = sftpView(s, side);
+  return view.rows
+    .filter((e) => view.selected.has(e.path))
+    .map((e) => ({
+      path: e.path,
+      name: e.name,
+      isDir: !!e.is_dir,
+      isSymlink: !!e.is_symlink,
+      permissions: Number.isFinite(e.permissions) ? Number(e.permissions) : null,
+    }));
 }
 
 let sftpDragPayload = null;
@@ -19659,15 +19912,17 @@ function sftpMaxConcurrent() {
   return Number.isFinite(n) ? Math.min(64, Math.max(1, n)) : 4;
 }
 
+/**
+ * Nombres del directorio actual de ese lado. Sale del listado en memoria, no de
+ * las filas pintadas: con el listado virtualizado —o con un filtro de búsqueda
+ * puesto— el DOM solo tiene una parte, y dar por libre un nombre que sí existe
+ * haría que una transferencia lo pisara sin preguntar.
+ */
 function renderedSftpNames(sessionId, side) {
   const s = sessions.get(sessionId);
-  const filesDiv = s?.sftp?.panel?.querySelector(`.sftp-files[data-side="${side}"]`);
-  if (!filesDiv) return new Set();
-  return new Set(
-    Array.from(filesDiv.querySelectorAll(".sftp-row"))
-      .map((row) => row.dataset.name)
-      .filter(Boolean),
-  );
+  const entries = s?.sftp?.entries?.[side];
+  if (!Array.isArray(entries)) return new Set();
+  return new Set(entries.map((e) => e?.name).filter(Boolean));
 }
 
 function destinationNameExists(sessionId, side, name, conflictState = null) {
@@ -19946,13 +20201,20 @@ function notifySkippedSymlinks(panel, n) {
  */
 function setSftpRowProgress(panel, side, name, pct, active) {
   if (!panel || !name) return;
-  const row = panel.querySelector(
-    `.sftp-files[data-side="${side}"] .sftp-row[data-name="${cssAttrEscape(name)}"]`
-  );
+  const filesDiv = panel.querySelector(`.sftp-files[data-side="${side}"]`);
+  if (!filesDiv) return;
+  const value = Math.max(0, Math.min(100, pct || 0));
+  // El progreso se anota aparte de la fila: si el listado se repinta (scroll de
+  // un directorio virtualizado, reordenación), la fila renace limpia y hay que
+  // poder devolverle la barra.
+  filesDiv._sftpProgress = filesDiv._sftpProgress || new Map();
+  if (active) filesDiv._sftpProgress.set(name, value);
+  else filesDiv._sftpProgress.delete(name);
+  const row = filesDiv.querySelector(`.sftp-row[data-name="${cssAttrEscape(name)}"]`);
   if (!row) return;
   row.classList.toggle("is-transferring", !!active);
   const bar = row.querySelector(".sftp-row-progress-bar");
-  if (bar) bar.style.width = `${Math.max(0, Math.min(100, pct || 0))}%`;
+  if (bar) bar.style.width = `${value}%`;
 }
 
 /**
@@ -20313,10 +20575,10 @@ function addTransfer(panel, label, transferId, detail = "") {
     <div class="sftp-transfer-bar"><div class="sftp-transfer-fill" style="width:0%"></div></div>
     <div class="sftp-transfer-detail">${escHtml(detail)}</div>
     <div class="sftp-transfer-actions">
-      <button class="sftp-transfer-pause hidden" title="Pausar">⏸</button>
-      <button class="sftp-transfer-resume hidden" title="Reanudar">▶</button>
-      <button class="sftp-transfer-retry hidden" title="Reintentar">↻</button>
-      <button class="sftp-transfer-close" title="Descartar / cancelar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+      <button class="sftp-transfer-pause hidden" title="${escHtml(t("sftp.transfer_pause"))}">⏸</button>
+      <button class="sftp-transfer-resume hidden" title="${escHtml(t("sftp.transfer_resume"))}">▶</button>
+      <button class="sftp-transfer-retry hidden" title="${escHtml(t("sftp.transfer_retry"))}">↻</button>
+      <button class="sftp-transfer-close" title="${escHtml(t("sftp.transfer_dismiss"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>
   `;
   el.querySelector(".sftp-transfer-pause").addEventListener("click", () => {
@@ -24941,14 +25203,14 @@ function buildTerminalSearchBar(sessionId) {
   const bar = document.createElement("div");
   bar.className = "terminal-search hidden";
   bar.innerHTML = `
-    <input type="search" class="terminal-search-input" placeholder="Buscar…" spellcheck="false" />
+    <input type="search" class="terminal-search-input" placeholder="${escHtml(t("terminal.search_placeholder"))}" spellcheck="false" />
     <span class="terminal-search-summary"></span>
-    <button class="terminal-search-btn" data-search="prev" title="Anterior (Shift+Enter)"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
-    <button class="terminal-search-btn" data-search="next" title="Siguiente (Enter)"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-down"/></svg></button>
-    <label class="terminal-search-toggle" title="Coincidir mayúsculas/minúsculas">
+    <button class="terminal-search-btn" data-search="prev" title="${escHtml(t("terminal.search_prev"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
+    <button class="terminal-search-btn" data-search="next" title="${escHtml(t("terminal.search_next"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-down"/></svg></button>
+    <label class="terminal-search-toggle" title="${escHtml(t("terminal.search_match_case"))}">
       <input type="checkbox" data-search-opt="case" /> Aa
     </label>
-    <button class="terminal-search-btn" data-search="close" title="Cerrar (Esc)"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+    <button class="terminal-search-btn" data-search="close" title="${escHtml(t("terminal.search_close"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
   `;
   const input = bar.querySelector(".terminal-search-input");
   const search = (dir) => runTerminalSearch(sessionId, dir);

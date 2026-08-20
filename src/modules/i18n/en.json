@@ -459,7 +459,8 @@
     "empty_hint": "Create your first SSH, RDP, SFTP or FTP profile to get started.",
     "empty_cta": "Add the first one",
     "favorites_empty_hint": "Mark a connection as favorite from its context menu and it'll show up here.",
-    "loading": "Loading connections…"
+    "loading": "Loading connections…",
+    "folder_name": "Folder name"
   },
   "rail": {
     "view_profiles": "Profiles",
@@ -1644,7 +1645,12 @@
   "terminal": {
     "closed": "Connection closed",
     "closed_hint": "(press Enter to reconnect)",
-    "shell_ended": "Console finished"
+    "shell_ended": "Console finished",
+    "search_placeholder": "Search…",
+    "search_prev": "Previous (Shift+Enter)",
+    "search_next": "Next (Enter)",
+    "search_close": "Close (Esc)",
+    "search_match_case": "Match case"
   },
   "toast": {
     "no_data_dir": "Couldn't get the data directory",
@@ -1740,12 +1746,38 @@
   },
   "sftp": {
     "symlinks_skipped": "{n} symbolic links skipped (not copied)",
-    "view_log": "View log"
+    "view_log": "View log",
+    "empty_folder": "Empty folder",
+    "loading_path": "Loading {path}…",
+    "rename_title": "Rename (F2)",
+    "delete_title": "Delete",
+    "close_panel": "Close SFTP panel",
+    "panel": "SFTP panel",
+    "download_selection": "Download selection to local",
+    "upload_selection": "Upload selection to remote",
+    "clear_activity": "Clear activity",
+    "clear_log": "Clear log",
+    "clear_completed": "Clear completed",
+    "clear": "Clear",
+    "resize_logs": "Resize SFTP logs",
+    "resize_panel": "Resize SFTP panel",
+    "sudo_reconnect": "Reconnect SFTP as root (sudo -n sftp-server). Requires NOPASSWD in /etc/sudoers",
+    "follow_cwd": "Follow the terminal's cwd (OSC 7)",
+    "sudo_badge": "SFTP session with elevated privileges (sudo)",
+    "transfer_dismiss": "Dismiss / cancel",
+    "transfer_pause": "Pause",
+    "transfer_resume": "Resume",
+    "transfer_retry": "Retry"
   },
   "sftp_nav": {
     "back": "Back",
     "forward": "Forward",
-    "breadcrumb_label": "Current path"
+    "breadcrumb_label": "Current path",
+    "up": "Parent directory",
+    "home": "Home",
+    "refresh": "Refresh",
+    "mkdir": "New folder",
+    "touch": "New file"
   },
   "sftp_search": {
     "placeholder": "Search by name…",
@@ -1766,5 +1798,16 @@
     "close_window_submit": "Close",
     "kill_pane_title": "Close pane",
     "kill_pane_confirm": "Closing the active pane kills its process ON THE SERVER (kill-pane). Continue?"
+  },
+  "tunnels": {
+    "panel": "SSH tunnels",
+    "close_panel": "Close panel",
+    "stop": "Close tunnel",
+    "bind_host": "Listening host",
+    "type": "Tunnel type",
+    "remote_host": "Target host",
+    "remote_port": "Target port",
+    "local_port": "Local port",
+    "optional_name": "Optional name"
   }
 }

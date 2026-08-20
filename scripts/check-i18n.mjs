@@ -70,9 +70,12 @@ const PATTERNS = [
   { name: "title", re: /\btitle:\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g, group: 2 },
   { name: "message", re: /\bmessage:\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g, group: 2 },
   { name: "submitLabel", re: /\bsubmitLabel:\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g, group: 2 },
-  { name: "attr title=", re: /\btitle="([^"${}<>]*)"/g, group: 1 },
-  { name: "attr aria-label=", re: /\baria-label="([^"${}<>]*)"/g, group: 1 },
-  { name: "attr placeholder=", re: /\bplaceholder="([^"${}<>]*)"/g, group: 1 },
+  // El `(?<![-\w])` descarta los atributos `data-i18n-title=` / `data-i18n-…`,
+  // cuyo valor es **una clave** del catálogo y no texto visible: con `\b` se
+  // colaban como si fueran cadenas sin traducir.
+  { name: "attr title=", re: /(?<![-\w])title="([^"${}<>]*)"/g, group: 1 },
+  { name: "attr aria-label=", re: /(?<![-\w])aria-label="([^"${}<>]*)"/g, group: 1 },
+  { name: "attr placeholder=", re: /(?<![-\w])placeholder="([^"${}<>]*)"/g, group: 1 },
 ];
 
 /** ¿La cadena tiene texto que un humano leería (y por tanto habría que traducir)? */

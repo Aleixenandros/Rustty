@@ -7422,8 +7422,11 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
   text-overflow: ellipsis;
 }
 
-.sftp-row.sftp-filtered-out {
-  display: none;
+/* Contenedor de las filas visibles de un listado virtualizado: los rellenos
+   superior e inferior ocupan el sitio de las filas que no se pintan, para que
+   la barra de scroll siga midiendo el directorio entero. */
+.sftp-rows {
+  display: flow-root;
 }
 
 .sftp-row.sftp-search-result {
