@@ -2680,7 +2680,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
         status: "ok",
         title: t("prefs_sync.done_sync").replace("{n}", total),
         detail: new Date(lastSyncAt).toLocaleString(),
-        actionLabel: "Abrir",
+        actionLabel: t("activity.open"),
         action: () => {
           prefsActiveTab = "data";
           openSettingsModal();
@@ -2713,7 +2713,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
         status: "error",
         title: t("prefs_sync.status_bad_passphrase"),
         detail: t("prefs_sync.bad_passphrase_toast"),
-        actionLabel: "Abrir",
+        actionLabel: t("activity.open"),
         action: () => {
           prefsActiveTab = "data";
           openSettingsModal();
@@ -2726,9 +2726,9 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     recordActivity({
       kind: "sync",
       status: "error",
-      title: "Sincronización fallida",
+      title: t("activity.sync_failed"),
       detail: String(err),
-      actionLabel: "Reintentar",
+      actionLabel: t("activity.retry"),
       action: () => runSyncWithCurrentState({ persistConfig: false, announce: true })
         .catch((e) => console.error("[sync] retry from activity", e)),
     });
@@ -2982,7 +2982,7 @@ async function syncRotatePassphraseFlow() {
 
 async function syncBrowseLocalFolder() {
   const path = await openDialog({
-    title: "Carpeta local de sincronización",
+    title: t("prefs_sync.local_folder_dialog"),
     directory: true,
     multiple: false,
   }).catch(() => null);
@@ -4035,7 +4035,7 @@ async function browseKeepassKeyfile() {
 
 function openKeepassUnlockModal() {
   const path = document.getElementById("pref-keepass-path").value.trim();
-  if (!path) { toast("Selecciona primero una base .kdbx", "warning"); return; }
+  if (!path) { toast(t("toast.keepass_select_db"), "warning"); return; }
   document.getElementById("kp-modal-path").value = path;
   document.getElementById("kp-modal-password").value = "";
   document.getElementById("kp-modal-error-row").style.display = "none";
@@ -4064,9 +4064,9 @@ async function submitKeepassUnlock() {
     await refreshKeepassStatus();
     touchKeepass();
     startKeepassAutoLock();
-    toast("KeePass desbloqueada", "success");
+    toast(t("toast.keepass_unlocked"), "success");
   } catch (e) {
-    errEl.textContent = e?.toString() || "No se pudo desbloquear";
+    errEl.textContent = e?.toString() || t("modal_kp.unlock_error");
     errRow.style.display = "";
   }
 }
@@ -4075,9 +4075,9 @@ async function lockKeepass() {
   try {
     await invoke("keepass_lock");
     await refreshKeepassStatus();
-    toast("KeePass bloqueada", "success");
+    toast(t("toast.keepass_locked_ok"), "success");
   } catch (e) {
-    toast("Error al bloquear: " + e, "error");
+    toast(t("toast.keepass_lock_error", { err: e }), "error");
   }
 }
 
@@ -7496,7 +7496,7 @@ function collectLegacyAlgorithms() {
 function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiveWorkspaceId()) {
   editingProfileId = null;
   resetConnectionTestPanel();
-  document.getElementById("modal-title").textContent = "Nueva conexión";
+  document.getElementById("modal-title").textContent = t("modal_conn.title_new");
   document.getElementById("form-connection").reset();
   setPasswordVisible(false);
   clearExtraCredRows();
@@ -7665,7 +7665,7 @@ function openEditConnectionModal(profileId) {
   resetConnectionTestPanel();
   setupModalNotePane();
   document.getElementById("field-template")?.classList.add("hidden");
-  document.getElementById("modal-title").textContent = "Editar conexión";
+  document.getElementById("modal-title").textContent = t("modal_conn.title_edit");
 
   document.getElementById("f-name").value  = profile.name;
   document.getElementById("f-host").value  = profile.host;
@@ -9183,7 +9183,7 @@ function resetConnectionTestPanel() {
   panel?.classList.add("hidden");
   if (list) list.innerHTML = "";
   if (status) {
-    status.textContent = "Listo";
+    status.textContent = t("modal_conn.test_idle");
     status.className = "connection-test-status";
   }
 }
@@ -9231,20 +9231,20 @@ async function runConnectionTestFromModal() {
       appendConnectionTestLog({
         stage: "connecting",
         status: "info",
-        message: `Comprobando puerto RDP ${profile.host}:${profile.port}`,
+        message: t("modal_conn.test_checking_port", { proto: "RDP", host: profile.host, port: profile.port }),
       });
       const ms = await invoke("tcp_ping", { host: profile.host, port: profile.port });
       appendConnectionTestLog({
         stage: "connected",
         status: "ok",
-        message: `Puerto RDP accesible (${ms} ms)`,
+        message: t("modal_conn.test_port_ok", { proto: "RDP", ms }),
       });
       setConnectionTestStatus("OK", "ok");
-      toast("Prueba RDP completada", "success");
+      toast(t("toast.test_done", { proto: "RDP" }), "success");
       recordActivity({
         kind: "connection",
         status: "ok",
-        title: `Prueba RDP OK: ${profile.name}`,
+        title: t("modal_conn.test_ok_activity", { proto: "RDP", name: profile.name }),
         detail: `${profile.host}:${profile.port}`,
       });
       return;
@@ -9255,20 +9255,20 @@ async function runConnectionTestFromModal() {
       appendConnectionTestLog({
         stage: "connecting",
         status: "info",
-        message: `Comprobando puerto ${proto} ${profile.host}:${profile.port}`,
+        message: t("modal_conn.test_checking_port", { proto, host: profile.host, port: profile.port }),
       });
       const ms = await invoke("tcp_ping", { host: profile.host, port: profile.port });
       appendConnectionTestLog({
         stage: "connected",
         status: "ok",
-        message: `Puerto ${proto} accesible (${ms} ms)`,
+        message: t("modal_conn.test_port_ok", { proto, ms }),
       });
       setConnectionTestStatus("OK", "ok");
-      toast(`Prueba ${proto} completada`, "success");
+      toast(t("toast.test_done", { proto }), "success");
       recordActivity({
         kind: "connection",
         status: "ok",
-        title: `Prueba ${proto} OK: ${profile.name}`,
+        title: t("modal_conn.test_ok_activity", { proto, name: profile.name }),
         detail: `${profile.host}:${profile.port}`,
       });
       return;
@@ -9284,11 +9284,11 @@ async function runConnectionTestFromModal() {
       testId,
     });
     setConnectionTestStatus("OK", "ok");
-    toast("Prueba SSH completada", "success");
+    toast(t("toast.test_done", { proto: "SSH" }), "success");
     recordActivity({
       kind: "connection",
       status: "ok",
-      title: `Prueba SSH OK: ${profile.name}`,
+      title: t("modal_conn.test_ok_activity", { proto: "SSH", name: profile.name }),
       detail: `${profile.host}:${profile.port}`,
     });
   } catch (err) {
@@ -9302,7 +9302,7 @@ async function runConnectionTestFromModal() {
     recordActivity({
       kind: "connection",
       status: "error",
-      title: `Prueba fallida: ${profile.name}`,
+      title: t("modal_conn.test_failed_activity", { name: profile.name }),
       detail: String(err),
     });
   } finally {
@@ -9442,7 +9442,7 @@ async function saveAndClose(shouldConnect) {
         await connectProfileWithCredentials(profile.id, password, passphrase, savePassphrase);
       }
     } else {
-      toast("Perfil guardado", "success");
+      toast(t("toast.profile_saved"), "success");
     }
   } catch (err) {
     toast(`Error: ${err}`, "error");
@@ -9731,8 +9731,8 @@ async function wakeProfile(profileId) {
 
   const macAddress = (profile.mac_address || "").trim();
   if (!macAddress) {
-    toast("Configura una MAC Wake On LAN en el perfil", "warning", 6000, {
-      actionLabel: "Editar",
+    toast(t("toast.wol_need_mac"), "warning", 6000, {
+      actionLabel: t("ctx.edit"),
       onAction: () => openEditConnectionModal(profileId),
     });
     return;
@@ -9744,13 +9744,13 @@ async function wakeProfile(profileId) {
       broadcast: (profile.wol_broadcast || "").trim() || null,
       port: profile.wol_port || null,
     });
-    toast(`Magic packet enviado a ${profile.name}`, "success", 7000, {
-      actionLabel: "Conectar",
+    toast(t("toast.wol_sent", { name: profile.name }), "success", 7000, {
+      actionLabel: t("activity.connect"),
       onAction: () => connectProfile(profileId, { force: true }),
     });
   } catch (err) {
     toast(t("toast.wol_failed", { err }), "error", 7000, {
-      actionLabel: "Reintentar",
+      actionLabel: t("activity.retry"),
       onAction: () => wakeProfile(profileId),
     });
   }
@@ -9992,7 +9992,7 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   appendConnectionLog(sessionId, {
     stage: "preparing",
     status: "info",
-    message: `Preparando conexión con ${profile.name}`,
+    message: t("terminal.log_preparing", { name: profile.name }),
     timestamp: new Date().toISOString(),
   });
 
@@ -11836,7 +11836,7 @@ async function reconnectLocalInPlace(s) {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
       renderDashboard();
-      showReconnectOverlay(sessionId, "Consola cerrada");
+      showReconnectOverlay(sessionId, t("terminal.console_closed"));
       enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
       markTabActivity(sessionId, { kind: "disconnect" });
     });
@@ -11859,7 +11859,7 @@ async function reconnectLocalInPlace(s) {
     s.unlisteners = [];
     s.status = "error";
     updateTabStatus(sessionId, "error");
-    showReconnectOverlay(sessionId, "Error al reabrir");
+    showReconnectOverlay(sessionId, t("terminal.reopen_error"));
     toast(`Error al reabrir la consola: ${err}`, "error");
   }
 }
@@ -11868,7 +11868,7 @@ async function reconnectSshInPlace(s) {
   const oldSessionId = s.id;
   const profile = profiles.find((p) => p.id === s.profileId);
   if (!profile) {
-    toast("Perfil no encontrado; no se puede reconectar", "error");
+    toast(t("toast.profile_not_found"), "error");
     return;
   }
 
@@ -11890,7 +11890,7 @@ async function reconnectSshInPlace(s) {
   appendConnectionLog(oldSessionId, {
     stage: "reconnecting",
     status: "info",
-    message: `Preparando reconexión con ${profile.name}`,
+    message: t("terminal.log_reconnect_preparing", { name: profile.name }),
     timestamp: new Date().toISOString(),
   });
 
@@ -11916,7 +11916,7 @@ async function reconnectSshInPlace(s) {
     s.unlisteners = [];
     s.status = "error";
     updateTabStatus(oldSessionId, "error");
-    showReconnectOverlay(oldSessionId, "Error al reconectar");
+    showReconnectOverlay(oldSessionId, t("terminal.reconnect_error"));
     toast(`No se pudo reconectar: ${ipcErrorText(err)}`, "error",
       isHostKeyError(err) ? 12000 : undefined);
   }
@@ -13169,8 +13169,8 @@ function buildReconnectOverlay(sessionId) {
   overlay.innerHTML = `
     <div class="terminal-reconnect-box">
       <span class="terminal-reconnect-spinner" aria-hidden="true"></span>
-      <div class="terminal-reconnect-title">Sesión cerrada</div>
-      <button type="button" class="terminal-reconnect-btn">Reconectar</button>
+      <div class="terminal-reconnect-title">${escHtml(t("terminal.session_closed"))}</div>
+      <button type="button" class="terminal-reconnect-btn">${escHtml(t("terminal.reconnect"))}</button>
     </div>
   `;
   overlay.querySelector(".terminal-reconnect-btn").addEventListener("click", () => {
@@ -13179,14 +13179,14 @@ function buildReconnectOverlay(sessionId) {
   return overlay;
 }
 
-function showReconnectOverlay(sessionId, title = "Sesión cerrada") {
+function showReconnectOverlay(sessionId, title = t("terminal.session_closed")) {
   const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
   const overlay = pane?.querySelector(".terminal-reconnect-overlay");
   if (!overlay) return;
   overlay.classList.remove("reconnecting");
   overlay.querySelector(".terminal-reconnect-title").textContent = title;
   overlay.querySelector(".terminal-reconnect-btn").disabled = false;
-  overlay.querySelector(".terminal-reconnect-btn").textContent = "Reconectar";
+  overlay.querySelector(".terminal-reconnect-btn").textContent = t("terminal.reconnect");
   overlay.classList.remove("hidden");
 }
 
@@ -13194,7 +13194,7 @@ function showReconnectOverlay(sessionId, title = "Sesión cerrada") {
 // dura el invoke. El botón se deshabilita (con etiqueta "…") y aparece un
 // spinner. `hideReconnectOverlay` lo retira al recibir `ssh-connected`; si
 // falla, `showReconnectOverlay` lo vuelve a poner en su estado anterior.
-function showReconnectingOverlay(sessionId, title = "Reconectando…") {
+function showReconnectingOverlay(sessionId, title = t("terminal.reconnecting")) {
   const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
   const overlay = pane?.querySelector(".terminal-reconnect-overlay");
   if (!overlay) return;
@@ -13216,7 +13216,7 @@ function hideReconnectOverlay(sessionId) {
   const btn = overlay.querySelector(".terminal-reconnect-btn");
   if (btn) {
     btn.disabled = false;
-    btn.textContent = "Reconectar";
+    btn.textContent = t("terminal.reconnect");
   }
 }
 
@@ -13586,7 +13586,7 @@ function buildConnectionLogPanel(sessionId) {
   panel.dataset.session = sessionId;
   panel.innerHTML = `
     <div class="connection-log-head">
-      <span>Diagnóstico de conexión</span>
+      <span>${escHtml(t("terminal.diagnostics_title"))}</span>
       <button type="button" class="connection-log-close" aria-label="${t("toast.close")}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>
     <div class="connection-log-list"></div>
@@ -13634,7 +13634,7 @@ function appendConnectionLog(sessionId, rawEntry) {
       status: entry.status === "ok" ? "ok" : entry.status,
       title: entry.message,
       detail: profile?.name || "",
-      actionLabel: "Ver",
+      actionLabel: t("activity.view"),
       action: () => {
         setActiveTab(sessionId);
         setConnectionLogPanelOpen(sessionId, true);
@@ -13816,7 +13816,7 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     appendConnectionLog(sessionId, {
       stage: "connected",
       status: "ok",
-      message: "Sesión SSH conectada",
+      message: t("terminal.log_connected"),
       timestamp: new Date().toISOString(),
     });
     hideReconnectOverlay(sessionId);
@@ -13867,9 +13867,9 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
       timestamp: new Date().toISOString(),
     });
     updateTabStatus(sessionId, "error");
-    showReconnectOverlay(sessionId, isHostKeyAlert ? "Host key cambiada" : "Error de conexión");
+    showReconnectOverlay(sessionId, isHostKeyAlert ? t("terminal.hostkey_changed") : t("terminal.connect_error"));
     if (isHostKeyAlert) {
-      enqueueTerminalOutput(s, `\r\n\x1b[1;41;97m  ⚠ HOST KEY CAMBIADA  \x1b[0m\r\n\x1b[31m${message}\x1b[0m\r\n`);
+      enqueueTerminalOutput(s, `\r\n\x1b[1;41;97m  ⚠ ${t("terminal.hostkey_banner")}  \x1b[0m\r\n\x1b[31m${message}\x1b[0m\r\n`);
       toast(message, "error", 12000);
     } else {
       enqueueTerminalOutput(s, `\r\n\x1b[31m✗ Error: ${message}\x1b[0m\r\n`);
@@ -13887,10 +13887,10 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     appendConnectionLog(sessionId, {
       stage: "reconnecting",
       status: "warning",
-      message: `Reintentando conexión (${attempt}/${max}) en ${secs}s`,
+      message: t("terminal.log_retrying", { attempt, max, secs }),
       timestamp: new Date().toISOString(),
     });
-    enqueueTerminalOutput(s, `\r\n\x1b[33m↻ Reintentando conexión (${attempt}/${max}) en ${secs}s…\x1b[0m\r\n`);
+    enqueueTerminalOutput(s, `\r\n\x1b[33m↻ ${t("terminal.log_retrying", { attempt, max, secs })}…\x1b[0m\r\n`);
     markTabActivity(sessionId, { important: true });
   }));
 
@@ -13902,11 +13902,11 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     appendConnectionLog(sessionId, {
       stage: "closed",
       status: "warning",
-      message: "Sesión SSH cerrada",
+      message: t("terminal.log_closed"),
       timestamp: new Date().toISOString(),
     });
     updateTabStatus(sessionId, "error");
-    showReconnectOverlay(sessionId, "Sesión cerrada");
+    showReconnectOverlay(sessionId, t("terminal.session_closed"));
     enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.closed")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
     markTabActivity(sessionId, { kind: "disconnect" });
     // El subsistema SFTP muere con el canal SSH; cerrar el panel para no dejarlo huérfano.
@@ -14054,7 +14054,7 @@ async function confirmCloseSession(sessionId) {
   const profile = profiles.find((p) => p.id === s.profileId);
   const name = profile?.name || (s.type ? s.type.toUpperCase() : "sesión");
   const transfers = sessionHasActiveTransfers(s)
-    ? "\n\nHay transferencias SFTP en curso que se cancelarán."
+    ? `\n\n${t("tabctx.close_tab_transfers")}`
     : "";
   // Cerrar una pestaña raíz cierra su conexión, y con ella caen las shells
   // hijas abiertas sobre ella («Nueva pestaña en esta conexión»): avisarlo.
@@ -14062,9 +14062,9 @@ async function confirmCloseSession(sessionId) {
     .filter((c) => c._parentSessionId === sessionId && isSessionLive(c)).length;
   const children = liveChildren > 0 ? `\n\n${t("shell_child.close_children_warning")}` : "";
   return confirmThemed({
-    title: "Cerrar pestaña",
-    message: `La conexión "${name}" sigue abierta. ¿Cerrar la pestaña y desconectar?${transfers}${children}`,
-    submitLabel: "Cerrar y desconectar",
+    title: t("tabctx.close_tab_title"),
+    message: `${t("tabctx.close_tab_msg", { name })}${transfers}${children}`,
+    submitLabel: t("tabctx.close_tab_submit"),
     danger: true,
   });
 }
@@ -14686,9 +14686,9 @@ async function deleteSelectedProfiles(targetId) {
   }
 
   const confirmed = await confirmThemed({
-    title: "Eliminar conexiones",
+    title: t("toast.del_conn_multi_title"),
     message: t("toast.del_conn_multi_confirm", { n: ids.length }),
-    submitLabel: "Eliminar",
+    submitLabel: t("toast.del_conn_submit"),
     danger: true,
   });
   if (!confirmed) return;
@@ -14864,7 +14864,7 @@ async function promoteProfilePasswordToMaster(profileId) {
  */
 async function openDataDirectory() {
   const dataDir = await invoke("get_data_dir").catch(() => null);
-  if (!dataDir) { toast("No se pudo obtener el directorio de datos", "error"); return; }
+  if (!dataDir) { toast(t("toast.no_data_dir"), "error"); return; }
 
   // El plugin opener ya está inicializado en Rust (tauri_plugin_opener::init)
   // y la capability autoriza `opener:allow-open-path`.
@@ -14952,7 +14952,7 @@ function populateGlobalTunnelProfileSelect(selectedId = null) {
     ? sshProfiles.map((p) =>
         `<option value="${escHtml(p.id)}"${p.id === selectedId ? " selected" : ""}>${escHtml(profileTunnelLabel(p))}</option>`
       ).join("")
-    : `<option value="">Sin conexiones SSH</option>`;
+    : `<option value="">${escHtml(t("tunnels.no_ssh_connections"))}</option>`;
   select.disabled = sshProfiles.length === 0;
 }
 
@@ -17124,11 +17124,11 @@ function renderGlobalTunnelLists() {
           <span class="global-tunnel-desc">${escHtml(describeTunnel(tunnel))}</span>
           <span class="global-tunnel-meta">↑ ${formatSize(tunnel.bytesUp || 0)} · ↓ ${formatSize(tunnel.bytesDown || 0)}</span>
           <span class="global-tunnel-row-actions">
-            <button type="button" class="global-tunnel-action danger" data-global-tunnel-action="stop-active">Parar</button>
+            <button type="button" class="global-tunnel-action danger" data-global-tunnel-action="stop-active">${escHtml(t("tunnels.stop_short"))}</button>
           </span>
         </div>`)
       .join("")
-    : `<div class="tunnel-empty">Sin túneles activos</div>`;
+    : `<div class="tunnel-empty">${escHtml(t("tunnels.empty_active"))}</div>`;
 
   const activeKeys = new Set(active.map(({ profile, tunnel }) => activeTunnelKey(profile?.id, tunnel.id)));
   const saved = profiles
@@ -17143,14 +17143,14 @@ function renderGlobalTunnelLists() {
             <span class="tunnel-kind">${tunnel.tunnelType === "dynamic" ? "SOCKS" : tunnel.tunnelType.toUpperCase()}</span>
             <span class="global-tunnel-profile">${escHtml(profile.name)}</span>
             <span class="global-tunnel-desc">${escHtml(tunnel.name || describeTunnel(tunnel))}</span>
-            <span class="global-tunnel-meta">${escHtml(describeTunnel(tunnel))}${tunnel.autoStart ? " · Auto" : ""}</span>
+            <span class="global-tunnel-meta">${escHtml(describeTunnel(tunnel))}${tunnel.autoStart ? ` · ${escHtml(t("tunnels.auto_check"))}` : ""}</span>
             <span class="global-tunnel-row-actions">
-              <button type="button" class="global-tunnel-action" data-global-tunnel-action="start-saved" ${isActive ? "disabled" : ""}>${isActive ? "Activo" : "Abrir"}</button>
-              <button type="button" class="global-tunnel-action danger" data-global-tunnel-action="delete-saved">Borrar</button>
+              <button type="button" class="global-tunnel-action" data-global-tunnel-action="start-saved" ${isActive ? "disabled" : ""}>${escHtml(isActive ? t("tunnels.active_badge") : t("tunnels.open"))}</button>
+              <button type="button" class="global-tunnel-action danger" data-global-tunnel-action="delete-saved">${escHtml(t("tunnels.delete_saved_submit"))}</button>
             </span>
           </div>`;
       }).join("")
-    : `<div class="tunnel-empty">Sin túneles guardados</div>`;
+    : `<div class="tunnel-empty">${escHtml(t("tunnels.empty_saved"))}</div>`;
 }
 
 async function startSavedGlobalTunnel(profileId, tunnelId) {
@@ -17174,9 +17174,9 @@ async function deleteSavedGlobalTunnel(profileId, tunnelId) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
   const ok = await confirmThemed({
-    title: "Túneles SSH",
-    message: "¿Borrar este túnel guardado?",
-    submitLabel: "Borrar",
+    title: t("tunnels.panel"),
+    message: t("tunnels.delete_saved_confirm"),
+    submitLabel: t("tunnels.delete_saved_submit"),
     danger: true,
   });
   if (!ok) return;
@@ -17221,25 +17221,25 @@ function buildTunnelPanel(sessionId) {
   panel.innerHTML = `
     <div class="tunnel-panel-head">
       <div>
-        <div class="tunnel-title">Túneles SSH</div>
-        <div class="tunnel-subtitle">Port forwarding sobre la sesión activa</div>
+        <div class="tunnel-title">${escHtml(t("tunnels.panel"))}</div>
+        <div class="tunnel-subtitle">${escHtml(t("tunnels.subtitle"))}</div>
       </div>
       <button class="tunnel-close" type="button" title="${escHtml(t("tunnels.close_panel"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>
     <form class="tunnel-form">
       <select name="type" title="${escHtml(t("tunnels.type"))}">
-        <option value="local">Local (-L)</option>
-        <option value="remote">Remoto (-R)</option>
-        <option value="dynamic">SOCKS (-D)</option>
+        <option value="local">${escHtml(t("tunnels.type_local"))}</option>
+        <option value="remote">${escHtml(t("tunnels.type_remote"))}</option>
+        <option value="dynamic">${escHtml(t("tunnels.type_dynamic"))}</option>
       </select>
       <input name="bindHost" type="text" value="127.0.0.1" title="${escHtml(t("tunnels.bind_host"))}" />
       <input name="localPort" type="number" min="1" max="65535" placeholder="${escHtml(t("tunnels.local_port"))}" required />
       <input name="remoteHost" type="text" placeholder="${escHtml(t("tunnels.remote_host"))}" />
       <input name="remotePort" type="number" min="1" max="65535" placeholder="${escHtml(t("tunnels.remote_port"))}" />
       <input name="name" type="text" placeholder="${escHtml(t("tunnels.optional_name"))}" />
-      <label class="tunnel-check"><input name="save" type="checkbox" /> Guardar</label>
-      <label class="tunnel-check"><input name="autoStart" type="checkbox" /> Auto</label>
-      <button type="submit" class="btn-primary">Abrir</button>
+      <label class="tunnel-check"><input name="save" type="checkbox" /> ${escHtml(t("tunnels.save_check"))}</label>
+      <label class="tunnel-check"><input name="autoStart" type="checkbox" /> ${escHtml(t("tunnels.auto_check"))}</label>
+      <button type="submit" class="btn-primary">${escHtml(t("tunnels.open"))}</button>
     </form>
     <div class="tunnel-list"></div>`;
 
@@ -17384,7 +17384,7 @@ function renderTunnelList(sessionId) {
   const list = panel.querySelector(".tunnel-list");
   const tunnels = [...(s.tunnels?.values() || [])];
   if (!tunnels.length) {
-    list.innerHTML = `<div class="tunnel-empty">Sin túneles activos</div>`;
+    list.innerHTML = `<div class="tunnel-empty">${escHtml(t("tunnels.empty_active"))}</div>`;
     return;
   }
   list.innerHTML = tunnels.map((tun) => `
@@ -17440,7 +17440,7 @@ async function openLocalShell() {
     const ulClose = await listen(eventName("shellClosed", sessionId), () => {
       s.status = "closed";
       updateTabStatus(sessionId, "error");
-      showReconnectOverlay(sessionId, "Consola cerrada");
+      showReconnectOverlay(sessionId, t("terminal.console_closed"));
       enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
       markTabActivity(sessionId, { kind: "disconnect" });
     });
@@ -17795,7 +17795,7 @@ function toggleActiveSftpPanel() {
 function toggleActiveSftpFollow() {
   const s = activeSftpSession();
   if (!s?.sftp || isFileTransferConnectionType(s.type)) {
-    toast("Abre primero el panel SFTP", "warning");
+    toast(t("toast.sftp_open_first"), "warning");
     return;
   }
   const btn = s.sftp.panel.querySelector('[data-sftp-nav="follow"]');
@@ -17805,7 +17805,7 @@ function toggleActiveSftpFollow() {
 function toggleActiveSftpElevated() {
   const s = activeSftpSession();
   if (!s?.sftp || isFileTransferConnectionType(s.type)) {
-    toast("Abre primero el panel SFTP", "warning");
+    toast(t("toast.sftp_open_first"), "warning");
     return;
   }
   toggleSftpElevated(activeSessionId);
@@ -18256,7 +18256,7 @@ function buildSftpPanel(sessionId) {
       <button class="sftp-nav-btn sftp-close-btn" data-sftp-act="close" title="${escHtml(t("sftp.close_panel"))}" aria-label="${escHtml(t("sftp.close_panel"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>
     <div class="sftp-side sftp-side-local" data-side="local">
-      <div class="sftp-side-title">Local</div>
+      <div class="sftp-side-title">${escHtml(t("toast.side_local"))}</div>
       <div class="sftp-toolbar">
         <button class="sftp-nav-btn" data-sftp-nav="back" data-side="local" title="${escHtml(t("sftp_nav.back"))}" aria-label="${escHtml(t("sftp_nav.back"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-left"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="forward" data-side="local" title="${escHtml(t("sftp_nav.forward"))}" aria-label="${escHtml(t("sftp_nav.forward"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></button>
@@ -18280,10 +18280,10 @@ function buildSftpPanel(sessionId) {
         <span class="sftp-search-status" data-side="local"></span>
       </div>
       <div class="sftp-columns" data-side="local">
-        <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="local" data-sftp-sort="type">Tipo</button>
-        <button type="button" class="sftp-sort-btn sftp-sort-name" data-side="local" data-sftp-sort="name">Nombre</button>
-        <button type="button" class="sftp-sort-btn sftp-sort-size" data-side="local" data-sftp-sort="size">Tamaño</button>
-        <button type="button" class="sftp-sort-btn sftp-sort-modified" data-side="local" data-sftp-sort="modified">Fecha</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="local" data-sftp-sort="type">${escHtml(t("sftp.col_type"))}</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-name" data-side="local" data-sftp-sort="name">${escHtml(t("sftp.col_name"))}</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-size" data-side="local" data-sftp-sort="size">${escHtml(t("sftp.col_size"))}</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-modified" data-side="local" data-sftp-sort="modified">${escHtml(t("sftp.col_modified"))}</button>
         <span></span>
       </div>
       <div class="sftp-files" data-side="local" tabindex="0" role="listbox" aria-multiselectable="true">
@@ -18298,7 +18298,7 @@ function buildSftpPanel(sessionId) {
 
     <div class="sftp-side sftp-side-remote" data-side="remote">
       <div class="sftp-side-title">
-        <span>Remoto</span>
+        <span>${escHtml(t("toast.side_remote"))}</span>
         <span class="sftp-sudo-badge hidden" data-sftp-sudo-badge title="${escHtml(t("sftp.sudo_badge"))}">sudo</span>
       </div>
       <div class="sftp-toolbar">
@@ -18328,10 +18328,10 @@ function buildSftpPanel(sessionId) {
         <span class="sftp-search-status" data-side="remote"></span>
       </div>
       <div class="sftp-columns" data-side="remote">
-        <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="remote" data-sftp-sort="type">Tipo</button>
-        <button type="button" class="sftp-sort-btn sftp-sort-name" data-side="remote" data-sftp-sort="name">Nombre</button>
-        <button type="button" class="sftp-sort-btn sftp-sort-size" data-side="remote" data-sftp-sort="size">Tamaño</button>
-        <button type="button" class="sftp-sort-btn sftp-sort-modified" data-side="remote" data-sftp-sort="modified">Fecha</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="remote" data-sftp-sort="type">${escHtml(t("sftp.col_type"))}</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-name" data-side="remote" data-sftp-sort="name">${escHtml(t("sftp.col_name"))}</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-size" data-side="remote" data-sftp-sort="size">${escHtml(t("sftp.col_size"))}</button>
+        <button type="button" class="sftp-sort-btn sftp-sort-modified" data-side="remote" data-sftp-sort="modified">${escHtml(t("sftp.col_modified"))}</button>
         <span></span>
       </div>
       <div class="sftp-files" data-side="remote" tabindex="0" role="listbox" aria-multiselectable="true">
@@ -18342,20 +18342,20 @@ function buildSftpPanel(sessionId) {
     <div class="sftp-transfers-wrap">
       <div class="sftp-log-resize-handle" title="${escHtml(t("sftp.resize_logs"))}"></div>
       <div class="sftp-log-tabs">
-        <button class="sftp-log-tab active" data-sftp-log-tab="transfers">Transferencias</button>
-        <button class="sftp-log-tab" data-sftp-log-tab="activity">Actividad</button>
+        <button class="sftp-log-tab active" data-sftp-log-tab="transfers">${escHtml(t("sftp.tab_transfers"))}</button>
+        <button class="sftp-log-tab" data-sftp-log-tab="activity">${escHtml(t("sftp.tab_activity"))}</button>
         <span class="sftp-log-spacer"></span>
         <button class="sftp-transfers-clear" title="${escHtml(t("sftp.clear_completed"))}">${escHtml(t("sftp.clear"))}</button>
         <button class="sftp-activity-clear hidden" title="${escHtml(t("sftp.clear_activity"))}">${escHtml(t("sftp.clear_log"))}</button>
       </div>
       <div class="sftp-log-pane active" data-sftp-log-pane="transfers">
         <div class="sftp-transfers">
-          <div class="sftp-transfers-empty">Sin transferencias todavía</div>
+          <div class="sftp-transfers-empty">${escHtml(t("sftp.transfers_empty"))}</div>
         </div>
       </div>
       <div class="sftp-log-pane" data-sftp-log-pane="activity">
         <div class="sftp-activity-log">
-          <div class="sftp-activity-empty">Sin actividad todavía</div>
+          <div class="sftp-activity-empty">${escHtml(t("sftp.activity_empty"))}</div>
         </div>
       </div>
     </div>
@@ -18560,17 +18560,13 @@ async function navigateSftpRemote(sessionId, path, { record = true } = {}) {
     const msg = String(err);
     const isPerm = /permission|denied|13/i.test(msg);
     if (isPerm) {
-      toast(
-        `SFTP sin permisos sobre ${path}. El subsistema SFTP conserva el usuario original; no puede seguir a un shell elevado (sudo su -).`,
-        "warning",
-        8000,
-      );
+      toast(t("sftp.perm_denied", { path }), "warning", 8000);
     } else {
-      toast(`No se pudo listar: ${err}`, "error");
+      toast(t("sftp.list_error", { err }), "error");
     }
     appendSftpActivity(panel, {
       status: "error",
-      label: "Listar Remoto",
+      label: t("sftp.activity_list_remote"),
       detail: `${path}: ${msg}`,
     });
     filesDiv.innerHTML = `<div class="sftp-empty error">Error: ${escHtml(msg)}</div>`;
@@ -18602,7 +18598,7 @@ async function navigateSftpLocal(sessionId, path, { record = true } = {}) {
     if (!isCurrentSftpNavigation(s, "local", nav)) return;
     appendSftpActivity(panel, {
       status: "error",
-      label: "Listar Local",
+      label: t("sftp.activity_list_local"),
       detail: `${path}: ${String(err)}`,
     });
     filesDiv.innerHTML = `<div class="sftp-empty error">Error: ${escHtml(String(err))}</div>`;
@@ -19945,17 +19941,16 @@ function autoRenameTransferName(sessionId, side, name, isDir, conflictState = nu
 }
 
 async function promptSftpTransferConflict(name, targetSide, isDir) {
-  const kind = isDir ? "la carpeta" : "el fichero";
-  const where = targetSide === "local" ? "Local" : "Remoto";
+  const where = targetSide === "local" ? t("toast.side_local") : t("toast.side_remote");
   const choice = await chooseThemed({
-    title: "Conflicto de transferencia",
-    message: `Ya existe ${kind} "${name}" en ${where}. Renombrar creará automáticamente una copia con sufijo numérico.`,
-    submitLabel: "Sobrescribir",
+    title: t("sftp.conflict_title"),
+    message: t(isDir ? "sftp.conflict_msg_dir" : "sftp.conflict_msg_file", { name, where }),
+    submitLabel: t("sftp.conflict_overwrite"),
     danger: true,
-    rememberLabel: "Aplicar a todos los conflictos de esta transferencia",
+    rememberLabel: t("sftp.conflict_remember"),
     actions: [
-      { value: "skip", label: "Omitir" },
-      { value: "rename", label: "Renombrar" },
+      { value: "skip", label: t("sftp.conflict_skip") },
+      { value: "rename", label: t("sftp.conflict_rename") },
     ],
   });
   if (!choice) return { action: "cancel", applyAll: false };
@@ -20150,11 +20145,11 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
       detail: `${srcPath}${finalTargetPath ? ` → ${finalTargetPath}` : ""}${partialDetail}: ${String(err)}`,
       bytes: transferredBytes,
       startedAt,
-      actionLabel: canceled ? "Ver" : "Reintentar",
+      actionLabel: canceled ? t("activity.view") : t("activity.retry"),
       action: canceled ? (() => revealSftpActivity(panel)) : (() => retrySftpTransfer(sessionId, transferId)),
     });
     if (!canceled) {
-      toast(`Fallo transferencia: ${err}`, "error", 8000, {
+      toast(t("sftp.transfer_failed", { err }), "error", 8000, {
         category: "transfer",
         actionLabel: t("sftp.view_log"),
         onAction: () => revealSftpActivity(panel),
@@ -20228,15 +20223,16 @@ function cssAttrEscape(value) {
 async function promptMkdir(sessionId, side) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
+  const whereMkdir = side === "local" ? t("toast.side_local") : t("toast.side_remote");
   const name = await promptEntryName({
-    title: "Nueva carpeta",
-    message: `Crear carpeta en ${side === "local" ? "Local" : "Remoto"}.`,
-    label: "Nombre",
-    submitLabel: "Crear",
+    title: t("sftp_nav.mkdir"),
+    message: t("sftp.mkdir_msg", { where: whereMkdir }),
+    label: t("sftp.name_label"),
+    submitLabel: t("sftp.create_submit"),
     isLocal: side === "local",
   });
   if (!name) return;
-  const where = side === "local" ? "Local" : "Remoto";
+  const where = whereMkdir;
   try {
     let path;
     if (side === "local") {
@@ -20267,15 +20263,16 @@ async function promptMkdir(sessionId, side) {
 async function promptCreateFile(sessionId, side) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
+  const whereTouch = side === "local" ? t("toast.side_local") : t("toast.side_remote");
   const name = await promptEntryName({
-    title: "Nuevo archivo",
-    message: `Crear archivo vacío en ${side === "local" ? "Local" : "Remoto"}.`,
-    label: "Nombre",
-    submitLabel: "Crear",
+    title: t("sftp_nav.touch"),
+    message: t("sftp.touch_msg", { where: whereTouch }),
+    label: t("sftp.name_label"),
+    submitLabel: t("sftp.create_submit"),
     isLocal: side === "local",
   });
   if (!name) return;
-  const where = side === "local" ? "Local" : "Remoto";
+  const where = whereTouch;
   try {
     let path;
     if (side === "local") {
@@ -20290,14 +20287,14 @@ async function promptCreateFile(sessionId, side) {
     }
     appendSftpActivity(s.sftp.panel, {
       status: "ok",
-      label: `Nuevo archivo ${where}`,
+      label: `${t("sftp_nav.touch")} ${where}`,
       detail: path,
     });
   } catch (err) {
     toast(`Error: ${err}`, "error");
     appendSftpActivity(s.sftp.panel, {
       status: "error",
-      label: `Nuevo archivo ${where}`,
+      label: `${t("sftp_nav.touch")} ${where}`,
       detail: `${name}: ${String(err)}`,
     });
   }
@@ -20306,16 +20303,17 @@ async function promptCreateFile(sessionId, side) {
 async function promptRename(sessionId, side, oldPath, oldName) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
+  const whereRename = side === "local" ? t("toast.side_local") : t("toast.side_remote");
   const newName = await promptEntryName({
-    title: "Renombrar",
-    message: `Cambiar nombre en ${side === "local" ? "Local" : "Remoto"}.`,
-    label: "Nuevo nombre",
+    title: t("sftp.rename_dialog_title"),
+    message: t("sftp.rename_msg", { where: whereRename }),
+    label: t("sftp.rename_label"),
     initialValue: oldName,
-    submitLabel: "Renombrar",
+    submitLabel: t("sftp.rename_submit"),
     isLocal: side === "local",
   });
   if (!newName || newName === oldName) return;
-  const where = side === "local" ? "Local" : "Remoto";
+  const where = whereRename;
   try {
     let newPath;
     if (side === "local") {
@@ -20335,14 +20333,14 @@ async function promptRename(sessionId, side, oldPath, oldName) {
     }
     appendSftpActivity(s.sftp.panel, {
       status: "ok",
-      label: `Renombrar ${where}`,
+      label: `${t("sftp.rename_submit")} ${where}`,
       detail: `${oldPath} → ${newPath}`,
     });
   } catch (err) {
     toast(`Error: ${err}`, "error");
     appendSftpActivity(s.sftp.panel, {
       status: "error",
-      label: `Renombrar ${where}`,
+      label: `${t("sftp.rename_submit")} ${where}`,
       detail: `${oldPath} → ${newName}: ${String(err)}`,
     });
   }
@@ -20351,12 +20349,11 @@ async function promptRename(sessionId, side, oldPath, oldName) {
 async function confirmDelete(sessionId, side, path, name, isDir) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
-  const kind = isDir ? "la carpeta" : "el fichero";
-  const where = side === "local" ? "Local" : "Remoto";
+  const where = side === "local" ? t("toast.side_local") : t("toast.side_remote");
   const ok = await confirmThemed({
-    title: "Eliminar",
-    message: `¿Eliminar ${kind} "${name}" de ${where}?`,
-    submitLabel: "Eliminar",
+    title: t("sftp.delete_title"),
+    message: t(isDir ? "sftp.delete_msg_dir" : "sftp.delete_msg_file", { name, where }),
+    submitLabel: t("toast.del_conn_submit"),
     danger: true,
   });
   if (!ok) return;
@@ -20375,14 +20372,14 @@ async function confirmDelete(sessionId, side, path, name, isDir) {
     }
     appendSftpActivity(s.sftp.panel, {
       status: "ok",
-      label: `Eliminar ${where}`,
+      label: `${t("sftp.delete_title")} ${where}`,
       detail: path,
     });
   } catch (err) {
     toast(`Error: ${err}`, "error");
     appendSftpActivity(s.sftp.panel, {
       status: "error",
-      label: `Eliminar ${where}`,
+      label: `${t("sftp.delete_title")} ${where}`,
       detail: `${path}: ${String(err)}`,
     });
   }
@@ -20394,11 +20391,11 @@ async function confirmDeleteRows(sessionId, side, rows) {
   }
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
-  const where = side === "local" ? "Local" : "Remoto";
+  const where = side === "local" ? t("toast.side_local") : t("toast.side_remote");
   const ok = await confirmThemed({
-    title: "Eliminar selección",
-    message: `¿Eliminar ${rows.length} elementos de ${where}?`,
-    submitLabel: "Eliminar",
+    title: t("sftp.delete_selection_title"),
+    message: t("sftp.delete_selection_msg", { n: rows.length, where }),
+    submitLabel: t("toast.del_conn_submit"),
     danger: true,
   });
   if (!ok) return;
@@ -20421,7 +20418,7 @@ async function confirmDeleteRows(sessionId, side, rows) {
       failed += 1;
       appendSftpActivity(s.sftp.panel, {
         status: "error",
-        label: `Eliminar ${where}`,
+        label: `${t("sftp.delete_title")} ${where}`,
         detail: `${row.path}: ${String(err)}`,
       });
     }
@@ -20432,7 +20429,9 @@ async function confirmDeleteRows(sessionId, side, rows) {
   appendSftpActivity(s.sftp.panel, {
     status: failed ? "error" : "ok",
     label: `Eliminar ${where}`,
-    detail: `${okCount} eliminados${failed ? `, ${failed} errores` : ""}`,
+    detail: failed
+      ? t("sftp.delete_summary_failed", { ok: okCount, failed })
+      : t("sftp.delete_summary", { ok: okCount }),
   });
 }
 
@@ -20442,7 +20441,7 @@ async function uploadLocalFilesFromDialog(sessionId) {
   let paths;
   try {
     paths = await openDialog({
-      title: "Subir archivos",
+      title: t("sftp.upload_dialog_title"),
       multiple: true,
       directory: false,
     });
@@ -20479,14 +20478,16 @@ function parseOctalMode(input) {
 async function promptSftpPermissions(sessionId, side, rows) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
-  const where = side === "local" ? "Local" : "Remoto";
+  const where = side === "local" ? t("toast.side_local") : t("toast.side_remote");
   const initial = rows.length === 1 ? formatOctalMode(rows[0].permissions) : "";
   const modeText = await promptTextValue({
-    title: "Cambiar permisos",
-    message: `${where}: ${rows.length === 1 ? rows[0].name : `${rows.length} elementos`}. Usa formato octal, por ejemplo 755 o 0644.`,
-    label: "Permisos",
+    title: t("sftp.chmod_title"),
+    message: rows.length === 1
+      ? t("sftp.chmod_msg_one", { where, name: rows[0].name })
+      : t("sftp.chmod_msg_many", { where, n: rows.length }),
+    label: t("sftp.chmod_label"),
     initialValue: initial,
-    submitLabel: "Aplicar",
+    submitLabel: t("sftp.chmod_apply"),
   });
   if (!modeText) return;
   const mode = parseOctalMode(modeText);
@@ -20513,7 +20514,7 @@ async function promptSftpPermissions(sessionId, side, rows) {
       failed += 1;
       appendSftpActivity(s.sftp.panel, {
         status: "error",
-        label: `Permisos ${where}`,
+        label: `${t("sftp.chmod_label")} ${where}`,
         detail: `${row.path}: ${String(err)}`,
       });
     }
@@ -20523,8 +20524,10 @@ async function promptSftpPermissions(sessionId, side, rows) {
   else await navigateSftpRemote(sessionId, s.sftp.cwd);
   appendSftpActivity(s.sftp.panel, {
     status: failed ? "error" : "ok",
-    label: `Permisos ${where}`,
-    detail: `${okCount} actualizados a ${mode.toString(8)}${failed ? `, ${failed} errores` : ""}`,
+    label: `${t("sftp.chmod_label")} ${where}`,
+    detail: failed
+      ? t("sftp.chmod_summary_failed", { ok: okCount, mode: mode.toString(8), failed })
+      : t("sftp.chmod_summary", { ok: okCount, mode: mode.toString(8) }),
   });
 }
 
@@ -20782,13 +20785,13 @@ function updateTransfersVisibility(panel) {
   if (list && !list.querySelector(".sftp-transfer") && !list.querySelector(".sftp-transfers-empty")) {
     const empty = document.createElement("div");
     empty.className = "sftp-transfers-empty";
-    empty.textContent = "Sin transferencias todavía";
+    empty.textContent = t("sftp.transfers_empty");
     list.appendChild(empty);
   }
   if (activity && !activity.querySelector(".sftp-activity-row") && !activity.querySelector(".sftp-activity-empty")) {
     const empty = document.createElement("div");
     empty.className = "sftp-activity-empty";
-    empty.textContent = "Sin actividad todavía";
+    empty.textContent = t("sftp.activity_empty");
     activity.appendChild(empty);
   }
 }
@@ -20944,12 +20947,12 @@ async function sendSystemNotification(title, body) {
 
 async function askExportStoredSecrets(count) {
   const choice = await chooseThemed({
-    title: "Exportar contraseñas",
-    message: `Vas a exportar ${count} conexión(es). ¿Quieres incluir también las contraseñas/passphrases guardadas en este equipo? Si las incluyes, el JSON contendrá secretos legibles: guárdalo cifrado o en un lugar seguro.`,
-    submitLabel: "Incluir contraseñas",
+    title: t("prefs_data.export_secrets_title"),
+    message: t("prefs_data.export_secrets_msg", { count }),
+    submitLabel: t("prefs_data.export_secrets_include"),
     danger: true,
     actions: [
-      { value: "without-secrets", label: "Sin contraseñas" },
+      { value: "without-secrets", label: t("prefs_data.export_secrets_without") },
     ],
   });
   if (!choice) return null;
@@ -21004,12 +21007,12 @@ async function importExportedSecrets(data) {
   if (!entries || typeof entries !== "object" || Array.isArray(entries)) return 0;
 
   const choice = await chooseThemed({
-    title: "Importar contraseñas",
-    message: "El archivo contiene contraseñas o passphrases exportadas. ¿Quieres guardarlas en el keyring local de este equipo?",
-    submitLabel: "Guardar en keyring",
+    title: t("prefs_data.import_secrets_title"),
+    message: t("prefs_data.import_secrets_msg"),
+    submitLabel: t("prefs_data.import_secrets_save"),
     danger: true,
     actions: [
-      { value: "skip-secrets", label: "No importar" },
+      { value: "skip-secrets", label: t("prefs_data.import_secrets_skip") },
     ],
   });
   if (!choice || choice.action !== "submit") return 0;
@@ -21068,7 +21071,7 @@ async function exportConnections(folderFilter, workspaceId = getActiveWorkspaceI
   let path;
   try {
     path = await saveDialog({
-      title: "Exportar conexiones",
+      title: t("prefs_data.export_dialog_title"),
       defaultPath: defaultName,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
@@ -21116,7 +21119,7 @@ async function exportConnectionsByWorkspace(workspaceId) {
   let path;
   try {
     path = await saveDialog({
-      title: "Exportar conexiones",
+      title: t("prefs_data.export_dialog_title"),
       defaultPath: defaultName,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
@@ -21145,7 +21148,7 @@ async function importConnections() {
   let path;
   try {
     path = await openDialog({
-      title: "Importar conexiones",
+      title: t("import_wizard.title"),
       multiple: false,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
@@ -21428,7 +21431,7 @@ async function importFromSshConfig() {
     const home = await invoke("local_home_dir").catch(() => null);
     const defaultPath = home ? `${home}/.ssh/config` : null;
     path = await openDialog({
-      title: "Importar ~/.ssh/config",
+      title: t("import_ssh.title"),
       multiple: false,
       defaultPath,
     });
@@ -22772,7 +22775,7 @@ function bindUIEvents() {
   document.getElementById("btn-export-folder")
     .addEventListener("click", () => {
       const sel = document.getElementById("export-folder-select").value;
-      if (!sel) { toast("Selecciona una carpeta primero", "warning"); return; }
+      if (!sel) { toast(t("toast.select_folder_first"), "warning"); return; }
       exportConnections(sel);
     });
   document.getElementById("btn-import")
@@ -26924,9 +26927,11 @@ async function handleTabContextAction(action) {
     }).length;
     if (liveCount > 0) {
       const ok = await confirmThemed({
-        title: "Cerrar pestañas",
-        message: `Hay ${liveCount} ${liveCount === 1 ? "conexión activa" : "conexiones activas"} entre las pestañas a cerrar. ¿Continuar y desconectarlas?`,
-        submitLabel: "Cerrar todas",
+        title: t("tabctx.close_many_title"),
+        message: liveCount === 1
+          ? t("tabctx.close_many_msg_one")
+          : t("tabctx.close_many_msg", { n: liveCount }),
+        submitLabel: t("tabctx.close_all"),
         danger: true,
       });
       if (!ok) return;

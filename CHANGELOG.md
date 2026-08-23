@@ -2,6 +2,28 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.5.0] - 2026-08-23
+
+### Corregido
+
+- **Toda la interfaz habla tu idioma: la deuda de traducción queda a cero.**
+  Quedaban 123 textos que salían en castellano aunque la aplicación estuviera en
+  inglés, francés, portugués o alemán: los diálogos de confirmación del panel de
+  archivos (crear carpeta, renombrar, eliminar, permisos, conflictos de
+  transferencia), los de exportar e importar conexiones y contraseñas, los de
+  las copias de seguridad cifradas, el aviso al cerrar pestañas con la conexión
+  viva, el panel de túneles entero (tipos, botones, listas vacías), las
+  cabeceras y pestañas del panel de archivos, la pantalla de reconexión del
+  terminal, el diagnóstico de conexión, las pruebas de conexión del formulario y
+  una tanda de avisos sueltos (KeePass, Wake On LAN, perfil guardado…). Todos
+  salen ya en los cinco idiomas.
+- El registro de actividad también traduce sus etiquetas («Listar remoto»,
+  «Renombrar», «Permisos»…) y los botones de acción de los avisos («Abrir»,
+  «Reintentar», «Ver», «Conectar»).
+- El comprobador que impide colar textos sin traducir se queda **sin lista de
+  excepciones**: a partir de ahora cualquier texto visible nuevo fuera del
+  sistema de traducciones rompe la integración continua directamente.
+
 ## [2.4.0] - 2026-08-20
 
 ### Añadido

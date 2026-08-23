@@ -19,6 +19,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { IPC_ERROR_KIND, ipcErrorKind, ipcErrorText } from "./modules/ipc/errors.js";
+import { t } from "./i18n.js";
 
 const KEYRING_SERVICE = "rustty";
 const KEY_PASSPHRASE = "sync:passphrase";
@@ -944,7 +945,7 @@ function requireDialogs(ctx) {
 export async function exportToFile(ctx) {
   const dialogs = requireDialogs(ctx);
   const path = await saveDialog({
-    title: "Exportar backup cifrado de Rustty",
+    title: t("prefs_sync.export_dialog_title"),
     defaultPath: `rustty-sync-${new Date().toISOString().slice(0, 10)}.bin`,
     filters: [{ name: "Rustty sync", extensions: ["bin"] }],
   });
@@ -952,9 +953,9 @@ export async function exportToFile(ctx) {
 
   // Pide passphrase al usuario
   const passphrase = await dialogs.promptSecret({
-    title: "Exportar backup cifrado",
-    message: "Passphrase para cifrar el fichero (no la pierdas):",
-    label: "Passphrase",
+    title: t("prefs_sync.export_pass_title"),
+    message: t("prefs_sync.export_pass_msg"),
+    label: t("prefs_sync.passphrase_label"),
   });
   if (!passphrase) return null;
 
@@ -974,31 +975,31 @@ export async function exportToFile(ctx) {
 export async function importFromFile(ctx) {
   const dialogs = requireDialogs(ctx);
   const path = await openDialog({
-    title: "Importar backup cifrado de Rustty",
+    title: t("prefs_sync.import_dialog_title"),
     multiple: false,
     filters: [{ name: "Rustty sync", extensions: ["bin"] }],
   });
   if (!path) return null;
 
   const passphrase = await dialogs.promptSecret({
-    title: "Importar backup cifrado",
-    message: "Passphrase con la que se cifró el fichero.",
-    label: "Passphrase",
+    title: t("prefs_sync.import_pass_title"),
+    message: t("prefs_sync.import_pass_msg"),
+    label: t("prefs_sync.passphrase_label"),
   });
   if (!passphrase) return null;
 
   const state = await invoke("sync_import_file", { path, passphrase });
   const okImport = await dialogs.confirm({
-    title: "Importar backup",
-    message: "Se fusionará con el estado actual (last-write-wins por item).",
-    submitLabel: "Importar",
+    title: t("prefs_sync.import_confirm_title"),
+    message: t("prefs_sync.import_confirm_msg"),
+    submitLabel: t("prefs_sync.import_confirm_submit"),
   });
   if (!okImport) return null;
   const allowSecrets = stateHasSecrets(state)
     ? await dialogs.confirm({
-        title: "Importar backup",
-        message: "El backup contiene contraseñas/passphrases cifradas. ¿Guardarlas en el keyring local?",
-        submitLabel: "Guardar en el keyring",
+        title: t("prefs_sync.import_confirm_title"),
+        message: t("prefs_sync.import_secrets_msg"),
+        submitLabel: t("prefs_sync.save_keyring"),
       })
     : false;
   const summary = await applyMergedState(state, { ...ctx, allowSecrets });
@@ -1031,9 +1032,9 @@ export async function applySnapshotState(state, ctx) {
   const dialogs = requireDialogs(ctx);
   const allowSecrets = stateHasSecrets(state)
     ? await dialogs.confirm({
-        title: "Restaurar copia",
-        message: "La copia contiene contraseñas/passphrases cifradas. ¿Guardarlas en el keyring local?",
-        submitLabel: "Guardar en el keyring",
+        title: t("prefs_sync.snapshots"),
+        message: t("prefs_sync.restore_secrets_msg"),
+        submitLabel: t("prefs_sync.save_keyring"),
       })
     : false;
   return await applyMergedState(state, { ...ctx, allowSecrets });
