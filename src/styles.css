@@ -5554,6 +5554,27 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   letter-spacing: 0.01em;
 }
 
+/* Visor del log técnico dentro de Preferencias → Sistema. Muestra la cola del
+   fichero sin salir de la aplicación: en una build de release el usuario no
+   tiene consola donde mirarlo, y abrirlo con el bloc de notas de Windows lo
+   pinta como ANSI (los acentos salen rotos). */
+.app-log-view {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin: 12px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
 .sync-backend-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

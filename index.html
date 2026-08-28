@@ -3257,6 +3257,35 @@
                 <p class="settings-hint" data-i18n="prefs_system.autostart_minimized_hint">Al arrancar con el sistema, oculta la ventana y mantiene solo el icono en la bandeja.</p>
               </div>
 
+              <h4 class="prefs-subhead" data-i18n="app_log.title">Log de diagnóstico</h4>
+              <p class="settings-hint" data-i18n="app_log.hint">Registro técnico de la propia aplicación: arranque, errores y cierre. Nunca guarda contraseñas ni contenido del terminal. Es el fichero que hay que adjuntar cuando algo falla.</p>
+
+              <div class="settings-row settings-row-inline">
+                <label for="app-log-dir" data-i18n="app_log.folder">Carpeta</label>
+                <div class="settings-control settings-file-row">
+                  <input type="text" id="app-log-dir" readonly />
+                  <button type="button" class="btn-secondary" id="btn-app-log-browse" data-i18n="app_log.browse">Cambiar…</button>
+                  <button type="button" class="btn-secondary" id="btn-app-log-reset" data-i18n="app_log.reset">Predeterminada</button>
+                  <p class="form-hint" id="app-log-status" data-i18n="app_log.loading">Consultando…</p>
+                </div>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="app-log-level" data-i18n="app_log.level">Nivel de detalle</label>
+                <select id="app-log-level">
+                  <option value="info" data-i18n="app_log.level_info">Normal</option>
+                  <option value="debug" data-i18n="app_log.level_debug">Detallado</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="app_log.restart_hint">La carpeta y el nivel se aplican al reiniciar Rustty: el registro se instala una sola vez, al arrancar. El nivel detallado sirve para reproducir un fallo y enviarlo.</p>
+
+              <div class="settings-row settings-row-inline">
+                <button type="button" class="btn-secondary" id="btn-app-log-open" data-i18n="app_log.open_folder">Abrir carpeta</button>
+                <button type="button" class="btn-secondary" id="btn-app-log-view" data-i18n="app_log.view">Ver el log</button>
+                <button type="button" class="btn-secondary" id="btn-app-log-copy" data-i18n="app_log.copy">Copiar el log</button>
+              </div>
+              <pre id="app-log-view" class="app-log-view" tabindex="0" hidden></pre>
+
               <h4 class="prefs-subhead" data-i18n="diagnostics.title">Informe de diagnóstico</h4>
               <p class="settings-hint" data-i18n="diagnostics.hint">Genera un informe con la versión, la plataforma, tus preferencias y los últimos eventos, para adjuntarlo a un informe de fallo. Nunca incluye contraseñas, passphrases, tokens ni contenido del terminal; los hosts y las rutas salen anonimizados salvo que lo autorices aquí.</p>
 

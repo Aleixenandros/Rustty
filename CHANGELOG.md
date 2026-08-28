@@ -2,6 +2,37 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.6.0] - 2026-08-28
+
+### Añadido
+
+- **Si Rustty se cierra solo, ahora queda escrito por qué.** Hasta ahora el
+  registro técnico sabía decir «arranqué» y nada más: si la aplicación se caía,
+  el motivo viajaba por una salida de error que en Windows no va a ninguna parte
+  —la ventana desaparecía y el fichero de registro se quedaba mudo—. Ahora
+  cualquier caída interna queda anotada con su causa y el punto exacto, incluso
+  si ocurre antes de que el registro esté en pie; también se anota cada salida
+  ordenada (cerrar la ventana, salir desde la bandeja, cerrar la aplicación), de
+  modo que un registro que termina sin ninguna de esas líneas señala por sí
+  mismo que el proceso murió por fuera.
+- Los errores de la interfaz —una excepción de JavaScript o una promesa
+  rechazada— también van al registro. Antes solo existían en una consola del
+  navegador interno que nadie abre en una versión publicada, y se perdían al
+  cerrarse la ventana.
+- **Preferencias → Sistema enseña el registro y lo pone a mano.** Se ve la
+  carpeta en la que se está escribiendo y su tamaño, se puede cambiar a
+  cualquier otra carpeta (o volver a la predeterminada), elegir el nivel de
+  detalle —normal o detallado, para reproducir un fallo y enviarlo—, abrirla en
+  el explorador, y leer o copiar el registro sin salir de la aplicación. La
+  carpeta y el nivel se aplican al reiniciar; una carpeta sin permiso de
+  escritura se rechaza en el momento, no en el arranque siguiente.
+
+### Corregido
+
+- La versión portable de Windows deja el registro junto al ejecutable, con el
+  resto de sus datos. Antes lo escribía en la carpeta del sistema del equipo
+  prestado: ni viajaba con el USB ni se encontraba cuando hacía falta.
+
 ## [2.5.0] - 2026-08-23
 
 ### Corregido

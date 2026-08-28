@@ -27,7 +27,7 @@ use crate::sync::{
     OAuthProvider, OAuthStartResult, SnapshotEntry, SyncBackendKind, SyncConfig, SyncManager,
     SyncRunOutcome, SyncState, CONFLICT_MARKER,
 };
-use crate::{DataDir, LaunchMinimized};
+use crate::{app_log, AppLogDir, AppLogLevel, DataDir, LaunchMinimized};
 
 // ─── Comandos de aplicación ─────────────────────────────────────────────────
 
@@ -50,6 +50,7 @@ pub fn close_app(
     // (coherente con el manejador de `CloseRequested` en `lib.rs`).
     vnc_state.disconnect_all();
     telnet_state.disconnect_all();
+    log::info!("cierre pedido desde la interfaz");
     app.exit(0);
 }
 
@@ -2371,6 +2372,119 @@ pub async fn sync_read_snapshot(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "Snapshot no encontrado".to_string())?;
     unpack_state(&passphrase, &bytes).map_err(|e| e.to_string())
+}
+
+// ─── Log de diagnóstico de la aplicación ─────────────────────────────────────
+
+/// Estado del log técnico: dónde escribe, cuánto ocupa y con qué nivel.
+#[derive(serde::Serialize)]
+pub struct AppLogInfo {
+    /// Carpeta efectiva en la que se está escribiendo ahora mismo.
+    pub dir: String,
+    /// Fichero de log completo (`<dir>/rustty.log`).
+    pub file: String,
+    /// `false` si todavía no se ha escrito nada (primer arranque tras cambiarlo).
+    pub exists: bool,
+    pub size_bytes: u64,
+    /// Nivel efectivo de este proceso: `info`, `debug`, …
+    pub level: String,
+    /// Carpeta elegida por el usuario, si la hay. Puede diferir de `dir` cuando
+    /// la configurada no se pudo escribir y se cayó a la del sistema.
+    pub configured_dir: Option<String>,
+    /// `true` cuando el log **no** está en la carpeta estándar del sistema.
+    pub custom: bool,
+}
+
+/// Carpeta en la que este proceso está escribiendo el log.
+///
+/// Si no se forzó ninguna, es la del sistema operativo, que solo conoce el
+/// `AppHandle` (varía por plataforma). Sin ella no hay nada que enseñar.
+fn app_log_dir_path(app: &AppHandle, state: &State<AppLogDir>) -> Result<PathBuf, String> {
+    if let Some(dir) = state.0.clone() {
+        return Ok(dir);
+    }
+    tauri::Manager::path(app)
+        .app_log_dir()
+        .map_err(|e| e.to_string())
+}
+
+/// Devuelve el estado del log técnico para la sección de diagnóstico.
+#[tauri::command]
+pub fn app_log_info(
+    app: AppHandle,
+    state: State<AppLogDir>,
+    level: State<AppLogLevel>,
+    data_dir: State<DataDir>,
+) -> Result<AppLogInfo, String> {
+    let dir = app_log_dir_path(&app, &state)?;
+    let file = dir.join(app_log::LOG_FILE_NAME);
+    let meta = std::fs::metadata(&file).ok();
+    let cfg = app_log::load_config(&data_dir.0);
+    Ok(AppLogInfo {
+        dir: dir.to_string_lossy().into_owned(),
+        file: file.to_string_lossy().into_owned(),
+        exists: meta.is_some(),
+        size_bytes: meta.map(|m| m.len()).unwrap_or(0),
+        level: app_log::level_name(level.0).to_string(),
+        configured_dir: cfg.dir.clone(),
+        custom: state.0.is_some(),
+    })
+}
+
+/// Guarda la carpeta y el nivel del log. **Se aplica al reiniciar**: el logger
+/// se instala una sola vez por proceso.
+///
+/// `dir` vacío o `None` vuelve a la carpeta del sistema. Una carpeta que no se
+/// pueda escribir se rechaza aquí, con el error a la vista, en vez de
+/// descubrirse en el siguiente arranque cuando ya no hay log que lo cuente.
+#[tauri::command]
+pub fn app_log_set_config(
+    data_dir: State<DataDir>,
+    dir: Option<String>,
+    level: Option<String>,
+) -> Result<(), String> {
+    let dir = dir.map(|d| d.trim().to_string()).filter(|d| !d.is_empty());
+    if let Some(ref d) = dir {
+        app_log::probe_writable(Path::new(d))?;
+    }
+    let level = level
+        .map(|l| l.trim().to_ascii_lowercase())
+        .filter(|l| !l.is_empty());
+    app_log::save_config(&data_dir.0, &app_log::LogConfig { dir, level })
+}
+
+/// Devuelve la cola del fichero de log (como mucho 256 KiB) para verlo sin
+/// salir de la aplicación.
+#[tauri::command]
+pub fn app_log_tail(app: AppHandle, state: State<AppLogDir>) -> Result<String, String> {
+    let file = app_log_dir_path(&app, &state)?.join(app_log::LOG_FILE_NAME);
+    if !file.exists() {
+        return Ok(String::new());
+    }
+    app_log::tail(&file, app_log::TAIL_MAX_BYTES)
+}
+
+/// Registra en el log un error del frontend (excepción no capturada o promesa
+/// rechazada).
+///
+/// Un fallo de JavaScript solo existía en la consola del webview, que en una
+/// build de release nadie abre: quedaba fuera del informe de fallo justo cuando
+/// más falta hace. El mensaje se recorta porque una traza de pila puede ser
+/// enorme y el log tiene rotación acotada.
+#[tauri::command]
+pub fn app_log_frontend(level: String, message: String) {
+    const MAX: usize = 4_000;
+    let mut texto = message;
+    if texto.len() > MAX {
+        texto.truncate(MAX);
+        texto.push_str(" […recortado]");
+    }
+    match level.trim() {
+        "warn" => log::warn!("[ui] {texto}"),
+        "info" => log::info!("[ui] {texto}"),
+        "debug" => log::debug!("[ui] {texto}"),
+        _ => log::error!("[ui] {texto}"),
+    }
 }
 
 // ─── Retención de logs de sesión ──────────────────────────────────────────────

@@ -1,3 +1,4 @@
+mod app_log;
 mod app_tray;
 mod asbru;
 mod atomic_file;
@@ -101,6 +102,13 @@ fn portable_data_dir() -> Option<PathBuf> {
     None
 }
 
+/// `true` cuando el ejecutable es la build portable de Windows. Lo consulta
+/// [`app_log::override_dir`] para dejar el log junto al `.exe` en vez de en el
+/// `%LOCALAPPDATA%` del equipo prestado.
+pub fn is_portable() -> bool {
+    portable_data_dir().is_some()
+}
+
 pub fn resolve_data_dir() -> PathBuf {
     portable_data_dir().unwrap_or_else(|| {
         dirs::data_dir()
@@ -109,16 +117,34 @@ pub fn resolve_data_dir() -> PathBuf {
     })
 }
 
+/// Carpeta a la que se ha forzado el log, o `None` si escribe en la del
+/// sistema operativo. Se resuelve **antes** de construir el plugin y se guarda
+/// como estado para que la interfaz pueda enseñar la ruta efectiva sin volver a
+/// adivinarla.
+pub struct AppLogDir(pub Option<PathBuf>);
+
+/// Nivel efectivo del log en este proceso, para enseñarlo en preferencias.
+pub struct AppLogLevel(pub log::LevelFilter);
+
 /// Plugin de logging técnico de diagnóstico. Escribe a stdout y a un fichero con
-/// rotación acotada en el directorio de logs de la app (`<log_dir>/rustty.log`),
-/// conservando un único fichero rotado para no crecer sin límite. Nivel `Debug`
-/// en builds de desarrollo, `Info` en release. **No** registra contenido de
-/// terminal ni secretos: solo trazas de la propia aplicación.
-fn build_log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    let level = if cfg!(debug_assertions) {
-        log::LevelFilter::Debug
-    } else {
-        log::LevelFilter::Info
+/// rotación acotada (`<carpeta>/rustty.log`), conservando un único fichero
+/// rotado para no crecer sin límite. La carpeta es la del sistema operativo
+/// salvo que el usuario elija otra o sea la build portable; el nivel es `Debug`
+/// en desarrollo e `Info` en release, y se puede subir desde preferencias.
+/// **No** registra contenido de terminal ni secretos: solo trazas de la propia
+/// aplicación.
+fn build_log_plugin<R: tauri::Runtime>(
+    dir: Option<PathBuf>,
+    level: log::LevelFilter,
+) -> tauri::plugin::TauriPlugin<R> {
+    let file_target = match dir {
+        Some(path) => tauri_plugin_log::TargetKind::Folder {
+            path,
+            file_name: Some(app_log::LOG_FILE_STEM.into()),
+        },
+        None => tauri_plugin_log::TargetKind::LogDir {
+            file_name: Some(app_log::LOG_FILE_STEM.into()),
+        },
     };
     tauri_plugin_log::Builder::new()
         .level(level)
@@ -126,9 +152,7 @@ fn build_log_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
         .targets([
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
-                file_name: Some("rustty".into()),
-            }),
+            tauri_plugin_log::Target::new(file_target),
         ])
         .build()
 }
@@ -138,6 +162,18 @@ pub fn run() {
     // Detectar si la app fue lanzada por el autostart del SO con --minimized
     // ANTES de construir el Builder para que el estado esté disponible en setup().
     let launched_minimized = std::env::args().any(|a| a == "--minimized");
+
+    // El log se configura antes que nada: dónde escribe y con qué nivel se
+    // decide leyendo un JSON propio del directorio de datos, porque cuando hay
+    // que instalar el logger todavía no existe ninguna preferencia del
+    // frontend. Y el gancho de panics va justo detrás: desde aquí, cualquier
+    // caída queda escrita en algún sitio en vez de morir en un `stderr` que en
+    // Windows no va a ninguna parte.
+    let log_data_dir = resolve_data_dir();
+    let log_cfg = app_log::load_config(&log_data_dir);
+    let log_level = app_log::level_filter(&log_cfg);
+    let log_dir = app_log::override_dir(&log_data_dir, &log_cfg);
+    app_log::install_panic_hook(log_data_dir);
 
     tauri::Builder::default()
         // Instancia única. **Debe registrarse el primero** (requisito del plugin).
@@ -162,7 +198,7 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
-        .plugin(build_log_plugin())
+        .plugin(build_log_plugin(log_dir.clone(), log_level))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -170,12 +206,28 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(move |app| {
+            // El logger global ya está en pie: a partir de aquí un panic tiene
+            // dónde escribirse y el gancho deja de usar el fichero de respaldo.
+            app_log::mark_logger_ready();
             log::info!(
                 "Rustty {} iniciando ({} {})",
                 env!("CARGO_PKG_VERSION"),
                 std::env::consts::OS,
                 std::env::consts::ARCH
             );
+            // La ruta efectiva del log, en el propio log: es lo primero que hay
+            // que saber cuando alguien manda un informe de fallo.
+            let effective_log_dir = log_dir.clone().or_else(|| app.path().app_log_dir().ok());
+            log::info!(
+                "log: nivel {}, carpeta {}",
+                app_log::level_name(log_level),
+                effective_log_dir
+                    .as_ref()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|| "desconocida".to_string())
+            );
+            app.manage(AppLogDir(log_dir.clone()));
+            app.manage(AppLogLevel(log_level));
             // Updater de Tauri (solo escritorio): permite actualizar la app
             // desde dentro sin re-lanzar el instalador. Las actualizaciones se
             // verifican con la clave pública de `tauri.conf.json`.
@@ -239,6 +291,17 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Trazas de cierre: sin ellas el log solo sabía decir «arranqué», y
+            // una desaparición súbita era indistinguible de un cierre normal.
+            match event {
+                WindowEvent::Destroyed => {
+                    log::info!("ventana '{}' destruida", window.label());
+                }
+                WindowEvent::CloseRequested { .. } => {
+                    log::info!("cierre solicitado en la ventana '{}'", window.label());
+                }
+                _ => {}
+            }
             if matches!(event, WindowEvent::CloseRequested { .. }) {
                 window.state::<SshManager>().disconnect_all();
                 window.state::<SftpManager>().disconnect_all();
@@ -405,6 +468,11 @@ pub fn run() {
             commands::sync_wipe_remote,
             commands::sync_clear_local_cache,
             commands::sync_rotate_passphrase,
+            // ── Log de diagnóstico de la aplicación
+            commands::app_log_info,
+            commands::app_log_set_config,
+            commands::app_log_tail,
+            commands::app_log_frontend,
             // ── Retención de logs de sesión
             commands::session_logs_dir,
             commands::session_logs_list,
@@ -415,6 +483,20 @@ pub fn run() {
             commands::session_snapshot_delete,
             commands::session_snapshot_list,
         ])
-        .run(tauri::generate_context!())
-        .expect("Error al iniciar la aplicación Rustty");
+        .build(tauri::generate_context!())
+        .expect("Error al iniciar la aplicación Rustty")
+        // `build` + `run` con callback en vez de `run` a secas: es el único
+        // sitio donde se ve la salida del proceso. Un cierre ordenado deja
+        // rastro aquí; si el log termina sin estas líneas, el proceso murió por
+        // fuera (crash nativo del webview, `TerminateProcess`, corte de luz) y
+        // eso ya es un diagnóstico en sí mismo.
+        .run(|_app, event| match event {
+            tauri::RunEvent::ExitRequested { .. } => {
+                log::info!("salida solicitada");
+            }
+            tauri::RunEvent::Exit => {
+                log::info!("Rustty finaliza");
+            }
+            _ => {}
+        });
 }

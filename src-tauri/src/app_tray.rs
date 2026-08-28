@@ -208,6 +208,7 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
         }
         ID_QUIT => {
             shutdown_sessions(app);
+            log::info!("cierre pedido desde la bandeja del sistema");
             app.exit(0);
         }
         _ if id.starts_with(PREFIX_CONNECT) => {

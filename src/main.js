@@ -2050,6 +2050,9 @@ function openSettingsModal() {
   if (slMb) slMb.value = prefs.sessionLogMaxTotalMb ?? "";
   refreshSessionLogsStats();
 
+  // Log técnico: ruta efectiva, tamaño y nivel de este proceso.
+  refreshAppLogInfo();
+
   // Atajos: (re)render con los valores actuales
   renderShortcutsList();
 
@@ -3005,6 +3008,164 @@ async function syncOpenLocalFolder() {
   await persistSyncConfig().catch((err) => console.error("[sync] save before open local", err));
   const path = document.getElementById("sync-local-folder")?.value?.trim();
   await openPathInFileManager(path, "carpeta local de sync");
+}
+
+// ─── Log técnico de la aplicación ────────────────────────────────────────────
+//
+// El fichero que hay que pedir cuando algo va mal. Vive fuera del alcance del
+// usuario medio (una carpeta del sistema que varía por plataforma), así que
+// aquí se enseña la ruta, se deja cambiarla, y se puede leer y copiar sin salir
+// de la aplicación: en release no hay consola donde mirarlo.
+
+/** Último estado conocido del log; evita reconsultar para abrir o copiar. */
+let appLogInfo = null;
+
+/** Refresca la ruta, el tamaño y el nivel en Preferencias → Sistema. */
+async function refreshAppLogInfo() {
+  const dirEl = document.getElementById("app-log-dir");
+  const statusEl = document.getElementById("app-log-status");
+  const levelEl = document.getElementById("app-log-level");
+  if (!dirEl) return;
+  try {
+    appLogInfo = await invoke("app_log_info");
+    // Se enseña la carpeta **elegida**, no la efectiva: si acaban de cambiarla,
+    // el proceso sigue escribiendo en la anterior hasta reiniciar y ver la vieja
+    // en el campo parecería que el cambio no se guardó.
+    const pending =
+      appLogInfo.configured_dir && appLogInfo.configured_dir !== appLogInfo.dir;
+    dirEl.value = appLogInfo.configured_dir || appLogInfo.dir;
+    if (levelEl) levelEl.value = appLogInfo.level === "debug" ? "debug" : "info";
+    if (statusEl) {
+      if (pending) {
+        statusEl.textContent = t("app_log.status_pending", { dir: appLogInfo.dir });
+      } else if (appLogInfo.exists) {
+        statusEl.textContent = t("app_log.status", { size: formatSize(appLogInfo.size_bytes) });
+      } else {
+        statusEl.textContent = t("app_log.status_empty");
+      }
+    }
+  } catch (err) {
+    console.error("[app-log] info", err);
+    if (statusEl) statusEl.textContent = t("app_log.status_error");
+  }
+}
+
+/** Guarda carpeta y nivel; ambos entran en vigor en el siguiente arranque. */
+async function applyAppLogConfig(dir, level) {
+  await invoke("app_log_set_config", { dir, level });
+  await refreshAppLogInfo();
+  toast(t("app_log.saved_restart"), "info", 6000);
+}
+
+async function appLogBrowseFolder() {
+  const path = await openDialog({
+    title: t("app_log.browse_dialog"),
+    directory: true,
+    multiple: false,
+  }).catch(() => null);
+  if (!path) return;
+  const level = document.getElementById("app-log-level")?.value || null;
+  try {
+    await applyAppLogConfig(path, level);
+  } catch (err) {
+    // Carpeta sin permiso de escritura: se avisa aquí y no en el próximo
+    // arranque, cuando ya no habría log que lo contase.
+    toast(t("app_log.folder_error", { err: String(err) }), "error", 8000);
+  }
+}
+
+async function appLogResetFolder() {
+  const level = document.getElementById("app-log-level")?.value || null;
+  try {
+    await applyAppLogConfig(null, level);
+  } catch (err) {
+    toast(t("app_log.folder_error", { err: String(err) }), "error", 8000);
+  }
+}
+
+async function appLogLevelChanged() {
+  const level = document.getElementById("app-log-level")?.value || null;
+  const dir = appLogInfo?.configured_dir ?? null;
+  try {
+    await applyAppLogConfig(dir, level);
+  } catch (err) {
+    toast(t("app_log.folder_error", { err: String(err) }), "error", 8000);
+  }
+}
+
+async function appLogOpenFolder() {
+  if (!appLogInfo) await refreshAppLogInfo();
+  await openPathInFileManager(appLogInfo?.dir, t("app_log.folder_label"));
+}
+
+/** Muestra u oculta la cola del log dentro del propio panel. */
+async function appLogToggleView() {
+  const view = document.getElementById("app-log-view");
+  const btn = document.getElementById("btn-app-log-view");
+  if (!view) return;
+  if (!view.hidden) {
+    view.hidden = true;
+    if (btn) btn.textContent = t("app_log.view");
+    return;
+  }
+  try {
+    const text = await invoke("app_log_tail");
+    view.textContent = text || t("app_log.empty");
+    view.hidden = false;
+    if (btn) btn.textContent = t("app_log.hide");
+    // Lo último es lo que interesa: el error está al final, no al principio.
+    view.scrollTop = view.scrollHeight;
+  } catch (err) {
+    toast(t("app_log.read_error", { err: String(err) }), "error", 6000);
+  }
+}
+
+async function appLogCopy() {
+  try {
+    const text = await invoke("app_log_tail");
+    if (!text) {
+      toast(t("app_log.empty"), "warning");
+      return;
+    }
+    await writeSystemClipboardText(text);
+    toast(t("app_log.copied"), "success");
+  } catch (err) {
+    toast(t("app_log.read_error", { err: String(err) }), "error", 6000);
+  }
+}
+
+// Errores del frontend al log del backend. Una excepción de JavaScript solo
+// existía en la consola del webview —que en una build de release nadie abre— y
+// desaparecía con la ventana. El tope evita que un error en bucle dentro de un
+// `requestAnimationFrame` llene el fichero y se lleve por delante el rastro
+// anterior, que es justo el que suele explicar el fallo.
+const APP_LOG_UI_MAX = 40;
+let appLogUiCount = 0;
+
+function reportUiError(kind, detail) {
+  if (appLogUiCount >= APP_LOG_UI_MAX) return;
+  appLogUiCount += 1;
+  const suffix = appLogUiCount === APP_LOG_UI_MAX ? " [tope alcanzado: no se registran mas]" : "";
+  invoke("app_log_frontend", {
+    level: "error",
+    message: `${kind}: ${detail}${suffix}`,
+  }).catch(() => {
+    /* Si ni el IPC responde, no hay nada más que intentar. */
+  });
+}
+
+/** Engancha los errores no capturados del webview. Se instala lo antes posible. */
+function installUiErrorReporting() {
+  window.addEventListener("error", (event) => {
+    const where = event.filename ? ` (${event.filename}:${event.lineno}:${event.colno})` : "";
+    const stack = event.error?.stack ? `\n${event.error.stack}` : "";
+    reportUiError("excepcion no capturada", `${event.message}${where}${stack}`);
+  });
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
+    const detail = reason?.stack || reason?.message || String(reason);
+    reportUiError("promesa rechazada sin manejar", detail);
+  });
 }
 
 // ─── Logs de sesión: retención y mantenimiento ────────────────────────────────
@@ -4249,6 +4410,10 @@ function initWorkLayoutCapture() {
 }
 
 async function init() {
+  // Lo primero: un fallo de arranque del propio frontend tiene que quedar
+  // escrito. Antes solo existía en la consola del webview, que en release nadie
+  // ve, y la ventana se lo llevaba consigo al cerrarse.
+  installUiErrorReporting();
   loadPrefs();
   await registerBundledThemePacks();
   enhanceThemePickers();
@@ -22642,6 +22807,12 @@ function bindUIEvents() {
     ?.addEventListener("change", syncScrollbarPrefControls);
 
   // Informe de diagnóstico (panel Sistema).
+  document.getElementById("btn-app-log-browse")?.addEventListener("click", appLogBrowseFolder);
+  document.getElementById("btn-app-log-reset")?.addEventListener("click", appLogResetFolder);
+  document.getElementById("btn-app-log-open")?.addEventListener("click", appLogOpenFolder);
+  document.getElementById("btn-app-log-view")?.addEventListener("click", appLogToggleView);
+  document.getElementById("btn-app-log-copy")?.addEventListener("click", appLogCopy);
+  document.getElementById("app-log-level")?.addEventListener("change", appLogLevelChanged);
   document.getElementById("btn-diag-copy")?.addEventListener("click", copyDiagnosticsSummary);
   document.getElementById("btn-diag-export")?.addEventListener("click", exportDiagnosticsBundle);
 
