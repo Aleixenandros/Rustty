@@ -112,6 +112,55 @@ async function updatePackageLock() {
 
 await updatePackageLock();
 
+/**
+ * Los plugins de Tauri vienen en pareja: un paquete npm (`@tauri-apps/plugin-x`)
+ * y un crate de Rust (`tauri-plugin-x`). La CLI de Tauri **exige** que compartan
+ * major y minor, y aborta el build si no. Ese aborto llega en el job `build`,
+ * ya pasado el gate `verify`: en v2.7.0 costó un ciclo entero de release por
+ * subir los paquetes npm sin subir sus crates. Aquí se caza antes, en el mismo
+ * `--check` que ya corren la CI y el gate.
+ *
+ * Solo se compara major.minor, que es lo que exige la CLI; el parche puede
+ * divergir sin problema.
+ */
+async function checkTauriPluginPairs() {
+  const cargo = await readFile(cargoPath, "utf8");
+  const minor = (v) => String(v).replace(/^[^\d]*/, "").split(".").slice(0, 2).join(".");
+  const mismatched = [];
+
+  for (const [npmName, npmVersion] of Object.entries(pkg.dependencies || {})) {
+    const plugin = npmName.startsWith("@tauri-apps/plugin-")
+      ? npmName.slice("@tauri-apps/plugin-".length)
+      : null;
+    if (!plugin) continue;
+    const crate = `tauri-plugin-${plugin}`;
+    // La versión del crate puede ir suelta (`= "2.11.0"`) o dentro de una tabla
+    // (`= { version = "2.11.0", features = [...] }`).
+    const declared = cargo.match(
+      new RegExp(`^${crate}\\s*=\\s*(?:"([^"]+)"|\\{[^}]*?version\\s*=\\s*"([^"]+)")`, "m")
+    );
+    if (!declared) continue;
+    const crateVersion = declared[1] ?? declared[2];
+    // Un requisito laxo (`"2"`) cubre cualquier minor: no puede desajustarse.
+    if (!crateVersion.includes(".")) continue;
+    if (minor(crateVersion) !== minor(npmVersion)) {
+      mismatched.push(`  - ${crate} (${crateVersion}) ≠ ${npmName} (${npmVersion})`);
+    }
+  }
+
+  if (mismatched.length) {
+    console.error(
+      "Plugins de Tauri descuadrados entre npm y Rust (la CLI de Tauri exige el\n" +
+        "mismo major.minor y aborta el build):\n" +
+        mismatched.join("\n") +
+        "\n\nSube el crate en src-tauri/Cargo.toml a la altura de su paquete npm."
+    );
+    process.exit(1);
+  }
+}
+
+await checkTauriPluginPairs();
+
 if (checkOnly && stale.length) {
   console.error(
     `La versión ${version} de package.json no está propagada a:\n` +

@@ -111,7 +111,7 @@ hex = "0.4"
 # directamente para construir la entrada de autostart con o sin `--minimized`
 # y para consultar su estado, sin depender de un plugin adicional.
 auto-launch = "0.6"
-tauri-plugin-updater = "2.10.1"
+tauri-plugin-updater = "2.11.0"
 tauri-plugin-process = "2.3.1"
 # Coincidencia de patrones para el paso `waitRegex` del motor de scripts. Ya
 # presente en el árbol de dependencias; se declara directo para poder usarlo.
