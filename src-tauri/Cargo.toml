@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "2.6.0"
+version = "2.7.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -72,8 +72,12 @@ dirs = "6"
 thiserror = "2"
 # Borrado seguro de secretos en memoria (Zeroizing) al liberarlos
 zeroize = "1"
-# Lectura de bases de datos KeePass (.kdbx)
-keepass = "0.13"
+# Lectura de bases de datos KeePass (.kdbx).
+# Clavado en 0.13.22: a partir de 0.13.23 el crate salta a `cipher` 0.5 /
+# `crypto-common` 0.2, y el resto del árbol (russh, age, rustls) sigue en la
+# 0.1. Conviven las dos versiones y `Aes256` deja de cumplir los traits que la
+# otra espera: no compila. Subirlo exige que el ecosistema entero cruce.
+keepass = "=0.13.22"
 # Enumeración de fuentes del sistema para el selector de familia del terminal
 fontdb = "0.23"
 # Sincronización en la nube: crypto + HTTP + timestamps

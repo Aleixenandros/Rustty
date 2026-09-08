@@ -1425,6 +1425,36 @@ pub async fn sftp_resume_transfer(
     sftp_state.resume_transfer(&session_id, transfer_id)
 }
 
+/// Pausa o reanuda **todas** las transferencias a la vez, de todas las
+/// sesiones. Es el gesto de «suelta el ancho de banda un momento»: pausar una a
+/// una no sirve cuando hay una carpeta entera en marcha.
+///
+/// Reanudar todo no despausa las transferencias que el usuario había pausado
+/// individualmente: solo levanta la pausa global.
+#[tauri::command]
+pub fn sftp_set_pause_all(paused: bool) {
+    crate::sftp_manager::set_pause_all(paused);
+}
+
+/// `true` si la pausa global está activa (para que la interfaz se pinte bien al
+/// arrancar o al reabrir el panel).
+#[tauri::command]
+#[must_use]
+pub fn sftp_pause_all_active() -> bool {
+    crate::sftp_manager::pause_all_active()
+}
+
+/// Fija los techos de velocidad de las transferencias en **KiB/s** (`0` = sin
+/// límite, que es el valor de fábrica). La llama el frontend al cargar y al
+/// guardar preferencias.
+#[tauri::command]
+pub fn set_transfer_rate_limits(upload_kib: u64, download_kib: u64) {
+    crate::transfer_rate::set_limits(
+        upload_kib.saturating_mul(1024),
+        download_kib.saturating_mul(1024),
+    );
+}
+
 // ─── Comandos de FS local (panel SFTP partido) ────────────────────────────────
 
 #[derive(serde::Serialize)]
@@ -3295,6 +3325,19 @@ pub fn set_host_key_change_policy(prompt: bool) {
 #[tauri::command]
 pub fn ssh_hostkey_response(prompt_id: String, accept: bool) -> bool {
     crate::host_keys::resolve_prompt(&prompt_id, accept)
+}
+
+/// Respuesta del usuario a una ronda de preguntas de la autenticación
+/// interactiva (`ssh-auth-prompt`), el camino de la MFA/2FA. `responses` lleva
+/// una respuesta por pregunta y en el mismo orden; `None` = el usuario canceló
+/// y la conexión se aborta. Devuelve `false` si el `prompt_id` ya había
+/// caducado o se respondió antes.
+///
+/// Las respuestas no se guardan en ninguna parte: se entregan al intercambio
+/// SSH en curso y mueren con él.
+#[tauri::command]
+pub fn ssh_auth_prompt_response(prompt_id: String, responses: Option<Vec<String>>) -> bool {
+    crate::auth_prompt::resolve_prompt(&prompt_id, responses)
 }
 
 /// Fija la política de primera conexión FTPS: `true` (default) exige confirmar la

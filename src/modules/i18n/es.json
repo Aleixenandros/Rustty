@@ -589,7 +589,10 @@
     "export_folder": "Exportar conexiones de la carpeta…",
     "export_workspace": "Exportar conexiones del perfil…",
     "folder_color": "Color",
-    "folder_color_clear": "Quitar color"
+    "folder_color_clear": "Quitar color",
+    "tunnels": "Túneles",
+    "tunnel_start_item": "Abrir «{name}»",
+    "tunnel_stop_item": "Parar «{name}»"
   },
   "promote_master": {
     "title": "Promover a credencial maestra",
@@ -706,6 +709,7 @@
     "auth_password": "Contraseña",
     "auth_publickey": "Clave pública / privada",
     "auth_agent": "Agente SSH",
+    "auth_keyboard_interactive": "Interactiva (código de verificación)",
     "use_keepass": "Usar contraseña de KeePass",
     "password_source": "Origen de la contraseña",
     "password_source_own": "Propia del perfil",
@@ -760,6 +764,7 @@
     "summary_auth_password": "Auth: contraseña",
     "summary_auth_publickey": "Auth: clave",
     "summary_auth_agent": "Auth: agente",
+    "summary_auth_keyboard_interactive": "Auth: interactiva",
     "summary_auth_keepass": "Auth: KeePass",
     "summary_bastion": "Bastion: {host}",
     "summary_keepalive": "Keep-alive {n}s",
@@ -918,6 +923,13 @@
     "received": "Recibida ahora ({type}):\n{fingerprint}",
     "advice": "Acepta SOLO si esperabas este cambio y puedes verificar la huella nueva por un canal de confianza. Al aceptar, la entrada antigua se reemplaza y la conexión continúa; al rechazar, no se modifica nada.",
     "accept": "Aceptar la clave nueva"
+  },
+  "modal_auth_prompt": {
+    "title": "Verificación en dos pasos",
+    "intro": "El servidor {target} pide un dato más para dejarte entrar. Compruébalo antes de escribirlo: lo que teclees aquí se le entrega a ese servidor.",
+    "step": "Pregunta {current} de {total}.",
+    "default_label": "Respuesta",
+    "submit": "Enviar"
   },
   "modal_rdp_cert_changed": {
     "title": "¡El certificado del servidor RDP ha cambiado!",
@@ -1318,7 +1330,10 @@
     "sftp_verify_size": "Verificar tamaño al terminar transferencias SFTP",
     "sftp_verify_size_hint": "Comprueba el tamaño final del fichero copiado para detectar transferencias incompletas.",
     "sftp_max_concurrent": "Transferencias simultáneas (SFTP)",
-    "sftp_max_concurrent_hint": "Peticiones SFTP en paralelo por transferencia. Súbelo para más velocidad en redes con latencia; bájalo (p. ej. 4) si el servidor da «Handle limit reached» (Hetzner Storage Box y similares). Aplica a sesiones nuevas."
+    "sftp_max_concurrent_hint": "Peticiones SFTP en paralelo por transferencia. Súbelo para más velocidad en redes con latencia; bájalo (p. ej. 4) si el servidor da «Handle limit reached» (Hetzner Storage Box y similares). Aplica a sesiones nuevas.",
+    "limit_down": "Límite de bajada (KiB/s)",
+    "limit_up": "Límite de subida (KiB/s)",
+    "limit_hint": "0 = sin límite (lo de siempre). El techo es del enlace, no de cada transferencia: dos descargas a la vez se reparten el mismo caudal. Sirve para dejar una copia larga de fondo sin que la videollamada o el resto de sesiones se resientan. Vale para SFTP, FTP y FTPS, y se aplica al instante."
   },
   "prefs_language": {
     "title": "Idioma",
@@ -1830,7 +1845,13 @@
     "sftp_open_first": "Abre primero el panel SFTP",
     "select_folder_first": "Selecciona una carpeta primero",
     "del_conn_multi_title": "Eliminar conexiones",
-    "test_done": "Prueba {proto} completada"
+    "test_done": "Prueba {proto} completada",
+    "auth_prompt_canceled": "Verificación cancelada; la conexión no se ha establecido.",
+    "tunnel_closed": "Túnel cerrado: {desc}",
+    "tunnels_all_stopped": "{n} túnel(es) cerrados",
+    "transfers_all_paused": "Transferencias en pausa",
+    "transfers_all_resumed": "Transferencias reanudadas",
+    "transfers_pause_all_failed": "No se pudo cambiar la pausa general: {err}"
   },
   "time": {
     "now": "ahora",
@@ -1903,7 +1924,11 @@
     "col_type": "Tipo",
     "col_name": "Nombre",
     "col_size": "Tamaño",
-    "col_modified": "Fecha"
+    "col_modified": "Fecha",
+    "pause_all": "Pausar todo",
+    "pause_all_title": "Pausar todas las transferencias, de todas las sesiones",
+    "resume_all": "Reanudar todo",
+    "resume_all_title": "Levantar la pausa general (las pausadas una a una siguen en pausa)"
   },
   "sftp_nav": {
     "back": "Atrás",
@@ -1958,6 +1983,15 @@
     "active_badge": "Activo",
     "empty_active": "Sin túneles activos",
     "empty_saved": "Sin túneles guardados",
-    "no_ssh_connections": "Sin conexiones SSH"
+    "no_ssh_connections": "Sin conexiones SSH",
+    "minimize": "Minimizar",
+    "minimize_title": "Minimizar el panel; los túneles siguen abiertos",
+    "close": "Cerrar",
+    "close_title": "Cerrar el panel de túneles",
+    "close_question": "Tienes {n} túnel(es) abiertos. Si cierras el panel siguen funcionando; para pararlos hay que decirlo aquí.",
+    "close_keep": "Dejarlos abiertos",
+    "close_stop_all": "Cerrar todos los túneles",
+    "active_count": "{n} túnel(es) activos",
+    "stay_open_note": "Hay {n} túnel(es) abiertos: seguirán funcionando aunque cierres este panel."
   }
 }

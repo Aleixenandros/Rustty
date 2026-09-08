@@ -411,12 +411,14 @@ fn resolve_secrets(profile: &ConnectionProfile) -> Result<CliSecrets, String> {
                 Some(resolve_password_markers(profile, value)?)
             }
         }
-        AuthType::PublicKey | AuthType::Agent => None,
+        // La interactiva no tiene secreto que resolver por adelantado: las
+        // respuestas las pregunta el servidor durante la conexión.
+        AuthType::PublicKey | AuthType::Agent | AuthType::KeyboardInteractive => None,
     };
 
     let passphrase = match profile.auth_type {
         AuthType::PublicKey => resolve_passphrase(profile)?,
-        AuthType::Password | AuthType::Agent => None,
+        AuthType::Password | AuthType::Agent | AuthType::KeyboardInteractive => None,
     };
 
     Ok(CliSecrets {
@@ -754,6 +756,7 @@ async fn connect_handle(
             &mut bastion,
             &profile.auth_type,
             &b_user,
+            &b_host,
             secrets.password.as_ref(),
             secrets.passphrase.as_ref(),
             profile.key_path.as_deref(),
@@ -822,6 +825,7 @@ async fn authenticate_target(
         handle,
         &profile.auth_type,
         &profile.username,
+        &profile.host,
         secrets.password.as_ref(),
         secrets.passphrase.as_ref(),
         profile.key_path.as_deref(),

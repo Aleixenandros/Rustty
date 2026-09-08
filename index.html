@@ -53,10 +53,14 @@
               <path d="M9 2.4 11.06 6.6l4.64.67-3.36 3.27.79 4.6L9 12.96 4.86 15.14l.79-4.6L2.3 7.27l4.64-.67z"/>
             </svg>
           </button>
-          <button class="rail-btn" data-rail-action="tunnels" data-i18n-title="rail.tunnels" data-tooltip="Túneles SSH" data-tooltip-pos="right" aria-label="Túneles SSH">
+          <button class="rail-btn" id="rail-btn-tunnels" data-rail-action="tunnels" data-i18n-title="rail.tunnels" data-tooltip="Túneles SSH" data-tooltip-pos="right" aria-label="Túneles SSH">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
               <path d="M2.5 6.5h11l-2 -2M15.5 11.5h-11l2 2"/>
             </svg>
+            <!-- Contador de túneles activos: se rellena desde main.js y solo se
+                 ve cuando hay alguno. Sin él, cerrar el panel dejaba los túneles
+                 corriendo sin ninguna señal en pantalla. -->
+            <span class="rail-badge hidden" id="rail-tunnels-badge" aria-hidden="true"></span>
           </button>
           <button class="rail-btn" data-rail-action="scripts" data-i18n-title="scripts.rail_title" data-tooltip="Scripts" data-tooltip-pos="right" aria-label="Scripts">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
@@ -562,9 +566,11 @@
 
       <!-- Grupo 3 · Red y avanzado -->
       <div class="ctx-sep ctx-conn-only hidden"></div>
-      <button class="ctx-item ctx-conn-only hidden" data-ctx="new-tunnel">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span><span data-i18n="ctx.new_tunnel">Nuevo túnel…</span>
-      </button>
+      <div class="ctx-item ctx-has-submenu ctx-conn-only hidden" id="ctx-tunnels" aria-haspopup="menu">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span><span data-i18n="ctx.tunnels">Túneles</span>
+        <span class="ctx-submenu-arrow">▸</span>
+        <div class="ctx-submenu" id="ctx-tunnels-submenu" role="menu"></div>
+      </div>
       <button class="ctx-item ctx-conn-only ctx-script-only hidden" data-ctx="run-script-conn">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-script"/></svg></span><span data-i18n="scripts.ctx_run">Ejecutar script…</span>
       </button>
@@ -870,6 +876,7 @@
               <option value="password" data-i18n="modal_conn.auth_password">Contraseña</option>
               <option value="public_key" data-i18n="modal_conn.auth_publickey">Clave pública / privada</option>
               <option value="agent" data-i18n="modal_conn.auth_agent">Agente SSH</option>
+              <option value="keyboard_interactive" data-i18n="modal_conn.auth_keyboard_interactive">Interactiva (código de verificación)</option>
             </select>
           </div>
 
@@ -1238,7 +1245,14 @@
       <div id="global-tunnels-modal" role="dialog" aria-modal="true" aria-labelledby="global-tunnels-title">
         <div class="modal-header">
           <h2 id="global-tunnels-title">Túneles SSH</h2>
-          <button class="btn-icon" id="btn-global-tunnels-close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+          <!-- Dos salidas distintas, a propósito. «Minimizar» esconde el panel y
+               deja los túneles corriendo (lo que hacía el aspa, sin decirlo).
+               El aspa, cuando hay túneles activos, pregunta: es el único sitio
+               desde el que cerrarlos todos de una vez. -->
+          <button class="btn-icon" id="btn-global-tunnels-minimize" data-i18n-title="tunnels.minimize_title" data-i18n-aria-label="tunnels.minimize" aria-label="Minimizar">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3.5 8.5h9"/></svg>
+          </button>
+          <button class="btn-icon" id="btn-global-tunnels-close" data-i18n-title="tunnels.close_title" data-i18n-aria-label="tunnels.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
 
         <div class="global-tunnels-body">
@@ -1292,6 +1306,7 @@
             <div class="global-tunnels-section-title">Guardados</div>
             <div id="global-saved-tunnels" class="global-tunnel-list"></div>
           </div>
+          <p class="global-tunnels-note" id="global-tunnels-note"></p>
         </div>
       </div>
     </div>
@@ -2583,6 +2598,16 @@
                 <input type="number" id="pref-sftp-max-concurrent" min="1" max="64" step="1" style="width: 80px;" />
               </div>
               <p class="settings-hint" data-i18n="prefs_transfer.sftp_max_concurrent_hint">Peticiones SFTP en paralelo por transferencia. Súbelo para más velocidad en redes con latencia; bájalo (p. ej. 4) si el servidor da «Handle limit reached» (Hetzner Storage Box y similares). Aplica a sesiones nuevas.</p>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-transfer-limit-down" data-i18n="prefs_transfer.limit_down">Límite de bajada (KiB/s)</label>
+                <input type="number" id="pref-transfer-limit-down" min="0" step="64" style="width: 110px;" />
+              </div>
+              <div class="settings-row settings-row-inline">
+                <label for="pref-transfer-limit-up" data-i18n="prefs_transfer.limit_up">Límite de subida (KiB/s)</label>
+                <input type="number" id="pref-transfer-limit-up" min="0" step="64" style="width: 110px;" />
+              </div>
+              <p class="settings-hint" data-i18n="prefs_transfer.limit_hint">0 = sin límite (lo de siempre). El techo es del enlace, no de cada transferencia: dos descargas a la vez se reparten el mismo caudal. Sirve para dejar una copia larga de fondo sin que la videollamada o el resto de sesiones se resientan. Vale para SFTP, FTP y FTPS, y se aplica al instante.</p>
             </section>
 
             <!-- ── Idioma ── -->

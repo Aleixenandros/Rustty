@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
 use crate::locks::MutexExt;
@@ -93,6 +94,25 @@ pub struct TransferControls {
     paused: Mutex<HashSet<String>>,
 }
 
+/// Pausa global: afecta a **todas** las transferencias de todas las sesiones a
+/// la vez. Vive fuera de `TransferControls` —que es por sesión— porque el
+/// gesto que la enciende («pausa todo, necesito el ancho de banda») no es de
+/// una sesión concreta. Una transferencia está pausada si lo está ella o si lo
+/// está el mundo entero; reanudar todo no despausa las que el usuario había
+/// pausado una a una.
+static PAUSE_ALL: AtomicBool = AtomicBool::new(false);
+
+/// Enciende o apaga la pausa global de transferencias.
+pub fn set_pause_all(paused: bool) {
+    PAUSE_ALL.store(paused, Ordering::Relaxed);
+}
+
+/// `true` si la pausa global está activa.
+#[must_use]
+pub fn pause_all_active() -> bool {
+    PAUSE_ALL.load(Ordering::Relaxed)
+}
+
 /// Lo que toda transferencia arrastra: a quién identifica, a quién le informa del
 /// progreso, cómo se pausa/cancela y si hay que verificar el tamaño al terminar.
 ///
@@ -137,7 +157,7 @@ impl TransferControls {
     }
 
     fn is_paused(&self, transfer_id: &str) -> bool {
-        self.paused.lock_recover().contains(transfer_id)
+        PAUSE_ALL.load(Ordering::Relaxed) || self.paused.lock_recover().contains(transfer_id)
     }
 
     fn cancel(&self, transfer_id: String) {
@@ -850,6 +870,7 @@ async fn connect_and_open_sftp(
                 AuthType::Password => "password",
                 AuthType::PublicKey => "public_key",
                 AuthType::Agent => "agent",
+                AuthType::KeyboardInteractive => "keyboard_interactive",
             }
         ),
     );
@@ -903,6 +924,50 @@ async fn connect_and_open_sftp(
             .inspect_err(|e| {
                 emit_sftp_log(app_handle, session_id, "auth", "error", e.clone());
             })?,
+        AuthType::KeyboardInteractive => {
+            crate::ssh_manager::keyboard_interactive_auth(
+                &mut handle,
+                &profile.username,
+                &profile.host,
+            )
+            .await
+            .map_err(|e| {
+                let msg = e.to_string();
+                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                msg
+            })?
+        }
+    };
+
+    // Segundo factor: igual que en el shell SSH, un `Failure` con
+    // `partial_success` no es un rechazo — la credencial valió y el servidor
+    // pide otro factor. Se encadena el flujo interactivo sin que el perfil
+    // tenga que declararlo.
+    let auth = match auth {
+        AuthResult::Failure {
+            ref remaining_methods,
+            partial_success: true,
+        } if remaining_methods.contains(&russh::MethodKind::KeyboardInteractive) => {
+            emit_sftp_log(
+                app_handle,
+                session_id,
+                "auth",
+                "info",
+                "El servidor pide un segundo factor",
+            );
+            crate::ssh_manager::keyboard_interactive_auth(
+                &mut handle,
+                &profile.username,
+                &profile.host,
+            )
+            .await
+            .map_err(|e| {
+                let msg = e.to_string();
+                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                msg
+            })?
+        }
+        other => other,
     };
 
     match auth {
@@ -1326,6 +1391,7 @@ impl FtpConnection {
                     transfer_id,
                     app,
                     controls,
+                    false,
                 )?;
                 ftp.finalize_retr_stream(remote_file)
                     .map_err(|e| e.to_string())?;
@@ -1339,6 +1405,7 @@ impl FtpConnection {
                     transfer_id,
                     app,
                     controls,
+                    false,
                 )?;
                 ftp.finalize_retr_stream(remote_file)
                     .map_err(|e| e.to_string())?;
@@ -1367,6 +1434,7 @@ impl FtpConnection {
                     transfer_id,
                     app,
                     controls,
+                    true,
                 )?;
                 ftp.finalize_put_stream(remote_file)
                     .map_err(|e| e.to_string())?;
@@ -1380,6 +1448,7 @@ impl FtpConnection {
                     transfer_id,
                     app,
                     controls,
+                    true,
                 )?;
                 ftp.finalize_put_stream(remote_file)
                     .map_err(|e| e.to_string())?;
@@ -1857,6 +1926,10 @@ async fn pipelined_download(
                 // sin nadie que la atienda.
                 let Some(mut f) = idle_files.pop() else { break };
                 let len = (total - next_read).min(SFTP_CHUNK);
+                // Techo de bajada: se paga aquí, antes de pedir el chunk, para
+                // no traerse datos que luego habría que retener. Sin límite
+                // configurado no cuesta nada (ni un lock).
+                crate::transfer_rate::throttle_download(len).await;
                 let off = next_read;
                 next_read += len;
                 in_flight.push(async move {
@@ -2047,6 +2120,10 @@ async fn pipelined_upload(
                 }
                 buf.truncate(filled);
 
+                // Techo de subida: se paga con los bytes que de verdad van a
+                // salir (el último chunk suele ser más corto que `len`).
+                crate::transfer_rate::throttle_upload(filled as u64).await;
+
                 in_flight.push(async move {
                     let res = write_chunk_at(&mut f, off, &buf).await;
                     (f, filled as u64, res)
@@ -2138,6 +2215,8 @@ fn transfer_copy_blocking<R, W>(
     transfer_id: &str,
     app: &AppHandle,
     controls: &Arc<TransferControls>,
+    // `upload`: `true` si los bytes salen. Decide contra qué techo se cuentan.
+    upload: bool,
 ) -> Result<(), String>
 where
     R: Read,
@@ -2198,6 +2277,9 @@ where
         if n == 0 {
             break;
         }
+        // Techo de velocidad. Aquí la espera es bloqueante porque toda esta
+        // copia lo es: corre en el hilo del worker FTP, no en el runtime async.
+        crate::transfer_rate::throttle_blocking(n as u64, upload);
         dst.write_all(&buf[..n]).map_err(|e| e.to_string())?;
         transferred += n as u64;
 

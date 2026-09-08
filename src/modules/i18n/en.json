@@ -589,7 +589,10 @@
     "export_folder": "Export folder connections…",
     "export_workspace": "Export workspace connections…",
     "folder_color": "Color",
-    "folder_color_clear": "Clear color"
+    "folder_color_clear": "Clear color",
+    "tunnels": "Tunnels",
+    "tunnel_start_item": "Open “{name}”",
+    "tunnel_stop_item": "Stop “{name}”"
   },
   "promote_master": {
     "title": "Promote to master credential",
@@ -706,6 +709,7 @@
     "auth_password": "Password",
     "auth_publickey": "Public / private key",
     "auth_agent": "SSH Agent",
+    "auth_keyboard_interactive": "Interactive (verification code)",
     "use_keepass": "Use KeePass password",
     "password_source": "Password source",
     "password_source_own": "Profile's own",
@@ -760,6 +764,7 @@
     "summary_auth_password": "Auth: password",
     "summary_auth_publickey": "Auth: key",
     "summary_auth_agent": "Auth: agent",
+    "summary_auth_keyboard_interactive": "Auth: interactive",
     "summary_auth_keepass": "Auth: KeePass",
     "summary_bastion": "Bastion: {host}",
     "summary_keepalive": "Keep-alive {n}s",
@@ -918,6 +923,13 @@
     "received": "Received now ({type}):\n{fingerprint}",
     "advice": "Accept ONLY if you expected this change and can verify the new fingerprint through a trusted channel. Accepting replaces the old entry and the connection continues; rejecting changes nothing.",
     "accept": "Accept the new key"
+  },
+  "modal_auth_prompt": {
+    "title": "Two-step verification",
+    "intro": "Server {target} is asking for one more thing before letting you in. Check it before typing: whatever you enter here is handed to that server.",
+    "step": "Question {current} of {total}.",
+    "default_label": "Answer",
+    "submit": "Send"
   },
   "modal_rdp_cert_changed": {
     "title": "The RDP server's certificate has changed!",
@@ -1318,7 +1330,10 @@
     "sftp_verify_size": "Verify size after SFTP transfers",
     "sftp_verify_size_hint": "Checks the final size of the copied file to detect incomplete transfers.",
     "sftp_max_concurrent": "Concurrent transfers (SFTP)",
-    "sftp_max_concurrent_hint": "Parallel SFTP requests per transfer. Raise it for more speed on high-latency networks; lower it (e.g. 4) if the server returns “Handle limit reached” (Hetzner Storage Box and similar). Applies to new sessions."
+    "sftp_max_concurrent_hint": "Parallel SFTP requests per transfer. Raise it for more speed on high-latency networks; lower it (e.g. 4) if the server returns “Handle limit reached” (Hetzner Storage Box and similar). Applies to new sessions.",
+    "limit_down": "Download limit (KiB/s)",
+    "limit_up": "Upload limit (KiB/s)",
+    "limit_hint": "0 = no limit (as always). The cap is on the link, not on each transfer: two downloads at once share the same budget. Useful for leaving a long copy running without your video call or other sessions suffering. Works for SFTP, FTP and FTPS, and applies right away."
   },
   "prefs_language": {
     "title": "Language",
@@ -1830,7 +1845,13 @@
     "sftp_open_first": "Open the SFTP panel first",
     "select_folder_first": "Select a folder first",
     "del_conn_multi_title": "Delete connections",
-    "test_done": "{proto} test completed"
+    "test_done": "{proto} test completed",
+    "auth_prompt_canceled": "Verification cancelled; the connection was not established.",
+    "tunnel_closed": "Tunnel closed: {desc}",
+    "tunnels_all_stopped": "{n} tunnel(s) closed",
+    "transfers_all_paused": "Transfers paused",
+    "transfers_all_resumed": "Transfers resumed",
+    "transfers_pause_all_failed": "Could not change the global pause: {err}"
   },
   "time": {
     "now": "just now",
@@ -1903,7 +1924,11 @@
     "col_type": "Type",
     "col_name": "Name",
     "col_size": "Size",
-    "col_modified": "Date"
+    "col_modified": "Date",
+    "pause_all": "Pause all",
+    "pause_all_title": "Pause every transfer, across all sessions",
+    "resume_all": "Resume all",
+    "resume_all_title": "Lift the global pause (transfers paused one by one stay paused)"
   },
   "sftp_nav": {
     "back": "Back",
@@ -1958,6 +1983,15 @@
     "active_badge": "Active",
     "empty_active": "No active tunnels",
     "empty_saved": "No saved tunnels",
-    "no_ssh_connections": "No SSH connections"
+    "no_ssh_connections": "No SSH connections",
+    "minimize": "Minimise",
+    "minimize_title": "Minimise the panel; the tunnels stay open",
+    "close": "Close",
+    "close_title": "Close the tunnels panel",
+    "close_question": "You have {n} tunnel(s) open. Closing the panel leaves them running; stopping them has to be said here.",
+    "close_keep": "Leave them open",
+    "close_stop_all": "Close every tunnel",
+    "active_count": "{n} tunnel(s) active",
+    "stay_open_note": "{n} tunnel(s) open: they keep running after you close this panel."
   }
 }

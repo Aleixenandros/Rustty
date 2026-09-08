@@ -64,6 +64,13 @@ describe("contrato de prefijos", () => {
     expect(EVENT.hostKeyPrompt).toBe("ssh-hostkey-prompt");
   });
 
+  // Espejo de `SSH_AUTH_PROMPT` en src-tauri/src/ipc.rs. Global por el mismo
+  // motivo que la host key: el intercambio interactivo lo levantan SSH, SFTP,
+  // los scripts y cada salto ProxyJump, y no todos conocen el sessionId.
+  it("el evento global ssh-auth-prompt es estable", () => {
+    expect(EVENT.sshAuthPrompt).toBe("ssh-auth-prompt");
+  });
+
   it("los catálogos son inmutables (Object.freeze)", () => {
     expect(Object.isFrozen(EVENT_PREFIX)).toBe(true);
     expect(Object.isFrozen(EVENT)).toBe(true);

@@ -211,6 +211,33 @@ jobs:
             echo "macOS dependencies already installed."
           fi
 
+      # ── Notas del release ─────────────────────────────────────
+      # Las notas son el changelog de esa versión: quien entra en la página del
+      # release quiere leer ahí mismo qué cambia, no un «ver CHANGELOG para
+      # detalles» que le obliga a salir. La sección la extrae
+      # `scripts/changelog-section.sh` del propio CHANGELOG.md, que el job
+      # `verify` ya ha comprobado que existe para este tag.
+      - name: Preparar notas del release
+        id: notas
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_NAME:0:1}" = "v" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            CUERPO=$(./scripts/changelog-section.sh "$VERSION")
+          else
+            CUERPO=""
+          fi
+          {
+            echo "cuerpo<<RUSTTY_EOF"
+            echo "$CUERPO"
+            echo ""
+            echo "---"
+            echo ""
+            echo "Registro completo: [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md)"
+            echo "RUSTTY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       # ── Dependencias JS ───────────────────────────────────────
       - name: Install JS dependencies
         run: npm ci
@@ -242,7 +269,7 @@ jobs:
           # limita a compilar (smoke test) sin tocar releases.
           tagName:       ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
           releaseName:   ${{ startsWith(github.ref, 'refs/tags/') && format('Rustty {0}', github.ref_name) || '' }}
-          releaseBody:   "Ver CHANGELOG para detalles."
+          releaseBody:   ${{ steps.notas.outputs.cuerpo }}
           releaseDraft:  true
           prerelease:    false
           args:          --target ${{ matrix.target }}

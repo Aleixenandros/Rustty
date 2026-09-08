@@ -22,10 +22,10 @@ use std::time::{Duration, Instant};
 
 use std::borrow::Cow;
 
-use russh::client::{self, AuthResult};
+use russh::client::{self, AuthResult, KeyboardInteractiveAuthResponse};
 use russh::keys::ssh_key::Algorithm;
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
-use russh::{cipher, kex, mac, ChannelMsg, Preferred};
+use russh::{cipher, kex, mac, ChannelMsg, MethodKind, Preferred};
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, Response};
@@ -35,6 +35,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+use crate::auth_prompt;
 use crate::error::AppError;
 use crate::host_keys;
 use crate::ipc::{event_name, EventKind};
@@ -944,6 +945,7 @@ async fn run_connection_test(
             &mut bastion,
             &profile.auth_type,
             &b_user,
+            &b_host,
             password.as_ref(),
             passphrase.as_ref(),
             profile.key_path.as_deref(),
@@ -1063,6 +1065,7 @@ async fn run_connection_test(
         &mut handle,
         &profile.auth_type,
         &profile.username,
+        &profile.host,
         password.as_ref(),
         passphrase.as_ref(),
         profile.key_path.as_deref(),
@@ -1688,6 +1691,7 @@ async fn run_session(
             &mut bastion,
             &profile.auth_type,
             &b_user,
+            &b_host,
             password.as_ref(),
             passphrase.as_ref(),
             profile.key_path.as_deref(),
@@ -1887,6 +1891,7 @@ async fn run_session(
         &mut handle,
         &profile.auth_type,
         &profile.username,
+        &profile.host,
         password.as_ref(),
         passphrase.as_ref(),
         profile.key_path.as_deref(),
@@ -3142,10 +3147,50 @@ pub(crate) fn parse_jump_spec(spec: &str, default_user: &str) -> (String, String
 /// Autentica un `client::Handle` aplicando el `auth_type` con las credenciales
 /// dadas. Reusable para el bastion (ProxyJump) y para el destino. La auth por
 /// clave pública requiere `key_path`.
+///
+/// `host` es solo para los diálogos de la autenticación interactiva: cuando el
+/// servidor pide un código de un solo uso, quien lo teclea tiene derecho a ver
+/// a quién se lo está entregando.
+///
+/// **Segundo factor.** Si el método elegido termina en `Failure` pero el
+/// servidor marca `partial_success`, no es que la credencial fuera mala: es que
+/// valió y el servidor exige **otro factor** (el caso de `AuthenticationMethods
+/// publickey,keyboard-interactive` en sshd). Ahí se encadena solo el flujo
+/// interactivo, sin que el perfil tenga que declararlo. Un `Failure` sin
+/// `partial_success` sí es un rechazo y se devuelve tal cual: preguntar un
+/// código después de una contraseña equivocada solo confundiría.
 pub(crate) async fn authenticate_handle(
     handle: &mut client::Handle<host_keys::KnownHostsClient>,
     auth_type: &AuthType,
     username: &str,
+    host: &str,
+    password: Option<&String>,
+    passphrase: Option<&String>,
+    key_path: Option<&str>,
+) -> Result<AuthResult, AppError> {
+    let result = authenticate_first_factor(
+        handle, auth_type, username, host, password, passphrase, key_path,
+    )
+    .await?;
+
+    if let AuthResult::Failure {
+        ref remaining_methods,
+        partial_success: true,
+    } = result
+    {
+        if remaining_methods.contains(&MethodKind::KeyboardInteractive) {
+            return keyboard_interactive_auth(handle, username, host).await;
+        }
+    }
+    Ok(result)
+}
+
+/// El método que el perfil declara, sin encadenar segundos factores.
+async fn authenticate_first_factor(
+    handle: &mut client::Handle<host_keys::KnownHostsClient>,
+    auth_type: &AuthType,
+    username: &str,
+    host: &str,
     password: Option<&String>,
     passphrase: Option<&String>,
     key_path: Option<&str>,
@@ -3180,7 +3225,79 @@ pub(crate) async fn authenticate_handle(
                 .map_err(|e| AppError::Auth(format!("Autenticación por clave fallida: {e}")))
         }
         AuthType::Agent => authenticate_with_agent(handle, username).await,
+        AuthType::KeyboardInteractive => keyboard_interactive_auth(handle, username, host).await,
     }
+}
+
+/// Tope de rondas de preguntas en un intercambio `keyboard-interactive`. El
+/// servidor puede mandar todas las que quiera y el protocolo no pone límite:
+/// sin este tope, un servidor hostil (o roto) mantendría la interfaz pidiendo
+/// códigos en bucle sin que la conexión avance nunca.
+const MAX_INTERACTIVE_ROUNDS: usize = 12;
+
+/// Autenticación `keyboard-interactive` (RFC 4256): el servidor manda rondas de
+/// preguntas, el usuario las contesta desde la interfaz y el ciclo se repite
+/// hasta que el servidor concede o deniega el acceso. Es el camino de la
+/// MFA/2FA — códigos de un solo uso, Duo, PAM encadenado.
+///
+/// Las respuestas **no se guardan**: viven lo que dura el intercambio. Un
+/// código de un solo uso caduca en segundos, así que persistirlo solo añadiría
+/// un secreto en disco sin ninguna utilidad.
+pub(crate) async fn keyboard_interactive_auth(
+    handle: &mut client::Handle<host_keys::KnownHostsClient>,
+    username: &str,
+    host: &str,
+) -> Result<AuthResult, AppError> {
+    let mut response = handle
+        .authenticate_keyboard_interactive_start(username.to_string(), None)
+        .await
+        .map_err(|e| AppError::Auth(format!("Autenticación interactiva fallida: {e}")))?;
+
+    for _ in 0..MAX_INTERACTIVE_ROUNDS {
+        let (name, instructions, prompts) = match response {
+            KeyboardInteractiveAuthResponse::Success => return Ok(AuthResult::Success),
+            KeyboardInteractiveAuthResponse::Failure {
+                remaining_methods,
+                partial_success,
+            } => {
+                return Ok(AuthResult::Failure {
+                    remaining_methods,
+                    partial_success,
+                })
+            }
+            KeyboardInteractiveAuthResponse::InfoRequest {
+                name,
+                instructions,
+                prompts,
+            } => (name, instructions, prompts),
+        };
+
+        let fields: Vec<auth_prompt::AuthPromptField> = prompts
+            .iter()
+            .map(|p| auth_prompt::AuthPromptField {
+                prompt: p.prompt.clone(),
+                echo: p.echo,
+            })
+            .collect();
+
+        let answers = auth_prompt::ask(host, username, &name, &instructions, &fields)
+            .await
+            .map_err(AppError::Auth)?;
+        let Some(answers) = answers else {
+            return Err(AppError::Auth(
+                "Autenticación interactiva cancelada".to_string(),
+            ));
+        };
+
+        response = handle
+            .authenticate_keyboard_interactive_respond(answers)
+            .await
+            .map_err(|e| AppError::Auth(format!("Autenticación interactiva fallida: {e}")))?;
+    }
+
+    Err(AppError::Auth(format!(
+        "El servidor pidió más de {MAX_INTERACTIVE_ROUNDS} rondas de preguntas; conexión abortada"
+    )))
 }
 
 /// Genera una cookie hex aleatoria de 16 bytes para MIT-MAGIC-COOKIE-1.
@@ -3251,6 +3368,7 @@ mod tests {
             &mut handle,
             &AuthType::PublicKey,
             &server.username,
+            "127.0.0.1",
             None,
             None,
             Some(&key_path),
@@ -3398,6 +3516,7 @@ mod tests {
             &mut b_handle,
             &AuthType::PublicKey,
             &bastion.username,
+            "127.0.0.1",
             None,
             None,
             Some(&b_key),
@@ -3429,6 +3548,7 @@ mod tests {
             &mut t_handle,
             &AuthType::PublicKey,
             &target.username,
+            "127.0.0.1",
             None,
             None,
             Some(&t_key),
@@ -3489,6 +3609,7 @@ mod tests {
             &mut handle,
             &AuthType::PublicKey,
             &server.username,
+            "127.0.0.1",
             None,
             None,
             Some(&key_path),
@@ -3750,6 +3871,7 @@ mod tests {
             &mut con_clave,
             &AuthType::PublicKey,
             &server.username,
+            "127.0.0.1",
             None,
             None,
             Some(&key_path.display().to_string()),

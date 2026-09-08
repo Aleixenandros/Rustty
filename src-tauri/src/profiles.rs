@@ -17,6 +17,10 @@ pub enum AuthType {
     PublicKey,
     /// Autenticación delegada al agente SSH del sistema
     Agent,
+    /// Autenticación interactiva por teclado (RFC 4256): el servidor pregunta
+    /// y el usuario contesta en el momento. Es el método de la MFA/2FA —
+    /// códigos de un solo uso, Duo, PAM encadenado.
+    KeyboardInteractive,
 }
 
 /// Origen de la contraseña del perfil. Reemplaza la inferencia implícita

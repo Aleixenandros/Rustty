@@ -2,6 +2,7 @@ mod app_log;
 mod app_tray;
 mod asbru;
 mod atomic_file;
+mod auth_prompt;
 pub mod cli;
 mod commands;
 mod credentials;
@@ -49,6 +50,7 @@ mod sync;
 // `pub` por el mismo motivo que `mux`: fase 1 del modo control, todavía sin
 // llamador en producción.
 pub mod tmux;
+mod transfer_rate;
 mod tunnel_throttle;
 
 use std::path::PathBuf;
@@ -240,6 +242,10 @@ pub fn run() {
             host_keys::register_app(app.handle().clone());
             // Igual para la confirmación de certificados FTPS (`ftps-cert-prompt`).
             ftps_certs::register_app(app.handle().clone());
+            // Y para las preguntas de la autenticación interactiva —el segundo
+            // factor— (`ssh-auth-prompt`). Sin ventana no hay a quién preguntar:
+            // la CLI rechaza esas conexiones en vez de colgarse esperando.
+            auth_prompt::set_app_handle(app.handle().clone());
             // Si es la build portable de Windows, los datos viajan junto al
             // .exe en `.conf/com.rustty.app/`. Si no, ruta estándar (identifier).
             let data_dir = resolve_data_dir();
@@ -303,6 +309,10 @@ pub fn run() {
                 _ => {}
             }
             if matches!(event, WindowEvent::CloseRequested { .. }) {
+                // Una conexión parada en el diálogo del segundo factor esperaría
+                // tres minutos a una ventana que ya no existe: se cancelan antes
+                // de cerrar las sesiones para que ninguna quede colgada.
+                auth_prompt::cancel_all();
                 window.state::<SshManager>().disconnect_all();
                 window.state::<SftpManager>().disconnect_all();
                 window.state::<LocalShellManager>().close_all();
@@ -419,6 +429,9 @@ pub fn run() {
             commands::sftp_cancel_transfer,
             commands::sftp_pause_transfer,
             commands::sftp_resume_transfer,
+            commands::sftp_set_pause_all,
+            commands::sftp_pause_all_active,
+            commands::set_transfer_rate_limits,
             // ── FS local (panel SFTP partido)
             commands::local_list_dir,
             commands::local_home_dir,
@@ -445,6 +458,7 @@ pub fn run() {
             commands::set_host_key_policy,
             commands::set_host_key_change_policy,
             commands::ssh_hostkey_response,
+            commands::ssh_auth_prompt_response,
             commands::set_ftps_cert_policy,
             commands::ftps_cert_response,
             commands::profiles_recovery,

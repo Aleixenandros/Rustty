@@ -2,6 +2,63 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.7.0] - 2026-09-09
+
+### Añadido
+
+- **Los servidores con verificación en dos pasos ya se pueden usar.** Hasta
+  ahora, un servidor que pide un código de un solo uso además de la contraseña
+  —Google Authenticator, Duo, un SMS, una cadena PAM— rechazaba la conexión sin
+  más: Rustty no sabía contestar a preguntas hechas durante el acceso. Ahora sí.
+  Cuando el servidor pregunta, Rustty se detiene, te enseña la pregunta tal como
+  el servidor la escribe y espera tu respuesta; si son varias, te las va pidiendo
+  una a una. El diálogo dice siempre a qué servidor le estás entregando el
+  código, y lo que tecleas no se guarda en ninguna parte: un código de un solo
+  uso caduca en segundos, así que no hay nada que conservar.
+- Si el servidor acepta tu contraseña o tu clave y **después** pide el segundo
+  factor, no hay que configurar nada: Rustty encadena la pregunta sola. El nuevo
+  tipo de autenticación «Interactiva (código de verificación)» del formulario de
+  conexión es para los servidores que piden el código de entrada, sin contraseña
+  previa. Vale igual para el terminal y para el panel de archivos.
+- **Límite de velocidad para las transferencias de ficheros.** En Preferencias →
+  FTP/SFTP hay dos campos nuevos, bajada y subida, en KiB/s. Sirven para dejar
+  una copia larga corriendo de fondo sin que la videollamada se entrecorte ni el
+  resto de sesiones vayan a tirones. El techo es del enlace y no de cada
+  transferencia, así que dos descargas a la vez se reparten el mismo caudal en
+  lugar de duplicarlo. Vacío o `0` = sin límite, que es lo de siempre; el cambio
+  se aplica al instante, sin reconectar, y vale para SFTP, FTP y FTPS.
+- **«Pausar todo» en el panel de archivos.** Un botón junto a la lista de
+  transferencias detiene todas de golpe —de todas las sesiones abiertas— y las
+  reanuda igual de rápido. Pausar una a una no servía de nada cuando lo que está
+  en marcha es una carpeta con cientos de ficheros. Levantar la pausa general no
+  reanuda las que hubieras pausado tú por separado: esas siguen donde las
+  dejaste.
+- **Se ve qué túneles tienes abiertos sin abrir nada.** El botón de túneles de la
+  barra lateral lleva ahora un contador de los que están activos y, al pasar por
+  encima, la lista completa. Cada conexión guardada que tenga un túnel abierto
+  muestra además su propio distintivo en la barra lateral, con el detalle en el
+  tooltip. Hasta ahora, cerrar el panel dejaba los túneles funcionando sin nada
+  en pantalla que lo dijera.
+- El panel de túneles gana un botón de **minimizar**, que es lo que en realidad
+  hacía el aspa: esconder la ventana y dejar los túneles como estaban. El aspa
+  pasa a preguntar qué hacer con ellos cuando hay alguno abierto —dejarlos o
+  cerrarlos todos—, y es el primer sitio desde el que se pueden cerrar todos de
+  una vez. Al pie del panel se lee cuántos seguirán funcionando al salir.
+- **Los túneles de una conexión están donde está la conexión.** El menú del botón
+  derecho tiene ahora un apartado «Túneles» que se despliega con los túneles
+  guardados de esa conexión: cada uno se abre o se para desde ahí, y al final
+  queda la opción de crear uno nuevo. Antes solo estaba «Nuevo túnel…» y
+  reutilizar uno ya definido obligaba a ir al panel global y buscarlo entre los
+  de todas las conexiones.
+
+### Cambiado
+
+- Las notas de cada publicación en GitHub llevan ya el detalle de la versión en
+  la propia página, en vez de remitir al registro de cambios completo.
+- Actualizadas las bibliotecas del proyecto: cliente SFTP, cliente FTP, lectura
+  de bases KeePass y utilidades de identificadores, más las herramientas de
+  desarrollo y de integración continua.
+
 ## [2.6.0] - 2026-08-28
 
 ### Añadido

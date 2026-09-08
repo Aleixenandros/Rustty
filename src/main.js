@@ -504,6 +504,13 @@ const DEFAULT_PREFS = {
   // limitan los handles abiertos y un valor alto provoca "Handle limit reached".
   sftpMaxConcurrent: 4,        // 1–64
 
+  // Techos de velocidad de las transferencias, en KiB/s. `0` = sin límite, que
+  // es lo de siempre. Servir para dejar una descarga larga de fondo sin que el
+  // resto de la red se resienta. El límite es del enlace, no de cada
+  // transferencia: dos descargas a la vez se reparten el mismo techo.
+  transferLimitUpKib:   0,
+  transferLimitDownKib: 0,
+
   // Disposición del panel SFTP: lado donde se muestra el panel remoto.
   sftpRemoteSide:  "left",     // "left" | "right"
   fontSize:        14,
@@ -749,7 +756,10 @@ function loadPrefs() {
   });
   userFolders = new Set(prefs.userFoldersByWorkspace[prefs.activeWorkspaceId] || []);
   // setLanguage carga el catálogo perezoso del idioma; al llegar, repintar.
-  setLanguage(prefs.lang).then(() => applyTranslations());
+  setLanguage(prefs.lang).then(() => {
+    applyTranslations();
+    refreshTunnelIndicators();
+  });
   applyTranslations();
   registerAllCustomThemes();
   applyTheme(prefs.theme);
@@ -1917,6 +1927,10 @@ function openSettingsModal() {
   document.getElementById("pref-sftp-verify-size").checked = !!prefs.sftpVerifySize;
   const maxConcEl = document.getElementById("pref-sftp-max-concurrent");
   if (maxConcEl) maxConcEl.value = sftpMaxConcurrent();
+  const upEl = document.getElementById("pref-transfer-limit-up");
+  if (upEl) upEl.value = String(transferLimitKib("transferLimitUpKib"));
+  const downEl = document.getElementById("pref-transfer-limit-down");
+  if (downEl) downEl.value = String(transferLimitKib("transferLimitDownKib"));
   const remoteSideEl = document.getElementById("pref-sftp-remote-side");
   if (remoteSideEl) remoteSideEl.value = prefs.sftpRemoteSide === "right" ? "right" : "left";
   populateFontFamilySelect(prefs.fontFamily || "");
@@ -3973,6 +3987,8 @@ function savePrefsFromModal() {
       const n = parseInt(document.getElementById("pref-sftp-max-concurrent")?.value, 10);
       return Number.isFinite(n) ? Math.min(64, Math.max(1, n)) : 4;
     })(),
+    transferLimitUpKib:   readTransferLimitField("pref-transfer-limit-up"),
+    transferLimitDownKib: readTransferLimitField("pref-transfer-limit-down"),
     sftpRemoteSide:  document.getElementById("pref-sftp-remote-side")?.value === "right" ? "right" : "left",
     fontFamily:      (document.getElementById("pref-font-family")?.value || "").trim(),
     fontSize:        parseInt(document.getElementById("pref-font-size").value, 10) || DEFAULT_PREFS.fontSize,
@@ -4080,6 +4096,7 @@ function savePrefsFromModal() {
   // La política de primera conexión la aplica el backend en cada handshake.
   applyHostKeyPolicy();
   applyFtpsCertPolicy();
+  applyTransferRateLimits();
   // Aplicar la preferencia de autostart al SO (enable/disable la entrada del SO).
   applyAutostartSetting(prefs.autostart, prefs.autostartMinimized)
     .catch((e) => console.error("[autostart] apply", e));
@@ -4103,7 +4120,12 @@ function savePrefsFromModal() {
   // re-detecte).
   const effectiveLang = prefs.lang || detectLanguage();
   if (effectiveLang !== getLanguage()) {
-    setLanguage(effectiveLang).then(() => applyTranslations());
+    setLanguage(effectiveLang).then(() => {
+      applyTranslations();
+      // `applyTranslations` reescribe el tooltip del botón de túneles desde su
+      // clave, y con él se va la lista de túneles activos: se vuelve a pintar.
+      refreshTunnelIndicators();
+    });
   }
   // Los snapshots ya no son relevantes: las prefs guardadas son la verdad.
   _terminalThemeSnapshot = undefined;
@@ -4459,8 +4481,15 @@ async function init() {
   // el usuario pueda conectar a nada.
   applyHostKeyPolicy();
   applyFtpsCertPolicy();
+  applyTransferRateLimits();
+  // El backend sobrevive a un recargado de la ventana: si la pausa general
+  // quedó echada, el botón tiene que nacer diciéndolo y no al revés.
+  await invoke("sftp_pause_all_active")
+    .then((paused) => { allTransfersPaused = !!paused; updatePauseAllButtons(); })
+    .catch((e) => console.debug("[transfer] pause-all state", e));
   await initHostKeyPrompt().catch((e) => console.error("[hostkey] init", e));
   await initFtpsCertPrompt().catch((e) => console.error("[ftpscert] init", e));
+  await initAuthPrompt().catch((e) => console.error("[auth-prompt] init", e));
   initWakeWatcher();
   await populateSyncTab().catch((e) => console.error("[sync] populate", e));
   if (_syncConfigCache?.enabled && _syncConfigCache.backend !== "none") {
@@ -5525,6 +5554,31 @@ function applyHostKeyPolicy() {
 }
 
 /** Igual para el certificado TLS de un servidor FTPS (TOFU por huella). */
+/** Techo guardado (KiB/s) de una de las dos direcciones, acotado y saneado. */
+function transferLimitKib(key) {
+  const n = parseInt(prefs[key], 10);
+  // Techo de 10 GiB/s: un número disparatado en el campo no debe convertirse en
+  // una espera absurda ni desbordar la cuenta del backend.
+  return Number.isFinite(n) && n > 0 ? Math.min(10 * 1024 * 1024, n) : 0;
+}
+
+/** Lee uno de los campos de techo de velocidad; vacío o inválido = sin límite. */
+function readTransferLimitField(id) {
+  const n = parseInt(document.getElementById(id)?.value, 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(10 * 1024 * 1024, n) : 0;
+}
+
+/**
+ * Traslada los techos de velocidad al backend, que es quien los aplica chunk a
+ * chunk. Sin esta llamada, los campos de Preferencias no harían nada.
+ */
+function applyTransferRateLimits() {
+  invoke("set_transfer_rate_limits", {
+    uploadKib: transferLimitKib("transferLimitUpKib"),
+    downloadKib: transferLimitKib("transferLimitDownKib"),
+  }).catch((e) => console.error("[transfer] set rate limits", e));
+}
+
 function applyFtpsCertPolicy() {
   invoke("set_ftps_cert_policy", { strict: prefs.strictFtpsCert !== false })
     .catch((e) => console.error("[ftpscert] set policy", e));
@@ -5618,6 +5672,69 @@ async function initHostKeyPrompt() {
         console.error("[hostkey] response", e);
       }
       if (!accept) toast(t("toast.hostkey_rejected", { host: p.host }), "warning");
+    }
+  );
+}
+
+/**
+ * Atiende `ssh-auth-prompt`: el servidor pide respuestas por
+ * `keyboard-interactive` —el camino de la MFA/2FA— y la conexión está parada
+ * esperándolas.
+ *
+ * Las preguntas las escribe el servidor («Verification code:», «Duo passcode or
+ * option:»), así que se muestran tal cual: traducirlas sería inventarse lo que
+ * el servidor quiere. Lo que sí va en el idioma del usuario es el marco —el
+ * título, el aviso de a quién se le entrega el código y el botón—.
+ *
+ * Cada pregunta de la ronda se pide por separado y en orden. Cancelar
+ * cualquiera de ellas cancela el intercambio entero: el backend aborta la
+ * conexión en vez de mandar una respuesta a medias.
+ */
+async function initAuthPrompt() {
+  await listen(
+    EVENT.sshAuthPrompt,
+    async (/** @type {{ payload: SshAuthPromptEvent }} */ event) => {
+      const p = event.payload || {};
+      const prompts = Array.isArray(p.prompts) ? p.prompts : [];
+      const target = `${p.username || ""}@${p.host || ""}`;
+      /** @type {string[] | null} */
+      let responses = [];
+
+      for (let i = 0; i < prompts.length; i++) {
+        const field = prompts[i] || {};
+        // El servidor manda el texto ya con sus dos puntos y su espacio final
+        // («Verification code: »); recortarlo evita el «Código:  :» del diálogo.
+        const label = String(field.prompt || "").trim()
+          || t("modal_auth_prompt.default_label");
+        const message = [
+          t("modal_auth_prompt.intro", { target }),
+          String(p.instructions || "").trim(),
+          prompts.length > 1
+            ? t("modal_auth_prompt.step", { current: i + 1, total: prompts.length })
+            : "",
+        ].filter(Boolean).join("\n\n");
+
+        const result = await promptCredential({
+          title: String(p.name || "").trim() || t("modal_auth_prompt.title"),
+          message,
+          label,
+          // `echo: false` = contraseña o código de un solo uso: no se enseña.
+          inputType: field.echo ? "text" : "password",
+          submitLabel: t("modal_auth_prompt.submit"),
+        });
+        if (!result) {
+          responses = null;
+          break;
+        }
+        responses.push(String(result.value ?? ""));
+      }
+
+      try {
+        await invoke("ssh_auth_prompt_response", { promptId: p.promptId, responses });
+      } catch (e) {
+        console.error("[auth-prompt] response", e);
+      }
+      if (responses === null) toast(t("toast.auth_prompt_canceled"), "warning");
     }
   );
 }
@@ -6402,6 +6519,7 @@ function renderConnectionItem(p, depth, opts = {}) {
   const notesBadge = noteSummary
     ? `<span class="conn-notes-badge" data-action="open-note" data-id="${p.id}" title="${escHtml(noteSummary.excerpt || t("notes.has_note"))}">${NOTE_ICON_SVG}</span>`
     : "";
+  const tunnelsBadge = tunnelBadgeHtml(p.id);
   const cls = [
     "conn-item",
     isActiveTab ? "active" : "",
@@ -6427,6 +6545,7 @@ function renderConnectionItem(p, depth, opts = {}) {
           <span class="conn-badge conn-badge-${escHtml(proto.className)}">${escHtml(proto.label)}</span>
           ${envBadgeHtml(p)}
           ${notesBadge}
+          ${tunnelsBadge}
         </div>
         <div class="conn-item-host">${hl(p.username)}@${hl(p.host)}:${p.port}</div>
         ${contextLine}${noteLine}
@@ -6998,6 +7117,61 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
     connectAsEl.classList.toggle("hidden", type !== "connection" || extras.length === 0);
   }
 
+  // «Túneles»: los guardados de esta conexión —cada uno abre o para según su
+  // estado— y, al final, la puerta de siempre para crear uno nuevo. Antes solo
+  // estaba «Nuevo túnel…», así que reusar un túnel ya definido obligaba a ir al
+  // panel global y buscarlo entre los de todas las conexiones.
+  const tunnelsEl = document.getElementById("ctx-tunnels");
+  const tunnelsSubmenu = document.getElementById("ctx-tunnels-submenu");
+  if (tunnelsEl && tunnelsSubmenu) {
+    tunnelsSubmenu.innerHTML = "";
+    const isSsh = type === "connection" && !!ctxProfile && isSshProfile(ctxProfile);
+    if (isSsh) {
+      const activeIds = new Set(
+        activeTunnelsForProfile(ctxProfile.id).map(({ tunnel }) => tunnel.id)
+      );
+      const saved = (ctxProfile.ssh_tunnels || []).map(normalizeTunnelConfig);
+      for (const tunnel of saved) {
+        const running = activeIds.has(tunnel.id);
+        const item = document.createElement("button");
+        item.type = "button";
+        item.setAttribute("role", "menuitem");
+        item.className = running ? "ctx-item is-running" : "ctx-item";
+        item.dataset.ctx = "toggle-saved-tunnel";
+        item.dataset.tunnelId = tunnel.id;
+        const icon = document.createElement("span");
+        icon.className = "ctx-icon";
+        icon.innerHTML = '<svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg>';
+        const label = document.createElement("span");
+        // El estado va en el texto y no solo en el color: quien no distinga el
+        // matiz debe poder saber si el ítem abre o para.
+        label.textContent = t(running ? "ctx.tunnel_stop_item" : "ctx.tunnel_start_item", {
+          name: tunnel.name || describeTunnel(tunnel),
+        });
+        item.append(icon, label);
+        tunnelsSubmenu.appendChild(item);
+      }
+      if (saved.length) {
+        const sep = document.createElement("div");
+        sep.className = "ctx-sep";
+        tunnelsSubmenu.appendChild(sep);
+      }
+      const nuevo = document.createElement("button");
+      nuevo.type = "button";
+      nuevo.setAttribute("role", "menuitem");
+      nuevo.className = "ctx-item";
+      nuevo.dataset.ctx = "new-tunnel";
+      const nuevoIcon = document.createElement("span");
+      nuevoIcon.className = "ctx-icon";
+      nuevoIcon.innerHTML = '<svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg>';
+      const nuevoLabel = document.createElement("span");
+      nuevoLabel.textContent = t("ctx.new_tunnel");
+      nuevo.append(nuevoIcon, nuevoLabel);
+      tunnelsSubmenu.appendChild(nuevo);
+    }
+    tunnelsEl.classList.toggle("hidden", !isSsh);
+  }
+
   // «Conectar y restaurar pantalla anterior»: solo si hay snapshot guardado.
   const restoreEl = document.getElementById("ctx-connect-restore");
   if (restoreEl) {
@@ -7006,15 +7180,18 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   }
 
   const { left: finalX, width } = positionFloatingMenu(menu, x, y);
-  if (submenu) {
-    // Si el menú queda en la mitad derecha, abrir el submenú hacia la izquierda;
-    // y si su ítem cae en la mitad baja de la ventana, abrirlo hacia arriba
-    // (anclado por abajo) para que no se corte contra el borde inferior.
-    submenu.classList.toggle("open-left", finalX + width + 190 > window.innerWidth);
-    const itemRect = connectAsEl && !connectAsEl.classList.contains("hidden")
-      ? connectAsEl.getBoundingClientRect()
+  // Si el menú queda en la mitad derecha, abrir los submenús hacia la izquierda;
+  // y si el ítem que los abre cae en la mitad baja de la ventana, abrirlos hacia
+  // arriba (anclados por abajo) para que no se corten contra el borde inferior.
+  // Cada submenú se mide contra SU ítem: son varios y están a distinta altura.
+  const openLeft = finalX + width + 190 > window.innerWidth;
+  for (const [item, sub] of [[connectAsEl, submenu], [tunnelsEl, tunnelsSubmenu]]) {
+    if (!sub) continue;
+    sub.classList.toggle("open-left", openLeft);
+    const itemRect = item && !item.classList.contains("hidden")
+      ? item.getBoundingClientRect()
       : null;
-    submenu.classList.toggle(
+    sub.classList.toggle(
       "open-up",
       !!itemRect && itemRect.top + itemRect.height / 2 > window.innerHeight / 2
     );
@@ -7778,6 +7955,7 @@ function renderConnectionSummary() {
     else if (authType === "password") badges.push({ kind: "info", label: t("modal_conn.summary_auth_password") });
     else if (authType === "public_key") badges.push({ kind: "info", label: t("modal_conn.summary_auth_publickey") });
     else if (authType === "agent") badges.push({ kind: "info", label: t("modal_conn.summary_auth_agent") });
+    else if (authType === "keyboard_interactive") badges.push({ kind: "info", label: t("modal_conn.summary_auth_keyboard_interactive") });
 
     const bastion = (document.getElementById("f-proxy-jump")?.value || "").trim();
     if (bastion) badges.push({ kind: "info", label: t("modal_conn.summary_bastion", { host: bastion }) });
@@ -15132,9 +15310,79 @@ function openGlobalTunnelsModal() {
   document.querySelector('[data-rail-action="tunnels"]')?.classList.add("active");
 }
 
+/**
+ * Esconde el panel dejando los túneles como estén. Es lo que hacen el botón de
+ * minimizar, la tecla Escape y el clic fuera del panel: ninguna de esas tres
+ * salidas debería tocar una conexión que el usuario ha abierto a propósito.
+ */
 function closeGlobalTunnelsModal() {
   document.getElementById("global-tunnels-overlay")?.classList.add("hidden");
   document.querySelector('[data-rail-action="tunnels"]')?.classList.remove("active");
+  updateTunnelsRailIndicator();
+}
+
+/**
+ * El aspa del panel. Con túneles activos pregunta qué hacer con ellos, porque
+ * hasta ahora «cerrar» escondía la ventana y dejaba los túneles corriendo sin
+ * decirlo — y este es además el único sitio desde el que pararlos todos de una
+ * vez. Sin túneles activos no hay nada que preguntar.
+ */
+async function closeGlobalTunnelsModalAsking() {
+  const active = activeTunnelEntries();
+  if (!active.length) {
+    closeGlobalTunnelsModal();
+    return;
+  }
+  const choice = await chooseThemed({
+    title: t("tunnels.close_title"),
+    message: t("tunnels.close_question", { n: active.length }),
+    submitLabel: t("tunnels.close_keep"),
+    actions: [{ value: "stop-all", label: t("tunnels.close_stop_all"), danger: true }],
+  });
+  // Cancelar (Escape) deja el panel abierto: no se decidió nada.
+  if (!choice) return;
+  if (choice.action === "stop-all") {
+    for (const { sessionId, tunnel } of active) {
+      await stopSshTunnel(sessionId, tunnel.id);
+    }
+    toast(t("toast.tunnels_all_stopped", { n: active.length }), "success");
+  }
+  closeGlobalTunnelsModal();
+}
+
+/**
+ * Contador de túneles activos sobre el botón del rail, con la lista completa en
+ * su tooltip. Es la señal que faltaba: al esconder el panel, los túneles
+ * seguían abiertos sin nada en pantalla que lo dijera.
+ */
+function updateTunnelsRailIndicator() {
+  const badge = document.getElementById("rail-tunnels-badge");
+  const btn = document.getElementById("rail-btn-tunnels");
+  if (!badge || !btn) return;
+  const active = activeTunnelEntries();
+  badge.textContent = active.length > 99 ? "99+" : String(active.length);
+  badge.classList.toggle("hidden", active.length === 0);
+  btn.classList.toggle("has-active", active.length > 0);
+
+  // El botón usa el sistema propio de tooltips (`data-tooltip`), no el `title`
+  // del navegador: escribir ahí el `title` no enseñaría nada.
+  const base = t("rail.tunnels");
+  if (!active.length) {
+    btn.setAttribute("data-tooltip", base);
+    btn.classList.remove("tooltip-multiline");
+    btn.setAttribute("aria-label", base);
+    return;
+  }
+  // Con la lista entera dentro, pasar por encima del botón responde «cuáles»
+  // sin abrir el panel. `tooltip-multiline` es lo que deja respirar los saltos
+  // de línea: el tooltip normal es de una sola línea.
+  const lines = active.map(({ profile, tunnel }) =>
+    `• ${profile?.name || "SSH"} — ${describeTunnel(tunnel)}`
+  );
+  const header = t("tunnels.active_count", { n: active.length });
+  btn.setAttribute("data-tooltip", [header, ...lines].join("\n"));
+  btn.classList.add("tooltip-multiline");
+  btn.setAttribute("aria-label", `${base} — ${header}`);
 }
 
 function isGlobalTunnelsModalOpen() {
@@ -17275,12 +17523,63 @@ function activeTunnelKey(profileId, tunnelId) {
   return `${profileId || ""}:${tunnelId || ""}`;
 }
 
+/** Túneles activos de un perfil (por todas sus sesiones abiertas). */
+function activeTunnelsForProfile(profileId) {
+  if (!profileId) return [];
+  return activeTunnelEntries().filter(({ profile }) => profile?.id === profileId);
+}
+
+/**
+ * Distintivo de «esta conexión tiene túneles abiertos» para su fila de la
+ * barra lateral. El tooltip enumera cuáles: un túnel es algo que sigue vivo en
+ * segundo plano, y merece verse desde donde vive la conexión.
+ */
+function tunnelBadgeHtml(profileId) {
+  const active = activeTunnelsForProfile(profileId);
+  if (!active.length) return "";
+  const lines = active.map(({ tunnel }) => `• ${describeTunnel(tunnel)}`);
+  const title = [t("tunnels.active_count", { n: active.length }), ...lines].join("\n");
+  return `<span class="conn-tunnel-badge" title="${escHtml(title)}" aria-label="${escHtml(t("tunnels.active_count", { n: active.length }))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span>`;
+}
+
+/**
+ * Refresca los distintivos de túnel sin volver a dibujar la barra lateral
+ * entera: un `renderConnectionList()` por cada evento de tráfico tiraría la
+ * selección y el desplazamiento del árbol.
+ */
+function refreshTunnelIndicators() {
+  updateTunnelsRailIndicator();
+  const container = document.getElementById("connection-list");
+  if (!container) return;
+  for (const el of container.querySelectorAll(".conn-item[data-id]")) {
+    const nameEl = el.querySelector(".conn-item-name");
+    if (!nameEl) continue;
+    const current = nameEl.querySelector(".conn-tunnel-badge");
+    const html = tunnelBadgeHtml(el.dataset.id);
+    if (!html) {
+      current?.remove();
+      continue;
+    }
+    if (current) current.outerHTML = html;
+    else nameEl.insertAdjacentHTML("beforeend", html);
+  }
+}
+
 function renderGlobalTunnelLists() {
+  // Antes de cualquier salida temprana: el contador del rail y los distintivos
+  // de la barra lateral se ven con el panel cerrado, que es justo cuando más
+  // falta hacen.
+  refreshTunnelIndicators();
   const activeList = document.getElementById("global-active-tunnels");
   const savedList = document.getElementById("global-saved-tunnels");
   if (!activeList || !savedList) return;
 
   const active = activeTunnelEntries();
+  const note = document.getElementById("global-tunnels-note");
+  if (note) {
+    note.textContent = active.length ? t("tunnels.stay_open_note", { n: active.length }) : "";
+    note.classList.toggle("hidden", active.length === 0);
+  }
   activeList.innerHTML = active.length
     ? active.map(({ sessionId, profile, tunnel }) => `
         <div class="global-tunnel-row" data-session-id="${escHtml(sessionId)}" data-tunnel-id="${escHtml(tunnel.id)}">
@@ -17333,6 +17632,22 @@ async function startSavedGlobalTunnel(profileId, tunnelId) {
   } catch (err) {
     toast(t("toast.tunnel_open_failed", { err }), "error", 8000);
   }
+}
+
+/**
+ * Abre o para un túnel guardado de una conexión desde su menú contextual.
+ * Un mismo ítem hace las dos cosas según el estado, que es como se lee el
+ * submenú: la lista dice qué hay y en qué punto está cada cosa.
+ */
+async function toggleSavedTunnelForProfile(profileId, tunnelId) {
+  const running = activeTunnelsForProfile(profileId)
+    .find(({ tunnel }) => tunnel.id === tunnelId);
+  if (running) {
+    await stopSshTunnel(running.sessionId, tunnelId);
+    toast(t("toast.tunnel_closed", { desc: describeTunnel(running.tunnel) }), "success");
+    return;
+  }
+  await startSavedGlobalTunnel(profileId, tunnelId);
 }
 
 async function deleteSavedGlobalTunnel(profileId, tunnelId) {
@@ -18510,6 +18825,7 @@ function buildSftpPanel(sessionId) {
         <button class="sftp-log-tab active" data-sftp-log-tab="transfers">${escHtml(t("sftp.tab_transfers"))}</button>
         <button class="sftp-log-tab" data-sftp-log-tab="activity">${escHtml(t("sftp.tab_activity"))}</button>
         <span class="sftp-log-spacer"></span>
+        <button class="sftp-transfers-pause-all" title="${escHtml(t("sftp.pause_all_title"))}">${escHtml(t("sftp.pause_all"))}</button>
         <button class="sftp-transfers-clear" title="${escHtml(t("sftp.clear_completed"))}">${escHtml(t("sftp.clear"))}</button>
         <button class="sftp-activity-clear hidden" title="${escHtml(t("sftp.clear_activity"))}">${escHtml(t("sftp.clear_log"))}</button>
       </div>
@@ -18570,6 +18886,12 @@ function buildSftpPanel(sessionId) {
       }
     });
   });
+
+  panel.querySelector(".sftp-transfers-pause-all")?.addEventListener("click", () => {
+    toggleAllTransfersPaused();
+  });
+  // Un panel recién abierto con la pausa ya echada debe nacer diciéndolo.
+  updatePauseAllButtons();
 
   panel.querySelector(".sftp-transfers-clear").addEventListener("click", () => {
     panel.querySelectorAll(".sftp-transfer.done, .sftp-transfer.canceled").forEach((el) => {
@@ -20896,6 +21218,42 @@ function resumeSftpTransfer(sessionId, transferId) {
   }).catch((err) => toast(`No se pudo reanudar: ${err}`, "error"));
 }
 
+/**
+ * Pausa global de transferencias: `true` mientras está echada. Se guarda aquí
+ * y no en `prefs` a propósito — es un gesto del momento («suéltame el ancho de
+ * banda ahora»), no una preferencia que deba sobrevivir al cierre de la app.
+ */
+let allTransfersPaused = false;
+
+/**
+ * Echa o levanta la pausa global. Pausar de una en una no sirve cuando hay una
+ * carpeta entera en marcha: son cientos de ficheros, cada uno con su fila.
+ *
+ * Levantarla no reanuda las transferencias que el usuario pausó individualmente:
+ * el backend las mantiene en su propia lista y esto solo quita el freno común.
+ */
+async function toggleAllTransfersPaused() {
+  const next = !allTransfersPaused;
+  try {
+    await invoke("sftp_set_pause_all", { paused: next });
+  } catch (err) {
+    toast(t("toast.transfers_pause_all_failed", { err }), "error");
+    return;
+  }
+  allTransfersPaused = next;
+  updatePauseAllButtons();
+  toast(t(next ? "toast.transfers_all_paused" : "toast.transfers_all_resumed"), "info");
+}
+
+/** Refresca el botón de pausa global en todos los paneles SFTP abiertos. */
+function updatePauseAllButtons() {
+  for (const btn of document.querySelectorAll(".sftp-transfers-pause-all")) {
+    btn.textContent = t(allTransfersPaused ? "sftp.resume_all" : "sftp.pause_all");
+    btn.title = t(allTransfersPaused ? "sftp.resume_all_title" : "sftp.pause_all_title");
+    btn.classList.toggle("is-paused", allTransfersPaused);
+  }
+}
+
 function markTransferSuccess(el, detail) {
   setTransferState(el, "done", detail);
   el.querySelector(".sftp-transfer-fill").style.width = "100%";
@@ -23123,8 +23481,10 @@ function bindUIEvents() {
     });
 
   // Panel global de túneles SSH
-  document.getElementById("btn-global-tunnels-close")
+  document.getElementById("btn-global-tunnels-minimize")
     ?.addEventListener("click", closeGlobalTunnelsModal);
+  document.getElementById("btn-global-tunnels-close")
+    ?.addEventListener("click", () => { closeGlobalTunnelsModalAsking(); });
   document.getElementById("global-tunnels-overlay")
     ?.addEventListener("mousedown", (e) => {
       if (e.target.id === "global-tunnels-overlay") closeGlobalTunnelsModal();
@@ -23376,6 +23736,13 @@ function bindUIEvents() {
       const profileId = ctxTarget.id;
       hideContextMenu();
       if (profileId && credId) connectProfileAs(profileId, credId);
+      return;
+    }
+    if (btn.dataset.ctx === "toggle-saved-tunnel") {
+      const tunnelId = btn.dataset.tunnelId;
+      const profileId = ctxTarget.id;
+      hideContextMenu();
+      if (profileId && tunnelId) toggleSavedTunnelForProfile(profileId, tunnelId);
       return;
     }
     if (btn.dataset.ctx === "set-folder-color") {

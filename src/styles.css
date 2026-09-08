@@ -337,6 +337,36 @@ a:focus-visible,
   border-radius: 0 2px 2px 0;
 }
 
+/* Contador de túneles activos sobre el botón del rail. Va anclado a la esquina
+   del icono, con el borde del propio rail alrededor, para que se lea como un
+   distintivo del botón y no como un número suelto encima. */
+.rail-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--blue);
+  color: var(--base);
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--mantle);
+  pointer-events: none;
+}
+
+/* Con túneles vivos el icono deja de ser gris aunque el panel esté cerrado:
+   el color dice «hay algo funcionando», el número dice cuánto. */
+.rail-btn.has-active {
+  color: var(--blue);
+}
+
 .rail-btn-logs {
   font-size: 9px;
   font-weight: 700;
@@ -1283,6 +1313,26 @@ body:not(.native-scrollbars) #connection-list::-webkit-scrollbar-thumb:hover {
   pointer-events: none;
 }
 .conn-notes-badge:hover { color: var(--peach); }
+
+/* Distintivo de «esta conexión tiene túneles abiertos». Mismo tamaño y
+   alineación que el de notas; el azul lo emparenta con el contador del rail. */
+.conn-tunnel-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  color: var(--blue);
+  vertical-align: text-bottom;
+}
+.conn-tunnel-badge svg {
+  width: 13px;
+  height: 13px;
+  pointer-events: none;
+}
+#connection-list.compact .conn-tunnel-badge svg {
+  width: 11px;
+  height: 11px;
+}
 
 .conn-item-actions {
   display: none;
@@ -5205,6 +5255,12 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   overscroll-behavior: contain;
 }
 
+/* Ítem del submenú de túneles que corresponde a uno en marcha. El color es un
+   refuerzo: el texto del ítem ya dice si abre o para. */
+.ctx-item.is-running {
+  color: var(--blue);
+}
+
 .ctx-item {
   display: flex;
   align-items: center;
@@ -7739,6 +7795,7 @@ body.sftp-log-resizing {
   flex: 1;
 }
 
+.sftp-transfers-pause-all,
 .sftp-transfers-clear,
 .sftp-activity-clear {
   background: transparent;
@@ -7749,8 +7806,17 @@ body.sftp-log-resizing {
   padding: 2px 6px;
   border-radius: var(--radius-xs);
 }
+.sftp-transfers-pause-all:hover,
 .sftp-transfers-clear:hover,
 .sftp-activity-clear:hover { background: var(--surface0); }
+
+/* Con la pausa general echada, el botón deja de ser un enlace más de la barra:
+   es un estado activo del que hay que poder salir, y se ve como tal. */
+.sftp-transfers-pause-all.is-paused {
+  background: var(--surface0);
+  color: var(--peach);
+  font-weight: var(--font-weight-medium);
+}
 
 .sftp-log-pane {
   display: none;
@@ -8058,6 +8124,20 @@ body.sftp-log-resizing {
 
 .global-tunnels-section {
   margin-top: 16px;
+}
+
+/* Aviso al pie del panel: lo que sigue vivo si lo cierras. Va en el flujo del
+   panel, no en un toast, porque debe seguir ahí cuando el usuario mira. */
+.global-tunnels-note {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--surface1);
+  border-left: 2px solid var(--blue);
+  border-radius: var(--radius-sm);
+  background: var(--mantle);
+  color: var(--subtext1);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .global-tunnels-section-title {
@@ -9243,6 +9323,14 @@ body.zen-mode #zen-exit-btn {
   opacity: 1;
   transform: translate(-50%, 0);
   transition-delay: var(--tooltip-delay);
+}
+
+/* Variante para tooltips que enumeran cosas (la lista de túneles activos): el
+   tooltip normal es de una línea y cortaría la enumeración en seco. */
+[data-tooltip].tooltip-multiline::after {
+  white-space: pre-line;
+  text-align: left;
+  max-width: 320px;
 }
 
 /* Variante de posición: tooltips que deben aparecer abajo (cuando el

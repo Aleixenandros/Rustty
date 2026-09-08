@@ -141,6 +141,19 @@ pub const HOST_KEY_PROMPT: &str = "ssh-hostkey-prompt";
 /// Payload: `{ promptId, host, port, fingerprint }`.
 pub const FTPS_CERT_PROMPT: &str = "ftps-cert-prompt";
 
+/// Evento global (sin sufijo): el servidor pide una o varias respuestas por el
+/// método `keyboard-interactive` (RFC 4256) — el camino de la MFA/2FA: códigos
+/// de un solo uso, Duo, PAM encadenado. Las preguntas las decide el servidor en
+/// tiempo de conexión, así que no caben en el formulario del perfil.
+///
+/// Global y no por sesión por el mismo motivo que las host keys: el
+/// intercambio lo levantan SSH, SFTP, los scripts y cada salto ProxyJump, y
+/// ninguno de esos caminos conoce siempre el `sessionId`. La respuesta vuelve
+/// por el comando `ssh_auth_prompt_response` con el `promptId` del payload.
+///
+/// Payload: `{ promptId, name, instructions, host, username, prompts: [{ prompt, echo }] }`.
+pub const SSH_AUTH_PROMPT: &str = "ssh-auth-prompt";
+
 #[cfg(test)]
 mod tests {
     use super::*;

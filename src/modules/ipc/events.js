@@ -96,6 +96,16 @@ export const EVENT = Object.freeze({
    * desconocido (TOFU). La respuesta vuelve por el comando `ftps_cert_response`.
    */
   ftpsCertPrompt: "ftps-cert-prompt",
+  /**
+   * `ssh-auth-prompt` → {@link SshAuthPromptEvent}
+   *
+   * El servidor pide una o varias respuestas por `keyboard-interactive`
+   * (RFC 4256): el camino de la MFA/2FA. Global por el mismo motivo que
+   * `hostKeyPrompt` — el intercambio lo levantan SSH, SFTP, los scripts y cada
+   * salto ProxyJump. La respuesta vuelve por el comando
+   * `ssh_auth_prompt_response`.
+   */
+  sshAuthPrompt: "ssh-auth-prompt",
 });
 
 /**
@@ -123,6 +133,19 @@ export const EVENT = Object.freeze({
  * @property {string} host
  * @property {number} port
  * @property {string} fingerprint Huella SHA-256 del certificado presentado.
+ */
+
+/**
+ * Payload de `ssh-auth-prompt`: el servidor pide respuestas por
+ * `keyboard-interactive` y la conexión está parada esperándolas.
+ * @typedef {object} SshAuthPromptEvent
+ * @property {string} promptId Identificador con el que responder.
+ * @property {string} name Nombre que el servidor da al intercambio (suele ir vacío).
+ * @property {string} instructions Instrucciones del servidor (suelen ir vacías).
+ * @property {string} host Host al que se conecta, para saber a quién se le da el código.
+ * @property {string} username
+ * @property {Array<{ prompt: string, echo: boolean }>} prompts Preguntas de esta
+ *   ronda. `echo: false` (contraseñas, códigos) = lo tecleado no debe verse.
  */
 
 /**
