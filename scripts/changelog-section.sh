@@ -20,4 +20,20 @@ awk -v v="$VERSION" '
   # de dentro: sin ellas, Markdown no separa los apartados.
   NF { for (i = 0; i < pendientes; i++) print ""; pendientes = 0; print; next }
   { if (NR == 1) next; pendientes++ }
+' | awk '
+  # Une las líneas de cada párrafo en una sola. La página de un release no
+  # renderiza el Markdown como un fichero .md: ahí cada salto de línea se
+  # convierte en un <br>, así que un CHANGELOG con las líneas cortadas a 80
+  # columnas se leería entrecortado, verso a verso. El fichero ya se guarda con
+  # un párrafo por línea; esto es el cinturón por si alguna entrada vuelve a
+  # escribirse envuelta.
+  function volcar() { if (buf != "") print buf; buf = "" }
+  /^[[:space:]]*$/ || /^#/ { volcar(); print; next }
+  /^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]/ { volcar(); buf = $0; next }
+  {
+    linea = $0
+    sub(/^[[:space:]]+/, "", linea)
+    buf = (buf == "") ? $0 : buf " " linea
+  }
+  END { volcar() }
 '
