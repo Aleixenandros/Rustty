@@ -83,6 +83,22 @@ Si una transferencia falla o se cancela, el detalle muestra los bytes realmente 
 
 Al terminar una transferencia, Rustty avisa según dónde estés mirando: si la sesión está a la vista no interrumpe; si la app está activa pero la sesión oculta, muestra un toast; y si la app está en segundo plano, envía una **notificación del sistema**. Los errores avisan siempre; los éxitos, solo si la transferencia fue larga (umbral configurable) o de más de 10 MiB. Se ajusta —o se desactiva— en **Preferencias → FTP/SFTP**.
 
+## Control de las transferencias
+
+Cuatro ajustes en **Preferencias → FTP/SFTP** deciden cuánto se lleva una copia y qué pasa cuando algo va mal. Todos son opcionales: de fábrica, el comportamiento es el de siempre.
+
+**Límite de velocidad.** Un techo de bajada y otro de subida en KiB/s (`0` = sin límite). El techo es del enlace, no de cada transferencia: dos descargas a la vez se reparten el mismo caudal en lugar de duplicarlo. Sirve para dejar una copia larga corriendo de fondo sin que la videollamada se entrecorte ni el resto de sesiones vayan a tirones. Vale para SFTP, FTP y FTPS, y se aplica al instante, sin reconectar.
+
+**Pausar todo.** El botón junto a la lista de transferencias detiene de golpe todas las transferencias de todas las sesiones abiertas, y las reanuda igual de rápido. Levantar la pausa general no reanuda las que hubieras pausado tú una a una: esas siguen donde las dejaste.
+
+**Transferencias a la vez.** Un techo de copias simultáneas para toda la aplicación (`0` = sin techo). No es lo mismo que *Transferencias simultáneas (SFTP)*, que son las peticiones en vuelo dentro de una misma copia: esto cuenta las copias enteras, las de todas las sesiones. Las que sobran esperan turno y el panel las marca **En cola**; una carpeta completa ocupa un solo turno, no uno por fichero. Mientras una copia espera, su sesión sigue navegando con normalidad.
+
+**Reanudar descargas interrumpidas.** Una descarga se escribe primero en un fichero temporal `<nombre>.rustty-part` y solo ocupa su nombre definitivo al terminar bien. Con esta opción activada, ese trozo **se conserva** cuando la descarga falla o se cancela, y el intento siguiente continúa desde donde iba en vez de empezar de cero.
+
+Rustty solo reanuda si el fichero del servidor sigue siendo el mismo: junto al temporal guarda una ficha con la ruta remota, el tamaño y la fecha de modificación del origen, y compara las tres antes de continuar. Si algo no cuadra —o si la ficha no está—, la descarga empieza de cero, porque pegar bytes nuevos detrás de los viejos produciría un fichero que no es ninguna de las dos versiones y que además pasaría la verificación de tamaño.
+
+El precio de poder continuar es que un fallo deja el temporal en disco en vez de borrarlo; con la opción apagada, el comportamiento es el de siempre —ni un resto—. Está disponible para SFTP; en FTP y FTPS las descargas siguen empezando de cero.
+
 ## Rendimiento (pipelining)
 
 Las descargas y subidas mantienen varias peticiones SFTP simultáneamente en vuelo con chunks de 256 KiB. Eso elimina el techo de velocidad `chunk × RTT` típico de los clientes SFTP en serie: con un RTT de 12-15 ms y buffer de 64 KiB el techo era de ~5 MB/s; con varios MiB de datos en vuelo a la vez, la transferencia satura el ancho de banda real de la conexión.

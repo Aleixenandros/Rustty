@@ -190,6 +190,9 @@ export function eventName(kind, suffix) {
  * @property {number} total Bytes totales esperados.
  * @property {boolean} done `true` cuando la transferencia ha terminado.
  * @property {boolean} [canceled] `true` si se canceló.
+ * @property {boolean} [queued] `true` mientras la transferencia espera turno
+ *   bajo el techo de transferencias simultáneas: existe, pero todavía no ha
+ *   pedido ni un byte.
  * @property {string} [kind] `"dir"` en transferencias/resúmenes de carpeta recursiva.
  * @property {string} [current] Ruta relativa del archivo/subcarpeta que se transfiere ahora (solo carpetas).
  * @property {number} [filesDone] Archivos completados hasta ahora (solo carpetas).

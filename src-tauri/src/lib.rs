@@ -51,6 +51,8 @@ mod sync;
 // llamador en producción.
 pub mod tmux;
 mod transfer_rate;
+mod transfer_resume;
+mod transfer_slots;
 mod tunnel_throttle;
 
 use std::path::PathBuf;
@@ -432,6 +434,8 @@ pub fn run() {
             commands::sftp_set_pause_all,
             commands::sftp_pause_all_active,
             commands::set_transfer_rate_limits,
+            commands::set_transfer_max_concurrent,
+            commands::set_transfer_resume,
             // ── FS local (panel SFTP partido)
             commands::local_list_dir,
             commands::local_home_dir,

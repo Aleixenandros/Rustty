@@ -2,6 +2,17 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.8.0] - 2026-09-10
+
+### Añadido
+
+- **Una descarga que se corta ya no se pierde.** Hasta ahora, un fichero grande interrumpido en el minuto 55 había que bajarlo entero otra vez: el temporal se descartaba siempre. Con la opción nueva de Preferencias → FTP/SFTP, el trozo ya bajado se conserva y la descarga siguiente continúa desde donde iba. Rustty solo reanuda si el fichero del servidor sigue siendo el mismo —guarda junto al temporal la ruta, el tamaño y la fecha del origen, y compara las tres antes de seguir—; si algo cambió, empieza de cero, porque pegar bytes nuevos detrás de los viejos daría un fichero que no es ninguna de las dos versiones y que además pasaría la verificación de tamaño. El precio de poder continuar es que un fallo deja el fichero temporal en el disco en vez de borrarlo, así que la opción viene apagada: sin tocarla, el comportamiento es el de siempre. De momento vale para SFTP.
+- **Techo de transferencias a la vez.** Otro campo nuevo pone un máximo de copias simultáneas para toda la aplicación, no para cada sesión. No es lo mismo que «Transferencias simultáneas (SFTP)», que son las peticiones en vuelo dentro de una misma copia: esto cuenta las copias enteras, vengan de la sesión que vengan. Las que sobran esperan turno y el panel las marca «En cola» —una transferencia parada con una explicación, no una barra a cero sin motivo—, y una carpeta completa ocupa un solo turno en vez de uno por fichero. Mientras una copia espera su turno, su sesión sigue navegando con normalidad. `0` = sin techo, que es lo de siempre.
+
+### Cambiado
+
+- La documentación del panel de archivos reúne en un solo sitio los cuatro mandos de una transferencia: el límite de velocidad y «Pausar todo» (que llegaron en la versión anterior sin quedar escritos) y los dos de esta.
+
 ## [2.7.0] - 2026-09-09
 
 ### Añadido

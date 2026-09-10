@@ -511,6 +511,15 @@ const DEFAULT_PREFS = {
   transferLimitUpKib:   0,
   transferLimitDownKib: 0,
 
+  // Techo de transferencias **simultáneas** de toda la aplicación (0 = sin
+  // techo, lo de siempre). No confundir con `sftpMaxConcurrent`, que son
+  // peticiones en vuelo dentro de una misma transferencia.
+  transferMaxConcurrent: 0,    // 0–32
+  // Conservar el trozo ya bajado de una descarga interrumpida para continuarla
+  // después, en vez de empezar de cero. Apagado por defecto: reanudar exige
+  // dejar el temporal en disco cuando algo falla.
+  transferResume:  false,
+
   // Disposición del panel SFTP: lado donde se muestra el panel remoto.
   sftpRemoteSide:  "left",     // "left" | "right"
   fontSize:        14,
@@ -1931,6 +1940,10 @@ function openSettingsModal() {
   if (upEl) upEl.value = String(transferLimitKib("transferLimitUpKib"));
   const downEl = document.getElementById("pref-transfer-limit-down");
   if (downEl) downEl.value = String(transferLimitKib("transferLimitDownKib"));
+  const maxXferEl = document.getElementById("pref-transfer-max-concurrent");
+  if (maxXferEl) maxXferEl.value = String(transferMaxConcurrent());
+  const resumeEl = document.getElementById("pref-transfer-resume");
+  if (resumeEl) resumeEl.checked = !!prefs.transferResume;
   const remoteSideEl = document.getElementById("pref-sftp-remote-side");
   if (remoteSideEl) remoteSideEl.value = prefs.sftpRemoteSide === "right" ? "right" : "left";
   populateFontFamilySelect(prefs.fontFamily || "");
@@ -3989,6 +4002,11 @@ function savePrefsFromModal() {
     })(),
     transferLimitUpKib:   readTransferLimitField("pref-transfer-limit-up"),
     transferLimitDownKib: readTransferLimitField("pref-transfer-limit-down"),
+    transferMaxConcurrent: (() => {
+      const n = parseInt(document.getElementById("pref-transfer-max-concurrent")?.value, 10);
+      return Number.isFinite(n) && n > 0 ? Math.min(32, n) : 0;
+    })(),
+    transferResume:  document.getElementById("pref-transfer-resume")?.checked ?? false,
     sftpRemoteSide:  document.getElementById("pref-sftp-remote-side")?.value === "right" ? "right" : "left",
     fontFamily:      (document.getElementById("pref-font-family")?.value || "").trim(),
     fontSize:        parseInt(document.getElementById("pref-font-size").value, 10) || DEFAULT_PREFS.fontSize,
@@ -4097,6 +4115,7 @@ function savePrefsFromModal() {
   applyHostKeyPolicy();
   applyFtpsCertPolicy();
   applyTransferRateLimits();
+  applyTransferOptions();
   // Aplicar la preferencia de autostart al SO (enable/disable la entrada del SO).
   applyAutostartSetting(prefs.autostart, prefs.autostartMinimized)
     .catch((e) => console.error("[autostart] apply", e));
@@ -4482,6 +4501,7 @@ async function init() {
   applyHostKeyPolicy();
   applyFtpsCertPolicy();
   applyTransferRateLimits();
+  applyTransferOptions();
   // El backend sobrevive a un recargado de la ventana: si la pausa general
   // quedó echada, el botón tiene que nacer diciéndolo y no al revés.
   await invoke("sftp_pause_all_active")
@@ -5577,6 +5597,25 @@ function applyTransferRateLimits() {
     uploadKib: transferLimitKib("transferLimitUpKib"),
     downloadKib: transferLimitKib("transferLimitDownKib"),
   }).catch((e) => console.error("[transfer] set rate limits", e));
+}
+
+/** Techo guardado de transferencias simultáneas, acotado (0 = sin techo). */
+function transferMaxConcurrent() {
+  const n = parseInt(prefs.transferMaxConcurrent, 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(32, n) : 0;
+}
+
+/**
+ * Traslada al backend cuántas transferencias pueden ir a la vez y si las
+ * descargas interrumpidas se reanudan. Como los techos de velocidad, viven en
+ * el backend: es él quien reparte los turnos y quien decide qué hacer con el
+ * fichero temporal de una descarga que se cortó.
+ */
+function applyTransferOptions() {
+  invoke("set_transfer_max_concurrent", { max: transferMaxConcurrent() })
+    .catch((e) => console.error("[transfer] set max concurrent", e));
+  invoke("set_transfer_resume", { enabled: !!prefs.transferResume })
+    .catch((e) => console.error("[transfer] set resume", e));
 }
 
 function applyFtpsCertPolicy() {
@@ -21133,7 +21172,19 @@ function setTransferState(el, state, detail = "") {
   }
 }
 
-function updateTransfer(el, { transferred, total, done, paused }) {
+function updateTransfer(el, { transferred, total, done, paused, queued }) {
+  // `queued: true` = la transferencia existe pero está esperando turno bajo el
+  // techo de transferencias simultáneas. Sin pintarlo, una copia en cola sería
+  // indistinguible de una copia colgada: barra a cero y ningún motivo.
+  if (queued === true && !el.classList.contains("done")) {
+    setTransferState(el, "queued", "En cola");
+    return;
+  }
+  // Le llegó el turno: el primer evento de progreso real la saca de la cola (y
+  // reinicia el cronómetro, para que la espera no cuente como lentitud).
+  if (el.classList.contains("queued") && !el.classList.contains("done")) {
+    setTransferState(el, "running", "Preparando…");
+  }
   // El backend envía `paused: true|false` al cambiar de estado. Reflejamos el
   // estado visual aquí en vez de en setTransferState para no perder el flag
   // si llega entremedias de otros eventos de progreso.

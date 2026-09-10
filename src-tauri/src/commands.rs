@@ -1455,6 +1455,21 @@ pub fn set_transfer_rate_limits(upload_kib: u64, download_kib: u64) {
     );
 }
 
+/// Techo de transferencias **simultáneas** de toda la aplicación (`0` = sin
+/// techo). No confundir con `sftpMaxConcurrent`, que son peticiones en vuelo
+/// dentro de una misma transferencia.
+#[tauri::command]
+pub fn set_transfer_max_concurrent(max: u32) {
+    crate::transfer_slots::set_max_concurrent(max);
+}
+
+/// Activa o desactiva la reanudación de descargas interrumpidas. Con ella, el
+/// trozo ya bajado se conserva al fallar para poder continuar después.
+#[tauri::command]
+pub fn set_transfer_resume(enabled: bool) {
+    crate::transfer_resume::set_enabled(enabled);
+}
+
 // ─── Comandos de FS local (panel SFTP partido) ────────────────────────────────
 
 #[derive(serde::Serialize)]

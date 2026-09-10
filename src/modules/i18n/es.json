@@ -1333,7 +1333,11 @@
     "sftp_max_concurrent_hint": "Peticiones SFTP en paralelo por transferencia. Súbelo para más velocidad en redes con latencia; bájalo (p. ej. 4) si el servidor da «Handle limit reached» (Hetzner Storage Box y similares). Aplica a sesiones nuevas.",
     "limit_down": "Límite de bajada (KiB/s)",
     "limit_up": "Límite de subida (KiB/s)",
-    "limit_hint": "0 = sin límite (lo de siempre). El techo es del enlace, no de cada transferencia: dos descargas a la vez se reparten el mismo caudal. Sirve para dejar una copia larga de fondo sin que la videollamada o el resto de sesiones se resientan. Vale para SFTP, FTP y FTPS, y se aplica al instante."
+    "limit_hint": "0 = sin límite (lo de siempre). El techo es del enlace, no de cada transferencia: dos descargas a la vez se reparten el mismo caudal. Sirve para dejar una copia larga de fondo sin que la videollamada o el resto de sesiones se resientan. Vale para SFTP, FTP y FTPS, y se aplica al instante.",
+    "max_concurrent": "Transferencias a la vez (todas las sesiones)",
+    "max_concurrent_hint": "0 = sin techo (lo de siempre). Cuenta las copias en marcha en toda la aplicación, no las peticiones de cada una: las que sobren esperan turno y el panel las marca «En cola». Una carpeta entera ocupa un solo turno.",
+    "resume": "Reanudar descargas interrumpidas",
+    "resume_hint": "Conserva el trozo ya bajado cuando una descarga falla o se cancela y continúa desde ahí la próxima vez. Solo reanuda si el fichero del servidor sigue igual —misma ruta, tamaño y fecha—; si cambió, empieza de cero. El precio es que un fallo deja un temporal «.rustty-part» junto al destino en vez de borrarlo. Solo SFTP."
   },
   "prefs_language": {
     "title": "Idioma",

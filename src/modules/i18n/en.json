@@ -1333,7 +1333,11 @@
     "sftp_max_concurrent_hint": "Parallel SFTP requests per transfer. Raise it for more speed on high-latency networks; lower it (e.g. 4) if the server returns “Handle limit reached” (Hetzner Storage Box and similar). Applies to new sessions.",
     "limit_down": "Download limit (KiB/s)",
     "limit_up": "Upload limit (KiB/s)",
-    "limit_hint": "0 = no limit (as always). The cap is on the link, not on each transfer: two downloads at once share the same budget. Useful for leaving a long copy running without your video call or other sessions suffering. Works for SFTP, FTP and FTPS, and applies right away."
+    "limit_hint": "0 = no limit (as always). The cap is on the link, not on each transfer: two downloads at once share the same budget. Useful for leaving a long copy running without your video call or other sessions suffering. Works for SFTP, FTP and FTPS, and applies right away.",
+    "max_concurrent": "Transfers at once (all sessions)",
+    "max_concurrent_hint": "0 = no cap (as always). It counts the copies running across the whole app, not the requests each one makes: the extra ones wait their turn and the panel marks them as queued. A whole folder takes a single turn.",
+    "resume": "Resume interrupted downloads",
+    "resume_hint": "Keeps the part already downloaded when a download fails or is cancelled, and carries on from there next time. It only resumes if the file on the server is still the same —same path, size and date—; if it changed, it starts over. The price is that a failure leaves a “.rustty-part” temporary file next to the destination instead of deleting it. SFTP only."
   },
   "prefs_language": {
     "title": "Language",

@@ -1333,7 +1333,11 @@
     "sftp_max_concurrent_hint": "Requêtes SFTP en parallèle par transfert. Augmentez-le pour plus de vitesse sur les réseaux à latence ; réduisez-le (par ex. 4) si le serveur renvoie « Handle limit reached » (Hetzner Storage Box et similaires). S'applique aux nouvelles sessions.",
     "limit_down": "Limite de téléchargement (Kio/s)",
     "limit_up": "Limite d'envoi (Kio/s)",
-    "limit_hint": "0 = sans limite (comme toujours). Le plafond porte sur le lien, pas sur chaque transfert : deux téléchargements simultanés se partagent le même débit. Utile pour laisser une longue copie en fond sans pénaliser la visioconférence ou les autres sessions. Vaut pour SFTP, FTP et FTPS, et s'applique immédiatement."
+    "limit_hint": "0 = sans limite (comme toujours). Le plafond porte sur le lien, pas sur chaque transfert : deux téléchargements simultanés se partagent le même débit. Utile pour laisser une longue copie en fond sans pénaliser la visioconférence ou les autres sessions. Vaut pour SFTP, FTP et FTPS, et s'applique immédiatement.",
+    "max_concurrent": "Transferts à la fois (toutes sessions)",
+    "max_concurrent_hint": "0 = sans plafond (comme toujours). Compte les copies en cours dans toute l’application, pas les requêtes de chacune : celles qui dépassent attendent leur tour et le panneau les indique en file d’attente. Un dossier entier occupe un seul tour.",
+    "resume": "Reprendre les téléchargements interrompus",
+    "resume_hint": "Conserve la partie déjà téléchargée quand un téléchargement échoue ou est annulé, et reprend à partir de là la fois suivante. La reprise n’a lieu que si le fichier du serveur est resté identique — même chemin, même taille, même date — ; s’il a changé, tout recommence. Le prix à payer : un échec laisse un fichier temporaire « .rustty-part » à côté de la destination au lieu de l’effacer. SFTP uniquement."
   },
   "prefs_language": {
     "title": "Langue",

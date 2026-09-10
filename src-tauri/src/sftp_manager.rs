@@ -40,6 +40,7 @@ use russh_sftp::protocol::{FileAttributes, OpenFlags};
 use crate::host_keys;
 use crate::ipc::{event_name, EventKind};
 use crate::profiles::{AuthType, ConnectionProfile};
+use crate::transfer_resume;
 
 // ─── Tipos expuestos al frontend ─────────────────────────────────────────────
 
@@ -301,6 +302,10 @@ struct FtpBackend {
 struct SftpHandle {
     tx: mpsc::Sender<SftpCommand>,
     controls: Arc<TransferControls>,
+    /// Copia del handle de la app: con ella, una transferencia que espera turno
+    /// puede decírselo al panel sin arrastrar el `AppHandle` por las firmas de
+    /// todos los comandos.
+    app: AppHandle,
 }
 
 pub struct SftpManager {
@@ -337,6 +342,7 @@ impl SftpManager {
 
         let sid = session_id.clone();
         let worker_controls = Arc::clone(&controls);
+        let handle_app = app_handle.clone();
         thread::spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -370,14 +376,35 @@ impl SftpManager {
 
         match ready_result {
             Ok(Ok(())) => {
-                self.sessions
-                    .lock_recover()
-                    .insert(session_id, SftpHandle { tx, controls });
+                self.sessions.lock_recover().insert(
+                    session_id,
+                    SftpHandle {
+                        tx,
+                        controls,
+                        app: handle_app,
+                    },
+                );
                 Ok(())
             }
             Ok(Err(e)) => Err(e),
             Err(_) => Err("El worker de ficheros terminó inesperadamente".into()),
         }
+    }
+
+    /// Pide turno bajo el techo global de transferencias simultáneas.
+    ///
+    /// Se hace en el lado del llamador y no dentro del worker a propósito: el
+    /// worker de una sesión atiende **todo** lo de esa sesión, así que
+    /// bloquearlo esperando turno congelaría también su panel de ficheros. Aquí
+    /// la espera solo detiene a la transferencia que la sufre. El hueco se
+    /// suelta cuando el comando termina, que es cuando termina la copia.
+    async fn wait_for_turn(
+        &self,
+        session_id: &str,
+        transfer_id: &str,
+    ) -> Option<crate::transfer_slots::TransferSlot> {
+        let app = self.sessions.lock_recover().get(session_id)?.app.clone();
+        Some(crate::transfer_slots::take_with_notice(&app, transfer_id).await)
     }
 
     async fn send<T>(
@@ -469,6 +496,7 @@ impl SftpManager {
         transfer_id: String,
         verify_size: bool,
     ) -> Result<(), String> {
+        let _slot = self.wait_for_turn(session_id, &transfer_id).await;
         self.send(session_id, move |reply| SftpCommand::Download {
             remote,
             local,
@@ -487,6 +515,7 @@ impl SftpManager {
         transfer_id: String,
         verify_size: bool,
     ) -> Result<(), String> {
+        let _slot = self.wait_for_turn(session_id, &transfer_id).await;
         self.send(session_id, move |reply| SftpCommand::Upload {
             local,
             remote,
@@ -506,6 +535,7 @@ impl SftpManager {
         conflict_policy: TransferConflictPolicy,
         verify_size: bool,
     ) -> Result<(), String> {
+        let _slot = self.wait_for_turn(session_id, &transfer_id).await;
         self.send(session_id, move |reply| SftpCommand::DownloadDir {
             remote,
             local,
@@ -526,6 +556,7 @@ impl SftpManager {
         conflict_policy: TransferConflictPolicy,
         verify_size: bool,
     ) -> Result<(), String> {
+        let _slot = self.wait_for_turn(session_id, &transfer_id).await;
         self.send(session_id, move |reply| SftpCommand::UploadDir {
             local,
             remote,
@@ -1757,6 +1788,7 @@ async fn do_download(
         .await
         .map_err(|e| e.to_string())?;
     let total = meta.len();
+    let remote_mtime = meta.mtime.map(u64::from);
 
     if let Some(parent) = local.parent() {
         tokio::fs::create_dir_all(parent)
@@ -1766,13 +1798,55 @@ async fn do_download(
 
     // Se baja al temporal y solo se publica (rename) si todo va bien.
     let part = part_path(local);
+    let resume = transfer_resume::enabled();
+    // Con la reanudación apagada el temporal se trunca siempre, como toda la
+    // vida; con ella encendida se pregunta primero si el trozo que hay sirve.
+    let plan = if resume {
+        transfer_resume::plan_on_disk(&part, remote, total, remote_mtime).await
+    } else {
+        transfer_resume::ResumePlan::Fresh
+    };
     let result = async {
-        // `create` trunca: un `.part` superviviente de un cierre brusco de la app
-        // se sobrescribe en vez de acumularse.
-        let mut file = tokio::fs::File::create(&part)
-            .await
-            .map_err(|e| e.to_string())?;
-        pipelined_download(sftp, remote, &mut file, total, ctx, max_parallelism).await?;
+        let start = match plan {
+            // Ya está entero en el temporal: no se vuelve a pedir ni un byte.
+            transfer_resume::ResumePlan::Complete => total,
+            transfer_resume::ResumePlan::Continue(off) => off,
+            transfer_resume::ResumePlan::Fresh => 0,
+        };
+        let mut file = if start > 0 {
+            let mut f = tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(&part)
+                .await
+                .map_err(|e| e.to_string())?;
+            // Se corta cualquier cola por detrás del punto de reanudación y se
+            // escribe justo ahí: el fichero no puede crecer por dos sitios.
+            f.set_len(start).await.map_err(|e| e.to_string())?;
+            f.seek(std::io::SeekFrom::Start(start))
+                .await
+                .map_err(|e| e.to_string())?;
+            f
+        } else {
+            // `create` trunca: un `.part` superviviente de un cierre brusco de la app
+            // se sobrescribe en vez de acumularse.
+            tokio::fs::File::create(&part)
+                .await
+                .map_err(|e| e.to_string())?
+        };
+        if resume {
+            // La ficha se escribe antes de bajar nada: si la app muere a mitad,
+            // el intento siguiente sabrá de qué era este temporal.
+            transfer_resume::write_meta(
+                &part,
+                &transfer_resume::PartMeta {
+                    remote: remote.to_string(),
+                    size: total,
+                    mtime: remote_mtime,
+                },
+            )
+            .await;
+        }
+        pipelined_download(sftp, remote, &mut file, total, start, ctx, max_parallelism).await?;
         // Los datos deben estar en disco antes del rename: si no, un corte de luz
         // dejaría el nombre definitivo apuntando a contenido incompleto.
         file.sync_all().await.map_err(|e| e.to_string())?;
@@ -1794,13 +1868,21 @@ async fn do_download(
     .await;
 
     match result {
-        Ok(()) => tokio::fs::rename(&part, local)
-            .await
-            .map_err(|e| format!("no se pudo publicar la descarga: {e}")),
+        Ok(()) => {
+            transfer_resume::remove_meta(&part).await;
+            tokio::fs::rename(&part, local)
+                .await
+                .map_err(|e| format!("no se pudo publicar la descarga: {e}"))
+        }
         Err(e) => {
-            // Nada de restos: el usuario no debe encontrarse un fichero a medias,
-            // ni con el nombre bueno ni con el `.part`.
-            let _ = tokio::fs::remove_file(&part).await;
+            if !resume {
+                // Nada de restos: el usuario no debe encontrarse un fichero a medias,
+                // ni con el nombre bueno ni con el `.part`.
+                let _ = tokio::fs::remove_file(&part).await;
+                transfer_resume::remove_meta(&part).await;
+            }
+            // Con la reanudación activada el temporal y su ficha se quedan a
+            // propósito: son exactamente lo que permite continuar después.
             Err(e)
         }
     }
@@ -1839,11 +1921,16 @@ async fn do_upload(
 /// Descarga con pipelining: abre N file handles SFTP sobre el mismo remoto,
 /// mantiene hasta N reads simultáneos en vuelo y los escribe al fichero local
 /// en el orden correcto usando una BTreeMap como buffer de reordenado.
+/// `start` es el punto desde el que se pide: `0` en una descarga normal y el
+/// tamaño del trozo ya bajado cuando se reanuda una interrumpida. El fichero
+/// local llega ya colocado en ese punto y el progreso cuenta los bytes previos
+/// como hechos, que es lo que el usuario ve.
 async fn pipelined_download(
     sftp: &SftpSession,
     remote: &str,
     local_file: &mut tokio::fs::File,
     total: u64,
+    start: u64,
     ctx: TransferCtx<'_>,
     max_parallelism: usize,
 ) -> Result<(), String> {
@@ -1856,27 +1943,29 @@ async fn pipelined_download(
     let event = event_name(EventKind::SftpProgress, transfer_id);
     let _ = app.emit(
         &event,
-        serde_json::json!({ "transferred": 0u64, "total": total, "done": false }),
+        serde_json::json!({ "transferred": start, "total": total, "done": false }),
     );
 
-    if total == 0 {
+    if total == 0 || start >= total {
         let _ = app.emit(
             &event,
-            serde_json::json!({ "transferred": 0u64, "total": 0u64, "done": true }),
+            serde_json::json!({ "transferred": total, "total": total, "done": true }),
         );
         return Ok(());
     }
 
     // Abrir N file handles concurrentemente para no pagar N RTT secuenciales.
-    let parallelism = effective_parallelism(total, max_parallelism);
+    // Lo que decide cuántos hacen falta es lo que **queda** por bajar, no el
+    // tamaño del fichero: al reanudar los últimos 200 KiB no se abren 32.
+    let parallelism = effective_parallelism(total - start, max_parallelism);
     let mut idle_files: Vec<SftpFile> = open_handles(sftp, remote, parallelism, OpenFlags::READ)
         .await
         .map_err(|e| format!("No se pudieron abrir los handles SFTP: {e}"))?;
 
-    let mut next_read: u64 = 0;
-    let mut next_write: u64 = 0;
-    let mut transferred: u64 = 0;
-    let mut last_emit: u64 = 0;
+    let mut next_read: u64 = start;
+    let mut next_write: u64 = start;
+    let mut transferred: u64 = start;
+    let mut last_emit: u64 = start;
     let mut completed: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
     let mut in_flight: FuturesUnordered<_> = FuturesUnordered::new();
 

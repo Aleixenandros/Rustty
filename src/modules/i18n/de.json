@@ -1333,7 +1333,11 @@
     "sftp_max_concurrent_hint": "Parallele SFTP-Anfragen pro Übertragung. Höher für mehr Geschwindigkeit in Netzen mit Latenz; niedriger (z. B. 4), wenn der Server „Handle limit reached“ meldet (Hetzner Storage Box u. Ä.). Gilt für neue Sitzungen.",
     "limit_down": "Download-Limit (KiB/s)",
     "limit_up": "Upload-Limit (KiB/s)",
-    "limit_hint": "0 = kein Limit (wie bisher). Die Grenze gilt für die Leitung, nicht für den einzelnen Transfer: zwei gleichzeitige Downloads teilen sich dieselbe Bandbreite. Praktisch, um eine lange Kopie im Hintergrund laufen zu lassen, ohne dass Videoanruf oder andere Sitzungen leiden. Gilt für SFTP, FTP und FTPS und wirkt sofort."
+    "limit_hint": "0 = kein Limit (wie bisher). Die Grenze gilt für die Leitung, nicht für den einzelnen Transfer: zwei gleichzeitige Downloads teilen sich dieselbe Bandbreite. Praktisch, um eine lange Kopie im Hintergrund laufen zu lassen, ohne dass Videoanruf oder andere Sitzungen leiden. Gilt für SFTP, FTP und FTPS und wirkt sofort.",
+    "max_concurrent": "Gleichzeitige Transfers (alle Sitzungen)",
+    "max_concurrent_hint": "0 = keine Grenze (wie bisher). Gezählt werden die laufenden Kopiervorgänge der gesamten Anwendung, nicht die Anfragen jedes einzelnen: Was darüber liegt, wartet, und das Panel zeigt es als wartend an. Ein ganzer Ordner belegt nur einen Platz.",
+    "resume": "Unterbrochene Downloads fortsetzen",
+    "resume_hint": "Behält den bereits geladenen Teil, wenn ein Download fehlschlägt oder abgebrochen wird, und macht beim nächsten Mal dort weiter. Fortgesetzt wird nur, wenn die Datei auf dem Server unverändert ist – gleicher Pfad, gleiche Größe, gleiches Datum; hat sie sich geändert, beginnt der Download neu. Der Preis: Bei einem Fehler bleibt eine Datei „.rustty-part“ neben dem Ziel liegen, statt gelöscht zu werden. Nur SFTP."
   },
   "prefs_language": {
     "title": "Sprache",
