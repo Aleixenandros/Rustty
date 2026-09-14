@@ -3237,6 +3237,19 @@ pub fn is_launched_minimized(state: State<LaunchMinimized>) -> bool {
     state.0
 }
 
+/// Vuelca el índice de workspaces (`{id, name}`) a `workspaces.json` para que
+/// la CLI, que no tiene las preferencias del frontend, pueda listar y filtrar
+/// por nombre de workspace. La interfaz lo llama al guardar preferencias.
+#[tauri::command]
+pub fn save_workspace_index(
+    data_dir: State<'_, DataDir>,
+    items: Vec<crate::workspace_index::WorkspaceEntry>,
+) -> Result<(), String> {
+    crate::workspace_index::save(&data_dir.0, &items)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// Muestra la ventana principal en cuanto el documento tiene algo que pintar.
 ///
 /// Lo pide `public/boot.js` al terminar el parseo del HTML —con el CSS ya

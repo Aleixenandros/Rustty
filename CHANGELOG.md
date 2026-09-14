@@ -2,6 +2,21 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.10.0] - 2026-09-14
+
+### Añadido
+
+- **La línea de comandos sirve por fin para scripts.** `rustty -c servidor --exec "…"` termina ahora con el código de salida del comando remoto, en vez de 255 pase lo que pase: el servidor manda ese código justo después de cerrar la salida y Rustty dejaba de escuchar un instante antes. Y un comando que lea de la entrada estándar, como `plesk db` o `mysql`, ya no se queda colgado para siempre: sin `--tty`, si la entrada es un terminal se cierra al momento, como hace `ssh -n`; si es una tubería o un fichero se reenvía, así que `--exec "bash -s" < script.sh` funciona tal cual. La pregunta de contraseña y los avisos van por la salida de errores, y `--quiet` los calla.
+- **Workspaces en la línea de comandos.** `rustty -l` muestra el workspace y el tipo de cada perfil (también en `--json`, con `workspace: {id, name}`), y `--workspace <nombre>` o `--group <carpeta>` filtran el listado o acotan la búsqueda de `-c`. La interfaz vuelca los nombres de los workspaces a un fichero al guardar preferencias para que la CLI los conozca; hasta que se abra una vez con esta versión, se ven los ids.
+- **Ejecutar en varios servidores a la vez.** `rustty --workspace Omnia --exec "uptime"` (o `--group`, o `--all`) lanza el comando en todos los perfiles SSH que casen, varios a la vez (`--parallel`, 4 por defecto), con la salida agrupada por servidor o, con `--json`, un objeto por servidor con su salida, sus errores, el código de salida y la duración. Sale con 0 si todos fueron bien y con 1 si alguno no.
+- **Scripts locales, sudo y tiempo límite.** `--script fichero.sh` manda el script por la entrada estándar a `bash -s` sin codificarlo ni pegarlo; `--sudo` lo ejecuta con `sudo -n` (con `--tty`, sudo puede pedir la contraseña); `--timeout <segundos>` acota cada servidor, conexión incluida, y sale con 124 al agotarse.
+- **Copiar ficheros por SFTP desde la línea de comandos.** `--get <remoto> <local>` y `--put <local> <remoto>` copian un fichero, también con perfiles SFTP sin shell como un StorageBox, que ahora aparecen en el listado con tipo `sftp`. Si el destino es una carpeta, el fichero conserva su nombre.
+- **Copiar el host o la IP de una conexión** desde el menú del botón derecho de la barra lateral.
+
+### Cambiado
+
+- En la línea de comandos, `--exec` toma el comando como un único argumento: las opciones como `--json` o `--timeout` pueden ir detrás sin que se confundan con parte del comando. Las palabras sueltas después del comando siguen sumándose a él, como antes.
+
 ## [2.9.0] - 2026-09-14
 
 ### Añadido

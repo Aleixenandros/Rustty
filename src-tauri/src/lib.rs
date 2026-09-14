@@ -53,6 +53,7 @@ mod sync;
 pub mod tmux;
 mod transfer_rate;
 mod transfer_resume;
+mod workspace_index;
 mod transfer_slots;
 mod tunnel_throttle;
 
@@ -382,6 +383,7 @@ pub fn run() {
             commands::autostart_is_enabled,
             commands::is_launched_minimized,
             commands::reveal_main_window,
+            commands::save_workspace_index,
             commands::is_appimage,
             commands::is_flatpak,
             app_tray::tray_update_quick_launcher,

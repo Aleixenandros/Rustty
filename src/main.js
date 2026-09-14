@@ -883,6 +883,24 @@ function toggleFavoriteProfile(id) {
 function savePrefs() {
   localStorage.setItem("rustty-prefs", JSON.stringify(prefs));
   scheduleTrayQuickLauncherUpdate();
+  syncWorkspaceIndex();
+}
+
+let _workspaceIndexSent = null;
+
+/**
+ * Vuelca los workspaces `{id, name}` al backend (`workspaces.json`) para que la
+ * CLI pueda listar y filtrar por nombre: los workspaces solo viven en estas
+ * prefs y `rustty -l` no las ve. Solo viaja cuando cambia.
+ */
+function syncWorkspaceIndex() {
+  const items = (prefs.workspaces || [])
+    .map((w) => ({ id: String(w?.id || ""), name: String(w?.name || "") }))
+    .filter((w) => w.id);
+  const key = JSON.stringify(items);
+  if (key === _workspaceIndexSent) return;
+  _workspaceIndexSent = key;
+  invoke("save_workspace_index", { items }).catch((e) => console.debug("[workspaces] index", e));
 }
 
 function persistSidebarOpenFolders() {
@@ -4541,6 +4559,7 @@ async function initMain() {
   await reportProfilesRecovery();
 
   ensureWorkspacesForProfiles();
+  syncWorkspaceIndex();
   await refreshNotesIndex();
   loadSnapshotIndex();
 
@@ -7428,6 +7447,9 @@ function handleContextMenuAction(action) {
       break;
     case "connect-overrides":
       duplicateSessionWithOverrides(id);
+      break;
+    case "copy-host":
+      if (id) copyProfileHost(id);
       break;
     case "edit-note":
       if (id) openNoteEditor(id);
@@ -11798,6 +11820,14 @@ async function readSystemClipboardText() {
     console.warn("[clipboard] plugin read failed, falling back to navigator", err);
     return await navigator.clipboard?.readText?.().catch(() => null);
   }
+}
+
+/** Copia el host o la IP de un perfil al portapapeles (menú contextual). */
+async function copyProfileHost(profileId) {
+  const host = (profiles.find((p) => p.id === profileId)?.host || "").trim();
+  if (!host) return;
+  await writeSystemClipboardText(host);
+  toast(t("toast.host_copied", { host }), "success");
 }
 
 async function writeSystemClipboardText(text) {
