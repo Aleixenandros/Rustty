@@ -2,6 +2,9 @@
   "app": {
     "cliente_ssh": "Cross-platform SSH client written in Rust"
   },
+  "boot": {
+    "starting": "Starting…"
+  },
   "scripts": {
     "rail_title": "Scripts",
     "ctx_run": "Run script…",
@@ -1034,6 +1037,8 @@
     "local_cwd": "Local console start folder",
     "local_cwd_placeholder": "$HOME",
     "local_cwd_hint": "Folder where new local consoles open. Empty = your home folder. If the path doesn't exist, the home folder is used.",
+    "shell_integration": "Shell integration in the local console",
+    "shell_integration_hint": "Makes bash and zsh emit the OSC 133 and OSC 7 marks in new local consoles: command blocks, long-command notifications and current folder, without touching your configuration files. Other shells start as usual.",
     "highlight_title": "Regex highlighting",
     "highlight_hint": "Each rule colors the pattern matches in the terminal buffer. Matches that span a network chunk are not highlighted.",
     "highlight_pattern": "Pattern",
@@ -1105,6 +1110,8 @@
     "reduce_motion_hint": "Disables animations, long transitions and decorative spinners. The operating-system preference is honored too.",
     "view_fade": "Fade when switching views",
     "view_fade_hint": "Brief transition between the start panel and the terminal when opening or closing sessions. \"Reduce motion\" also disables it.",
+    "boot_screen": "Loading screen at startup",
+    "boot_screen_hint": "Shows the logo and \"Starting…\" as soon as the window opens, while the application finishes starting up. When off, the window does not appear until the interface is ready.",
     "strong_focus": "Reinforced focus ring",
     "strong_focus_hint": "Increases the thickness and contrast of the focus ring during keyboard navigation.",
     "overlay_scrollbars": "Overlay scrollbars",
@@ -1855,6 +1862,10 @@
     "tunnels_all_stopped": "{n} tunnel(s) closed",
     "transfers_all_paused": "Transfers paused",
     "transfers_all_resumed": "Transfers resumed",
+    "transfer_cancel_failed": "Could not cancel: {err}",
+    "transfer_pause_failed": "Could not pause: {err}",
+    "transfer_resume_failed": "Could not resume: {err}",
+    "transfer_skipped": "Skipped: {name}",
     "transfers_pause_all_failed": "Could not change the global pause: {err}"
   },
   "time": {
@@ -1887,6 +1898,17 @@
     "transfer_pause": "Pause",
     "transfer_resume": "Resume",
     "transfer_retry": "Retry",
+    "state_queued": "Queued",
+    "state_preparing": "Preparing…",
+    "state_cancelling": "Cancelling…",
+    "state_paused": "Paused",
+    "state_resuming": "Resuming…",
+    "state_downloading": "Downloading…",
+    "state_uploading": "Uploading…",
+    "state_canceled": "Cancelled",
+    "state_skipped_policy": "Skipped by the conflict policy",
+    "state_skipped_short": "skipped",
+    "state_canceled_short": "cancelled",
     "conflict_title": "Transfer conflict",
     "conflict_msg_file": "The file \"{name}\" already exists in {where}. Rename will automatically create a copy with a numeric suffix.",
     "conflict_msg_dir": "The folder \"{name}\" already exists in {where}. Rename will automatically create a copy with a numeric suffix.",

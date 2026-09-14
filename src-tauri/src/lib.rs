@@ -43,6 +43,7 @@ mod webdav_fixture;
 mod sandbox;
 mod scripts;
 mod sftp_manager;
+mod shell_integration;
 mod ssh_manager;
 mod store_file;
 mod subst;
@@ -75,6 +76,18 @@ use tauri::{Manager, WindowEvent};
 /// con el argumento `--minimized`. El frontend consulta este estado para decidir
 /// si ocultar la ventana al tray en lugar de mostrarla al frente.
 pub struct LaunchMinimized(pub bool);
+
+/// Flags del plugin window-state: tamaño, posición y maximizado. Espejo de
+/// `WINDOW_STATE_FLAGS_SIZE_POSITION_MAXIMIZED` en `main.js`; la visibilidad se
+/// deja fuera **a propósito** (ver el registro del plugin en `run()`).
+pub(crate) const WINDOW_STATE_FLAGS: tauri_plugin_window_state::StateFlags =
+    tauri_plugin_window_state::StateFlags::SIZE
+        .union(tauri_plugin_window_state::StateFlags::POSITION)
+        .union(tauri_plugin_window_state::StateFlags::MAXIMIZED);
+
+/// Plazo tras el que la ventana principal se muestra aunque el frontend no lo
+/// haya pedido: red de seguridad para un bundle que no llega a ejecutarse.
+const WINDOW_REVEAL_DEADLINE: Duration = Duration::from_secs(20);
 
 /// Directorio de datos efectivo de la aplicación.
 ///
@@ -208,7 +221,20 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Tamaño, posición y maximizado; **no** la visibilidad. Con los flags
+        // por defecto (`StateFlags::all()`) el plugin hacía `show()` de la
+        // ventana en `on_window_ready`, o sea con el webview recién creado y
+        // sin haber cargado nada: anulaba el `"visible": false` de
+        // `tauri.conf.json` y la app arrancaba enseñando un rectángulo vacío
+        // hasta que el frontend pintaba. La ventana la revela el frontend
+        // cuando tiene algo que enseñar (la pantalla de carga o la interfaz
+        // montada): `revealMainWindow` en `main.js`, que restaura y guarda con
+        // estos mismos flags.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(WINDOW_STATE_FLAGS)
+                .build(),
+        )
         .setup(move |app| {
             // El logger global ya está en pie: a partir de aquí un panic tiene
             // dónde escribirse y el gancho deja de usar el fichero de respaldo.
@@ -296,6 +322,32 @@ pub fn run() {
             app.manage(LaunchMinimized(launched_minimized));
             app_tray::setup(app);
 
+            // Red de seguridad del arranque visual. La ventana nace oculta
+            // (`"visible": false`) y es el frontend quien la muestra en cuanto
+            // ha pintado la pantalla de carga (o la interfaz, si el usuario
+            // apagó la pantalla). Si el bundle no llegara a ejecutarse —un
+            // WebKit demasiado viejo para el JS generado, un fichero dañado—
+            // nadie la mostraría jamás y la app parecería no arrancar. Pasado
+            // el plazo, si sigue oculta y no se pidió arrancar minimizada, se
+            // muestra igualmente: ver algo a medias es mejor que no ver nada.
+            if !launched_minimized {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(WINDOW_REVEAL_DEADLINE);
+                    let Some(window) = handle.get_webview_window("main") else {
+                        return;
+                    };
+                    if window.is_visible().unwrap_or(true) {
+                        return;
+                    }
+                    log::warn!(
+                        "la ventana seguía oculta {} s después de arrancar: se muestra sin esperar al frontend",
+                        WINDOW_REVEAL_DEADLINE.as_secs()
+                    );
+                    let _ = window.show();
+                });
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -329,6 +381,7 @@ pub fn run() {
             commands::autostart_apply,
             commands::autostart_is_enabled,
             commands::is_launched_minimized,
+            commands::reveal_main_window,
             commands::is_appimage,
             commands::is_flatpak,
             app_tray::tray_update_quick_launcher,

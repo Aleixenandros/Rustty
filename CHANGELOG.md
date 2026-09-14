@@ -2,6 +2,17 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.9.0] - 2026-09-14
+
+### Añadido
+
+- **La aplicación ya no se abre en blanco.** Hasta ahora, al lanzar Rustty aparecía un rectángulo vacío del color del tema y no se pintaba nada hasta que la interfaz terminaba de arrancar. Ahora la ventana se abre ya con el logotipo, una barra de progreso e «Iniciando…» en tu idioma, y esa pantalla se funde sobre la interfaz en cuanto está lista. El origen era doble: un complemento restauraba la visibilidad de la ventana antes de que hubiera nada que enseñar, y la revelación desde la interfaz esperaba a un fotograma que una ventana oculta nunca pinta, así que cada arranque sumaba segundo y medio en negro. La pantalla se puede apagar en Preferencias → Apariencia; entonces la ventana no aparece hasta que la interfaz está montada. El log de diagnóstico anota ahora cuánto tardó el arranque.
+- **La consola local también entiende de bloques de comando.** Con la opción nueva **Integración de shell en la consola local** (Preferencias → Terminal, apagada por defecto), bash y zsh emiten en las consolas locales las mismas marcas que Rustty ya aprovechaba en las sesiones remotas: navegación por bloques con `Alt+↑/↓`, panel de bloques, aviso de fin de comando largo y carpeta actual en la barra inferior. Rustty arranca el shell con un fichero de inicio propio que carga primero tu configuración de siempre y después añade los hooks, así que tus `.bashrc`, `.zshenv` y `.zshrc` no se tocan; los hooks van detrás de temas como starship o powerlevel10k, que reescriben el prompt en cada ciclo. Otros shells arrancan como siempre.
+
+### Corregido
+
+- **El panel de transferencias hablaba español aunque la app estuviera en otro idioma.** Los estados de cada copia («En cola», «Preparando…», «Descargando…», «En pausa», «Cancelado», «Omitido por política de conflictos»…) y los avisos de cancelar, pausar y reanudar no pasaban por el catálogo de traducciones. Ahora sí, y el paso de «Preparando…» a «Descargando…» ya no depende del texto en pantalla.
+
 ## [2.8.0] - 2026-09-10
 
 ### Añadido

@@ -2,6 +2,9 @@
   "app": {
     "cliente_ssh": "Plattformübergreifender SSH-Client in Rust"
   },
+  "boot": {
+    "starting": "Wird gestartet…"
+  },
   "scripts": {
     "rail_title": "Skripte",
     "ctx_run": "Skript ausführen…",
@@ -1034,6 +1037,8 @@
     "local_cwd": "Startordner der lokalen Konsole",
     "local_cwd_placeholder": "$HOME",
     "local_cwd_hint": "Ordner, in dem neue lokale Konsolen öffnen. Leer = dein persönlicher Ordner. Wenn der Pfad nicht existiert, wird der persönliche Ordner verwendet.",
+    "shell_integration": "Shell-Integration in der lokalen Konsole",
+    "shell_integration_hint": "Lässt bash und zsh in neuen lokalen Konsolen die Marken OSC 133 und OSC 7 ausgeben: Befehlsblöcke, Hinweis auf lange Befehle und aktueller Ordner, ohne deine Konfigurationsdateien anzurühren. Andere Shells starten wie gewohnt.",
     "highlight_title": "Regex-Hervorhebung",
     "highlight_hint": "Jede Regel färbt die Muster-Treffer im Terminal-Puffer. Treffer, die einen Netzwerk-Chunk überspannen, werden nicht hervorgehoben.",
     "highlight_pattern": "Muster",
@@ -1105,6 +1110,8 @@
     "reduce_motion_hint": "Deaktiviert Animationen, lange Übergänge und dekorative Spinner. Die Einstellung des Betriebssystems wird ebenfalls berücksichtigt.",
     "view_fade": "Überblenden beim Ansichtswechsel",
     "view_fade_hint": "Kurze Überblendung zwischen Startbereich und Terminal beim Öffnen oder Schließen von Sitzungen. „Bewegung reduzieren“ deaktiviert sie ebenfalls.",
+    "boot_screen": "Ladebildschirm beim Start",
+    "boot_screen_hint": "Zeigt das Logo und „Wird gestartet…“, sobald sich das Fenster öffnet, während die Anwendung fertig startet. Deaktiviert erscheint das Fenster erst, wenn die Oberfläche bereit ist.",
     "strong_focus": "Verstärkter Fokusrahmen",
     "strong_focus_hint": "Erhöht Dicke und Kontrast des Fokusrahmens bei der Tastaturnavigation.",
     "overlay_scrollbars": "Überlagernde Bildlaufleisten",
@@ -1855,6 +1862,10 @@
     "tunnels_all_stopped": "{n} Tunnel geschlossen",
     "transfers_all_paused": "Übertragungen pausiert",
     "transfers_all_resumed": "Übertragungen fortgesetzt",
+    "transfer_cancel_failed": "Abbrechen nicht möglich: {err}",
+    "transfer_pause_failed": "Pausieren nicht möglich: {err}",
+    "transfer_resume_failed": "Fortsetzen nicht möglich: {err}",
+    "transfer_skipped": "Übersprungen: {name}",
     "transfers_pause_all_failed": "Die allgemeine Pause ließ sich nicht ändern: {err}"
   },
   "time": {
@@ -1887,6 +1898,17 @@
     "transfer_pause": "Anhalten",
     "transfer_resume": "Fortsetzen",
     "transfer_retry": "Erneut versuchen",
+    "state_queued": "In der Warteschlange",
+    "state_preparing": "Wird vorbereitet…",
+    "state_cancelling": "Wird abgebrochen…",
+    "state_paused": "Pausiert",
+    "state_resuming": "Wird fortgesetzt…",
+    "state_downloading": "Wird heruntergeladen…",
+    "state_uploading": "Wird hochgeladen…",
+    "state_canceled": "Abgebrochen",
+    "state_skipped_policy": "Laut Konfliktregel übersprungen",
+    "state_skipped_short": "übersprungen",
+    "state_canceled_short": "abgebrochen",
     "conflict_title": "Übertragungskonflikt",
     "conflict_msg_file": "Die Datei \"{name}\" existiert bereits in {where}. Umbenennen erstellt automatisch eine Kopie mit numerischem Suffix.",
     "conflict_msg_dir": "Der Ordner \"{name}\" existiert bereits in {where}. Umbenennen erstellt automatisch eine Kopie mit numerischem Suffix.",

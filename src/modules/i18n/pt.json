@@ -2,6 +2,9 @@
   "app": {
     "cliente_ssh": "Cliente SSH multiplataforma escrito em Rust"
   },
+  "boot": {
+    "starting": "A iniciar…"
+  },
   "scripts": {
     "rail_title": "Scripts",
     "ctx_run": "Executar script…",
@@ -1034,6 +1037,8 @@
     "local_cwd": "Pasta inicial do console local",
     "local_cwd_placeholder": "$HOME",
     "local_cwd_hint": "Pasta onde os novos consoles locais abrem. Vazio = a sua pasta pessoal. Se o caminho não existir, usa-se a pasta pessoal.",
+    "shell_integration": "Integração de shell na consola local",
+    "shell_integration_hint": "Faz com que o bash e o zsh emitam as marcas OSC 133 e OSC 7 nas consolas locais novas: blocos de comando, aviso de fim de comando longo e pasta atual, sem tocar nos teus ficheiros de configuração. Os outros shells arrancam como sempre.",
     "highlight_title": "Realce por regex",
     "highlight_hint": "Cada regra colore as ocorrências do padrão no buffer do terminal. Correspondências que cruzam um chunk de rede não são realçadas.",
     "highlight_pattern": "Padrão",
@@ -1105,6 +1110,8 @@
     "reduce_motion_hint": "Desativa animações, transições longas e spinners decorativos. A preferência do sistema operativo também é respeitada.",
     "view_fade": "Fundido ao mudar de vista",
     "view_fade_hint": "Transição breve entre o painel inicial e o terminal ao abrir ou fechar sessões. «Reduzir movimento» também a desativa.",
+    "boot_screen": "Ecrã de carregamento ao arrancar",
+    "boot_screen_hint": "Mostra o logótipo e «A iniciar…» assim que a janela abre, enquanto a aplicação acaba de arrancar. Desativado, a janela só aparece quando a interface está pronta.",
     "strong_focus": "Foco visível reforçado",
     "strong_focus_hint": "Aumenta a espessura e o contraste do anel de foco na navegação por teclado.",
     "overlay_scrollbars": "Barras de deslocamento sobrepostas",
@@ -1861,6 +1868,10 @@
     "tunnels_all_stopped": "{n} túnel(eis) fechados",
     "transfers_all_paused": "Transferências em pausa",
     "transfers_all_resumed": "Transferências retomadas",
+    "transfer_cancel_failed": "Não foi possível cancelar: {err}",
+    "transfer_pause_failed": "Não foi possível pausar: {err}",
+    "transfer_resume_failed": "Não foi possível retomar: {err}",
+    "transfer_skipped": "Omitido: {name}",
     "transfers_pause_all_failed": "Não foi possível mudar a pausa geral: {err}"
   },
   "sftp": {
@@ -1887,6 +1898,17 @@
     "transfer_pause": "Pausar",
     "transfer_resume": "Retomar",
     "transfer_retry": "Tentar de novo",
+    "state_queued": "Em fila",
+    "state_preparing": "A preparar…",
+    "state_cancelling": "A cancelar…",
+    "state_paused": "Em pausa",
+    "state_resuming": "A retomar…",
+    "state_downloading": "A descarregar…",
+    "state_uploading": "A enviar…",
+    "state_canceled": "Cancelado",
+    "state_skipped_policy": "Omitido pela política de conflitos",
+    "state_skipped_short": "omitido",
+    "state_canceled_short": "cancelado",
     "conflict_title": "Conflito de transferência",
     "conflict_msg_file": "O ficheiro \"{name}\" já existe em {where}. Renomear criará automaticamente uma cópia com sufixo numérico.",
     "conflict_msg_dir": "A pasta \"{name}\" já existe em {where}. Renomear criará automaticamente uma cópia com sufixo numérico.",

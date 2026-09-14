@@ -2,6 +2,9 @@
   "app": {
     "cliente_ssh": "Cliente SSH multiplataforma escrito en Rust"
   },
+  "boot": {
+    "starting": "Iniciando…"
+  },
   "scripts": {
     "rail_title": "Scripts",
     "ctx_run": "Ejecutar script…",
@@ -1034,6 +1037,8 @@
     "local_cwd": "Carpeta inicial de la consola local",
     "local_cwd_placeholder": "$HOME",
     "local_cwd_hint": "Carpeta donde se abren las consolas locales nuevas. Vacío = tu carpeta personal. Si la ruta no existe, se usa la carpeta personal.",
+    "shell_integration": "Integración de shell en la consola local",
+    "shell_integration_hint": "Hace que bash y zsh emitan las marcas OSC 133 y OSC 7 en las consolas locales nuevas: bloques de comando, aviso de fin de comando largo y carpeta actual, sin tocar tus ficheros de configuración. Otros shells arrancan como siempre.",
     "highlight_title": "Resaltado por regex",
     "highlight_hint": "Cada regla colorea las coincidencias del patrón en el buffer del terminal. Los matches que crucen un chunk de red no se resaltan.",
     "highlight_pattern": "Patrón",
@@ -1105,6 +1110,8 @@
     "reduce_motion_hint": "Desactiva animaciones, transiciones largas y spinners decorativos. Se respeta también la preferencia del sistema operativo.",
     "view_fade": "Fundido al cambiar de vista",
     "view_fade_hint": "Transición breve entre el panel de inicio y el terminal al abrir o cerrar sesiones. «Reducir movimiento» también la desactiva.",
+    "boot_screen": "Pantalla de carga al arrancar",
+    "boot_screen_hint": "Muestra el logotipo e «Iniciando…» en cuanto se abre la ventana, mientras la aplicación termina de arrancar. Desactivada, la ventana no aparece hasta que la interfaz está lista.",
     "strong_focus": "Foco visible reforzado",
     "strong_focus_hint": "Aumenta el grosor y el contraste del anillo de foco en la navegación por teclado.",
     "overlay_scrollbars": "Barras de desplazamiento superpuestas",
@@ -1855,6 +1862,10 @@
     "tunnels_all_stopped": "{n} túnel(es) cerrados",
     "transfers_all_paused": "Transferencias en pausa",
     "transfers_all_resumed": "Transferencias reanudadas",
+    "transfer_cancel_failed": "No se pudo cancelar: {err}",
+    "transfer_pause_failed": "No se pudo pausar: {err}",
+    "transfer_resume_failed": "No se pudo reanudar: {err}",
+    "transfer_skipped": "Omitido: {name}",
     "transfers_pause_all_failed": "No se pudo cambiar la pausa general: {err}"
   },
   "time": {
@@ -1887,6 +1898,17 @@
     "transfer_pause": "Pausar",
     "transfer_resume": "Reanudar",
     "transfer_retry": "Reintentar",
+    "state_queued": "En cola",
+    "state_preparing": "Preparando…",
+    "state_cancelling": "Cancelando…",
+    "state_paused": "En pausa",
+    "state_resuming": "Reanudando…",
+    "state_downloading": "Descargando…",
+    "state_uploading": "Subiendo…",
+    "state_canceled": "Cancelado",
+    "state_skipped_policy": "Omitido por política de conflictos",
+    "state_skipped_short": "omitido",
+    "state_canceled_short": "cancelado",
     "conflict_title": "Conflicto de transferencia",
     "conflict_msg_file": "Ya existe el fichero \"{name}\" en {where}. Renombrar creará automáticamente una copia con sufijo numérico.",
     "conflict_msg_dir": "Ya existe la carpeta \"{name}\" en {where}. Renombrar creará automáticamente una copia con sufijo numérico.",

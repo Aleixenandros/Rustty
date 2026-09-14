@@ -202,8 +202,24 @@ let _trayQuickLauncherTimer = null;
 const RELEASES_API_URL = "https://api.github.com/repos/Aleixenandros/Rustty/releases/latest";
 const RELEASES_PAGE_URL = "https://github.com/Aleixenandros/Rustty/releases/latest";
 const DEFAULT_SYNC_HISTORY_KEEP = 30;
+// Espejo de `WINDOW_STATE_FLAGS` en `lib.rs`: el plugin window-state restaura y
+// guarda con los mismos flags por los dos caminos. La visibilidad (8) se deja
+// fuera a propósito: con ella el plugin mostraba la ventana con el webview
+// recién creado, antes de que hubiera nada pintado.
 const WINDOW_STATE_FLAGS_SIZE_POSITION_MAXIMIZED = 1 | 2 | 4;
 const WINDOW_CLOSE_FALLBACK_MS = 700;
+// Pantalla de carga: plazo máximo que puede tapar la interfaz si init() se
+// atasca; mínimo que se queda a la vista desde que la ventana se enseña (un
+// arranque de 100 ms la convertiría en un destello, peor que nada); y duración
+// del fundido con el que se retira (≥ --motion-slow).
+const BOOT_SCREEN_MAX_MS = 15000;
+const BOOT_SCREEN_MIN_VISIBLE_MS = 500;
+const BOOT_SCREEN_FADE_MS = 400;
+// Salvaguarda de revealWindowAfterPaint: si el doble rAF no dispara en este
+// plazo, la ventana se muestra igual. Era 1500 ms, y con la ventana oculta de
+// verdad (página "hidden", sin rAF) ese plazo se convertía en el tiempo de
+// arranque: cada apertura esperaba 1,5 s en negro.
+const WINDOW_REVEAL_FALLBACK_MS = 250;
 const WINDOW_STATE_CLOSE_SAVE_TIMEOUT_MS = 250;
 const SFTP_PANEL_HEIGHT_STORAGE_KEY = "rustty-sftp-panel-height-percent";
 const SFTP_LOG_HEIGHT_STORAGE_KEY = "rustty-sftp-log-height-px";
@@ -542,6 +558,11 @@ const DEFAULT_PREFS = {
   // usuario). Una ruta válida se usa como cwd al abrir/reabrir la consola; si no
   // existe, el backend cae a $HOME.
   localShellCwd:   "",
+  // Integración de shell en la consola local (bash/zsh): marcas OSC 133
+  // (bloques de comando, aviso de fin de comando largo) y OSC 7 (carpeta
+  // actual) sin tocar los dotfiles del usuario. Opt-in: cambia cómo arranca
+  // el shell, así que solo se aplica a consolas nuevas.
+  localShellIntegration: false,
   // Comandos locales del catálogo: plazo máximo de ejecución en segundos
   // (0 = sin límite, opción explícita del usuario) y tope de salida capturada
   // por flujo en KiB. Al agotarse el plazo se termina el árbol de procesos.
@@ -655,6 +676,10 @@ const DEFAULT_PREFS = {
   // Fundido corto al pasar del panel de inicio al terminal (y a la inversa).
   // «Reducir movimiento» (arriba) también lo anula.
   viewFade:        true,
+  // Pantalla de carga al arrancar: logotipo e «Iniciando…» en cuanto se abre la
+  // ventana, mientras init() termina. Off = la ventana no aparece hasta que la
+  // interfaz está montada. La lee también `public/boot.js`, antes del bundle.
+  bootScreen:      true,
   // Barras de desplazamiento superpuestas: el pulgar flota sobre el contenido,
   // fino en reposo y más ancho al pasar el ratón. Off = las finas normales.
   overlayScrollbars: false,
@@ -1972,6 +1997,8 @@ function openSettingsModal() {
   if (_strongFocus) _strongFocus.checked = !!prefs.strongFocus;
   const _viewFade = document.getElementById("pref-view-fade");
   if (_viewFade) _viewFade.checked = prefs.viewFade !== false;
+  const _bootScreen = document.getElementById("pref-boot-screen");
+  if (_bootScreen) _bootScreen.checked = prefs.bootScreen !== false;
   const _overlayScrollbars = document.getElementById("pref-overlay-scrollbars");
   if (_overlayScrollbars) _overlayScrollbars.checked = !!prefs.overlayScrollbars;
   const _nativeScrollbars = document.getElementById("pref-native-scrollbars");
@@ -2014,6 +2041,8 @@ function openSettingsModal() {
   if (_termContrast) _termContrast.value = ["aa", "aaa"].includes(prefs.terminalMinContrast) ? prefs.terminalMinContrast : "off";
   const _termCursorHv = document.getElementById("pref-terminal-cursor-highvis");
   if (_termCursorHv) _termCursorHv.checked = !!prefs.terminalCursorHighVis;
+  const _shellIntegration = document.getElementById("pref-local-shell-integration");
+  if (_shellIntegration) _shellIntegration.checked = prefs.localShellIntegration === true;
   const _localCwdEl = document.getElementById("pref-local-cwd");
   if (_localCwdEl) _localCwdEl.value = prefs.localShellCwd || "";
   const _localCmdTimeout = document.getElementById("pref-localcmd-timeout");
@@ -4043,6 +4072,7 @@ function savePrefsFromModal() {
     })(),
     terminalCursorHighVis: !!document.getElementById("pref-terminal-cursor-highvis")?.checked,
     localShellCwd:   (document.getElementById("pref-local-cwd")?.value || "").trim(),
+    localShellIntegration: !!document.getElementById("pref-local-shell-integration")?.checked,
     localCmdTimeoutSecs: (() => {
       const v = Number(document.getElementById("pref-localcmd-timeout")?.value);
       return LOCALCMD_TIMEOUTS.includes(v) ? v : DEFAULT_PREFS.localCmdTimeoutSecs;
@@ -4063,6 +4093,7 @@ function savePrefsFromModal() {
     reduceMotion:    !!document.getElementById("pref-reduce-motion")?.checked,
     strongFocus:     !!document.getElementById("pref-strong-focus")?.checked,
     viewFade:        document.getElementById("pref-view-fade")?.checked ?? true,
+    bootScreen:      document.getElementById("pref-boot-screen")?.checked ?? true,
     overlayScrollbars: !!document.getElementById("pref-overlay-scrollbars")?.checked,
     nativeScrollbars: !!document.getElementById("pref-native-scrollbars")?.checked,
     terminalRenderer: (() => {
@@ -4456,6 +4487,30 @@ async function init() {
   // ve, y la ventana se lo llevaba consigo al cerrarse.
   installUiErrorReporting();
   loadPrefs();
+  // La pantalla de carga (#boot-screen) ya está pintada con el HTML y el CSS
+  // estáticos, así que la ventana puede enseñarse ya: es lo que ve el usuario
+  // mientras el resto del arranque termina. Con la pantalla apagada
+  // (preferencia) la ventana espera a finishBoot(), con la interfaz montada.
+  if (prefs.bootScreen !== false) revealMainWindow();
+  // Si el arranque se atascara en un invoke que nunca responde, la pantalla de
+  // carga no puede quedarse para siempre tapando una interfaz que quizá sí
+  // sirva a medias (consola local, Preferencias). Pasado el plazo se retira.
+  const bootDeadline = setTimeout(() => {
+    reportUiError("arranque", `init() no ha terminado en ${BOOT_SCREEN_MAX_MS} ms: se retira la pantalla de carga`);
+    finishBoot();
+  }, BOOT_SCREEN_MAX_MS);
+  try {
+    await initMain();
+  } finally {
+    clearTimeout(bootDeadline);
+    // Éxito o fallo, la interfaz que haya se enseña: con la pantalla de carga
+    // encima el usuario no sabría ni que hubo un error.
+    finishBoot();
+  }
+}
+
+/** Cuerpo del arranque; `init()` lo envuelve con la pantalla de carga. */
+async function initMain() {
   await registerBundledThemePacks();
   enhanceThemePickers();
   // Los temas (incluidos los bundled, que se inyectan de forma diferida) ya
@@ -4510,6 +4565,11 @@ async function init() {
   await initHostKeyPrompt().catch((e) => console.error("[hostkey] init", e));
   await initFtpsCertPrompt().catch((e) => console.error("[ftpscert] init", e));
   await initAuthPrompt().catch((e) => console.error("[auth-prompt] init", e));
+  // La interfaz está montada, responde y ya sabe preguntar por host keys,
+  // certificados y segundo factor: fuera la pantalla de carga. Lo que sigue
+  // (sync de arranque, comprobación de versión, KeePass) es trabajo de fondo
+  // con sus propios indicadores y no tiene por qué retener al usuario.
+  finishBoot();
   initWakeWatcher();
   await populateSyncTab().catch((e) => console.error("[sync] populate", e));
   if (_syncConfigCache?.enabled && _syncConfigCache.backend !== "none") {
@@ -12226,9 +12286,12 @@ async function reconnectLocalInPlace(s) {
     await invoke("local_shell_open", {
       sessionId,
       onData: dataChannel,
-      cwd: prefs.localShellCwd || null,
-      cols: s.terminal.cols,
-      rows: s.terminal.rows,
+      opts: {
+        cwd: prefs.localShellCwd || null,
+        cols: s.terminal.cols,
+        rows: s.terminal.rows,
+        shellIntegration: prefs.localShellIntegration === true,
+      },
     });
     if (s.status !== "closed") {
       s.status = "connected";
@@ -14581,7 +14644,7 @@ async function disconnectAll() {
         if (s.sftp?.transferQueue) {
           s.sftp.transferQueue = s.sftp.transferQueue.filter((item) => item.id !== job.id);
         }
-        markTransferCanceled(job.transferEl, "Cancelado");
+        markTransferCanceled(job.transferEl);
       } else if ((job.status === "running" || job.status === "paused") && sftpSessionId) {
         invoke("sftp_cancel_transfer", { sessionId: sftpSessionId, transferId: job.id }).catch(() => {});
       }
@@ -17967,9 +18030,12 @@ async function openLocalShell() {
     await invoke("local_shell_open", {
       sessionId,
       onData: dataChannel,
-      cwd: prefs.localShellCwd || null,
-      cols: s.terminal.cols,
-      rows: s.terminal.rows,
+      opts: {
+        cwd: prefs.localShellCwd || null,
+        cols: s.terminal.cols,
+        rows: s.terminal.rows,
+        shellIntegration: prefs.localShellIntegration === true,
+      },
     });
     // Si el cierre no se adelantó al connect, marcamos la sesión como conectada.
     if (s.status !== "closed") {
@@ -20343,8 +20409,9 @@ function enqueueSftpTransfers(sessionId, direction, rows) {
   for (const row of cleanRows) {
     const transferId = crypto.randomUUID();
     const arrow = direction === "upload" ? "⬆" : "⬇";
-    const transferEl = addTransfer(s.sftp.panel, `${arrow} ${row.name}`, transferId, "En cola");
-    setTransferState(transferEl, "queued", "En cola");
+    const transferEl = addTransfer(s.sftp.panel, `${arrow} ${row.name}`, transferId);
+    transferEl.dataset.direction = direction;
+    setTransferPhase(transferEl, "queued", "queued");
     const job = {
       id: transferId,
       direction,
@@ -20395,7 +20462,7 @@ function cancelQueuedTransfersForState(sessionId, conflictState) {
   for (const job of s.sftp.transferQueue) {
     if (job.conflictState === conflictState) {
       job.status = "canceled";
-      markTransferCanceled(job.transferEl, "Cancelado");
+      markTransferCanceled(job.transferEl);
     } else {
       remaining.push(job);
     }
@@ -20409,7 +20476,7 @@ function cancelQueuedSftpTransfer(sessionId, transferId) {
   if (!job || job.status !== "queued") return;
   job.status = "canceled";
   s.sftp.transferQueue = s.sftp.transferQueue.filter((item) => item.id !== transferId);
-  markTransferCanceled(job.transferEl, "Cancelado");
+  markTransferCanceled(job.transferEl);
 }
 
 function retrySftpTransfer(sessionId, transferId) {
@@ -20418,7 +20485,7 @@ function retrySftpTransfer(sessionId, transferId) {
   if (!oldJob || !["error", "skipped", "canceled"].includes(oldJob.status)) return;
   oldJob.status = "queued";
   oldJob.conflictState = createTransferConflictState();
-  setTransferState(oldJob.transferEl, "queued", "En cola");
+  setTransferPhase(oldJob.transferEl, "queued", "queued");
   s.sftp.transferQueue.push(oldJob);
   processSftpQueue(sessionId);
 }
@@ -20531,15 +20598,15 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
   if (resolved.action === "cancel") return "cancel";
   if (resolved.action === "skip") {
     if (job?.transferEl) {
-      markTransferSkipped(job.transferEl, "Omitido por política de conflictos");
+      markTransferSkipped(job.transferEl, t("sftp.state_skipped_policy"));
       job.status = "skipped";
     }
     appendSftpActivity(s.sftp.panel, {
       status: "skipped",
       label: `${transferDirectionLabel(direction)} ${name}`,
-      detail: "Omitido por política de conflictos",
+      detail: t("sftp.state_skipped_policy"),
     });
-    toast(`Omitido: ${name}`, "info");
+    toast(t("toast.transfer_skipped", { name }), "info");
     return "skip";
   }
 
@@ -20549,7 +20616,8 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
   const targetName = resolved.name;
   const label = targetName === name ? `${arrow} ${name}` : `${arrow} ${name} → ${targetName}`;
   const transferEl = job?.transferEl || addTransfer(panel, label, transferId);
-  setTransferState(transferEl, "running", "Preparando…");
+  transferEl.dataset.direction = direction;
+  setTransferPhase(transferEl, "running", "preparing");
   transferEl.dataset.label = label;
   transferEl.querySelector(".sftp-transfer-label").textContent = label;
   if (job) job.status = "running";
@@ -20654,7 +20722,7 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
   } catch (err) {
     const canceled = /cancelad|cancel/i.test(String(err));
     if (canceled) {
-      markTransferCanceled(transferEl, "Cancelado");
+      markTransferCanceled(transferEl);
       if (job) job.status = "canceled";
     } else {
       markTransferError(transferEl, String(err));
@@ -21130,11 +21198,11 @@ function addTransfer(panel, label, transferId, detail = "") {
       return;
     }
     if (job?.status === "running" || job?.status === "paused") {
-      setTransferState(el, "running", "Cancelando…");
+      setTransferPhase(el, "running", "cancelling");
       invoke("sftp_cancel_transfer", {
         sessionId: sessions.get(sessionId)?.sftp?.sftpSessionId,
         transferId,
-      }).catch((err) => toast(`No se pudo cancelar: ${err}`, "error"));
+      }).catch((err) => toast(t("toast.transfer_cancel_failed", { err }), "error"));
       return;
     }
     if (sessionId) sessions.get(sessionId)?.sftp?.transfers?.delete(transferId);
@@ -21145,8 +21213,31 @@ function addTransfer(panel, label, transferId, detail = "") {
   return el;
 }
 
+/**
+ * Fases con texto propio del panel de transferencias. Van por `t()` y quedan
+ * anotadas en `dataset.phase`: lo que antes se decidía comparando el texto
+ * visible («Preparando…») deja de depender del idioma.
+ */
+const TRANSFER_PHASE_KEYS = {
+  queued: "sftp.state_queued",
+  preparing: "sftp.state_preparing",
+  cancelling: "sftp.state_cancelling",
+  paused: "sftp.state_paused",
+  resuming: "sftp.state_resuming",
+  downloading: "sftp.state_downloading",
+  uploading: "sftp.state_uploading",
+};
+
+/** Cambia el estado de la fila y pinta el texto de la fase, traducido. */
+function setTransferPhase(el, state, phase) {
+  if (!el) return;
+  setTransferState(el, state, t(TRANSFER_PHASE_KEYS[phase]));
+  el.dataset.phase = phase;
+}
+
 function setTransferState(el, state, detail = "") {
   if (!el) return;
+  delete el.dataset.phase;
   el.classList.remove("queued", "running", "paused", "done", "error", "skipped", "canceled");
   el.classList.add(state);
   if (["done", "error", "skipped", "canceled"].includes(state)) el.classList.add("done");
@@ -21177,13 +21268,13 @@ function updateTransfer(el, { transferred, total, done, paused, queued }) {
   // techo de transferencias simultáneas. Sin pintarlo, una copia en cola sería
   // indistinguible de una copia colgada: barra a cero y ningún motivo.
   if (queued === true && !el.classList.contains("done")) {
-    setTransferState(el, "queued", "En cola");
+    setTransferPhase(el, "queued", "queued");
     return;
   }
   // Le llegó el turno: el primer evento de progreso real la saca de la cola (y
   // reinicia el cronómetro, para que la espera no cuente como lentitud).
   if (el.classList.contains("queued") && !el.classList.contains("done")) {
-    setTransferState(el, "running", "Preparando…");
+    setTransferPhase(el, "running", "preparing");
   }
   // El backend envía `paused: true|false` al cambiar de estado. Reflejamos el
   // estado visual aquí en vez de en setTransferState para no perder el flag
@@ -21199,20 +21290,19 @@ function updateTransfer(el, { transferred, total, done, paused, queued }) {
     el.querySelector(".sftp-transfer-pause")?.classList.remove("hidden");
     el.querySelector(".sftp-transfer-resume")?.classList.add("hidden");
   }
-  // En cuanto entra el primer byte real, el detalle "Preparando…" deja de
-  // ser cierto. Mostramos el estado descriptivo ("Descargando…" / "Subiendo…")
-  // o vaciamos si ya estamos en pausa (paused tiene su propio texto).
+  // En cuanto entra el primer byte real, la fase «preparando» o «reanudando»
+  // deja de ser cierta: pasa a la descriptiva (descargando / subiendo). La
+  // fase se lee del dataset, no del texto visible, que depende del idioma.
   if (
     transferred > 0 &&
     !done &&
     !el.classList.contains("paused") &&
-    el.classList.contains("running")
+    el.classList.contains("running") &&
+    (el.dataset.phase === "preparing" || el.dataset.phase === "resuming")
   ) {
-    const detail = el.querySelector(".sftp-transfer-detail");
-    if (detail && (detail.textContent === "Preparando…" || detail.textContent === "Reanudando…")) {
-      const label = el.dataset.label || "";
-      detail.textContent = label.startsWith("⬇") ? "Descargando…" : "Subiendo…";
-    }
+    const phase = el.dataset.direction === "upload" ? "uploading" : "downloading";
+    el.querySelector(".sftp-transfer-detail").textContent = t(TRANSFER_PHASE_KEYS[phase]);
+    el.dataset.phase = phase;
   }
   const pct = total > 0 ? Math.min(100, Math.round((transferred / total) * 100)) : 0;
   el.querySelector(".sftp-transfer-fill").style.width = pct + "%";
@@ -21244,11 +21334,11 @@ function pauseSftpTransfer(sessionId, transferId) {
   job.status = "paused";
   job.pausedAt = Date.now();
   job.transferEl.dataset.pausedAt = String(job.pausedAt);
-  setTransferState(job.transferEl, "paused", "En pausa");
+  setTransferPhase(job.transferEl, "paused", "paused");
   invoke("sftp_pause_transfer", {
     sessionId: s.sftp.sftpSessionId,
     transferId,
-  }).catch((err) => toast(`No se pudo pausar: ${err}`, "error"));
+  }).catch((err) => toast(t("toast.transfer_pause_failed", { err }), "error"));
 }
 
 function resumeSftpTransfer(sessionId, transferId) {
@@ -21262,11 +21352,11 @@ function resumeSftpTransfer(sessionId, transferId) {
     job.transferEl.dataset.pausedMs = String(prev + (Date.now() - pausedAt));
     delete job.transferEl.dataset.pausedAt;
   }
-  setTransferState(job.transferEl, "running", "Reanudando…");
+  setTransferPhase(job.transferEl, "running", "resuming");
   invoke("sftp_resume_transfer", {
     sessionId: s.sftp.sftpSessionId,
     transferId,
-  }).catch((err) => toast(`No se pudo reanudar: ${err}`, "error"));
+  }).catch((err) => toast(t("toast.transfer_resume_failed", { err }), "error"));
 }
 
 /**
@@ -21318,12 +21408,12 @@ function markTransferError(el, detail) {
 
 function markTransferSkipped(el, detail) {
   setTransferState(el, "skipped", detail);
-  el.querySelector(".sftp-transfer-text").textContent = "omitido";
+  el.querySelector(".sftp-transfer-text").textContent = t("sftp.state_skipped_short");
 }
 
-function markTransferCanceled(el, detail) {
+function markTransferCanceled(el, detail = t("sftp.state_canceled")) {
   setTransferState(el, "canceled", detail);
-  el.querySelector(".sftp-transfer-text").textContent = "cancelado";
+  el.querySelector(".sftp-transfer-text").textContent = t("sftp.state_canceled_short");
 }
 
 const SFTP_NOTIFY_MIN_BYTES = 10 * 1024 * 1024;
@@ -26966,7 +27056,8 @@ function initSidebarResize() {
  * Controles de ventana integrados (CSD: decorations:false).
  * En macOS dejamos los traffic lights nativos (titleBarStyle Overlay),
  * así que ocultamos nuestros botones y añadimos un padding a la izquierda
- * del tab-bar vía la clase `platform-macos`.
+ * del tab-bar vía la clase `platform-macos`. Mostrar la ventana por primera
+ * vez NO es cosa de aquí: lo hace revealMainWindow(), al arrancar.
  */
 async function initWindowControls() {
   // Detección de plataforma a partir del UA de la webview.
@@ -26976,24 +27067,9 @@ async function initWindowControls() {
             :                                 "platform-linux";
   document.body.classList.add(cls);
 
-  let win;
-  try {
-    const mod = await import("@tauri-apps/api/window");
-    win = mod.getCurrentWindow();
-    // Restauramos tamaño/posición/maximizado ANTES de mostrar la ventana.
-    // Así el estado del plugin window-state ya está aplicado cuando la ventana
-    // se hace visible y evitamos un salto visible tras el primer paint.
-    await restoreWindowStateNow(win);
-    // Si la app fue lanzada por el autostart del SO con --minimized, no
-    // mostramos la ventana: queda oculta y el tray sigue operativo.
-    const launchedMinimized = await invoke("is_launched_minimized").catch(() => false);
-    if (!launchedMinimized) {
-      revealWindowAfterPaint(win);
-    }
-    initWindowResizeHandles(win);
-  } catch {
-    return; // fuera de Tauri (p. ej. vite dev puro): no hay ventana
-  }
+  const win = await getMainWindow();
+  if (!win) return; // fuera de Tauri (p. ej. vite dev puro): no hay ventana
+  initWindowResizeHandles(win);
 
   const btnMin   = document.getElementById("btn-win-min");
   const btnMax   = document.getElementById("btn-win-max");
@@ -27090,13 +27166,139 @@ async function saveWindowStateNow() {
   } catch {}
 }
 
+let _mainWindowPromise = null;
+
+/**
+ * Handle de la ventana principal, memoizado. El import de
+ * `@tauri-apps/api/window` es dinámico y falla fuera de Tauri (p. ej. en
+ * `vite dev` puro): entonces resuelve a null y quien lo pida no hace nada.
+ */
+function getMainWindow() {
+  if (!_mainWindowPromise) {
+    _mainWindowPromise = import("@tauri-apps/api/window")
+      .then((mod) => mod.getCurrentWindow())
+      .catch(() => null);
+  }
+  return _mainWindowPromise;
+}
+
+let _mainWindowRevealed = false;
+
+/**
+ * Enseña la ventana principal por primera vez. Idempotente: la llama init()
+ * nada más arrancar cuando hay pantalla de carga, y finishBoot() en todo caso
+ * (con la pantalla apagada es la primera vez que se pide; si no, ya está hecho).
+ * Restaura tamaño/posición/maximizado ANTES de mostrarla, para que el estado
+ * del plugin window-state ya esté aplicado cuando se haga visible y no haya un
+ * salto tras el primer paint. Y si la app la lanzó el autostart del SO con
+ * `--minimized`, no se muestra: queda oculta y la bandeja sigue operativa.
+ */
+async function revealMainWindow() {
+  if (_mainWindowRevealed) return;
+  _mainWindowRevealed = true;
+  // boot.js ya la enseñó al terminar el parseo del documento, antes de que se
+  // evaluara el bundle (`reveal_main_window`): no queda nada que mostrar, solo
+  // anotar desde cuándo se ve, que es desde cuando cuenta la pantalla de carga.
+  const early = Number(document.documentElement.dataset.revealedAt);
+  if (Number.isFinite(early) && early > 0) {
+    markWindowRevealed(early);
+    return;
+  }
+  const win = await getMainWindow();
+  if (!win) {
+    markWindowRevealed(); // fuera de Tauri no hay ventana que enseñar
+    return;
+  }
+  await restoreWindowStateNow(win);
+  const launchedMinimized = await invoke("is_launched_minimized").catch(() => false);
+  if (launchedMinimized) {
+    markWindowRevealed(); // se queda oculta a propósito; que nada la espere
+    return;
+  }
+  revealWindowAfterPaint(win);
+}
+
+let _bootFinished = false;
+/** `performance.now()` en que la ventana quedó revelada (o se decidió no hacerlo). */
+let _windowRevealedAt = null;
+/** Quien necesite saber cuándo se reveló la ventana y aún no lo sepa. */
+let _onWindowRevealed = null;
+
+/**
+ * Anota que la ventana ya está a la vista (o que no va a estarlo: lanzada
+ * minimizada, o sin Tauri). Idempotente. Avisa a quien esperaba ese momento
+ * —la pantalla de carga cuenta su mínimo desde aquí, no desde que la interfaz
+ * estuvo lista: si la ventana tardara en aparecer, la pantalla se habría
+ * retirado antes de que nadie la viera.
+ */
+function markWindowRevealed(at = performance.now()) {
+  if (_windowRevealedAt !== null) return;
+  _windowRevealedAt = at;
+  if (_bootFinished) {
+    logUiInfo(`ventana mostrada a los ${Math.round(_windowRevealedAt)} ms, despues de montar la interfaz`);
+  }
+  const cb = _onWindowRevealed;
+  _onWindowRevealed = null;
+  cb?.();
+}
+
+/**
+ * Da por terminado el arranque visual: desvanece la pantalla de carga y se
+ * asegura de que la ventana esté a la vista. Idempotente; la llama init() al
+ * montar la interfaz, su `finally` (por si algo falló antes) y el plazo máximo.
+ * Deja en el log de diagnóstico cuánto tardó (desde la carga de la página):
+ * es el dato que faltaba para hablar del tiempo de arranque con números.
+ */
+function finishBoot() {
+  if (_bootFinished) return;
+  _bootFinished = true;
+  const readyAt = performance.now();
+  const screen = document.getElementById("boot-screen");
+  const hide = () => {
+    if (!screen.isConnected || screen.classList.contains("boot-screen-hide")) return;
+    screen.classList.add("boot-screen-hide");
+    screen.setAttribute("aria-hidden", "true");
+    // Se retira del DOM al acabar el fundido: un overlay invisible a pantalla
+    // completa seguiría ahí para el lector de pantalla y el inspector.
+    setTimeout(() => screen.remove(), BOOT_SCREEN_FADE_MS);
+  };
+  if (screen && !document.documentElement.classList.contains("no-boot-screen")) {
+    // Mínimo a la vista contado desde que la ventana se enseñó; si todavía no
+    // se ha enseñado, se espera a ese momento. Y por si nunca llegara, un tope:
+    // la pantalla no se queda encima de una interfaz lista más de unos segundos.
+    const scheduleHide = () => {
+      const shownFor = performance.now() - _windowRevealedAt;
+      setTimeout(hide, Math.max(0, BOOT_SCREEN_MIN_VISIBLE_MS - shownFor));
+    };
+    if (_windowRevealedAt !== null) scheduleHide();
+    else _onWindowRevealed = scheduleHide;
+    setTimeout(hide, BOOT_SCREEN_MIN_VISIBLE_MS * 10);
+  } else if (screen) {
+    screen.remove(); // la preferencia la tenía apagada: nunca se pintó
+  }
+  revealMainWindow();
+  const shownNote = _windowRevealedAt === null
+    ? "ventana aun sin mostrar"
+    : `ventana visible desde los ${Math.round(_windowRevealedAt)} ms`;
+  logUiInfo(`interfaz montada a los ${Math.round(readyAt)} ms de cargar la pagina (${shownNote})`);
+}
+
+/** Traza informativa al log de diagnóstico; sin tope, es para hitos, no fallos. */
+function logUiInfo(message) {
+  invoke("app_log_frontend", { level: "info", message }).catch(() => {});
+}
+
 /**
  * Arranque visual sin flash: la ventana nace oculta (`visible:false` en
- * tauri.conf.json) y la revelamos solo tras el primer paint, una vez aplicados
- * tema y estilos. Un doble requestAnimationFrame garantiza que el navegador ha
- * pintado al menos un frame antes de `show()`. Como salvaguarda anti-bloqueo,
- * un setTimeout fuerza el `show()` aunque el rAF no llegara a dispararse (p. ej.
- * pestaña en segundo plano), evitando que la ventana quede oculta para siempre.
+ * tauri.conf.json) y la revelamos con tema y estilos ya aplicados.
+ *
+ * Mientras la ventana está oculta la página es "hidden" para WebKit: no pinta
+ * ni dispara requestAnimationFrame hasta que la ventana se mapea, así que
+ * esperar a un frame sería esperar al timeout (y así fue: 1,5 s en negro en
+ * cada arranque). En ese caso se muestra ya; el primer frame saldrá con el DOM
+ * y el CSS tal como están (tema aplicado, pantalla de carga puesta). Si la
+ * página ya es visible (recarga con la ventana abierta), un doble rAF asegura
+ * un frame pintado antes de `show()`, con salvaguarda corta por si no llegara.
  */
 function revealWindowAfterPaint(win) {
   let shown = false;
@@ -27104,9 +27306,14 @@ function revealWindowAfterPaint(win) {
     if (shown) return;
     shown = true;
     win.show().catch(() => {});
+    markWindowRevealed();
   };
+  if (document.visibilityState === "hidden") {
+    show();
+    return;
+  }
   requestAnimationFrame(() => requestAnimationFrame(show));
-  setTimeout(show, 1500);
+  setTimeout(show, WINDOW_REVEAL_FALLBACK_MS);
 }
 
 async function restoreWindowStateNow(win) {

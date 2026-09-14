@@ -106,7 +106,7 @@ Desde la paleta de comandos (`Ctrl+Shift+P` → «Comprobar salud de los favorit
 
 ## Aviso de fin de comando largo
 
-Si tu shell remoto emite las marcas semánticas **OSC 133** (bash, zsh y fish modernos), Rustty puede avisarte cuando termina un comando que superó cierta duración — útil para builds, copias o migraciones que dejas corriendo mientras haces otra cosa. El aviso elige el canal según dónde estés mirando: con la sesión a la vista no interrumpe; con la app activa y la sesión oculta muestra un toast; con la app en segundo plano envía una **notificación del sistema**. Solo viajan la duración y el código de salida — nunca la salida del comando — y las sesiones privadas no avisan. Se activa (está apagado por defecto) y se ajusta el umbral en **Preferencias → Terminal**; cada perfil puede definir su propio umbral en sus opciones avanzadas.
+Si tu shell remoto emite las marcas semánticas **OSC 133** (bash, zsh y fish modernos; en la consola local basta con activar la **Integración de shell** de Preferencias → Terminal), Rustty puede avisarte cuando termina un comando que superó cierta duración — útil para builds, copias o migraciones que dejas corriendo mientras haces otra cosa. El aviso elige el canal según dónde estés mirando: con la sesión a la vista no interrumpe; con la app activa y la sesión oculta muestra un toast; con la app en segundo plano envía una **notificación del sistema**. Solo viajan la duración y el código de salida — nunca la salida del comando — y las sesiones privadas no avisan. Se activa (está apagado por defecto) y se ajusta el umbral en **Preferencias → Terminal**; cada perfil puede definir su propio umbral en sus opciones avanzadas.
 
 ## Tipos soportados
 

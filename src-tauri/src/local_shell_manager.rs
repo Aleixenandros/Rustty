@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 
 use crate::locks::MutexExt;
@@ -21,6 +22,20 @@ struct ShellHandle {
     /// PID del proceso shell (el proceso raíz del PTY).
     /// Se usa para detectar si hay procesos hijos activos antes de cerrar.
     shell_pid: Option<u32>,
+}
+
+/// Opciones de apertura de una consola local. Las dicta el `invoke` del
+/// frontend (`opts` de `local_shell_open`).
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalShellOptions {
+    /// Directorio inicial; vacío o inexistente = carpeta personal.
+    pub cwd: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+    /// Integración de shell (OSC 133 / OSC 7) en bash y zsh. Opt-in.
+    #[serde(default)]
+    pub shell_integration: bool,
 }
 
 /// Gestor de sesiones de shell local.
@@ -48,15 +63,20 @@ impl LocalShellManager {
     ///
     /// Emite (vía eventos, baja frecuencia):
     ///   `shell-closed-{id}` → el proceso del shell terminó
+    ///
+    /// `integration_dir` es el directorio de datos donde dejar los ficheros de
+    /// arranque de la integración de shell; `None` = consola sin integración.
     pub fn open(
         &self,
         session_id: String,
         app_handle: AppHandle,
         on_data: Channel<Response>,
-        cwd: Option<String>,
-        cols: u16,
-        rows: u16,
+        opts: LocalShellOptions,
+        integration_dir: Option<PathBuf>,
     ) -> Result<(), String> {
+        let LocalShellOptions {
+            cwd, cols, rows, ..
+        } = opts;
         let pty_system = native_pty_system();
 
         let pair = pty_system
@@ -81,6 +101,27 @@ impl LocalShellManager {
         // el del contenedor no tiene los dotfiles ni las herramientas del
         // usuario. Fuera del sandbox esto es un `CommandBuilder` normal.
         let mut cmd = crate::sandbox::host_pty_command(&shell, resolved_cwd.as_deref());
+        // Integración de shell (opt-in): marcas OSC 133 / OSC 7 en bash y zsh
+        // sin tocar los dotfiles del usuario. Si los ficheros de arranque no se
+        // pueden escribir, la consola abre igual, sin marcas: un fallo de disco
+        // no puede dejar al usuario sin consola.
+        if let Some(dir) = integration_dir {
+            let kind = crate::shell_integration::ShellKind::detect(&shell);
+            match crate::shell_integration::prepare(&dir, kind) {
+                Ok(Some(launch)) => {
+                    for arg in launch.args {
+                        cmd.arg(arg);
+                    }
+                    for (key, value) in launch.env {
+                        cmd.env(key, value);
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    log::warn!("integración de shell no disponible para {shell}: {err}");
+                }
+            }
+        }
         cmd.env("TERM", "xterm-256color");
         // Color verdadero en apps que lo detectan por COLORTERM (vim, bat, delta…).
         cmd.env("COLORTERM", "truecolor");
@@ -328,4 +369,30 @@ fn has_child_processes(_pid: u32) -> bool {
     // Windows: sin detección de hijos de PTY; siempre devuelve false.
     // El cierre de consolas locales en Windows no muestra aviso de proceso activo.
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LocalShellOptions;
+
+    /// El frontend manda `opts` tal cual lo construye `main.js`: camelCase y
+    /// con `cwd` a `null` cuando no hay carpeta configurada. Si este contrato
+    /// se rompe, ninguna consola local vuelve a abrir.
+    #[test]
+    fn las_opciones_de_la_consola_se_leen_como_las_manda_el_frontend() {
+        let opts: LocalShellOptions = serde_json::from_str(
+            r#"{"cwd":null,"cols":120,"rows":30,"shellIntegration":true}"#,
+        )
+        .unwrap();
+        assert_eq!(opts.cwd, None);
+        assert_eq!((opts.cols, opts.rows), (120, 30));
+        assert!(opts.shell_integration);
+
+        // Un frontend anterior (sin el campo) sigue abriendo consolas, sin
+        // integración.
+        let legacy: LocalShellOptions =
+            serde_json::from_str(r#"{"cwd":"/tmp","cols":80,"rows":24}"#).unwrap();
+        assert_eq!(legacy.cwd.as_deref(), Some("/tmp"));
+        assert!(!legacy.shell_integration);
+    }
 }

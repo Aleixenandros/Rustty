@@ -4,7 +4,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use tauri::ipc::{Channel, Response};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_window_state::WindowExt;
 use zeroize::Zeroizing;
 
 use crate::credentials::{self, CredentialKind, CredentialMeta, CredentialStore};
@@ -14,7 +15,7 @@ use crate::ipc_error::{IpcError, IpcErrorKind};
 use crate::keepass_manager;
 use crate::keyring_scope;
 use crate::local_command::{self, LocalCommandOutput, LocalCommandRegistry};
-use crate::local_shell_manager::LocalShellManager;
+use crate::local_shell_manager::{LocalShellManager, LocalShellOptions};
 use crate::notes::{NoteDoc, NoteSummary, NotesManager};
 use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
 use crate::tmux::bridge as tmux_cmds;
@@ -1126,18 +1127,20 @@ pub fn telnet_disconnect(
 
 /// Abre una sesión de shell local con PTY.
 /// Devuelve el session_id. Los bytes del shell llegan por `on_data` (Channel
-/// binario) y el fin del proceso por el evento `shell-closed-{id}`.
+/// binario) y el fin del proceso por el evento `shell-closed-{id}`. Con
+/// `opts.shell_integration` el shell arranca con las marcas OSC 133 / OSC 7
+/// (bash y zsh), con sus ficheros de inicio en el directorio de datos.
 #[tauri::command]
 pub fn local_shell_open(
     shell_state: State<'_, LocalShellManager>,
+    data_dir: State<'_, DataDir>,
     app_handle: AppHandle,
     on_data: Channel<Response>,
     session_id: String,
-    cwd: Option<String>,
-    cols: u16,
-    rows: u16,
+    opts: LocalShellOptions,
 ) -> Result<(), String> {
-    shell_state.open(session_id, app_handle, on_data, cwd, cols, rows)
+    let integration_dir = opts.shell_integration.then(|| data_dir.0.clone());
+    shell_state.open(session_id, app_handle, on_data, opts, integration_dir)
 }
 
 /// Envía bytes al stdin del shell local
@@ -3232,6 +3235,28 @@ pub fn autostart_is_enabled() -> Result<bool, String> {
 #[tauri::command]
 pub fn is_launched_minimized(state: State<LaunchMinimized>) -> bool {
     state.0
+}
+
+/// Muestra la ventana principal en cuanto el documento tiene algo que pintar.
+///
+/// Lo pide `public/boot.js` al terminar el parseo del HTML —con el CSS ya
+/// aplicado y **antes** de que el bundle se evalúe, que es el tramo largo del
+/// arranque— para que la pantalla de carga se vea desde el primer momento;
+/// `main.js` vuelve a pedirlo desde `init()` por si este camino no existiera.
+/// Devuelve si la ventana se ha mostrado: lanzada con `--minimized` se queda
+/// oculta y la bandeja sigue operativa.
+#[tauri::command]
+pub fn reveal_main_window(app: AppHandle, launched: State<LaunchMinimized>) -> bool {
+    if launched.0 {
+        return false;
+    }
+    let Some(window) = app.get_webview_window("main") else {
+        return false;
+    };
+    // Tamaño, posición y maximizado antes de mostrarla. El plugin ya lo hizo al
+    // crear la ventana; repetirlo es barato y deja la garantía en un solo sitio.
+    let _ = window.restore_state(crate::WINDOW_STATE_FLAGS);
+    window.show().is_ok()
 }
 
 /// Indica si la app se está ejecutando como AppImage en Linux (variable de

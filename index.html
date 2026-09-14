@@ -15,6 +15,27 @@
   </head>
   <body>
 
+    <!-- Pantalla de carga. Se pinta con el HTML y el CSS estáticos, antes de
+         que el bundle se haya ejecutado, y init() (main.js) la desvanece cuando
+         la interfaz está montada. Vive fuera de #app a propósito: #app queda
+         invisible mientras dura el anti-flash de tema y esto tiene que verse
+         desde el primer pintado. Sin script inline (CSP): el texto lo ajusta
+         boot.js al idioma guardado y applyTranslations() lo remata con el
+         catálogo. La preferencia «Pantalla de carga al arrancar» apagada la
+         suprime (html.no-boot-screen). -->
+    <div id="boot-screen" role="status" aria-live="polite" data-tauri-drag-region>
+      <div class="boot-screen-brand" data-tauri-drag-region>
+        <svg class="boot-screen-icon" viewBox="0 0 18 18" width="40" height="40" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 4.5h12v9h-12z"/>
+          <path d="M5.5 8 7.5 10 5.5 12"/>
+          <path d="M9 12h3.5"/>
+        </svg>
+        <span class="boot-screen-logo">Rustty</span>
+      </div>
+      <div class="boot-screen-bar" aria-hidden="true"></div>
+      <span id="boot-screen-text" class="boot-screen-text" data-i18n="boot.starting">Iniciando…</span>
+    </div>
+
     <div id="app">
       <div id="window-resize-handles" aria-hidden="true">
         <div class="window-resize-handle resize-n" data-resize-dir="North"></div>
@@ -2153,6 +2174,14 @@
               </div>
 
               <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-local-shell-integration" />
+                  <span data-i18n="prefs_terminal.shell_integration">Integración de shell en la consola local</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.shell_integration_hint">Hace que bash y zsh emitan las marcas OSC 133 y OSC 7 en las consolas locales nuevas: bloques de comando, aviso de fin de comando largo y carpeta actual, sin tocar tus ficheros de configuración. Otros shells arrancan como siempre.</p>
+              </div>
+
+              <div class="settings-row">
                 <label data-i18n="prefs_terminal.highlight_title">Resaltado por regex</label>
                 <p class="form-hint" data-i18n="prefs_terminal.highlight_hint">
                   Cada regla colorea las coincidencias del patrón en el buffer del terminal. Los matches que crucen un chunk de red no se resaltan.
@@ -2478,6 +2507,14 @@
                   <span data-i18n="prefs_appearance.view_fade">Fundido al cambiar de vista</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_appearance.view_fade_hint">Transición breve entre el panel de inicio y el terminal al abrir o cerrar sesiones. «Reducir movimiento» también la desactiva.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-boot-screen" />
+                  <span data-i18n="prefs_appearance.boot_screen">Pantalla de carga al arrancar</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_appearance.boot_screen_hint">Muestra el logotipo e «Iniciando…» en cuanto se abre la ventana, mientras la aplicación termina de arrancar. Desactivada, la ventana no aparece hasta que la interfaz está lista.</p>
               </div>
 
               <div class="settings-row">

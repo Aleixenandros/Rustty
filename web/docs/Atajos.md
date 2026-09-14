@@ -50,6 +50,16 @@ bloque al que ir —o estás dentro de una aplicación de pantalla completa—,
 Rustty no consume `Alt+↑/↓`: las teclas llegan al servidor con normalidad. Las
 dos combinaciones se pueden cambiar o desactivar como cualquier otro atajo.
 
+En la **consola local** los bloques también funcionan sin configurar nada en
+tu shell: la opción **Integración de shell en la consola local** de
+**Preferencias → Terminal** (apagada por defecto) hace que bash y zsh emitan
+las marcas OSC 133 y OSC 7 en las consolas nuevas. Rustty arranca el shell con
+un fichero de inicio propio que primero carga tu configuración de siempre y
+después instala los hooks, así que tus `.bashrc`, `.zshenv` y `.zshrc` quedan
+intactos; el resto de shells arrancan como siempre. Con ella activada, la
+consola local gana también la carpeta actual en la barra inferior y el aviso
+de fin de comando largo.
+
 ### Panel de bloques de comando
 
 Desde la paleta de comandos (**Panel de bloques de comando**) o con un atajo

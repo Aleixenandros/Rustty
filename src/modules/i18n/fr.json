@@ -2,6 +2,9 @@
   "app": {
     "cliente_ssh": "Client SSH multiplateforme écrit en Rust"
   },
+  "boot": {
+    "starting": "Démarrage…"
+  },
   "scripts": {
     "rail_title": "Scripts",
     "ctx_run": "Exécuter un script…",
@@ -1034,6 +1037,8 @@
     "local_cwd": "Dossier initial de la console locale",
     "local_cwd_placeholder": "$HOME",
     "local_cwd_hint": "Dossier où s'ouvrent les nouvelles consoles locales. Vide = votre dossier personnel. Si le chemin n'existe pas, le dossier personnel est utilisé.",
+    "shell_integration": "Intégration du shell dans la console locale",
+    "shell_integration_hint": "Fait émettre à bash et zsh les marques OSC 133 et OSC 7 dans les nouvelles consoles locales : blocs de commande, avis de fin de commande longue et dossier courant, sans toucher à vos fichiers de configuration. Les autres shells démarrent comme d'habitude.",
     "highlight_title": "Surlignage par regex",
     "highlight_hint": "Chaque règle colore les correspondances du motif dans le buffer du terminal. Les correspondances coupées entre paquets ne sont pas surlignées.",
     "highlight_pattern": "Motif",
@@ -1105,6 +1110,8 @@
     "reduce_motion_hint": "Désactive les animations, les transitions longues et les spinners décoratifs. La préférence du système d'exploitation est aussi respectée.",
     "view_fade": "Fondu au changement de vue",
     "view_fade_hint": "Transition brève entre le panneau d'accueil et le terminal à l'ouverture ou la fermeture de sessions. « Réduire les animations » la désactive aussi.",
+    "boot_screen": "Écran de chargement au démarrage",
+    "boot_screen_hint": "Affiche le logo et « Démarrage… » dès l'ouverture de la fenêtre, pendant que l'application finit de démarrer. Désactivé, la fenêtre n'apparaît que lorsque l'interface est prête.",
     "strong_focus": "Focus visible renforcé",
     "strong_focus_hint": "Augmente l'épaisseur et le contraste de l'anneau de focus lors de la navigation au clavier.",
     "overlay_scrollbars": "Barres de défilement superposées",
@@ -1861,6 +1868,10 @@
     "tunnels_all_stopped": "{n} tunnel(s) fermés",
     "transfers_all_paused": "Transferts en pause",
     "transfers_all_resumed": "Transferts repris",
+    "transfer_cancel_failed": "Impossible d'annuler : {err}",
+    "transfer_pause_failed": "Impossible de mettre en pause : {err}",
+    "transfer_resume_failed": "Impossible de reprendre : {err}",
+    "transfer_skipped": "Ignoré : {name}",
     "transfers_pause_all_failed": "Impossible de changer la pause générale : {err}"
   },
   "sftp": {
@@ -1887,6 +1898,17 @@
     "transfer_pause": "Mettre en pause",
     "transfer_resume": "Reprendre",
     "transfer_retry": "Réessayer",
+    "state_queued": "En attente",
+    "state_preparing": "Préparation…",
+    "state_cancelling": "Annulation…",
+    "state_paused": "En pause",
+    "state_resuming": "Reprise…",
+    "state_downloading": "Téléchargement…",
+    "state_uploading": "Envoi…",
+    "state_canceled": "Annulé",
+    "state_skipped_policy": "Ignoré selon la politique de conflits",
+    "state_skipped_short": "ignoré",
+    "state_canceled_short": "annulé",
     "conflict_title": "Conflit de transfert",
     "conflict_msg_file": "Le fichier \"{name}\" existe déjà dans {where}. Renommer créera automatiquement une copie avec un suffixe numérique.",
     "conflict_msg_dir": "Le dossier \"{name}\" existe déjà dans {where}. Renommer créera automatiquement une copie avec un suffixe numérique.",

@@ -215,6 +215,82 @@ html.booting #app {
   #app { transition: none; }
 }
 
+/* Pantalla de carga (#boot-screen, fuera de #app): logotipo, barra
+   indeterminada e «Iniciando…» desde el primer pintado, con los tokens del
+   tema que boot.js ya ha aplicado al <html>. init() la desvanece al montar la
+   interfaz y la retira del DOM al acabar el fundido; con la preferencia
+   «Pantalla de carga al arrancar» apagada (html.no-boot-screen, también de
+   boot.js) no se pinta y la ventana espera montada. Va por encima de todo lo
+   demás (la capa más alta del resto del chrome es 20000). */
+#boot-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 30000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  background: var(--surface-page);
+  color: var(--text);
+  transition: opacity var(--motion-slow) var(--motion-ease);
+}
+#boot-screen.boot-screen-hide {
+  opacity: 0;
+  pointer-events: none;
+}
+html.no-boot-screen #boot-screen {
+  display: none;
+}
+.boot-screen-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--blue);
+}
+.boot-screen-logo {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+.boot-screen-bar {
+  position: relative;
+  width: 160px;
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--surface0);
+  overflow: hidden;
+}
+.boot-screen-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--blue);
+  animation: boot-screen-slide 1.2s var(--motion-ease) infinite;
+}
+@keyframes boot-screen-slide {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(250%); }
+}
+.boot-screen-text {
+  font-size: var(--font-size-base);
+  color: var(--subtext0);
+}
+/* Sin movimiento: el indicador desaparece y queda la pista quieta; el texto ya
+   dice que se está iniciando. La clase en <html> la pone boot.js desde el
+   primer pintado; la de <body>, loadPrefs() después. */
+@media (prefers-reduced-motion: reduce) {
+  .boot-screen-bar::before { display: none; }
+}
+html.reduce-motion .boot-screen-bar::before,
+body.reduce-motion .boot-screen-bar::before {
+  display: none;
+}
+
 button {
   font-family: inherit;
   font-size: inherit;

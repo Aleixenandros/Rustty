@@ -22,14 +22,14 @@ Al tratarse de un proyecto mantenido de forma voluntaria, no se garantizan plazo
 
 ## Versiones soportadas
 
-Solo la última versión menor publicada recibe parches de seguridad. La versión actual es la línea **2.8.x** (`package.json` y `src-tauri/Cargo.toml` declaran `2.8.0`).
+Solo la última versión menor publicada recibe parches de seguridad. La versión actual es la línea **2.9.x** (`package.json` y `src-tauri/Cargo.toml` declaran `2.9.0`).
 
 | Versión | Soporte de seguridad |
 | ------- | -------------------- |
-| 2.8.x  | Sí                   |
-| < 2.8  | No                   |
+| 2.9.x  | Sí                   |
+| < 2.9  | No                   |
 
-Si usas una versión anterior, actualiza a la última 2.8.x para recibir correcciones.
+Si usas una versión anterior, actualiza a la última 2.9.x para recibir correcciones.
 
 ## Superficie de seguridad
 
