@@ -67,7 +67,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "linux-
 # Generación de UUIDs para IDs de sesión y perfil
 uuid = { version = "1", features = ["v4"] }
 # Directorios del sistema (app data dir)
-dirs = "6"
+dirs = "7"
 # Manejo ergonómico de errores
 thiserror = "2"
 # Borrado seguro de secretos en memoria (Zeroizing) al liberarlos
