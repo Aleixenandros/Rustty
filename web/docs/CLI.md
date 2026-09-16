@@ -114,6 +114,51 @@ rustty -c storagebox --put informe.pdf /docs/ --json
 
 `--get <remoto> <local>` descarga y `--put <local> <remoto>` sube un fichero, de uno en uno. Si el destino es una carpeta (existe o acaba en `/`), el fichero conserva su nombre. Funciona con perfiles SSH y también con perfiles **SFTP** sin shell, como un StorageBox: `-l` los lista con tipo `sftp`. `--timeout`, `-q` y `--json` (`op`, `bytes`, `durationMs`, `error`) se aplican igual.
 
+## Importar conexiones desde un JSON
+
+```bash
+rustty --import conexiones.json --dry-run
+rustty --import conexiones.json                    # a un workspace nuevo import_<fecha>
+rustty --import conexiones.json --workspace Omnia  # a ese workspace, o lo crea con ese nombre
+cat conexion.json | rustty --import - --json
+```
+
+`--import` lee un perfil o un array de perfiles en el **formato nativo** de Rustty (el mismo de `profiles.json`) y los guarda por el mismo camino que la interfaz: una sola transacción. Lo importado **no se mezcla** con lo que ya tienes: sin `--workspace`, va a un workspace nuevo llamado `import_<fecha>_<hora>`; con `--workspace` y un nombre o id existente, se añade a ese workspace; con un nombre que no existe, se crea con ese nombre. El workspace nuevo aparece en la interfaz la próxima vez que se abra. Sirve para volcar lo que ya tengas descifrado de otro cliente, como mRemoteNG, sin pasar por el asistente gráfico. Cada objeto admite los campos de un perfil (los que falten toman su valor por defecto) y tres campos que la app nunca escribe en `profiles.json`: `password`, `passphrase` y `extra_credentials[].password`. El importador los saca del perfil y los guarda en el **keyring del sistema**, bajo las mismas claves que usa la interfaz (`password:<id>`, `passphrase:<id>`), con el modelo de contraseña propia del perfil (`password_source: own`). En Rustty no hay un almacén cifrado con clave maestra que desbloquear: `profiles.json` va en claro y los secretos los guarda el keyring, así que no hace falta ninguna contraseña maestra; en Linux basta con que el keyring de la sesión esté desbloqueado, que es lo normal en una sesión de escritorio.
+
+Ejemplo mínimo:
+
+```json
+[
+  {
+    "name": "Web 01",
+    "host": "10.0.0.5",
+    "port": 22,
+    "username": "root",
+    "connection_type": "ssh",
+    "group": "Producción/Web",
+    "password": "en-claro-solo-en-este-fichero"
+  },
+  {
+    "name": "Escritorio Ana",
+    "host": "10.0.0.20",
+    "connection_type": "rdp",
+    "username": "ana",
+    "domain": "CORP",
+    "password": "…"
+  }
+]
+```
+
+Reglas:
+
+- **Tipo**: `connection_type` acepta `ssh`, `rdp`, `vnc`, `telnet`, `ftp` y `ftps`, y los alias de otros clientes (`SSH2` y `SFTP` valen como `ssh`). Un tipo desconocido descarta la entrada con su motivo. Si falta el puerto, se pone el del protocolo.
+- **Carpeta y workspace**: la carpeta es `group`, una ruta con barras (`Producción/Web`), como en la barra lateral. El workspace lo decide `--workspace` para todo el fichero; un `workspace_id` dentro de las entradas se ignora, para que nada acabe en un workspace ajeno por accidente.
+- **Coincidencias**: si la entrada trae un `id` que ya existe, actualiza ese perfil; si no, busca por nombre dentro del mismo workspace y lo actualiza **conservando el id** (las contraseñas del keyring cuelgan de él); si tampoco lo encuentra, lo crea. Una entrada idéntica a lo guardado se omite como «sin cambios», y una repetida en el mismo fichero, como «duplicado».
+- **`--dry-run`** cuenta lo que haría sin escribir nada, ni perfiles ni contraseñas.
+- **Resumen** por la salida de errores: importadas, actualizadas y omitidas (con el motivo de cada una) y contraseñas guardadas o no; con `--json`, el mismo resumen como objeto. Sale con `0` si todo entró y con `1` si alguna entrada era inválida o alguna contraseña no pudo guardarse (los perfiles sí se guardan).
+
+Un fichero con contraseñas en claro es sensible: bórralo en cuanto termine la importación.
+
 ## Comandos con pseudo-terminal
 
 Algunos comandos necesitan una pseudo-terminal remota. Puedes solicitarla con `--tty`:

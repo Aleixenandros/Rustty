@@ -44,6 +44,23 @@ pub fn save(data_dir: &Path, items: &[WorkspaceEntry]) -> std::io::Result<bool> 
     Ok(true)
 }
 
+/// Id nuevo con el mismo formato que genera la interfaz (`ws-<uuid>`).
+pub fn new_id() -> String {
+    format!("ws-{}", uuid::Uuid::new_v4())
+}
+
+/// Añade (o renombra) una entrada del índice y lo guarda. La interfaz, al
+/// arrancar, crea en sus preferencias los workspaces que referencien perfiles
+/// y toma de aquí el nombre.
+pub fn add(data_dir: &Path, entry: WorkspaceEntry) -> std::io::Result<()> {
+    let mut items = load(data_dir);
+    match items.iter_mut().find(|w| w.id == entry.id) {
+        Some(existing) => existing.name = entry.name,
+        None => items.push(entry),
+    }
+    save(data_dir, &items).map(|_| ())
+}
+
 /// `id → nombre` (un nombre vacío cae al id).
 pub fn name_map(items: &[WorkspaceEntry]) -> HashMap<String, String> {
     items
@@ -86,6 +103,19 @@ mod tests {
         assert_eq!(load(&dir), items);
         let map = name_map(&load(&dir));
         assert_eq!(map.get("ws-1").map(String::as_str), Some("Omnia"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn add_crea_o_renombra_sin_duplicar() {
+        let dir = tempdir();
+        add(&dir, WorkspaceEntry { id: "ws-1".into(), name: "Import".into() }).unwrap();
+        add(&dir, WorkspaceEntry { id: "ws-1".into(), name: "Import 2".into() }).unwrap();
+        add(&dir, WorkspaceEntry { id: "ws-2".into(), name: "Otro".into() }).unwrap();
+        let items = load(&dir);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].name, "Import 2");
+        assert!(new_id().starts_with("ws-") && new_id() != new_id());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

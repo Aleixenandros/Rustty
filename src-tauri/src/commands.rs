@@ -3250,6 +3250,16 @@ pub fn save_workspace_index(
         .map_err(|e| e.to_string())
 }
 
+/// Índice de workspaces tal como está en disco. La interfaz lo consulta al
+/// arrancar para dar nombre a los workspaces que solo existen en los perfiles
+/// (p. ej. uno creado por `rustty --import`).
+#[tauri::command]
+pub fn load_workspace_index(
+    data_dir: State<'_, DataDir>,
+) -> Vec<crate::workspace_index::WorkspaceEntry> {
+    crate::workspace_index::load(&data_dir.0)
+}
+
 /// Muestra la ventana principal en cuanto el documento tiene algo que pintar.
 ///
 /// Lo pide `public/boot.js` al terminar el parseo del HTML —con el CSS ya

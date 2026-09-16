@@ -831,7 +831,12 @@ function profileWorkspaceId(p) {
  * nombres correctos), reemplaza la lista entera y los nombres se restauran.
  * @returns {boolean} true si añadió alguna entrada.
  */
-function ensureWorkspacesForProfiles() {
+/**
+ * @param {Map<string, string>|null} [indexNames] Nombres del índice del backend
+ *   (`workspaces.json`): un workspace creado por `rustty --import` solo existe
+ *   ahí y en los perfiles, y este es el momento en que entra en las prefs.
+ */
+function ensureWorkspacesForProfiles(indexNames = null) {
   if (!Array.isArray(prefs.workspaces) || prefs.workspaces.length === 0) {
     prefs.workspaces = [{ id: "default", name: "Default" }];
   }
@@ -841,9 +846,11 @@ function ensureWorkspacesForProfiles() {
     const wsId = p?.workspace_id || "default";
     if (known.has(wsId)) continue;
     known.add(wsId);
-    // Nombre de respaldo: legible aunque el real (del bundle remoto) aún no haya
-    // llegado. El usuario puede renombrarlo; un sync posterior lo sobrescribe.
-    prefs.workspaces.push({ id: wsId, name: `Workspace ${prefs.workspaces.length}` });
+    // Nombre del índice si lo hay (import por CLI); si no, uno de respaldo
+    // legible aunque el real (del bundle remoto) aún no haya llegado. El usuario
+    // puede renombrarlo; un sync posterior lo sobrescribe.
+    const fromIndex = (indexNames?.get(wsId) || "").trim();
+    prefs.workspaces.push({ id: wsId, name: fromIndex || `Workspace ${prefs.workspaces.length}` });
     prefs.userFoldersByWorkspace = prefs.userFoldersByWorkspace || {};
     if (!Array.isArray(prefs.userFoldersByWorkspace[wsId])) {
       prefs.userFoldersByWorkspace[wsId] = [];
@@ -4558,7 +4565,10 @@ async function initMain() {
   // todo, y el siguiente guardado escribiría encima.
   await reportProfilesRecovery();
 
-  ensureWorkspacesForProfiles();
+  const workspaceIndex = await invoke("load_workspace_index").catch(() => []);
+  ensureWorkspacesForProfiles(
+    new Map((Array.isArray(workspaceIndex) ? workspaceIndex : []).map((w) => [String(w?.id || ""), String(w?.name || "")])),
+  );
   syncWorkspaceIndex();
   await refreshNotesIndex();
   loadSnapshotIndex();

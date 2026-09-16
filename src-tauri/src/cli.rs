@@ -68,6 +68,13 @@ enum CliCommand {
         op: TransferOp,
         opts: RunOptions,
     },
+    /// `--import <fichero|->`: perfiles en JSON nativo, con `--dry-run`.
+    Import {
+        path: String,
+        dry_run: bool,
+        workspace: Option<String>,
+        opts: RunOptions,
+    },
     Help,
     Invalid(String),
 }
@@ -272,6 +279,7 @@ const CLI_ENTRY_FLAGS: &[&str] = &[
     "--workspace",
     "--group",
     "--all",
+    "--import",
 ];
 
 fn parse_cli_command(args: &[String]) -> Option<CliCommand> {
@@ -299,6 +307,8 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
     let mut script: Option<PathBuf> = None;
     let mut command: Option<String> = None;
     let mut transfer: Option<TransferOp> = None;
+    let mut import: Option<String> = None;
+    let mut dry_run = false;
 
     fn value<'a>(args: &[&'a str], i: usize, flag: &str) -> Result<&'a str, String> {
         match args.get(i) {
@@ -319,6 +329,14 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
             "--sudo" => opts.sudo = true,
             "-n" | "--no-stdin" => opts.no_stdin = true,
             "--all" => selector.all = true,
+            "--dry-run" => dry_run = true,
+            "--import" => {
+                i += 1;
+                match value(&args, i, "--import") {
+                    Ok(v) => import = Some(v.to_string()),
+                    Err(e) => return invalid(e),
+                }
+            }
             "-c" | "--connect" => {
                 i += 1;
                 match value(&args, i, "-c") {
@@ -438,6 +456,20 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
     if help {
         return CliCommand::Help;
     }
+    if let Some(path) = import {
+        if list || query.is_some() || command.is_some() || script.is_some() || transfer.is_some() || selector.group.is_some() || selector.all {
+            return invalid("--import solo se combina con --workspace, --dry-run, --json y -q.");
+        }
+        return CliCommand::Import {
+            path,
+            dry_run,
+            workspace: selector.workspace,
+            opts,
+        };
+    }
+    if dry_run {
+        return invalid("--dry-run solo vale con --import.");
+    }
     if let Some(cmd) = &command {
         if cmd.trim().is_empty() {
             return invalid("El comando remoto no puede estar vacio.");
@@ -527,6 +559,12 @@ fn run_cli(command: CliCommand) -> Result<i32, String> {
             op,
             opts,
         } => run_transfer_command(&query, &selector, op, opts),
+        CliCommand::Import {
+            path,
+            dry_run,
+            workspace,
+            opts,
+        } => run_import(&path, dry_run, workspace.as_deref(), &opts),
         CliCommand::Help => {
             print_help();
             Ok(0)
@@ -551,6 +589,9 @@ Uso:
   rustty -c <perfil> --put <local> <remoto>   Sube un fichero por SFTP
   rustty --workspace <w> --exec "cmd"         Ejecuta en todos los perfiles SSH del workspace
   rustty --group <g> --exec "cmd"             ...o de la carpeta (y subcarpetas); --all = todos
+  rustty --import <fichero.json|->            Importa perfiles a un workspace NUEVO import_<fecha>
+  rustty --import f.json --workspace <w>      ...o a ese workspace (existente, o nuevo con ese nombre)
+  rustty --import f.json --dry-run            Solo cuenta lo que haria, sin escribir nada
 
 Opciones:
   --json          Salida JSON: listado, o un objeto por servidor (salida, codigo, duracion)
@@ -1528,6 +1569,152 @@ fn run_many(
     Ok(if failed == 0 { 0 } else { 1 })
 }
 
+// ─── Importación de perfiles ──────────────────────────────────────────────────
+
+/// Workspace de destino de un import. Los perfiles importados **nunca se
+/// mezclan** con los de otros workspaces: sin `--workspace` se crea uno nuevo
+/// con la fecha; con un nombre o id existente se añaden a ese; con un nombre
+/// que no existe, se crea con ese nombre.
+fn resolve_import_target(
+    catalog: &Catalog,
+    wanted: Option<&str>,
+    now: &chrono::DateTime<chrono::Utc>,
+) -> crate::profile_import::TargetWorkspace {
+    use crate::profile_import::TargetWorkspace;
+    let Some(wanted) = wanted.map(str::trim).filter(|w| !w.is_empty()) else {
+        return TargetWorkspace {
+            id: workspace_index::new_id(),
+            name: crate::profile_import::import_workspace_name(now),
+            created: true,
+        };
+    };
+    if let Some((id, name)) = catalog
+        .workspace_names
+        .iter()
+        .find(|(id, name)| id.eq_ignore_ascii_case(wanted) || name.eq_ignore_ascii_case(wanted))
+    {
+        return TargetWorkspace {
+            id: id.clone(),
+            name: name.clone(),
+            created: false,
+        };
+    }
+    if let Some(p) = catalog
+        .profiles
+        .iter()
+        .find(|p| p.workspace_id.eq_ignore_ascii_case(wanted))
+    {
+        return TargetWorkspace {
+            id: p.workspace_id.clone(),
+            name: p.workspace_id.clone(),
+            created: false,
+        };
+    }
+    TargetWorkspace {
+        id: workspace_index::new_id(),
+        name: wanted.to_string(),
+        created: true,
+    }
+}
+
+fn run_import(path: &str, dry_run: bool, workspace: Option<&str>, opts: &RunOptions) -> Result<i32, String> {
+    use crate::profile_import as imp;
+
+    let raw = if path == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .map_err(|e| format!("Error leyendo stdin: {e}"))?;
+        buf
+    } else {
+        std::fs::read_to_string(path).map_err(|e| format!("No se pudo leer {path}: {e}"))?
+    };
+    let entries = imp::parse_entries(&raw)?;
+    let catalog = load_catalog()?;
+    let now = chrono::Utc::now();
+    let target = resolve_import_target(&catalog, workspace, &now);
+    let import_opts = imp::Options {
+        workspace_id: Some(target.id.clone()),
+        now: now.to_rfc3339(),
+    };
+
+    let mut prepared = Vec::new();
+    let mut invalid_entries = Vec::new();
+    for (idx, entry) in entries.into_iter().enumerate() {
+        let name = entry
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("entrada #{}", idx + 1));
+        match imp::prepare(entry, &import_opts) {
+            Ok(p) => prepared.push(p),
+            Err(reason) => invalid_entries.push(imp::Skipped { name, reason }),
+        }
+    }
+    let mut plan = imp::plan(&catalog.profiles, prepared);
+    plan.skipped.extend(invalid_entries.clone());
+    let will_write = !dry_run && (!plan.create.is_empty() || !plan.update.is_empty());
+
+    let data_dir = crate::resolve_data_dir();
+    let manager = ProfileManager::new(data_dir.clone());
+    let mut summary = imp::apply(
+        plan,
+        dry_run,
+        |profiles| manager.save_many(profiles).map_err(|e| e.to_string()),
+        |secret| {
+            crate::keyring_scope::entry(KEYRING_SERVICE, &secret.key)?
+                .set_password(&secret.value)
+                .map_err(|e| e.to_string())
+        },
+    )?;
+    // El workspace nuevo solo existe si hay perfiles que lo referencien: la
+    // interfaz lo crea al arrancar y toma el nombre del índice.
+    if target.created && will_write {
+        workspace_index::add(
+            &data_dir,
+            workspace_index::WorkspaceEntry {
+                id: target.id.clone(),
+                name: target.name.clone(),
+            },
+        )
+        .map_err(|e| format!("No se pudo anotar el workspace nuevo: {e}"))?;
+    }
+    summary.workspace = Some(target.clone());
+
+    if opts.json {
+        print_json(&summary)?;
+    } else if !opts.quiet {
+        eprintln!(
+            "{}Workspace destino: {} ({}).",
+            if dry_run { "[simulacion] " } else { "" },
+            target.name,
+            if target.created { "nuevo" } else { "existente" }
+        );
+        eprintln!(
+            "{} importadas, {} actualizadas, {} omitidas; {} contrasenas guardadas{}.",
+            summary.imported,
+            summary.updated,
+            summary.skipped.len(),
+            summary.secrets_stored,
+            if summary.secrets_failed.is_empty() {
+                String::new()
+            } else {
+                format!(", {} NO guardadas", summary.secrets_failed.len())
+            }
+        );
+        for s in &summary.skipped {
+            eprintln!("  omitida: {} ({})", s.name, s.reason);
+        }
+        for s in &summary.secrets_failed {
+            eprintln!("  contrasena no guardada: {} ({})", s.name, s.reason);
+        }
+    }
+    let failed = !invalid_entries.is_empty() || !summary.secrets_failed.is_empty();
+    Ok(if failed { 1 } else { 0 })
+}
+
 // ─── SFTP: --get / --put ──────────────────────────────────────────────────────
 
 fn run_transfer_command(
@@ -2065,6 +2252,43 @@ mod tests {
             parse_cli_command(&args(&["--all", "--put", "a", "b"])),
             Some(CliCommand::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn import_toma_fichero_dry_run_y_workspace() {
+        match parse_cli_command(&args(&["--import", "conexiones.json", "--dry-run", "--workspace", "Omnia", "--json"])) {
+            Some(CliCommand::Import { path, dry_run, workspace, opts }) => {
+                assert_eq!(path, "conexiones.json");
+                assert!(dry_run && opts.json);
+                assert_eq!(workspace.as_deref(), Some("Omnia"));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+        assert!(matches!(
+            parse_cli_command(&args(&["--import", "a.json", "--exec", "ls"])),
+            Some(CliCommand::Invalid(_))
+        ));
+        assert!(matches!(
+            parse_cli_command(&args(&["-l", "--dry-run"])),
+            Some(CliCommand::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn el_import_nunca_mezcla_con_workspaces_ajenos() {
+        let cat = catalog();
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-16T18:30:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let fresh = resolve_import_target(&cat, None, &now);
+        assert!(fresh.created && fresh.id.starts_with("ws-"));
+        assert_eq!(fresh.name, "import_2026-09-16_1830");
+        let existing = resolve_import_target(&cat, Some("omnia"), &now);
+        assert_eq!((existing.id.as_str(), existing.created), ("ws-omnia", false));
+        let by_id = resolve_import_target(&cat, Some("DEFAULT"), &now);
+        assert_eq!(by_id.id, "default");
+        let named = resolve_import_target(&cat, Some("Clientes 2026"), &now);
+        assert!(named.created && named.name == "Clientes 2026" && named.id != fresh.id);
     }
 
     #[test]

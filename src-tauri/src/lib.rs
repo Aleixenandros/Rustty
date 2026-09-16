@@ -29,6 +29,7 @@ mod metrics;
 // dispara `dead_code` con clippy bloqueante.
 pub mod mux;
 mod notes;
+mod profile_import;
 mod profiles;
 #[cfg(all(test, target_os = "linux"))]
 mod ftp_fixture;
@@ -384,6 +385,7 @@ pub fn run() {
             commands::is_launched_minimized,
             commands::reveal_main_window,
             commands::save_workspace_index,
+            commands::load_workspace_index,
             commands::is_appimage,
             commands::is_flatpak,
             app_tray::tray_update_quick_launcher,

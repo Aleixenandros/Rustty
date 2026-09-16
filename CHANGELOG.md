@@ -2,6 +2,16 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.11.0] - 2026-09-16
+
+### Añadido
+
+- **Importar conexiones desde la línea de comandos.** `rustty --import conexiones.json` lee un perfil o un array de perfiles en el formato nativo de Rustty y los guarda por el mismo camino que la interfaz, en una sola operación. Sirve para volcar lo que ya tengas exportado y descifrado de otro cliente, como mRemoteNG, sin pasar por el asistente gráfico: la carpeta llega como `group`, y `SSH2`, `RDP`, `VNC` o `Telnet` se reconocen tal cual. Cada entrada puede traer `password` y `passphrase` en claro; el importador los saca del perfil y los guarda en el keyring del sistema, como hace la interfaz, así que nunca acaban en `profiles.json`. Lo importado no se mezcla con lo que ya tienes: sin `--workspace` va a un workspace nuevo llamado `import_<fecha>_<hora>`; con `--workspace` y un nombre existente se añade a ese; con un nombre nuevo se crea con ese nombre, y aparece en la interfaz la próxima vez que se abra. Si una entrada trae un `id` conocido, o un nombre que ya existe en ese workspace, se actualiza conservando su id y sus contraseñas. `--dry-run` cuenta lo que haría sin escribir nada, y el resumen, también en `--json`, dice cuántas se importaron, actualizaron u omitieron y por qué.
+
+### Corregido
+
+- Actualizada la biblioteca TLS (`rustls`) a la versión que corrige un fallo en el reparto de mensajes del saludo de TLS 1.3 (RUSTSEC-2026-0285). Afecta a las conexiones cifradas que hace Rustty por su cuenta: FTPS, sincronización por WebDAV o Google Drive y el comprobador de actualizaciones.
+
 ## [2.10.0] - 2026-09-14
 
 ### Añadido
