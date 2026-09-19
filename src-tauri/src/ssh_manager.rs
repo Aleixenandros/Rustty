@@ -3109,6 +3109,10 @@ pub(crate) fn legacy_preferred(selected: Option<&[String]>) -> Preferred {
         cipher: Cow::Owned(cipher),
         mac: Cow::Owned(macs),
         compression: default.compression.clone(),
+        // Vacío en el default de russh: no anunciamos algoritmos de
+        // certificado de host, así que el servidor nunca nos manda uno (el
+        // camino TOFU de `host_keys` compara huellas, no firmas de CA).
+        host_key_certificates: default.host_key_certificates.clone(),
     }
 }
 

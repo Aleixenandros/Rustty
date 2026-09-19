@@ -558,7 +558,7 @@ const DEFAULT_PREFS = {
   // usuario). Una ruta válida se usa como cwd al abrir/reabrir la consola; si no
   // existe, el backend cae a $HOME.
   localShellCwd:   "",
-  // Integración de shell en la consola local (bash/zsh): marcas OSC 133
+  // Integración de shell en la consola local (bash/zsh/fish/PowerShell): marcas OSC 133
   // (bloques de comando, aviso de fin de comando largo) y OSC 7 (carpeta
   // actual) sin tocar los dotfiles del usuario. Opt-in: cambia cómo arranca
   // el shell, así que solo se aplica a consolas nuevas.
@@ -4990,8 +4990,8 @@ function renderConnectionList() {
         <div class="empty-state__title">${escHtml(t("sidebar.empty_title"))}</div>
         <p class="empty-state__hint">${escHtml(t("sidebar.empty_hint"))}</p>
         <div class="empty-state__actions">
-          <button class="btn-link" id="btn-first-connection">${escHtml(t("sidebar.empty_cta"))}</button>
-          <button class="btn-link" id="btn-first-import">${escHtml(t("sidebar.empty_import"))}</button>
+          <button class="btn-secondary" id="btn-first-connection">${escHtml(t("sidebar.empty_cta"))}</button>
+          <button class="btn-secondary" id="btn-first-import">${escHtml(t("sidebar.empty_import"))}</button>
         </div>
       </div>`;
     container.querySelector("#btn-first-connection")
@@ -13915,9 +13915,11 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     // prompt, fuera de esa ventana. Shells sin OSC 133 mantienen el
     // comportamiento best-effort (`_inCommandOutput` queda en falsy).
     if (sessionObj._inCommandOutput) return true;
-    try {
-      sessionObj.remoteCwd = decodeURIComponent(m[1]);
-    } catch { sessionObj.remoteCwd = m[1]; }
+    let cwd = m[1];
+    try { cwd = decodeURIComponent(cwd); } catch { /* ruta no válida como URI: se usa tal cual */ }
+    // Windows: `file://host/C:/Users/ana` — la barra inicial es de la URL, no
+    // de la ruta. Sin quitarla, la barra de estado enseña `/C:/Users/ana`.
+    sessionObj.remoteCwd = /^\/[A-Za-z]:[\\/]/.test(cwd) ? cwd.slice(1) : cwd;
     // Si el panel SFTP sigue al terminal, navegar al nuevo cwd
     if (sessionObj.sftp?.follow && sessionObj.sftp.cwd !== sessionObj.remoteCwd) {
       navigateSftp(sessionObj.id, sessionObj.remoteCwd);
@@ -27814,6 +27816,29 @@ async function handleTabContextAction(action) {
       invoke("tmux_kill_pane", { sessionId: target.conn, pane: target.pane })
         .catch((err) => toast(`${err}`, "error"));
     }
+    return;
+  }
+  if (action === "tmux-rename-window") {
+    const winSession = sessions.get(targetId);
+    if (!winSession?._tmux) return;
+    const root = sessions.get(winSession._tmux.conn);
+    const info = root ? tmuxWindowsOf(root).get(winSession._tmux.window) : null;
+    const name = await promptTextValue({
+      title: t("tmux.rename_window_title"),
+      message: t("tmux.rename_window_msg"),
+      label: t("tmux.rename_window_label"),
+      initialValue: info?.name || "",
+      submitLabel: t("tmux.rename_window_submit"),
+      // El quoting lo sanea el backend (`cmd_rename_window`); aquí solo se
+      // veta lo que tmux no aceptaría como nombre de ventana de una línea.
+      validate: (value) => (/[\r\n]/.test(value) ? t("tmux.rename_window_invalid") : null),
+    });
+    if (!name) return;
+    invoke("tmux_rename_window", {
+      sessionId: winSession._tmux.conn,
+      window: winSession._tmux.window,
+      name,
+    }).catch((err) => toast(`${err}`, "error"));
     return;
   }
   if (action === "tmux-new-window") {

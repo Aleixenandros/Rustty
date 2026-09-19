@@ -641,6 +641,7 @@
     "new_shell": "Nouvel onglet sur cette connexion",
     "tmux_split_h": "Diviser le panneau en colonnes",
     "tmux_split_v": "Diviser le panneau en lignes",
+    "tmux_rename_window": "Renommer la fenêtre tmux…",
     "tmux_new_window": "Nouvelle fenêtre tmux",
     "tmux_kill_pane": "Fermer le panneau (tue son processus)",
     "close_tab_title": "Fermer l'onglet",
@@ -1039,7 +1040,7 @@
     "local_cwd_placeholder": "$HOME",
     "local_cwd_hint": "Dossier où s'ouvrent les nouvelles consoles locales. Vide = votre dossier personnel. Si le chemin n'existe pas, le dossier personnel est utilisé.",
     "shell_integration": "Intégration du shell dans la console locale",
-    "shell_integration_hint": "Fait émettre à bash et zsh les marques OSC 133 et OSC 7 dans les nouvelles consoles locales : blocs de commande, avis de fin de commande longue et dossier courant, sans toucher à vos fichiers de configuration. Les autres shells démarrent comme d'habitude.",
+    "shell_integration_hint": "Fait émettre à bash, zsh, fish et PowerShell les marques OSC 133 et OSC 7 dans les nouvelles consoles locales : blocs de commande, avis de fin de commande longue et dossier courant, sans toucher à vos fichiers de configuration. Les autres shells démarrent comme d'habitude.",
     "highlight_title": "Surlignage par regex",
     "highlight_hint": "Chaque règle colore les correspondances du motif dans le buffer du terminal. Les correspondances coupées entre paquets ne sont pas surlignées.",
     "highlight_pattern": "Motif",
@@ -1986,7 +1987,12 @@
     "close_window_confirm": "Fermer cette fenêtre tue ses processus SUR LE SERVEUR (kill-window). Continuer ?",
     "close_window_submit": "Fermer",
     "kill_pane_title": "Fermer le panneau",
-    "kill_pane_confirm": "Fermer le panneau actif tue son processus SUR LE SERVEUR (kill-pane). Continuer ?"
+    "kill_pane_confirm": "Fermer le panneau actif tue son processus SUR LE SERVEUR (kill-pane). Continuer ?",
+    "rename_window_title": "Renommer la fenêtre tmux",
+    "rename_window_msg": "Le nom appartient à la fenêtre SUR LE SERVEUR : tous les clients attachés à cette session tmux le verront.",
+    "rename_window_label": "Nom de la fenêtre",
+    "rename_window_submit": "Renommer",
+    "rename_window_invalid": "Le nom doit tenir sur une seule ligne."
   },
   "tunnels": {
     "panel": "Tunnels SSH",

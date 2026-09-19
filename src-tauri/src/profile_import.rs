@@ -15,8 +15,8 @@
 //!   existe, se busca por `workspace_id` + `name` (sin distinguir mayúsculas) y,
 //!   de encontrarse, se actualiza **conservando el id** (las claves del keyring
 //!   derivan de él); si tampoco, se crea con un UUID nuevo.
-//! - **connection_type**: se normaliza (`SSH2` → `ssh`, `SFTP` → `ssh`, …); un
-//!   valor desconocido descarta la entrada con motivo.
+//! - **connection_type**: se normaliza (`SSH2` → `ssh`, `SCP` → `ssh`, `SFTP` →
+//!   `sftp`, …); un valor desconocido descarta la entrada con motivo.
 //! - **port**: si falta, el del protocolo. **auth_type**: si falta, `password`;
 //!   **username**: si falta, vacío.
 //!   **created_at**: si falta, ahora; al actualizar se conserva el original.
@@ -36,8 +36,15 @@ use serde_json::{Map, Value};
 use crate::profiles::ConnectionProfile;
 
 /// Tipos que la interfaz sabe abrir, con sus alias de otros clientes.
+///
+/// `sftp` es un tipo **propio**, no un alias de `ssh`: marca un destino de solo
+/// ficheros (un StorageBox sin shell), y es lo que distingue la CLI para
+/// aceptarlo en `--get`/`--put` y listarlo con su tipo. Aplastarlo a `ssh` al
+/// importar perdía esa información en el formato nativo de Rustty. `scp` sí es
+/// un alias: no es un tipo de perfil aquí.
 const CONNECTION_TYPES: &[(&str, &[&str])] = &[
-    ("ssh", &["ssh", "ssh1", "ssh2", "sftp", "scp"]),
+    ("ssh", &["ssh", "ssh1", "ssh2", "scp"]),
+    ("sftp", &["sftp"]),
     ("rdp", &["rdp", "mstsc"]),
     ("vnc", &["vnc"]),
     ("telnet", &["telnet"]),
@@ -396,7 +403,10 @@ mod tests {
     #[test]
     fn normaliza_tipos_y_puertos() {
         assert_eq!(normalize_connection_type("SSH2"), Some("ssh"));
-        assert_eq!(normalize_connection_type("sftp"), Some("ssh"));
+        assert_eq!(normalize_connection_type("SCP"), Some("ssh"));
+        // `sftp` conserva su tipo: la CLI lo trata como destino sin shell.
+        assert_eq!(normalize_connection_type("sftp"), Some("sftp"));
+        assert_eq!(default_port("sftp"), 22);
         assert_eq!(normalize_connection_type(""), Some("ssh"));
         assert_eq!(normalize_connection_type("RDP"), Some("rdp"));
         assert_eq!(normalize_connection_type("Telnet"), Some("telnet"));

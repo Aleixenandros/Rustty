@@ -52,13 +52,19 @@ dos combinaciones se pueden cambiar o desactivar como cualquier otro atajo.
 
 En la **consola local** los bloques también funcionan sin configurar nada en
 tu shell: la opción **Integración de shell en la consola local** de
-**Preferencias → Terminal** (apagada por defecto) hace que bash y zsh emitan
-las marcas OSC 133 y OSC 7 en las consolas nuevas. Rustty arranca el shell con
-un fichero de inicio propio que primero carga tu configuración de siempre y
-después instala los hooks, así que tus `.bashrc`, `.zshenv` y `.zshrc` quedan
-intactos; el resto de shells arrancan como siempre. Con ella activada, la
-consola local gana también la carpeta actual en la barra inferior y el aviso
-de fin de comando largo.
+**Preferencias → Terminal** (apagada por defecto) hace que bash, zsh, fish y
+PowerShell emitan las marcas OSC 133 y OSC 7 en las consolas nuevas. Rustty
+arranca el shell con un fichero de inicio propio que se carga junto al tuyo,
+así que tus `.bashrc`, `.zshenv`, `.zshrc`, `config.fish` y tu `$PROFILE`
+quedan intactos y el tema que dibuje tu prompt se respeta; el resto de shells
+arrancan como siempre. Con ella activada, la consola local gana también la
+carpeta actual en la barra inferior y el aviso de fin de comando largo.
+
+En **fish** hace falta la versión 3 o posterior. En **PowerShell**, si tu
+directiva de ejecución (`Get-ExecutionPolicy`) no permite cargar el fichero, la
+consola abre igual, sin marcas y sin error; y el momento en que arranca un
+comando se detecta con PSReadLine, así que sin él los bloques empiezan en el
+prompt en vez de en la salida.
 
 ### Panel de bloques de comando
 

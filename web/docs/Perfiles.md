@@ -55,9 +55,11 @@ Detalles a saber:
   shell normal y lo avisa en el log de conexión.
 - El nombre de la sesión es el del reenganche clásico (o el nombre del perfil);
   si marcas ambas casillas, gana el modo control.
-- Dividir, cerrar panes o crear ventanas se hace desde el menú contextual de la
-  pestaña; cerrar una ventana o un pane **mata sus procesos en el servidor**,
-  por eso pide confirmación.
+- Dividir, cerrar panes, crear ventanas o **renombrar la ventana** se hace desde
+  el menú contextual de la pestaña; cerrar una ventana o un pane **mata sus
+  procesos en el servidor**, por eso pide confirmación. El nombre que pongas es
+  el de la ventana en el servidor: lo verá cualquier otro cliente enganchado a
+  esa sesión.
 - Al reenganchar, cada pane recupera parte de su historia
   (**Preferencias → Terminal → Scrollback al reenganchar tmux**; 0 = enganche
   instantáneo sin historia).

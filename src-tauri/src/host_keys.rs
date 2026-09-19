@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use russh::client;
-use russh::keys::{known_hosts, ssh_key::PublicKey};
+use russh::keys::{known_hosts, ssh_key::PublicKey, PublicKeyOrCertificate};
 use russh::{Channel, ChannelMsg};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -475,8 +475,31 @@ impl client::Handler for KnownHostsClient {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        // Desde russh 0.63 el handler recibe la clave **o un certificado** de
+        // host. Un certificado se verifica contra la CA declarada en
+        // known_hosts (`@cert-authority`), no comparando huellas, así que no
+        // tiene traducción en este camino TOFU: aquí se rechaza con un mensaje
+        // que lo dice. No es alcanzable mientras no anunciemos algoritmos
+        // `*-cert-v01@openssh.com` (`Preferred::host_key_certificates`, vacío
+        // por defecto y también en `legacy_preferred`); queda como la única
+        // respuesta honesta si algún día se activan.
+        let server_public_key = match server_public_key {
+            PublicKeyOrCertificate::PublicKey { key, .. } => key,
+            PublicKeyOrCertificate::Certificate(cert) => {
+                self.set_failure(format!(
+                    "{} {}:{} ha presentado un CERTIFICADO de host ({}), y Rustty \
+                     todavía no verifica certificados: solo claves en known_hosts. \
+                     Conexión rechazada.",
+                    crate::ipc_error::HOSTKEY_UNKNOWN_MARKER,
+                    self.host,
+                    self.port,
+                    cert.algorithm(),
+                ));
+                return Ok(false);
+            }
+        };
         match self.check_known_hosts(server_public_key) {
             // Coincide exactamente con una entrada existente (mismo algoritmo
             // y misma clave): aceptamos.

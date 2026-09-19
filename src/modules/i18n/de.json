@@ -641,6 +641,7 @@
     "new_shell": "Neuer Tab auf dieser Verbindung",
     "tmux_split_h": "Pane in Spalten teilen",
     "tmux_split_v": "Pane in Zeilen teilen",
+    "tmux_rename_window": "tmux-Fenster umbenennen…",
     "tmux_new_window": "Neues tmux-Fenster",
     "tmux_kill_pane": "Pane schließen (beendet ihren Prozess)",
     "close_tab_title": "Tab schließen",
@@ -1039,7 +1040,7 @@
     "local_cwd_placeholder": "$HOME",
     "local_cwd_hint": "Ordner, in dem neue lokale Konsolen öffnen. Leer = dein persönlicher Ordner. Wenn der Pfad nicht existiert, wird der persönliche Ordner verwendet.",
     "shell_integration": "Shell-Integration in der lokalen Konsole",
-    "shell_integration_hint": "Lässt bash und zsh in neuen lokalen Konsolen die Marken OSC 133 und OSC 7 ausgeben: Befehlsblöcke, Hinweis auf lange Befehle und aktueller Ordner, ohne deine Konfigurationsdateien anzurühren. Andere Shells starten wie gewohnt.",
+    "shell_integration_hint": "Lässt bash, zsh, fish und PowerShell in neuen lokalen Konsolen die Marken OSC 133 und OSC 7 ausgeben: Befehlsblöcke, Hinweis auf lange Befehle und aktueller Ordner, ohne deine Konfigurationsdateien anzurühren. Andere Shells starten wie gewohnt.",
     "highlight_title": "Regex-Hervorhebung",
     "highlight_hint": "Jede Regel färbt die Muster-Treffer im Terminal-Puffer. Treffer, die einen Netzwerk-Chunk überspannen, werden nicht hervorgehoben.",
     "highlight_pattern": "Muster",
@@ -1986,7 +1987,12 @@
     "close_window_confirm": "Das Schließen dieses Fensters beendet seine Prozesse AUF DEM SERVER (kill-window). Fortfahren?",
     "close_window_submit": "Schließen",
     "kill_pane_title": "Pane schließen",
-    "kill_pane_confirm": "Das Schließen der aktiven Pane beendet ihren Prozess AUF DEM SERVER (kill-pane). Fortfahren?"
+    "kill_pane_confirm": "Das Schließen der aktiven Pane beendet ihren Prozess AUF DEM SERVER (kill-pane). Fortfahren?",
+    "rename_window_title": "tmux-Fenster umbenennen",
+    "rename_window_msg": "Der Name gehört zum Fenster AUF DEM SERVER: Jeder Client, der an dieser tmux-Sitzung hängt, sieht ihn.",
+    "rename_window_label": "Fenstername",
+    "rename_window_submit": "Umbenennen",
+    "rename_window_invalid": "Der Name muss in eine Zeile passen."
   },
   "tunnels": {
     "panel": "SSH-Tunnel",

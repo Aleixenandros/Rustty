@@ -641,6 +641,7 @@
     "new_shell": "New tab on this connection",
     "tmux_split_h": "Split pane into columns",
     "tmux_split_v": "Split pane into rows",
+    "tmux_rename_window": "Rename tmux window…",
     "tmux_new_window": "New tmux window",
     "tmux_kill_pane": "Close pane (kills its process)",
     "close_tab_title": "Close tab",
@@ -1039,7 +1040,7 @@
     "local_cwd_placeholder": "$HOME",
     "local_cwd_hint": "Folder where new local consoles open. Empty = your home folder. If the path doesn't exist, the home folder is used.",
     "shell_integration": "Shell integration in the local console",
-    "shell_integration_hint": "Makes bash and zsh emit the OSC 133 and OSC 7 marks in new local consoles: command blocks, long-command notifications and current folder, without touching your configuration files. Other shells start as usual.",
+    "shell_integration_hint": "Makes bash, zsh, fish and PowerShell emit the OSC 133 and OSC 7 marks in new local consoles: command blocks, long-command notifications and current folder, without touching your configuration files. Other shells start as usual.",
     "highlight_title": "Regex highlighting",
     "highlight_hint": "Each rule colors the pattern matches in the terminal buffer. Matches that span a network chunk are not highlighted.",
     "highlight_pattern": "Pattern",
@@ -1986,7 +1987,12 @@
     "close_window_confirm": "Closing this window kills its processes ON THE SERVER (kill-window). Continue?",
     "close_window_submit": "Close",
     "kill_pane_title": "Close pane",
-    "kill_pane_confirm": "Closing the active pane kills its process ON THE SERVER (kill-pane). Continue?"
+    "kill_pane_confirm": "Closing the active pane kills its process ON THE SERVER (kill-pane). Continue?",
+    "rename_window_title": "Rename tmux window",
+    "rename_window_msg": "The name belongs to the window ON THE SERVER: every client attached to this tmux session will see it.",
+    "rename_window_label": "Window name",
+    "rename_window_submit": "Rename",
+    "rename_window_invalid": "The name must fit on a single line."
   },
   "tunnels": {
     "panel": "SSH tunnels",

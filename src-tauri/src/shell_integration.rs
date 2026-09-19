@@ -22,8 +22,20 @@
 //!   `ZDOTDIR` a `~/.config/zsh`) y devuelven `ZDOTDIR` a su valor, para que un
 //!   zsh anidado no vuelva a pasar por aquí. Los hooks van por
 //!   `precmd`/`preexec`.
-//! - **Otros** (fish, PowerShell, cmd, sh): sin integración; el shell arranca
-//!   como siempre.
+//! - **fish**: `fish --init-command "source <dir>/rustty-fish.fish"`.
+//!   `--init-command` se evalúa **después** de `config.fish`, que es lo que
+//!   permite envolver la `fish_prompt` que haya quedado definida —la del
+//!   usuario o la de fish— sin tocar sus ficheros ni `XDG_DATA_DIRS` (un
+//!   snippet en `conf.d` se carga antes y el usuario lo pisaría). `C`/`D` van
+//!   por los eventos `fish_preexec`/`fish_postexec`.
+//! - **PowerShell**: `-NoExit -Command "try { . '<dir>/rustty.ps1' } catch {}"`,
+//!   que se ejecuta tras los perfiles del usuario. El prompt se envuelve
+//!   guardando el `$function:prompt` vigente, y la `C` se engancha a
+//!   `PSConsoleHostReadLine` (PSReadLine), el único punto entre el Intro y la
+//!   ejecución; sin PSReadLine se queda sin `C`. Si la directiva de ejecución
+//!   (`Restricted`) impide cargar el fichero, el `catch` deja la consola
+//!   arrancar sin marcas en vez de con un error.
+//! - **Otros** (cmd, sh): sin integración; el shell arranca como siempre.
 
 use std::path::Path;
 
@@ -32,20 +44,29 @@ use std::path::Path;
 pub enum ShellKind {
     Bash,
     Zsh,
+    Fish,
+    PowerShell,
     Other,
 }
 
 impl ShellKind {
-    /// `/usr/bin/zsh` → `Zsh`; `bash` → `Bash`; `pwsh.exe`, `/bin/fish` → `Other`.
+    /// `/usr/bin/zsh` → `Zsh`; `bash` → `Bash`; `/bin/fish` → `Fish`;
+    /// `pwsh.exe` → `PowerShell`; `/bin/sh` → `Other`.
     pub fn detect(shell: &str) -> Self {
-        let name = Path::new(shell)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-        let name = name.strip_suffix(".exe").unwrap_or(name);
+        // El último segmento, partiendo por los DOS separadores: una ruta de
+        // Windows (`C:\...\pwsh.exe`) llega entera si se mira con las reglas
+        // de Unix, y `Path::file_name` devolvería la ruta completa.
+        let name = shell.rsplit(['/', '\\']).next().unwrap_or("");
+        // En minúsculas y sin `.exe`: en Windows el nombre del ejecutable no
+        // distingue mayúsculas y `COMSPEC`/el registro pueden darlo en
+        // cualquier caja.
+        let name = name.to_ascii_lowercase();
+        let name = name.strip_suffix(".exe").unwrap_or(&name);
         match name {
             "bash" => Self::Bash,
             "zsh" => Self::Zsh,
+            "fish" => Self::Fish,
+            "pwsh" | "powershell" => Self::PowerShell,
             _ => Self::Other,
         }
     }
@@ -62,6 +83,8 @@ pub struct Launch {
 pub const DIR_NAME: &str = "shell-integration";
 const BASH_FILE: &str = "rustty-bash.sh";
 const ZSH_DIR: &str = "zsh";
+const FISH_FILE: &str = "rustty-fish.fish";
+const PWSH_FILE: &str = "rustty.ps1";
 
 /// Fichero de inicio de bash (`--rcfile`).
 pub const BASH_RC: &str = r#"# Integracion de shell de Rustty para bash. Generado por Rustty: los cambios
@@ -168,6 +191,98 @@ if [[ -z "$__rustty_integrated" ]]; then
 fi
 "#;
 
+/// Fichero de arranque de fish (`--init-command`).
+pub const FISH_CONF: &str = r#"# Integracion de shell de Rustty para fish. Generado por Rustty: los cambios
+# se pierden al abrir la siguiente consola. Se carga con --init-command, o sea
+# DESPUES de tu config.fish, para poder envolver la fish_prompt que ya haya.
+if not set -q __rustty_integrated
+    set -g __rustty_integrated 1
+
+    function __rustty_osc
+        printf '\033]%s\a' $argv[1]
+    end
+
+    # C (empieza la salida) y D (acaba el comando, con su estado).
+    function __rustty_preexec --on-event fish_preexec
+        set -g __rustty_cmd_ran 1
+        __rustty_osc "133;C"
+    end
+    function __rustty_postexec --on-event fish_postexec
+        set -l st $status
+        if set -q __rustty_cmd_ran
+            __rustty_osc "133;D;$st"
+            set -e __rustty_cmd_ran
+        end
+    end
+
+    # A (prompt nuevo), el cwd y B (fin del prompt) envolviendo la funcion de
+    # prompt vigente: la tuya si la has definido, si no la de fish.
+    if functions -q fish_prompt
+        functions --copy fish_prompt __rustty_user_prompt
+    else
+        function __rustty_user_prompt
+            printf '%s> ' (prompt_pwd)
+        end
+    end
+    function fish_prompt
+        __rustty_osc "7;file://$hostname$PWD"
+        __rustty_osc "133;A"
+        __rustty_user_prompt
+        __rustty_osc "133;B"
+    end
+end
+"#;
+
+/// Fichero de arranque de PowerShell (`-NoExit -Command`).
+pub const PWSH_PROFILE: &str = r#"# Integracion de shell de Rustty para PowerShell. Generado por Rustty: los
+# cambios se pierden al abrir la siguiente consola. Se carga tras tus perfiles,
+# asi que el prompt que se envuelve es el que ya estuviera puesto.
+if (-not $global:__RusttyIntegrated) {
+    $global:__RusttyIntegrated = $true
+    $global:__RusttyOriginalPrompt = $function:prompt
+    $global:__RusttyCmdRan = $false
+
+    function global:__RusttyOsc([string] $Data) {
+        return "$([char]0x1b)]$Data$([char]0x07)"
+    }
+
+    function global:prompt {
+        # $? del ultimo comando: se lee lo primero, antes de que nada lo pise.
+        $ok = $?
+        $code = if ($ok) { 0 } elseif ($global:LASTEXITCODE) { $global:LASTEXITCODE } else { 1 }
+        $out = ''
+        if ($global:__RusttyCmdRan) {
+            $out += __RusttyOsc "133;D;$code"
+            $global:__RusttyCmdRan = $false
+        }
+        $cwd = (Get-Location).Path -replace '\\', '/'
+        if (-not $cwd.StartsWith('/')) { $cwd = "/$cwd" }
+        $out += __RusttyOsc "7;file://$([System.Net.Dns]::GetHostName())$cwd"
+        $out += __RusttyOsc "133;A"
+        if ($global:__RusttyOriginalPrompt) {
+            $out += & $global:__RusttyOriginalPrompt
+        } else {
+            $out += "PS $cwd> "
+        }
+        $out += __RusttyOsc "133;B"
+        return $out
+    }
+
+    # C (empieza la salida): PSReadLine entrega la linea por
+    # PSConsoleHostReadLine, el unico punto entre el Intro y la ejecucion.
+    # Sin PSReadLine no hay donde engancharlo y esta consola se queda sin C.
+    if (Get-Command PSConsoleHostReadLine -ErrorAction SilentlyContinue) {
+        $global:__RusttyOriginalReadLine = $function:PSConsoleHostReadLine
+        function global:PSConsoleHostReadLine {
+            $line = & $global:__RusttyOriginalReadLine
+            $global:__RusttyCmdRan = $true
+            [Console]::Write((__RusttyOsc "133;C"))
+            return $line
+        }
+    }
+}
+"#;
+
 /// Deja escritos los ficheros de arranque de `kind` bajo `data_dir` y devuelve
 /// lo que hay que añadir al lanzamiento. `Ok(None)` = shell sin integración.
 ///
@@ -197,8 +312,49 @@ pub fn prepare(data_dir: &Path, kind: ShellKind) -> std::io::Result<Option<Launc
                 ],
             }))
         }
+        ShellKind::Fish => {
+            let conf = dir.join(FISH_FILE);
+            ensure_file(&conf, FISH_CONF)?;
+            Ok(Some(Launch {
+                args: vec![
+                    "--init-command".to_string(),
+                    format!("source {}", fish_quote(&path_string(&conf))),
+                ],
+                env: Vec::new(),
+            }))
+        }
+        ShellKind::PowerShell => {
+            let script = dir.join(PWSH_FILE);
+            ensure_file(&script, PWSH_PROFILE)?;
+            Ok(Some(Launch {
+                args: vec![
+                    "-NoExit".to_string(),
+                    "-Command".to_string(),
+                    // El `catch` vacío es deliberado: si la directiva de
+                    // ejecución no deja cargar el fichero, la consola abre sin
+                    // marcas en vez de recibir al usuario con un error rojo.
+                    format!(
+                        "try {{ . {} }} catch {{ }}",
+                        pwsh_quote(&path_string(&script))
+                    ),
+                ],
+                env: Vec::new(),
+            }))
+        }
         ShellKind::Other => Ok(None),
     }
+}
+
+/// Entrecomilla una ruta para fish. Entre comillas simples fish solo interpreta
+/// `\'` y `\\`, así que basta con escapar esos dos.
+fn fish_quote(path: &str) -> String {
+    format!("'{}'", path.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+
+/// Entrecomilla una ruta para PowerShell. Entre comillas simples el único
+/// escape es duplicar la comilla.
+fn pwsh_quote(path: &str) -> String {
+    format!("'{}'", path.replace('\'', "''"))
 }
 
 /// `ZDOTDIR` del usuario si lo tiene en el entorno; si no, su carpeta personal.
@@ -254,15 +410,20 @@ mod tests {
         assert_eq!(ShellKind::detect("bash"), ShellKind::Bash);
         assert_eq!(ShellKind::detect("/bin/zsh"), ShellKind::Zsh);
         assert_eq!(ShellKind::detect("/usr/local/bin/zsh"), ShellKind::Zsh);
-        assert_eq!(ShellKind::detect("/usr/bin/fish"), ShellKind::Other);
-        assert_eq!(ShellKind::detect("pwsh.exe"), ShellKind::Other);
+        assert_eq!(ShellKind::detect("/usr/bin/fish"), ShellKind::Fish);
+        assert_eq!(ShellKind::detect("pwsh.exe"), ShellKind::PowerShell);
+        assert_eq!(ShellKind::detect("powershell.EXE"), ShellKind::PowerShell);
+        assert_eq!(
+            ShellKind::detect(r"C:\Program Files\PowerShell\7\pwsh.exe"),
+            ShellKind::PowerShell
+        );
         assert_eq!(ShellKind::detect("/bin/sh"), ShellKind::Other);
         assert_eq!(ShellKind::detect(""), ShellKind::Other);
     }
 
     #[test]
     fn los_scripts_llevan_las_cuatro_marcas_y_el_cwd() {
-        for script in [BASH_RC, ZSH_RC] {
+        for script in [BASH_RC, ZSH_RC, FISH_CONF, PWSH_PROFILE] {
             for mark in ["133;A", "133;B", "133;C", "133;D;", "7;file://"] {
                 assert!(script.contains(mark), "falta {mark}");
             }
@@ -271,6 +432,74 @@ mod tests {
         assert!(BASH_RC.contains(". \"$HOME/.bashrc\""));
         assert!(ZSH_ENV.contains(". \"$ZDOTDIR/.zshenv\""));
         assert!(ZSH_RC.contains(". \"$RUSTTY_USER_ZDOTDIR/.zshrc\""));
+        // fish y PowerShell no cargan nada del usuario: su fichero se evalúa
+        // DESPUÉS de la configuración (`--init-command` / `-Command`), que es
+        // justo lo que permite envolver el prompt que ya haya.
+        assert!(FISH_CONF.contains("functions --copy fish_prompt __rustty_user_prompt"));
+        assert!(PWSH_PROFILE.contains("$global:__RusttyOriginalPrompt = $function:prompt"));
+    }
+
+    #[test]
+    fn fish_y_powershell_reciben_su_fichero_de_arranque() {
+        let dir = tempdir("launch-fish-pwsh");
+        let base = dir.join(DIR_NAME);
+
+        let fish = prepare(&dir, ShellKind::Fish).unwrap().unwrap();
+        let conf = base.join(FISH_FILE);
+        assert_eq!(
+            fish.args,
+            vec![
+                "--init-command".to_string(),
+                format!("source '{}'", path_string(&conf)),
+            ]
+        );
+        assert!(fish.env.is_empty());
+        assert_eq!(std::fs::read_to_string(&conf).unwrap(), FISH_CONF);
+
+        let pwsh = prepare(&dir, ShellKind::PowerShell).unwrap().unwrap();
+        let script = base.join(PWSH_FILE);
+        assert_eq!(pwsh.args[0], "-NoExit");
+        assert_eq!(pwsh.args[1], "-Command");
+        assert_eq!(
+            pwsh.args[2],
+            format!("try {{ . '{}' }} catch {{ }}", path_string(&script))
+        );
+        assert!(pwsh.env.is_empty());
+        assert_eq!(std::fs::read_to_string(&script).unwrap(), PWSH_PROFILE);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Una ruta con comilla o barra invertida no puede romper el `source` de
+    /// fish ni el dot-source de PowerShell: un directorio de datos con un
+    /// apóstrofo en el nombre del usuario es un caso real, no rebuscado.
+    #[test]
+    fn las_rutas_con_comillas_van_entrecomilladas() {
+        assert_eq!(fish_quote("/home/ana/datos"), "'/home/ana/datos'");
+        assert_eq!(fish_quote("/home/o'hara/d"), r"'/home/o\'hara/d'");
+        assert_eq!(fish_quote(r"C:\Users\ana"), r"'C:\\Users\\ana'");
+        assert_eq!(pwsh_quote(r"C:\Users\ana"), r"'C:\Users\ana'");
+        assert_eq!(pwsh_quote("C:\\o'hara"), "'C:\\o''hara'");
+    }
+
+    /// Si la máquina tiene fish, que al menos el script **parsee**: un error de
+    /// sintaxis en `--init-command` deja la consola sin prompt. Sin fish
+    /// instalado (el caso del CI) la prueba no puede decir nada y se salta.
+    #[test]
+    fn el_script_de_fish_parsea_si_hay_fish() {
+        use std::process::Command;
+        let dir = tempdir("fish-parse");
+        let conf = dir.join(DIR_NAME).join(FISH_FILE);
+        let _ = prepare(&dir, ShellKind::Fish).unwrap();
+        // `--no-execute` solo comprueba la sintaxis.
+        if let Ok(out) = Command::new("fish").arg("--no-execute").arg(&conf).output() {
+            assert!(
+                out.status.success(),
+                "fish -n rechaza el script: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

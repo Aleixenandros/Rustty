@@ -641,6 +641,7 @@
     "new_shell": "Novo separador nesta ligação",
     "tmux_split_h": "Dividir painel em colunas",
     "tmux_split_v": "Dividir painel em linhas",
+    "tmux_rename_window": "Renomear janela tmux…",
     "tmux_new_window": "Nova janela tmux",
     "tmux_kill_pane": "Fechar painel (mata o seu processo)",
     "close_tab_title": "Fechar separador",
@@ -1039,7 +1040,7 @@
     "local_cwd_placeholder": "$HOME",
     "local_cwd_hint": "Pasta onde os novos consoles locais abrem. Vazio = a sua pasta pessoal. Se o caminho não existir, usa-se a pasta pessoal.",
     "shell_integration": "Integração de shell na consola local",
-    "shell_integration_hint": "Faz com que o bash e o zsh emitam as marcas OSC 133 e OSC 7 nas consolas locais novas: blocos de comando, aviso de fim de comando longo e pasta atual, sem tocar nos teus ficheiros de configuração. Os outros shells arrancam como sempre.",
+    "shell_integration_hint": "Faz com que o bash, o zsh, o fish e o PowerShell emitam as marcas OSC 133 e OSC 7 nas consolas locais novas: blocos de comando, aviso de fim de comando longo e pasta atual, sem tocar nos teus ficheiros de configuração. Os outros shells arrancam como sempre.",
     "highlight_title": "Realce por regex",
     "highlight_hint": "Cada regra colore as ocorrências do padrão no buffer do terminal. Correspondências que cruzam um chunk de rede não são realçadas.",
     "highlight_pattern": "Padrão",
@@ -1986,7 +1987,12 @@
     "close_window_confirm": "Fechar esta janela mata os seus processos NO SERVIDOR (kill-window). Continuar?",
     "close_window_submit": "Fechar",
     "kill_pane_title": "Fechar painel",
-    "kill_pane_confirm": "Fechar o painel ativo mata o seu processo NO SERVIDOR (kill-pane). Continuar?"
+    "kill_pane_confirm": "Fechar o painel ativo mata o seu processo NO SERVIDOR (kill-pane). Continuar?",
+    "rename_window_title": "Renomear janela tmux",
+    "rename_window_msg": "O nome é da janela NO SERVIDOR: qualquer cliente ligado a esta sessão tmux vai vê-lo.",
+    "rename_window_label": "Nome da janela",
+    "rename_window_submit": "Renomear",
+    "rename_window_invalid": "O nome tem de caber numa só linha."
   },
   "tunnels": {
     "panel": "Túneis SSH",

@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "2.11.0"
+version = "2.12.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -45,7 +45,7 @@ serde_json = "1"
 # interactivo (ssh_manager) como el explorador de ficheros (sftp_manager);
 # nos permite arrancar un sftp-server elevado con `sudo` sobre un canal exec.
 # feature "des": habilita 3des-cbc para servidores legacy muy antiguos.
-russh = { version = "0.62", features = ["des"] }
+russh = { version = "0.63", features = ["des"] }
 russh-sftp = "2.3"
 suppaftp = { version = "10.0.0", features = ["rustls-ring"] }
 tokio = { version = "1", features = ["rt", "net", "io-util", "io-std", "sync", "fs", "macros", "time"] }
@@ -67,7 +67,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "linux-
 # Generación de UUIDs para IDs de sesión y perfil
 uuid = { version = "1", features = ["v4"] }
 # Directorios del sistema (app data dir)
-dirs = "6"
+dirs = "7"
 # Manejo ergonómico de errores
 thiserror = "2"
 # Borrado seguro de secretos en memoria (Zeroizing) al liberarlos

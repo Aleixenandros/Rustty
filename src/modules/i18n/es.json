@@ -641,6 +641,7 @@
     "new_shell": "Nueva pestaña en esta conexión",
     "tmux_split_h": "Dividir pane en columnas",
     "tmux_split_v": "Dividir pane en filas",
+    "tmux_rename_window": "Renombrar ventana tmux…",
     "tmux_new_window": "Nueva ventana tmux",
     "tmux_kill_pane": "Cerrar pane (mata su proceso)",
     "close_tab_title": "Cerrar pestaña",
@@ -1039,7 +1040,7 @@
     "local_cwd_placeholder": "$HOME",
     "local_cwd_hint": "Carpeta donde se abren las consolas locales nuevas. Vacío = tu carpeta personal. Si la ruta no existe, se usa la carpeta personal.",
     "shell_integration": "Integración de shell en la consola local",
-    "shell_integration_hint": "Hace que bash y zsh emitan las marcas OSC 133 y OSC 7 en las consolas locales nuevas: bloques de comando, aviso de fin de comando largo y carpeta actual, sin tocar tus ficheros de configuración. Otros shells arrancan como siempre.",
+    "shell_integration_hint": "Hace que bash, zsh, fish y PowerShell emitan las marcas OSC 133 y OSC 7 en las consolas locales nuevas: bloques de comando, aviso de fin de comando largo y carpeta actual, sin tocar tus ficheros de configuración. Otros shells arrancan como siempre.",
     "highlight_title": "Resaltado por regex",
     "highlight_hint": "Cada regla colorea las coincidencias del patrón en el buffer del terminal. Los matches que crucen un chunk de red no se resaltan.",
     "highlight_pattern": "Patrón",
@@ -1986,7 +1987,12 @@
     "close_window_confirm": "Cerrar esta ventana mata sus procesos EN EL SERVIDOR (kill-window). ¿Continuar?",
     "close_window_submit": "Cerrar",
     "kill_pane_title": "Cerrar pane",
-    "kill_pane_confirm": "Cerrar la pane activa mata su proceso EN EL SERVIDOR (kill-pane). ¿Continuar?"
+    "kill_pane_confirm": "Cerrar la pane activa mata su proceso EN EL SERVIDOR (kill-pane). ¿Continuar?",
+    "rename_window_title": "Renombrar ventana tmux",
+    "rename_window_msg": "El nombre se lo pones a la ventana EN EL SERVIDOR: lo verá cualquier cliente enganchado a esta sesión tmux.",
+    "rename_window_label": "Nombre de la ventana",
+    "rename_window_submit": "Renombrar",
+    "rename_window_invalid": "El nombre tiene que caber en una línea."
   },
   "tunnels": {
     "panel": "Túneles SSH",
