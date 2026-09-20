@@ -466,6 +466,7 @@ pub fn run() {
             commands::telnet_connect,
             commands::telnet_disconnect,
             // ── Shell local
+            commands::sweep_orphan_sessions,
             commands::local_shell_open,
             commands::local_shell_send_input,
             commands::local_shell_resize,

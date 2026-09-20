@@ -97,45 +97,7 @@ impl LocalShellManager {
             .or_else(dirs::home_dir);
 
         let shell = get_default_shell();
-        // Dentro de Flatpak el shell nace en el host (`flatpak-spawn --host`):
-        // el del contenedor no tiene los dotfiles ni las herramientas del
-        // usuario. Fuera del sandbox esto es un `CommandBuilder` normal.
-        let mut cmd = crate::sandbox::host_pty_command(&shell, resolved_cwd.as_deref());
-        // Integración de shell (opt-in): marcas OSC 133 / OSC 7 en bash y zsh
-        // sin tocar los dotfiles del usuario. Si los ficheros de arranque no se
-        // pueden escribir, la consola abre igual, sin marcas: un fallo de disco
-        // no puede dejar al usuario sin consola.
-        if let Some(dir) = integration_dir {
-            let kind = crate::shell_integration::ShellKind::detect(&shell);
-            match crate::shell_integration::prepare(&dir, kind) {
-                Ok(Some(launch)) => {
-                    for arg in launch.args {
-                        cmd.arg(arg);
-                    }
-                    for (key, value) in launch.env {
-                        cmd.env(key, value);
-                    }
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    log::warn!("integración de shell no disponible para {shell}: {err}");
-                }
-            }
-        }
-        cmd.env("TERM", "xterm-256color");
-        // Color verdadero en apps que lo detectan por COLORTERM (vim, bat, delta…).
-        cmd.env("COLORTERM", "truecolor");
-        // Locale UTF-8 cuando el entorno no define ninguno, para que readline y
-        // las TUIs no caigan a ASCII/Latin-1. Solo Unix: en Windows ConPTY usa
-        // UTF-16/UTF-8 y forzar un locale rompería más de lo que arregla.
-        #[cfg(unix)]
-        if std::env::var_os("LC_ALL").is_none()
-            && std::env::var_os("LC_CTYPE").is_none()
-            && std::env::var_os("LANG").is_none()
-        {
-            cmd.env("LANG", "C.UTF-8");
-            cmd.env("LC_CTYPE", "C.UTF-8");
-        }
+        let cmd = build_command(&shell, resolved_cwd.as_deref(), integration_dir.as_deref());
         let mut child = pair
             .slave
             .spawn_command(cmd)
@@ -183,9 +145,17 @@ impl LocalShellManager {
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) | Err(_) => {
-                        // El shell terminó: retira el handle muerto del mapa
-                        // antes de avisar al frontend (evita acumular sesiones
-                        // cerradas si el usuario no cierra la pestaña).
+                        // El shell terminó. Antes de avisar, la **marca de fin**:
+                        // un bloque vacío por el mismo Channel que los datos. El
+                        // cierre viaja por un evento y la salida por el Channel
+                        // —dos caminos—, y el evento puede adelantar al último
+                        // bloque; el Channel sí ordena sus mensajes, así que el
+                        // frontend sabe con esta marca que ya lo ha visto todo y
+                        // pinta «el shell ha terminado» DESPUÉS de la salida.
+                        let _ = on_data.send(Response::new(Vec::new()));
+                        // Retira el handle muerto del mapa antes de avisar al
+                        // frontend (evita acumular sesiones cerradas si el
+                        // usuario no cierra la pestaña).
                         sessions_r.lock_recover().remove(&sid_r);
                         let _ = app_r.emit(&event_name(EventKind::ShellClosed, &sid_r), ());
                         break;
@@ -193,6 +163,14 @@ impl LocalShellManager {
                     Ok(n) => {
                         // Bytes crudos por el Channel binario (sin JSON).
                         if on_data.send(Response::new(buf[..n].to_vec())).is_err() {
+                            // El Channel ha muerto: el webview se recargó o la
+                            // ventana cayó, y con él quien leía y quien podía
+                            // cerrar esta consola. Salir sin más dejaba el shell
+                            // vivo y huérfano hasta cerrar la app.
+                            log::warn!("consola local {sid_r}: canal de datos roto, se cierra el shell");
+                            if let Some(handle) = sessions_r.lock_recover().remove(&sid_r) {
+                                let _ = handle.cmd_tx.send(ShellCommand::Close);
+                            }
                             break;
                         }
                     }
@@ -216,6 +194,11 @@ impl LocalShellManager {
                 }
                 Ok(ShellCommand::Close) | Err(_) => {
                     let _ = child.kill();
+                    // `kill` (SIGHUP, y SIGKILL si no basta) no recoge al hijo
+                    // cuando acaba en SIGKILL: sin este `wait` quedaba un
+                    // zombi por consola hasta salir de la app. Tras un kill no
+                    // bloquea: el proceso ya está muerto o a punto.
+                    let _ = child.wait();
                     break;
                 }
             }
@@ -279,17 +262,70 @@ impl LocalShellManager {
         Ok(())
     }
 
-    pub fn close_all(&self) {
+    /// Cierra todas las consolas y devuelve cuántas había.
+    pub fn close_all(&self) -> usize {
         let handles: Vec<_> = self
             .sessions
             .lock_recover()
             .drain()
             .map(|(_, h)| h)
             .collect();
+        let count = handles.len();
         for handle in handles {
             let _ = handle.cmd_tx.send(ShellCommand::Close);
         }
+        count
     }
+}
+
+/// Comando con el que nace el shell: programa, carpeta, integración de shell
+/// (opt-in) y entorno de terminal. Separado de `open` para poder probarlo sin
+/// abrir un PTY.
+fn build_command(
+    shell: &str,
+    cwd: Option<&std::path::Path>,
+    integration_dir: Option<&std::path::Path>,
+) -> portable_pty::CommandBuilder {
+    // Dentro de Flatpak el shell nace en el host (`flatpak-spawn --host`):
+    // el del contenedor no tiene los dotfiles ni las herramientas del
+    // usuario. Fuera del sandbox esto es un `CommandBuilder` normal.
+    let mut cmd = crate::sandbox::host_pty_command(shell, cwd);
+    // Integración de shell (opt-in): marcas OSC 133 / OSC 7 sin tocar los
+    // dotfiles del usuario. Si los ficheros de arranque no se pueden escribir,
+    // la consola abre igual, sin marcas: un fallo de disco no puede dejar al
+    // usuario sin consola.
+    if let Some(dir) = integration_dir {
+        let kind = crate::shell_integration::ShellKind::detect(shell);
+        match crate::shell_integration::prepare(dir, kind) {
+            Ok(Some(launch)) => {
+                for arg in launch.args {
+                    cmd.arg(arg);
+                }
+                for (key, value) in launch.env {
+                    cmd.env(key, value);
+                }
+            }
+            Ok(None) => {}
+            Err(err) => {
+                log::warn!("integración de shell no disponible para {shell}: {err}");
+            }
+        }
+    }
+    cmd.env("TERM", "xterm-256color");
+    // Color verdadero en apps que lo detectan por COLORTERM (vim, bat, delta…).
+    cmd.env("COLORTERM", "truecolor");
+    // Locale UTF-8 cuando el entorno no define ninguno, para que readline y
+    // las TUIs no caigan a ASCII/Latin-1. Solo Unix: en Windows ConPTY usa
+    // UTF-16/UTF-8 y forzar un locale rompería más de lo que arregla.
+    #[cfg(unix)]
+    if std::env::var_os("LC_ALL").is_none()
+        && std::env::var_os("LC_CTYPE").is_none()
+        && std::env::var_os("LANG").is_none()
+    {
+        cmd.env("LANG", "C.UTF-8");
+        cmd.env("LC_CTYPE", "C.UTF-8");
+    }
+    cmd
 }
 
 fn get_default_shell() -> String {
@@ -394,5 +430,74 @@ mod tests {
             serde_json::from_str(r#"{"cwd":"/tmp","cols":80,"rows":24}"#).unwrap();
         assert_eq!(legacy.cwd.as_deref(), Some("/tmp"));
         assert!(!legacy.shell_integration);
+    }
+
+    fn argv(cmd: &portable_pty::CommandBuilder) -> Vec<String> {
+        cmd.get_argv()
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// El comando del shell sin abrir un PTY: entorno de terminal siempre, y
+    /// los argumentos de la integración solo cuando se pide (es opt-in).
+    #[test]
+    fn el_comando_lleva_el_entorno_de_terminal_y_la_integracion_solo_si_se_pide() {
+        let plain = super::build_command("/bin/bash", None, None);
+        assert_eq!(argv(&plain), vec!["/bin/bash".to_string()]);
+        assert_eq!(plain.get_env("TERM").and_then(|v| v.to_str()), Some("xterm-256color"));
+        assert_eq!(plain.get_env("COLORTERM").and_then(|v| v.to_str()), Some("truecolor"));
+
+        let dir = std::env::temp_dir().join(format!(
+            "rustty-shell-cmd-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let integrated = super::build_command("/bin/bash", None, Some(&dir));
+        let args = argv(&integrated);
+        assert_eq!(args[0], "/bin/bash");
+        assert_eq!(args[1], "--rcfile");
+        assert!(args[2].ends_with("rustty-bash.sh"), "{args:?}");
+
+        // Un shell sin integración (sh) arranca igual que sin ella.
+        let sh = super::build_command("/bin/sh", None, Some(&dir));
+        assert_eq!(argv(&sh), vec!["/bin/sh".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Cerrar una consola es matar **y recoger**. `kill` de portable-pty manda
+    /// SIGHUP y, si no basta, SIGKILL sin `wait`: un hijo que ignora SIGHUP
+    /// quedaba zombi hasta salir de la app, uno por consola cerrada. El hilo de
+    /// control hace `kill` + `wait`; aquí se comprueba que, con ese par, del
+    /// proceso no queda ni la entrada en `/proc`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn un_shell_que_ignora_sighup_no_queda_zombi_tras_cerrar() {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+
+        let pair = native_pty_system()
+            .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
+            .expect("abrir PTY");
+        let mut cmd = CommandBuilder::new("/bin/sh");
+        cmd.arg("-c");
+        // Ignora SIGHUP y se queda esperando: fuerza el camino SIGKILL.
+        cmd.arg("trap '' HUP; sleep 60");
+        let mut child = pair.slave.spawn_command(cmd).expect("lanzar sh");
+        drop(pair.slave);
+        let pid = child.process_id().expect("pid");
+        // Margen para que el `trap` esté instalado antes del SIGHUP.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+        assert!(
+            stat.is_empty(),
+            "el shell sigue en la tabla de procesos (¿zombi?): {stat}"
+        );
     }
 }

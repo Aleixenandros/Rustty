@@ -1,0 +1,83 @@
+// Cliente WebDriver (W3C) mínimo contra `tauri-driver`, sin dependencias.
+//
+// Por qué no Playwright: en Linux el webview de Tauri es WebKitGTK, y Playwright
+// solo sabe manejar sus propios navegadores. La vía oficial de Tauri es
+// `tauri-driver`, que hace de puente con el `WebKitWebDriver` del sistema.
+//
+// Dos límites del WebKitWebDriver de Linux, ya pagados:
+//   - El clic nativo (`element/click`) responde «unsupported operation»: los
+//     clics se hacen desde la página (`el.click()`), ver `jsClick`.
+//   - El terminal (xterm sobre WebGL) no tiene texto en el DOM: la entrada se
+//     manda por el mismo comando IPC que usa al teclear, y el resultado se
+//     mira en el log del backend o en una captura.
+
+import fs from "node:fs";
+
+const ELEMENT = "element-6066-11e4-a52e-4f735466cecf";
+
+export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Abre una sesión WebDriver, que lanza la aplicación.
+ * @param {object} options
+ * @param {string} options.application  Ruta al binario de Rustty.
+ * @param {string} [options.driver]     URL de tauri-driver.
+ */
+export async function openSession({ application, driver = "http://127.0.0.1:4444" }) {
+  async function call(method, path, body) {
+    const res = await fetch(driver + path, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (json.value && json.value.error) {
+      throw new Error(`${method} ${path}: ${json.value.error}: ${json.value.message}`);
+    }
+    return json.value;
+  }
+
+  const created = await call("POST", "/session", {
+    capabilities: { alwaysMatch: { "tauri:options": { application }, browserName: "wry" } },
+  });
+  const base = `/session/${created.sessionId}`;
+
+  const session = {
+    /** Ejecuta un script en la página; `arguments[n]` recibe `args`. */
+    exec: (script, args = []) => call("POST", `${base}/execute/sync`, { script, args }),
+    find: async (css) =>
+      (await call("POST", `${base}/element`, { using: "css selector", value: css }))[ELEMENT],
+    /** Clic desde la página: el nativo no está soportado en WebKitWebDriver. */
+    jsClick: (css) =>
+      session.exec(
+        "const el = document.querySelector(arguments[0]); if (!el) return false; el.click(); return true;",
+        [css],
+      ),
+    screenshot: async (file) =>
+      fs.writeFileSync(file, Buffer.from(await call("GET", `${base}/screenshot`), "base64")),
+    close: () => call("DELETE", base),
+    async waitFor(css, timeoutMs = 30000) {
+      const started = Date.now();
+      for (;;) {
+        try {
+          return await session.find(css);
+        } catch (err) {
+          if (Date.now() - started > timeoutMs) throw err;
+          await sleep(250);
+        }
+      }
+    },
+    /** Id de la sesión de la última pestaña abierta. */
+    lastSessionId: () =>
+      session.exec(
+        "const tabs = document.querySelectorAll('.tab[data-session]'); return tabs.length ? tabs[tabs.length - 1].dataset.session : null;",
+      ),
+    /** Escribe en una consola local por el comando IPC que usa el teclado. */
+    typeIntoLocalShell: (sessionId, text) =>
+      session.exec(
+        "window.__TAURI_INTERNALS__.invoke('local_shell_send_input', { sessionId: arguments[0], data: Array.from(new TextEncoder().encode(arguments[1])) }); return true;",
+        [sessionId, text],
+      ),
+  };
+  return session;
+}

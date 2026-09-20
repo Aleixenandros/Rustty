@@ -646,6 +646,11 @@ impl SshManager {
         Ok(())
     }
 
+    /// Sesiones vivas ahora mismo (para el barrido de huérfanas al arrancar).
+    pub fn session_count(&self) -> usize {
+        self.sessions.lock_recover().len()
+    }
+
     pub fn disconnect_all(&self) {
         let handles: Vec<_> = self
             .sessions

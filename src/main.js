@@ -87,6 +87,8 @@ import { diffLines, pairDiffRows, diffToUnifiedText } from "./modules/terminal/d
 import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { defaultHighlightRules, compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
+import { createChunkDecoder } from "./modules/terminal/chunk-decoder.js";
+import { createShellCloseGate } from "./modules/terminal/shell-close.js";
 import { normalizePrefs } from "./modules/prefs/normalize.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
@@ -4511,6 +4513,12 @@ async function init() {
   // escrito. Antes solo existía en la consola del webview, que en release nadie
   // ve, y la ventana se lo llevaba consigo al cerrarse.
   installUiErrorReporting();
+  // Un webview recién cargado no ha abierto nada: lo que el backend tenga vivo
+  // ahora es de un frontend anterior (una recarga, un proceso web relanzado) y
+  // ya nadie puede leerlo ni cerrarlo. No se espera: el arranque no depende de
+  // ello, y en un inicio normal no hay nada que barrer. Si barre algo, lo deja
+  // escrito el propio backend en el log.
+  invoke("sweep_orphan_sessions").catch(() => {});
   loadPrefs();
   // La pantalla de carga (#boot-screen) ya está pintada con el HTML y el CSS
   // estáticos, así que la ventana puede enseñarse ya: es lo que ve el usuario
@@ -11351,12 +11359,12 @@ async function bindTmuxPaneChannel(s) {
       if (text && sessions.has(s.id)) s.terminal.write(text.replace(/\n/g, "\r\n"));
     } catch { /* sin scrollback no se bloquea el enganche */ }
   }
-  const decoder = new TextDecoder();
+  const decodeChunk = createChunkDecoder();
   const channel = new Channel();
   channel.onmessage = (payload) => {
     const live = sessions.get(s.id);
     if (!live) return;
-    const text = decoder.decode(channelBytesToU8(payload));
+    const text = decodeChunk(channelBytesToU8(payload));
     enqueueTerminalOutput(live, applyHighlightRules(text, currentCompiledHighlightRules()));
     if (live._tmux) markTabActivity(tmuxWindowTabId(live._tmux.conn, live._tmux.window));
   };
@@ -12293,6 +12301,51 @@ async function reconnectSession(sessionId) {
   }
 }
 
+/**
+ * Cablea los dos caminos de una consola local —la salida (Channel binario) y
+ * el cierre (evento)— y devuelve el Channel para `local_shell_open`. El listener
+ * de cierre se registra ANTES del invoke: si el proceso muere en los primeros
+ * ms, el evento no se pierde (la pestaña quedaría «conectada» para siempre).
+ *
+ * El estado de la pestaña cambia en cuanto llega el cierre; el AVISO escrito en
+ * el terminal espera a la marca de fin del Channel (un bloque vacío que manda
+ * el backend) para no pintarse encima de las últimas líneas de salida.
+ */
+async function wireLocalShellStreams(s, sessionId, { refreshDashboard = false } = {}) {
+  const decodeChunk = createChunkDecoder();
+  const gate = createShellCloseGate({
+    onReady: () => {
+      enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
+    },
+  });
+  const dataChannel = new Channel();
+  dataChannel.onmessage = (payload) => {
+    const bytes = channelBytesToU8(payload);
+    // Bloque vacío = marca de fin: la salida del shell ya ha llegado entera.
+    if (bytes.length === 0) {
+      gate.markDrained();
+      return;
+    }
+    const text = decodeChunk(bytes);
+    if (text) {
+      enqueueTerminalOutput(s, text);
+      markTabActivity(sessionId);
+    }
+  };
+  const ulClose = await listen(eventName("shellClosed", sessionId), () => {
+    s.status = "closed";
+    updateTabStatus(sessionId, "error");
+    if (refreshDashboard) renderDashboard();
+    showReconnectOverlay(sessionId, t("terminal.console_closed"));
+    markTabActivity(sessionId, { kind: "disconnect" });
+    gate.markClosed();
+  });
+  // `gate.cancel` va con los unlisteners: al reabrir o destruir la sesión, un
+  // aviso de cierre que siguiera en espera no debe pintarse sobre la nueva.
+  s.unlisteners.push(ulClose, () => gate.cancel());
+  return dataChannel;
+}
+
 async function reconnectLocalInPlace(s) {
   const sessionId = s.id;
   for (const ul of s.unlisteners) { try { ul(); } catch {} }
@@ -12301,28 +12354,7 @@ async function reconnectLocalInPlace(s) {
   updateTabStatus(sessionId, "connecting");
 
   try {
-    // El caudal del shell viaja por el Channel binario; se asigna su handler
-    // antes del invoke para no perder bytes iniciales.
-    const decoder = new TextDecoder();
-    const dataChannel = new Channel();
-    dataChannel.onmessage = (payload) => {
-      const text = decoder.decode(channelBytesToU8(payload));
-      if (text) {
-        enqueueTerminalOutput(s, text);
-        markTabActivity(sessionId);
-      }
-    };
-    // Listener de cierre antes del invoke (ver `openLocalShell`): evita perder
-    // el evento si el proceso muere nada más reabrir.
-    const ulClose = await listen(eventName("shellClosed", sessionId), () => {
-      s.status = "closed";
-      updateTabStatus(sessionId, "error");
-      renderDashboard();
-      showReconnectOverlay(sessionId, t("terminal.console_closed"));
-      enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
-      markTabActivity(sessionId, { kind: "disconnect" });
-    });
-    s.unlisteners.push(ulClose);
+    const dataChannel = await wireLocalShellStreams(s, sessionId, { refreshDashboard: true });
     await invoke("local_shell_open", {
       sessionId,
       onData: dataChannel,
@@ -14263,14 +14295,15 @@ function channelBytesToU8(payload) {
  *   El caller lo crea y lo pasa también al `invoke("ssh_connect")`.
  */
 async function registerSshListeners(sessionId, terminal, dataChannel) {
-  const decoder = new TextDecoder();
+  // Con estado: un carácter multibyte partido entre dos bloques sale entero.
+  const decodeChunk = createChunkDecoder();
   const ul = [];
 
   // Caudal de datos del servidor: llega por el Channel binario (sin JSON), no
   // por un evento `listen`. El canal se libera al recogerse la sesión.
   dataChannel.onmessage = (payload) => {
     const s = sessions.get(sessionId);
-    const text = decoder.decode(channelBytesToU8(payload));
+    const text = decodeChunk(channelBytesToU8(payload));
     const filtered = filterSuppressedTerminalOutput(s, text);
     if (filtered) {
       enqueueTerminalOutput(s, applyHighlightRules(filtered, currentCompiledHighlightRules()));
@@ -18047,28 +18080,7 @@ async function openLocalShell() {
   // El resize de la consola local viaja por su propio comando IPC.
   s._resizeCmd = "local_shell_resize";
   try {
-    // El caudal del shell viaja por el Channel binario; se asigna su handler
-    // antes del invoke para no perder bytes iniciales.
-    const decoder = new TextDecoder();
-    const dataChannel = new Channel();
-    dataChannel.onmessage = (payload) => {
-      const text = decoder.decode(channelBytesToU8(payload));
-      if (text) {
-        enqueueTerminalOutput(s, text);
-        markTabActivity(sessionId);
-      }
-    };
-    // Registramos el listener de cierre ANTES del invoke: si el proceso muere
-    // en los primeros ms, el evento `shell-closed-*` no se pierde (si no,
-    // la pestaña quedaría «conectada» para siempre).
-    const ulClose = await listen(eventName("shellClosed", sessionId), () => {
-      s.status = "closed";
-      updateTabStatus(sessionId, "error");
-      showReconnectOverlay(sessionId, t("terminal.console_closed"));
-      enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.shell_ended")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
-      markTabActivity(sessionId, { kind: "disconnect" });
-    });
-    s.unlisteners.push(ulClose);
+    const dataChannel = await wireLocalShellStreams(s, sessionId);
     await invoke("local_shell_open", {
       sessionId,
       onData: dataChannel,

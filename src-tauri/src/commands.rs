@@ -55,6 +55,40 @@ pub fn close_app(
     app.exit(0);
 }
 
+/// Barre las sesiones que dejó un frontend anterior. Lo invoca la interfaz
+/// **al arrancar**, cuando todavía no ha abierto nada: cualquier consola local,
+/// conexión SSH o sesión SFTP viva en ese momento pertenece a un webview que ya
+/// no existe (se recargó, o su proceso cayó y el sistema lo relanzó). Nadie
+/// puede leerlas ni cerrarlas, y una conexión SSH huérfana puede tener túneles
+/// escuchando sin que ninguna pantalla los enseñe. En un arranque normal no
+/// hay nada que barrer y esto no hace nada.
+///
+/// Los clientes **externos** (RDP, VNC, Telnet) no se tocan: son ventanas
+/// propias que el usuario sigue viendo y puede cerrar él mismo.
+#[tauri::command]
+pub fn sweep_orphan_sessions(
+    ssh_state: State<SshManager>,
+    sftp_state: State<SftpManager>,
+    shell_state: State<LocalShellManager>,
+) -> usize {
+    let ssh = ssh_state.session_count();
+    let sftp = sftp_state.session_count();
+    if ssh > 0 {
+        ssh_state.disconnect_all();
+    }
+    if sftp > 0 {
+        sftp_state.disconnect_all();
+    }
+    let shells = shell_state.close_all();
+    let total = ssh + sftp + shells;
+    if total > 0 {
+        log::warn!(
+            "barrido al arrancar la interfaz: {ssh} SSH, {sftp} SFTP y {shells} consolas de un frontend anterior"
+        );
+    }
+    total
+}
+
 // ─── Comandos de gestión de perfiles ─────────────────────────────────────────
 
 /// Devuelve todos los perfiles de conexión guardados

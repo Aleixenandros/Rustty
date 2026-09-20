@@ -96,9 +96,12 @@ rustty -c produccion --script mantenimiento.sh --sudo
 rustty --workspace Omnia --exec "uptime"
 rustty --group VPS --exec "df -h /" --json
 rustty --all --script parche.sh --sudo --parallel 8 --timeout 60
+rustty --workspace Omnia --exec "apt list --upgradable" --ndjson | jq -r '.name + ": " + (.exitCode|tostring)'
 ```
 
 Con `--workspace`, `--group` o `--all` (sin `-c`), Rustty ejecuta el comando en todos los perfiles SSH que casen, `--parallel` a la vez (4 por defecto). Sin `--json`, la salida llega **agrupada por servidor** conforme cada uno termina: una cabecera y un resumen por la salida de errores, y la salida del comando por donde le toca. Con `--json` se imprime al final un array ordenado por nombre, con una entrada por servidor.
+
+Con **`--ndjson`** el resultado es el mismo, pero cada servidor sale **en cuanto termina**, como un objeto JSON en una sola línea: no hay que esperar al más lento para empezar a procesar los demás, y una tubería con `jq` o un `while read` los va consumiendo según llegan. El orden es el de llegada, no el alfabético. `--json` y `--ndjson` son excluyentes, y el listado (`-l`) solo admite `--json`, porque es un documento y no un flujo.
 
 El código de salida es `0` si todos acabaron en `0` y `1` si alguno no. Una entrada de la tubería se lee entera una vez y se reparte a todos; `--script` funciona igual. `--tty` no está disponible en multi-host.
 
@@ -112,7 +115,23 @@ rustty -c produccion --put ./nginx.conf /etc/nginx/nginx.conf
 rustty -c storagebox --put informe.pdf /docs/ --json
 ```
 
-`--get <remoto> <local>` descarga y `--put <local> <remoto>` sube un fichero, de uno en uno. Si el destino es una carpeta (existe o acaba en `/`), el fichero conserva su nombre. Funciona con perfiles SSH y también con perfiles **SFTP** sin shell, como un StorageBox: `-l` los lista con tipo `sftp`. `--timeout`, `-q` y `--json` (`op`, `bytes`, `durationMs`, `error`) se aplican igual.
+`--get <remoto> <local>` descarga y `--put <local> <remoto>` sube un fichero. Si el destino es una carpeta (existe o acaba en `/`), el fichero conserva su nombre. Funciona con perfiles SSH y también con perfiles **SFTP** sin shell, como un StorageBox: `-l` los lista con tipo `sftp`. `--timeout`, `-q`, `--json` y `--ndjson` se aplican igual.
+
+### Carpetas enteras
+
+```bash
+rustty -c produccion -r --get /var/www/sitio ./copias/
+rustty -c storagebox -r --put ./fotos /backups/ --json
+```
+
+Con **`-r`** (`--recursive`) la ruta de origen puede ser una carpeta y se copia con todo lo que cuelga de ella. Sin `-r`, una carpeta es un error que lo dice, igual que en `scp`: copiar un árbol entero nunca ocurre por accidente.
+
+- **Dónde acaba la copia** sigue la regla de `cp -r`. Si el destino ya es una carpeta (o acaba en `/`), el árbol cuelga de ella con su nombre: `--get -r /var/www/sitio ./copias/` deja `./copias/sitio/`. Si el destino no existe, **es** la copia: `--get -r /var/www/sitio ./nuevo` deja el contenido en `./nuevo/`.
+- **Los enlaces simbólicos no se siguen ni se copian**, y tampoco los ficheros especiales (sockets, dispositivos): se cuentan como omitidos y el resumen dice cuántos. Seguirlos permitiría salirse del árbol que has pedido o entrar en un bucle.
+- **Un fichero que falla no detiene el resto.** Si uno no se puede leer (permisos, por ejemplo), su error sale por la salida de errores, la copia sigue y el comando termina con `1`; con todo copiado, termina con `0`.
+- Por seguridad, si el servidor devolviera un nombre de fichero con una ruta dentro (`../algo`), la copia se aborta entera: es lo que intentaría un servidor malicioso para escribir fuera de tu carpeta de destino.
+
+El resumen —y `--json`— cuenta `files`, `dirs`, `bytes`, `skipped` y la lista de `errors`, además de `op`, `durationMs` y `error`.
 
 ## Importar conexiones desde un JSON
 
@@ -190,5 +209,6 @@ Si el comando corre **sin terminal interactiva** (dentro de un script, un cron o
 - Los nombres de workspace los conoce la CLI porque la interfaz los vuelca a `workspaces.json` al guardar preferencias; hasta que la interfaz se haya abierto una vez con esta versión, el listado muestra el id en su lugar.
 - KeePass desbloqueado en la interfaz gráfica no está disponible desde el CLI.
 - X11 forwarding queda fuera del CLI.
-- `--get`/`--put` copian ficheros sueltos, no carpetas.
+- `--get`/`--put -r` no conservan permisos ni fechas, y no copian enlaces simbólicos; tampoco reanudan una copia cortada (la interfaz sí reanuda descargas).
+- `--sudo` no usa la contraseña del perfil: necesita `NOPASSWD` en el servidor, o `--tty` para que `sudo` la pida.
 - Las credenciales sí se resuelven desde el keyring del sistema cuando existen, incluidas las **credenciales maestras** y los marcadores `${var:...}` / `${master:...}` / `${secret:...}` en la contraseña del perfil, igual que en la interfaz gráfica. Los marcadores `${ask:...}` no se preguntan desde el CLI.

@@ -602,6 +602,11 @@ impl SftpManager {
         Ok(())
     }
 
+    /// Sesiones vivas ahora mismo (para el barrido de huérfanas al arrancar).
+    pub fn session_count(&self) -> usize {
+        self.sessions.lock_recover().len()
+    }
+
     pub fn disconnect_all(&self) {
         let handles: Vec<_> = self
             .sessions
@@ -2591,7 +2596,7 @@ async fn count_remote_tree(backend: &mut dyn FileTransfer, root: &str) -> TreeCo
 /// absoluta; como `Path::join` con una ruta absoluta *reemplaza* la base, eso
 /// permitiría escribir ficheros fuera del directorio de descarga elegido (clase
 /// CVE de rsync/scp). Se rechazan además `.`, `..` y el nombre vacío.
-fn safe_entry_name(name: &str) -> Result<(), String> {
+pub(crate) fn safe_entry_name(name: &str) -> Result<(), String> {
     use std::path::Component;
     if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         return Err(format!(

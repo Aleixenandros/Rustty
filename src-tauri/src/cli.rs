@@ -97,23 +97,37 @@ impl HostSelector {
 #[derive(Debug, Clone, PartialEq)]
 struct RunOptions {
     json: bool,
+    /// `--ndjson`: como `--json`, pero un objeto compacto por línea y, en
+    /// multi-host, **conforme termina cada servidor** (no un array al final).
+    ndjson: bool,
     quiet: bool,
     timeout: Option<Duration>,
     parallel: usize,
     sudo: bool,
     no_stdin: bool,
+    /// `-r`: `--get`/`--put` aceptan carpetas. Sin él, una carpeta es un error.
+    recursive: bool,
 }
 
 impl Default for RunOptions {
     fn default() -> Self {
         Self {
             json: false,
+            ndjson: false,
             quiet: false,
             timeout: None,
             parallel: DEFAULT_PARALLEL,
             sudo: false,
             no_stdin: false,
+            recursive: false,
         }
+    }
+}
+
+impl RunOptions {
+    /// ¿La salida es para una máquina? Calla los avisos humanos de stdout.
+    fn machine(&self) -> bool {
+        self.json || self.ndjson
     }
 }
 
@@ -202,9 +216,33 @@ struct TransferResult {
     local: String,
     remote: String,
     bytes: u64,
+    /// Ficheros copiados (1 sin `--recursive`).
+    files: u64,
+    /// Carpetas creadas o recorridas con `--recursive`.
+    dirs: u64,
+    /// Entradas omitidas a propósito: enlaces simbólicos y ficheros especiales.
+    skipped: u64,
+    /// Entradas que fallaron en una copia recursiva (la copia sigue con el resto).
+    errors: Vec<String>,
     duration_ms: u128,
     error: Option<String>,
 }
+
+/// Recuento de una transferencia. Una copia recursiva **no aborta** al primer
+/// fichero que falla (como `cp -r`/`scp -r`): anota el error, sigue con el
+/// resto y el código de salida dice que algo quedó sin copiar.
+#[derive(Debug, Default, PartialEq)]
+struct TransferStats {
+    bytes: u64,
+    files: u64,
+    dirs: u64,
+    skipped: u64,
+    errors: Vec<String>,
+}
+
+/// Tope de profundidad de una copia recursiva. Los enlaces simbólicos no se
+/// siguen, así que un árbol real no tiene ciclos; esto acota uno patológico.
+const MAX_TRANSFER_DEPTH: usize = 64;
 
 struct RawModeGuard;
 
@@ -324,6 +362,8 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
             "-l" | "--list" => list = true,
             "-h" | "--help" => help = true,
             "--json" => opts.json = true,
+            "--ndjson" => opts.ndjson = true,
+            "-r" | "--recursive" => opts.recursive = true,
             "-q" | "--quiet" => opts.quiet = true,
             "-t" | "--tty" => tty = true,
             "--sudo" => opts.sudo = true,
@@ -457,7 +497,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
         return CliCommand::Help;
     }
     if let Some(path) = import {
-        if list || query.is_some() || command.is_some() || script.is_some() || transfer.is_some() || selector.group.is_some() || selector.all {
+        if list || query.is_some() || command.is_some() || script.is_some() || transfer.is_some() || selector.group.is_some() || selector.all || opts.ndjson || opts.recursive {
             return invalid("--import solo se combina con --workspace, --dry-run, --json y -q.");
         }
         return CliCommand::Import {
@@ -470,6 +510,12 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
     if dry_run {
         return invalid("--dry-run solo vale con --import.");
     }
+    if opts.json && opts.ndjson {
+        return invalid("--json y --ndjson son excluyentes: elige un formato.");
+    }
+    if opts.recursive && transfer.is_none() {
+        return invalid("--recursive solo vale con --get o --put.");
+    }
     if let Some(cmd) = &command {
         if cmd.trim().is_empty() {
             return invalid("El comando remoto no puede estar vacio.");
@@ -478,6 +524,9 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
     if list {
         if command.is_some() || script.is_some() || transfer.is_some() {
             return invalid("-l no se combina con --exec, --script, --get ni --put.");
+        }
+        if opts.ndjson {
+            return invalid("-l no admite --ndjson: el listado es un unico documento, usa --json.");
         }
         return CliCommand::List {
             json: opts.json,
@@ -587,6 +636,7 @@ Uso:
   rustty -c <perfil> --script f.sh            Manda el script local por stdin a bash -s
   rustty -c <perfil> --get <remoto> <local>   Descarga un fichero por SFTP
   rustty -c <perfil> --put <local> <remoto>   Sube un fichero por SFTP
+  rustty -c <perfil> -r --get <dir> <local>   ...o una carpeta entera con -r (tambien --put)
   rustty --workspace <w> --exec "cmd"         Ejecuta en todos los perfiles SSH del workspace
   rustty --group <g> --exec "cmd"             ...o de la carpeta (y subcarpetas); --all = todos
   rustty --import <fichero.json|->            Importa perfiles a un workspace NUEVO import_<fecha>
@@ -595,6 +645,8 @@ Uso:
 
 Opciones:
   --json          Salida JSON: listado, o un objeto por servidor (salida, codigo, duracion)
+  --ndjson        Lo mismo, una linea por objeto y, en multi-host, conforme acaba cada servidor
+  -r, --recursive --get/--put copian carpetas; los enlaces simbolicos se omiten y se cuentan
   -q, --quiet     Sin avisos por stderr ("Conectando a...", resumenes)
   --timeout <s>   Limite por servidor, en segundos; al agotarse sale con 124
   --parallel <n>  Conexiones simultaneas en multi-host (por defecto {DEFAULT_PARALLEL})
@@ -602,8 +654,9 @@ Opciones:
   -n, --no-stdin  No reenvia stdin al comando remoto (como ssh -n)
 
 Codigos de salida: el del comando remoto; 255 si no conecta; 124 por --timeout; 2 por uso
-incorrecto. En multi-host, 0 si todos acabaron en 0 y 1 si alguno no. Sin --tty, un stdin
-que es un terminal se cierra al instante; una tuberia o un fichero se reenvian."#
+incorrecto. En multi-host, 0 si todos acabaron en 0 y 1 si alguno no; en una copia con -r,
+1 si algun fichero no se pudo copiar (el resto se copia igual). Sin --tty, un stdin que es un
+terminal se cierra al instante; una tuberia o un fichero se reenvian."#
     );
 }
 
@@ -1004,7 +1057,7 @@ fn client_config(profile: &ConnectionProfile) -> Arc<client::Config> {
 }
 
 fn announce(profile: &ConnectionProfile, opts: &RunOptions) {
-    if opts.quiet || opts.json {
+    if opts.quiet || opts.machine() {
         return;
     }
     eprintln!(
@@ -1397,6 +1450,16 @@ fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
     Ok(())
 }
 
+/// Un objeto JSON **compacto en una sola línea** (NDJSON). `println!` toma el
+/// cerrojo de stdout por llamada, así que las líneas de dos servidores que
+/// acaban a la vez no se entremezclan.
+fn print_json_line<T: Serialize>(value: &T) -> Result<(), String> {
+    let payload =
+        serde_json::to_string(value).map_err(|e| format!("No se pudo generar JSON: {e}"))?;
+    println!("{payload}");
+    Ok(())
+}
+
 /// Salida agrupada de un servidor en multi-host sin `--json`: cabecera y
 /// resumen por stderr, la salida del comando por donde le toca.
 fn print_grouped(result: &HostResult, quiet: bool) {
@@ -1469,11 +1532,13 @@ fn connect_single(
             let secrets = resolve_secrets(&profile);
             let stdin = stdin_mode(&remote, &opts, false)?;
             announce(&profile, &opts);
-            let capture = opts.json;
+            let capture = opts.machine();
             let result = runtime.block_on(run_host(
                 profile, secrets, remote, stdin, opts.clone(), capture, workspace,
             ));
-            if opts.json {
+            if opts.ndjson {
+                print_json_line(&result)?;
+            } else if opts.json {
                 print_json(&[&result])?;
             } else if let Some(error) = &result.error {
                 eprintln!("{error}");
@@ -1508,7 +1573,7 @@ fn run_many(
             (p, secrets, ws)
         })
         .collect();
-    if !opts.quiet && !opts.json {
+    if !opts.quiet && !opts.machine() {
         eprintln!(
             "Ejecutando en {} servidores ({} a la vez)...",
             jobs.len(),
@@ -1519,6 +1584,7 @@ fn run_many(
     let runtime = build_runtime()?;
     let local = tokio::task::LocalSet::new();
     let json = opts.json;
+    let ndjson = opts.ndjson;
     let quiet = opts.quiet;
     let results: Vec<HostResult> = local.block_on(&runtime, async move {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(opts.parallel));
@@ -1539,7 +1605,13 @@ fn run_many(
         while let Some(joined) = set.join_next().await {
             match joined {
                 Ok(result) => {
-                    if !json {
+                    if ndjson {
+                        // En streaming: cada servidor sale en cuanto acaba, sin
+                        // esperar al más lento. El orden es el de llegada.
+                        if let Err(err) = print_json_line(&result) {
+                            eprintln!("{err}");
+                        }
+                    } else if !json {
                         print_grouped(&result, quiet);
                     }
                     results.push(result);
@@ -1559,7 +1631,7 @@ fn run_many(
         .iter()
         .filter(|r| r.exit_code != Some(0))
         .count();
-    if !quiet && !json {
+    if !quiet && !json && !ndjson {
         eprintln!(
             "{} servidores, {} con fallo.",
             results.len(),
@@ -1734,7 +1806,7 @@ fn run_transfer_command(
         TransferOp::Get { remote, local } => ("get", local.clone(), remote.clone()),
         TransferOp::Put { local, remote } => ("put", local.clone(), remote.clone()),
     };
-    let fut = transfer_file(&profile, &secrets, &op);
+    let fut = transfer(&profile, &secrets, &op, opts.recursive);
     let outcome = match opts.timeout {
         Some(limit) => match runtime.block_on(tokio::time::timeout(limit, fut)) {
             Ok(r) => r,
@@ -1746,28 +1818,64 @@ fn run_transfer_command(
         None => runtime.block_on(fut),
     };
     let duration_ms = started.elapsed().as_millis();
-    let (code, bytes, error) = match outcome {
-        Ok(bytes) => (0, bytes, None),
-        Err((code, err)) => (code, 0, Some(err)),
+    let (code, stats, error) = match outcome {
+        // Una copia recursiva con entradas fallidas termina, pero no con 0.
+        Ok(stats) => (i32::from(!stats.errors.is_empty()), stats, None),
+        Err((code, err)) => (code, TransferStats::default(), Some(err)),
     };
-    if opts.json {
-        print_json(&TransferResult {
+    if opts.machine() {
+        let row = TransferResult {
             profile: profile.id.clone(),
             name: profile.name.clone(),
             host: profile.host.clone(),
             op: op_name,
             local,
             remote,
-            bytes,
+            bytes: stats.bytes,
+            files: stats.files,
+            dirs: stats.dirs,
+            skipped: stats.skipped,
+            errors: stats.errors,
             duration_ms,
             error,
-        })?;
+        };
+        if opts.ndjson {
+            print_json_line(&row)?;
+        } else {
+            print_json(&row)?;
+        }
     } else if let Some(err) = error {
         eprintln!("{err}");
-    } else if !opts.quiet {
-        eprintln!("{bytes} bytes copiados en {duration_ms} ms.");
+    } else {
+        for err in &stats.errors {
+            eprintln!("{err}");
+        }
+        if !opts.quiet {
+            eprintln!("{}", transfer_summary(&stats, duration_ms));
+        }
     }
     Ok(code)
+}
+
+/// Resumen humano de una transferencia, por stderr.
+fn transfer_summary(stats: &TransferStats, duration_ms: u128) -> String {
+    if stats.dirs == 0 && stats.files <= 1 && stats.skipped == 0 && stats.errors.is_empty() {
+        return format!("{} bytes copiados en {duration_ms} ms.", stats.bytes);
+    }
+    let mut text = format!(
+        "{} ficheros ({} bytes) en {} carpetas, {duration_ms} ms.",
+        stats.files, stats.bytes, stats.dirs
+    );
+    if stats.skipped > 0 {
+        text.push_str(&format!(
+            " {} omitidos (enlaces simbolicos o ficheros especiales).",
+            stats.skipped
+        ));
+    }
+    if !stats.errors.is_empty() {
+        text.push_str(&format!(" {} con error.", stats.errors.len()));
+    }
+    text
 }
 
 /// Nombre de fichero de una ruta; una ruta que acaba en «/» es una carpeta y
@@ -1782,90 +1890,343 @@ fn file_name_of(path: &str) -> Option<String> {
         .filter(|n| !n.is_empty())
 }
 
-/// Copia un fichero. Devuelve los bytes copiados; el error lleva el código de
-/// salida: 255 si no conecta, 1 si la copia falla.
-async fn transfer_file(
+/// Conecta, abre SFTP y copia. El error lleva el código de salida: 255 si no
+/// conecta, 1 si la copia falla.
+async fn transfer(
     profile: &ConnectionProfile,
     secrets: &CliSecrets,
     op: &TransferOp,
-) -> Result<u64, (i32, String)> {
+    recursive: bool,
+) -> Result<TransferStats, (i32, String)> {
     let connect = |e: String| (EXIT_CONNECT_FAILED, e);
     let config = client_config(profile);
     let mut handle = connect_handle(profile, config, secrets).await.map_err(connect)?;
     authenticate_target(&mut handle, profile, secrets)
         .await
         .map_err(connect)?;
+    let sftp = open_sftp(&handle).await.map_err(connect)?;
+    let stats = run_transfer(&sftp, op, recursive).await.map_err(|e| (1, e));
+    let _ = sftp.close().await;
+    stats
+}
+
+/// Abre el subsistema SFTP sobre una conexión ya autenticada.
+async fn open_sftp<H: client::Handler>(
+    handle: &client::Handle<H>,
+) -> Result<russh_sftp::client::SftpSession, String> {
     let channel = handle
         .channel_open_session()
         .await
-        .map_err(|e| connect(format!("No se pudo abrir canal SSH: {e}")))?;
+        .map_err(|e| format!("No se pudo abrir canal SSH: {e}"))?;
     channel
         .request_subsystem(true, "sftp")
         .await
-        .map_err(|e| connect(format!("No se pudo abrir el subsistema SFTP: {e}")))?;
-    let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
+        .map_err(|e| format!("No se pudo abrir el subsistema SFTP: {e}"))?;
+    russh_sftp::client::SftpSession::new(channel.into_stream())
         .await
-        .map_err(|e| connect(format!("No se pudo iniciar SFTP: {e}")))?;
+        .map_err(|e| format!("No se pudo iniciar SFTP: {e}"))
+}
 
-    let fail = |e: String| (1, e);
-    let bytes = match op {
+/// Núcleo de `--get`/`--put` sobre una sesión SFTP abierta (lo que prueban los
+/// tests reales). Un fichero se copia tal cual; una carpeta exige `recursive`.
+async fn run_transfer(
+    sftp: &russh_sftp::client::SftpSession,
+    op: &TransferOp,
+    recursive: bool,
+) -> Result<TransferStats, String> {
+    let mut stats = TransferStats::default();
+    match op {
         TransferOp::Get { remote, local } => {
-            // Destino que es una carpeta (o acaba en «/»): el nombre del remoto.
-            let local_path = {
-                let p = PathBuf::from(local);
-                if local.ends_with('/') || p.is_dir() {
-                    match file_name_of(remote) {
-                        Some(name) => p.join(name),
-                        None => return Err(fail(format!("Ruta remota sin nombre de fichero: {remote}"))),
-                    }
-                } else {
-                    p
+            let meta = sftp
+                .metadata(remote.clone())
+                .await
+                .map_err(|e| format!("No se pudo leer el remoto {remote}: {e}"))?;
+            if meta.is_dir() {
+                if !recursive {
+                    return Err(format!("{remote} es una carpeta: anade --recursive (-r)."));
                 }
-            };
-            let mut source = sftp
-                .open(remote.clone())
-                .await
-                .map_err(|e| fail(format!("No se pudo abrir el remoto {remote}: {e}")))?;
-            let mut target = tokio::fs::File::create(&local_path)
-                .await
-                .map_err(|e| fail(format!("No se pudo crear {}: {e}", local_path.display())))?;
-            let n = tokio::io::copy(&mut source, &mut target)
-                .await
-                .map_err(|e| fail(format!("Error copiando {remote}: {e}")))?;
-            target
-                .flush()
-                .await
-                .map_err(|e| fail(format!("Error escribiendo {}: {e}", local_path.display())))?;
-            n
+                let root = tree_root(Path::new(local), local.ends_with('/'), remote);
+                get_tree(sftp, remote, &root, &mut stats).await?;
+            } else {
+                // Destino que es una carpeta (o acaba en «/»): el nombre del remoto.
+                let local_path = {
+                    let p = PathBuf::from(local);
+                    if local.ends_with('/') || p.is_dir() {
+                        match file_name_of(remote) {
+                            Some(name) => p.join(name),
+                            None => return Err(format!("Ruta remota sin nombre de fichero: {remote}")),
+                        }
+                    } else {
+                        p
+                    }
+                };
+                stats.bytes = get_file(sftp, remote, &local_path).await?;
+                stats.files = 1;
+            }
         }
         TransferOp::Put { local, remote } => {
-            let remote_path = if remote.ends_with('/') {
-                match file_name_of(local) {
-                    Some(name) => format!("{remote}{name}"),
-                    None => return Err(fail(format!("Ruta local sin nombre de fichero: {local}"))),
+            let meta = std::fs::metadata(local)
+                .map_err(|e| format!("No se pudo abrir {local}: {e}"))?;
+            if meta.is_dir() {
+                if !recursive {
+                    return Err(format!("{local} es una carpeta: anade --recursive (-r)."));
+                }
+                let remote_is_dir = remote.ends_with('/')
+                    || sftp
+                        .metadata(remote.clone())
+                        .await
+                        .map(|m| m.is_dir())
+                        .unwrap_or(false);
+                let root = remote_tree_root(remote, remote_is_dir, local);
+                put_tree(sftp, Path::new(local), &root, &mut stats).await?;
+            } else {
+                let remote_path = if remote.ends_with('/') {
+                    match file_name_of(local) {
+                        Some(name) => format!("{remote}{name}"),
+                        None => return Err(format!("Ruta local sin nombre de fichero: {local}")),
+                    }
+                } else {
+                    remote.clone()
+                };
+                stats.bytes = put_file(sftp, Path::new(local), &remote_path).await?;
+                stats.files = 1;
+            }
+        }
+    }
+    Ok(stats)
+}
+
+/// Raíz local de un `--get -r`, con la regla de `cp -r`: si el destino ya es
+/// una carpeta (o acaba en «/»), el árbol cuelga de ella con el nombre del
+/// origen; si no existe, el destino **es** la copia.
+fn tree_root(local: &Path, trailing_slash: bool, remote: &str) -> PathBuf {
+    if trailing_slash || local.is_dir() {
+        if let Some(name) = file_name_of(remote.trim_end_matches('/')) {
+            return local.join(name);
+        }
+    }
+    local.to_path_buf()
+}
+
+/// Lo mismo para `--put -r`, del lado remoto.
+fn remote_tree_root(remote: &str, remote_is_dir: bool, local: &str) -> String {
+    if remote_is_dir {
+        if let Some(name) = file_name_of(local.trim_end_matches('/')) {
+            return join_remote(remote, &name);
+        }
+    }
+    remote.to_string()
+}
+
+/// `a/` + `b` → `a/b`; `/` + `b` → `/b`. Las rutas SFTP van siempre con «/».
+fn join_remote(dir: &str, name: &str) -> String {
+    let base = dir.trim_end_matches('/');
+    if base.is_empty() && dir.starts_with('/') {
+        format!("/{name}")
+    } else if base.is_empty() {
+        name.to_string()
+    } else {
+        format!("{base}/{name}")
+    }
+}
+
+async fn get_file(
+    sftp: &russh_sftp::client::SftpSession,
+    remote: &str,
+    local_path: &Path,
+) -> Result<u64, String> {
+    let mut source = sftp
+        .open(remote.to_string())
+        .await
+        .map_err(|e| format!("No se pudo abrir el remoto {remote}: {e}"))?;
+    let mut target = tokio::fs::File::create(local_path)
+        .await
+        .map_err(|e| format!("No se pudo crear {}: {e}", local_path.display()))?;
+    let n = tokio::io::copy(&mut source, &mut target)
+        .await
+        .map_err(|e| format!("Error copiando {remote}: {e}"))?;
+    target
+        .flush()
+        .await
+        .map_err(|e| format!("Error escribiendo {}: {e}", local_path.display()))?;
+    Ok(n)
+}
+
+async fn put_file(
+    sftp: &russh_sftp::client::SftpSession,
+    local: &Path,
+    remote_path: &str,
+) -> Result<u64, String> {
+    let mut source = tokio::fs::File::open(local)
+        .await
+        .map_err(|e| format!("No se pudo abrir {}: {e}", local.display()))?;
+    let mut target = sftp
+        .create(remote_path.to_string())
+        .await
+        .map_err(|e| format!("No se pudo crear el remoto {remote_path}: {e}"))?;
+    let n = tokio::io::copy(&mut source, &mut target)
+        .await
+        .map_err(|e| format!("Error copiando a {remote_path}: {e}"))?;
+    target
+        .shutdown()
+        .await
+        .map_err(|e| format!("Error cerrando el remoto {remote_path}: {e}"))?;
+    Ok(n)
+}
+
+/// Descarga un árbol. Pila explícita en vez de recursión (una `async fn`
+/// recursiva exigiría `Box::pin` en cada nivel). Tres reglas:
+///
+/// - **Los nombres que devuelve el servidor son entrada hostil**: cada uno pasa
+///   por `safe_entry_name` antes de tocar el disco, y uno inválido **aborta la
+///   copia entera** —no es un fichero con mala suerte, es un servidor que
+///   intenta escribir fuera del destino (`../../.bashrc`).
+/// - Los enlaces simbólicos y los ficheros especiales **no se siguen ni se
+///   copian**: se cuentan en `skipped`. Seguirlos abre la puerta a ciclos y a
+///   leer fuera del árbol pedido.
+/// - Un fichero que falla no detiene el resto: se anota en `errors`.
+async fn get_tree(
+    sftp: &russh_sftp::client::SftpSession,
+    remote_root: &str,
+    local_root: &Path,
+    stats: &mut TransferStats,
+) -> Result<(), String> {
+    let mut stack = vec![(remote_root.trim_end_matches('/').to_string(), local_root.to_path_buf(), 0usize)];
+    while let Some((remote_dir, local_dir, depth)) = stack.pop() {
+        if depth > MAX_TRANSFER_DEPTH {
+            return Err(format!(
+                "El arbol remoto supera {MAX_TRANSFER_DEPTH} niveles en {remote_dir}: copia abortada."
+            ));
+        }
+        tokio::fs::create_dir_all(&local_dir)
+            .await
+            .map_err(|e| format!("No se pudo crear {}: {e}", local_dir.display()))?;
+        stats.dirs += 1;
+        let listing_path = if remote_dir.is_empty() { "/".to_string() } else { remote_dir.clone() };
+        let entries = match sftp.read_dir(listing_path).await {
+            Ok(entries) => entries,
+            Err(e) => {
+                stats.errors.push(format!("No se pudo listar {remote_dir}: {e}"));
+                continue;
+            }
+        };
+        for entry in entries {
+            let name = entry.file_name();
+            crate::sftp_manager::safe_entry_name(&name)
+                .map_err(|e| format!("Copia abortada en {remote_dir}: {e}"))?;
+            let remote_path = join_remote(&remote_dir, &name);
+            let local_path = local_dir.join(&name);
+            let kind = entry.file_type();
+            if kind.is_dir() {
+                stack.push((remote_path, local_path, depth + 1));
+            } else if kind.is_file() {
+                match get_file(sftp, &remote_path, &local_path).await {
+                    Ok(n) => {
+                        stats.bytes += n;
+                        stats.files += 1;
+                    }
+                    Err(e) => stats.errors.push(e),
                 }
             } else {
-                remote.clone()
-            };
-            let mut source = tokio::fs::File::open(local)
-                .await
-                .map_err(|e| fail(format!("No se pudo abrir {local}: {e}")))?;
-            let mut target = sftp
-                .create(remote_path.clone())
-                .await
-                .map_err(|e| fail(format!("No se pudo crear el remoto {remote_path}: {e}")))?;
-            let n = tokio::io::copy(&mut source, &mut target)
-                .await
-                .map_err(|e| fail(format!("Error copiando a {remote_path}: {e}")))?;
-            target
-                .shutdown()
-                .await
-                .map_err(|e| fail(format!("Error cerrando el remoto {remote_path}: {e}")))?;
-            n
+                stats.skipped += 1;
+            }
         }
-    };
-    let _ = sftp.close().await;
-    Ok(bytes)
+    }
+    Ok(())
+}
+
+/// Sube un árbol. Mismas reglas que `get_tree`, del otro lado: los enlaces
+/// simbólicos locales no se siguen (`symlink_metadata`), y una entrada que
+/// falla se anota sin detener el resto.
+async fn put_tree(
+    sftp: &russh_sftp::client::SftpSession,
+    local_root: &Path,
+    remote_root: &str,
+    stats: &mut TransferStats,
+) -> Result<(), String> {
+    let mut stack = vec![(local_root.to_path_buf(), remote_root.trim_end_matches('/').to_string(), 0usize)];
+    while let Some((local_dir, remote_dir, depth)) = stack.pop() {
+        if depth > MAX_TRANSFER_DEPTH {
+            return Err(format!(
+                "El arbol local supera {MAX_TRANSFER_DEPTH} niveles en {}: copia abortada.",
+                local_dir.display()
+            ));
+        }
+        // La raíz tiene que existir o nada de lo que cuelga de ella entra: su
+        // fallo es fatal. El de una subcarpeta solo pierde esa rama.
+        if let Err(e) = ensure_remote_dir(sftp, &remote_dir).await {
+            if depth == 0 {
+                return Err(e);
+            }
+            stats.errors.push(e);
+            continue;
+        }
+        stats.dirs += 1;
+        let entries = match std::fs::read_dir(&local_dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                stats.errors.push(format!("No se pudo listar {}: {e}", local_dir.display()));
+                continue;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    stats.errors.push(format!("Entrada ilegible en {}: {e}", local_dir.display()));
+                    continue;
+                }
+            };
+            let local_path = entry.path();
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                stats.errors.push(format!(
+                    "Nombre no UTF-8, no se puede enviar por SFTP: {}",
+                    local_path.display()
+                ));
+                continue;
+            };
+            let remote_path = join_remote(&remote_dir, &name);
+            // `symlink_metadata`: el tipo del enlace, no el de su destino.
+            let kind = match std::fs::symlink_metadata(&local_path) {
+                Ok(meta) => meta.file_type(),
+                Err(e) => {
+                    stats.errors.push(format!("No se pudo leer {}: {e}", local_path.display()));
+                    continue;
+                }
+            };
+            if kind.is_dir() {
+                stack.push((local_path, remote_path, depth + 1));
+            } else if kind.is_file() {
+                match put_file(sftp, &local_path, &remote_path).await {
+                    Ok(n) => {
+                        stats.bytes += n;
+                        stats.files += 1;
+                    }
+                    Err(e) => stats.errors.push(e),
+                }
+            } else {
+                stats.skipped += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Crea la carpeta remota si no existe. `create_dir` sobre una que ya está
+/// falla con un error genérico, así que ante el fallo se pregunta si el destino
+/// es ya una carpeta antes de darlo por malo.
+async fn ensure_remote_dir(
+    sftp: &russh_sftp::client::SftpSession,
+    path: &str,
+) -> Result<(), String> {
+    let target = if path.is_empty() { "/" } else { path };
+    match sftp.create_dir(target.to_string()).await {
+        Ok(()) => Ok(()),
+        Err(create_err) => match sftp.metadata(target.to_string()).await {
+            Ok(meta) if meta.is_dir() => Ok(()),
+            _ => Err(format!("No se pudo crear la carpeta remota {target}: {create_err}")),
+        },
+    }
 }
 
 // ─── Conexión ─────────────────────────────────────────────────────────────────
@@ -2398,6 +2759,79 @@ mod tests {
         assert_eq!(file_name_of("/srv/"), None);
     }
 
+    #[test]
+    fn recursive_y_ndjson_se_parsean_y_se_acotan() {
+        match parse_cli_command(&args(&["-c", "nas", "-r", "--get", "/srv/web", "./copia", "--ndjson"])) {
+            Some(CliCommand::Transfer { op, opts, .. }) => {
+                assert!(opts.recursive && opts.ndjson && !opts.json);
+                assert_eq!(
+                    op,
+                    TransferOp::Get { remote: "/srv/web".into(), local: "./copia".into() }
+                );
+            }
+            other => panic!("esperaba Transfer, llego {other:?}"),
+        }
+        // Dos formatos a la vez no tienen sentido, y -r sin copia tampoco.
+        assert!(matches!(
+            parse_cli_command(&args(&["--all", "--exec", "uptime", "--json", "--ndjson"])),
+            Some(CliCommand::Invalid(_))
+        ));
+        assert!(matches!(
+            parse_cli_command(&args(&["-c", "nas", "-r", "--exec", "ls"])),
+            Some(CliCommand::Invalid(_))
+        ));
+        // El listado es un documento, no un flujo.
+        assert!(matches!(
+            parse_cli_command(&args(&["-l", "--ndjson"])),
+            Some(CliCommand::Invalid(_))
+        ));
+        match parse_cli_command(&args(&["--workspace", "Omnia", "--exec", "uptime", "--ndjson"])) {
+            Some(CliCommand::Run { opts, .. }) => assert!(opts.ndjson && opts.machine()),
+            other => panic!("esperaba Run, llego {other:?}"),
+        }
+    }
+
+    #[test]
+    fn las_rutas_remotas_se_unen_con_una_sola_barra() {
+        assert_eq!(join_remote("/srv/web", "a.txt"), "/srv/web/a.txt");
+        assert_eq!(join_remote("/srv/web/", "a.txt"), "/srv/web/a.txt");
+        assert_eq!(join_remote("/", "etc"), "/etc");
+        assert_eq!(join_remote("", "rel"), "rel");
+        assert_eq!(join_remote("rel/dir", "f"), "rel/dir/f");
+    }
+
+    /// La regla de `cp -r`: sobre una carpeta que existe, el árbol cuelga de
+    /// ella con su nombre; sobre un destino que no existe, el destino ES la copia.
+    #[test]
+    fn la_raiz_de_una_copia_recursiva_sigue_la_regla_de_cp() {
+        let existing = std::env::temp_dir();
+        assert_eq!(tree_root(&existing, false, "/srv/web"), existing.join("web"));
+        assert_eq!(tree_root(&existing, false, "/srv/web/"), existing.join("web"));
+        let missing = existing.join("rustty-cli-no-existe-jamas");
+        assert_eq!(tree_root(&missing, false, "/srv/web"), missing);
+        assert_eq!(tree_root(&missing, true, "/srv/web"), missing.join("web"));
+
+        assert_eq!(remote_tree_root("/backups", true, "./sitio"), "/backups/sitio");
+        assert_eq!(remote_tree_root("/backups/", true, "./sitio/"), "/backups/sitio");
+        assert_eq!(remote_tree_root("/backups/nuevo", false, "./sitio"), "/backups/nuevo");
+    }
+
+    #[test]
+    fn el_resumen_de_una_copia_cuenta_lo_omitido_y_lo_fallido() {
+        let one = TransferStats { bytes: 10, files: 1, ..Default::default() };
+        assert_eq!(transfer_summary(&one, 5), "10 bytes copiados en 5 ms.");
+        let tree = TransferStats {
+            bytes: 300,
+            files: 3,
+            dirs: 2,
+            skipped: 1,
+            errors: vec!["x".into()],
+        };
+        let text = transfer_summary(&tree, 9);
+        assert!(text.starts_with("3 ficheros (300 bytes) en 2 carpetas, 9 ms."), "{text}");
+        assert!(text.contains("1 omitidos") && text.contains("1 con error"), "{text}");
+    }
+
     /// Integración real contra el `sshd` del fixture: código de salida, stdin
     /// cerrado, script por stdin y captura separada de stdout/stderr.
     #[cfg(target_os = "linux")]
@@ -2469,6 +2903,92 @@ mod tests {
             assert_eq!(split.exit_code, Some(5));
             assert_eq!(String::from_utf8_lossy(&split.stdout), "fuera\n");
             assert_eq!(String::from_utf8_lossy(&split.stderr), "error\n");
+        }
+
+        /// `--put -r` y `--get -r` de verdad: un árbol con subcarpetas, un
+        /// fichero vacío y un enlace simbólico sube al servidor, vuelve a bajar
+        /// y llega idéntico —menos el enlace, que se cuenta como omitido en los
+        /// dos sentidos y no aparece al otro lado—. Y sin `-r`, una carpeta es
+        /// un error que lo dice, no una copia a medias.
+        #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+        #[tokio::test]
+        async fn una_carpeta_sube_y_baja_entera_y_los_enlaces_se_omiten() {
+            let _guard = CLI_IT_LOCK.lock().await;
+            let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+                eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+                return;
+            };
+            host_keys::set_strict_first_connect(false);
+            let handle = fixture_handle(&server).await;
+            let sftp = open_sftp(&handle).await.expect("sftp");
+
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let base = std::env::temp_dir().join(format!("rustty-cli-tree-{}-{nanos}", std::process::id()));
+            let src = base.join("origen");
+            std::fs::create_dir_all(src.join("sub/hondo")).unwrap();
+            std::fs::write(src.join("raiz.txt"), b"hola").unwrap();
+            std::fs::write(src.join("sub/medio.bin"), vec![7u8; 70_000]).unwrap();
+            std::fs::write(src.join("sub/hondo/vacio"), b"").unwrap();
+            std::os::unix::fs::symlink(src.join("raiz.txt"), src.join("enlace")).unwrap();
+
+            let local = src.to_string_lossy().into_owned();
+            let remote = base.join("servidor").to_string_lossy().into_owned();
+
+            // Sin -r: error claro, y nada creado al otro lado.
+            let denied = run_transfer(
+                &sftp,
+                &TransferOp::Put { local: local.clone(), remote: remote.clone() },
+                false,
+            )
+            .await
+            .expect_err("una carpeta sin -r no se copia");
+            assert!(denied.contains("--recursive"), "{denied}");
+            assert!(!base.join("servidor").exists());
+
+            let up = run_transfer(
+                &sftp,
+                &TransferOp::Put { local: local.clone(), remote: remote.clone() },
+                true,
+            )
+            .await
+            .expect("put -r");
+            assert_eq!((up.files, up.dirs, up.skipped), (3, 3, 1), "{up:?}");
+            assert_eq!(up.bytes, 4 + 70_000);
+            assert!(up.errors.is_empty(), "{:?}", up.errors);
+            assert!(!base.join("servidor/enlace").exists(), "el enlace no debe subir");
+
+            // De vuelta, sobre una carpeta que YA existe: cuelga con su nombre.
+            let back = base.join("vuelta");
+            std::fs::create_dir_all(&back).unwrap();
+            let down = run_transfer(
+                &sftp,
+                &TransferOp::Get { remote: remote.clone(), local: back.to_string_lossy().into_owned() },
+                true,
+            )
+            .await
+            .expect("get -r");
+            assert_eq!((down.files, down.dirs, down.skipped), (3, 3, 0), "{down:?}");
+            assert_eq!(down.bytes, up.bytes);
+            let got = back.join("servidor");
+            assert_eq!(std::fs::read(got.join("raiz.txt")).unwrap(), b"hola");
+            assert_eq!(std::fs::read(got.join("sub/medio.bin")).unwrap(), vec![7u8; 70_000]);
+            assert_eq!(std::fs::read(got.join("sub/hondo/vacio")).unwrap(), b"");
+
+            // Una carpeta remota sin -r tampoco baja.
+            let denied = run_transfer(
+                &sftp,
+                &TransferOp::Get { remote, local: base.join("no").to_string_lossy().into_owned() },
+                false,
+            )
+            .await
+            .expect_err("una carpeta remota sin -r no se copia");
+            assert!(denied.contains("--recursive"), "{denied}");
+
+            let _ = sftp.close().await;
+            let _ = std::fs::remove_dir_all(&base);
         }
 
         #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
