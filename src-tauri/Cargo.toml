@@ -79,7 +79,7 @@ zeroize = "1"
 # otra espera: no compila. Subirlo exige que el ecosistema entero cruce.
 keepass = "=0.13.22"
 # Enumeración de fuentes del sistema para el selector de familia del terminal
-fontdb = "0.23"
+fontdb = "0.24"
 # Sincronización en la nube: crypto + HTTP + timestamps
 # `age` provee cifrado simétrico con passphrase (scrypt + ChaCha20-Poly1305)
 # en formato estándar. `chrono` para timestamps de los items con LWW.
