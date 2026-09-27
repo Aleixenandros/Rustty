@@ -7,9 +7,6 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { check as checkUpdate } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-// Solo los selectores de fichero siguen siendo nativos (no hay alternativa
-// web); las confirmaciones usan confirmThemed para respetar el tema de la app.
-import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { readText as readClipboardText, writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import { isPermissionGranted as notifPermissionGranted, requestPermission as requestNotifPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import * as sync from "./sync.js";
@@ -93,6 +90,10 @@ import { normalizePrefs } from "./modules/prefs/normalize.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { ipcErrorText, isHostKeyError } from "./modules/ipc/errors.js";
+// Los selectores de fichero son nativos y los abre el backend (`fs_pick`), que
+// devuelve con la ruta un permiso de un solo uso para leerla o escribirla; las
+// confirmaciones usan confirmThemed para respetar el tema de la app.
+import { createFileApi, isFileGrantError, localCommandError } from "./modules/ipc/files.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
 import { generatePassphrase, passphraseStrength } from "./modules/passphrase.js";
 import { rankCommandSuggestions } from "./modules/command-suggest.js";
@@ -432,6 +433,22 @@ const THEME_CLASSES = [
 // ═══════════════════════════════════════════════════════════════
 // PREFERENCIAS
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * Diálogos de fichero y lectura/escritura local con permiso de un solo uso (ver
+ * `modules/ipc/files.js`): la ruta la elige el usuario en el diálogo nativo que
+ * abre el backend, nunca la nombra el renderer.
+ */
+const files = createFileApi(invoke);
+
+/**
+ * Texto de un error de lectura/escritura de fichero: el de un permiso inválido
+ * (caducado, ya usado o ruta cambiada) se traduce; el resto se muestra tal cual.
+ * @param {unknown} err
+ */
+function fileErrorText(err) {
+  return isFileGrantError(err) ? t("toast.file_grant_invalid") : ipcErrorText(err);
+}
 
 /**
  * Cuota de tamaño (en bytes) de cada lectura de fichero local, por operación.
@@ -1522,23 +1539,20 @@ async function exportCurrentTheme() {
   });
 
   const defaultName = `rustty-theme-${uiId}.json`;
-  let path;
+  let file;
   try {
-    path = await saveDialog({
+    file = await files.pickFileToSave({
       title: t("toast.export_theme_title"),
       defaultPath: defaultName,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
-  } catch (err) { toast(`${err}`, "error"); return; }
-  if (!path) return;
+  } catch (err) { toast(fileErrorText(err), "error"); return; }
+  if (!file) return;
 
   try {
-    await invoke("write_text_file", {
-      path,
-      contents: JSON.stringify(exported, null, 2),
-    });
+    await files.writeTextFile(file, JSON.stringify(exported, null, 2));
     toast(t("toast.theme_exported").replace("{name}", baseName), "success");
-  } catch (err) { toast(`${err}`, "error"); }
+  } catch (err) { toast(fileErrorText(err), "error"); }
 }
 
 async function exportThemeTemplate() {
@@ -1549,39 +1563,35 @@ async function exportThemeTemplate() {
     terminal: getTerminalTheme(),
   });
 
-  let path;
+  let file;
   try {
-    path = await saveDialog({
+    file = await files.pickFileToSave({
       title: t("toast.export_theme_title"),
       defaultPath: "rustty-theme-template.json",
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
-  } catch (err) { toast(`${err}`, "error"); return; }
-  if (!path) return;
+  } catch (err) { toast(fileErrorText(err), "error"); return; }
+  if (!file) return;
 
   try {
-    await invoke("write_text_file", {
-      path,
-      contents: JSON.stringify(template, null, 2),
-    });
+    await files.writeTextFile(file, JSON.stringify(template, null, 2));
     toast(t("toast.theme_exported").replace("{name}", template.name), "success");
-  } catch (err) { toast(`${err}`, "error"); }
+  } catch (err) { toast(fileErrorText(err), "error"); }
 }
 
 async function importTheme() {
-  let path;
+  let file;
   try {
-    path = await openDialog({
+    file = await files.pickFileToOpen({
       title: t("toast.import_theme_title"),
-      multiple: false,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
   } catch (err) { toast(`${err}`, "error"); return; }
-  if (!path) return;
+  if (!file) return;
 
   let data;
   try {
-    const text = await invoke("read_text_file", { path, maxBytes: FILE_READ_LIMITS.theme });
+    const text = await files.readTextFile(file, FILE_READ_LIMITS.theme);
     data = JSON.parse(text);
   } catch (err) { toast(t("toast.theme_import_invalid"), "error"); return; }
 
@@ -1749,15 +1759,16 @@ function initTerminalBgPause() {
 }
 
 async function chooseTerminalBackground() {
-  const file = await openDialog({
-    multiple: false,
-    filters: [{ name: "Imagen", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
-  });
-  if (!file) return;
-  const path = Array.isArray(file) ? file[0] : file;
+  let file;
   try {
-    const b64 = await invoke("read_file_base64", { path, maxBytes: 8 * 1024 * 1024 });
-    const ext = String(path).toLowerCase().split(".").pop();
+    file = await files.pickFileToOpen({
+      filters: [{ name: "Imagen", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+    });
+  } catch (err) { toast(fileErrorText(err), "error"); return; }
+  if (!file) return;
+  try {
+    const b64 = await files.readFileBase64(file, 8 * 1024 * 1024);
+    const ext = String(file.path).toLowerCase().split(".").pop();
     const mime = ext === "png" ? "image/png"
       : ext === "webp" ? "image/webp"
       : ext === "gif" ? "image/gif"
@@ -1782,7 +1793,7 @@ async function chooseTerminalBackground() {
     applyPrefsToAllTerminals();
     toast(t("prefs_appearance.bg_set_hint"), "info", 6000);
   } catch (err) {
-    toast(ipcErrorText(err), "error");
+    toast(fileErrorText(err), "error");
   }
 }
 
@@ -3067,10 +3078,8 @@ async function syncRotatePassphraseFlow() {
 }
 
 async function syncBrowseLocalFolder() {
-  const path = await openDialog({
+  const path = await files.pickDirectory({
     title: t("prefs_sync.local_folder_dialog"),
-    directory: true,
-    multiple: false,
   }).catch(() => null);
   if (path) document.getElementById("sync-local-folder").value = path;
 }
@@ -3141,10 +3150,8 @@ async function applyAppLogConfig(dir, level) {
 }
 
 async function appLogBrowseFolder() {
-  const path = await openDialog({
+  const path = await files.pickDirectory({
     title: t("app_log.browse_dialog"),
-    directory: true,
-    multiple: false,
   }).catch(() => null);
   if (!path) return;
   const level = document.getElementById("app-log-level")?.value || null;
@@ -3345,7 +3352,7 @@ async function syncExportFile() {
     });
     if (path) toast(t("prefs_sync.done_export").replace("{path}", path), "success");
   } catch (err) {
-    toast(`Export: ${err}`, "error", 6000);
+    toast(`Export: ${fileErrorText(err)}`, "error", 6000);
   }
 }
 
@@ -3372,7 +3379,7 @@ async function syncImportFile() {
       + (summary.prefsChanged ? 1 : 0);
     toast(t("prefs_sync.done_import").replace("{n}", total), "success");
   } catch (err) {
-    toast(`Import: ${err}`, "error", 6000);
+    toast(`Import: ${fileErrorText(err)}`, "error", 6000);
   }
 }
 
@@ -3639,21 +3646,21 @@ async function exportDiagnosticsBundle() {
   let report;
   try {
     report = await buildCurrentDiagnostics(diagnosticsConsent());
-  } catch (err) { toast(`${err}`, "error"); return; }
+  } catch (err) { toast(fileErrorText(err), "error"); return; }
   const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
-  let path;
+  let file;
   try {
-    path = await saveDialog({
+    file = await files.pickFileToSave({
       title: t("diagnostics.export"),
       defaultPath: `rustty-diagnostics-${stamp}.json`,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
-  } catch (err) { toast(`${err}`, "error"); return; }
-  if (!path) return;
+  } catch (err) { toast(fileErrorText(err), "error"); return; }
+  if (!file) return;
   try {
-    await invoke("write_text_file", { path, contents: JSON.stringify(report, null, 2) });
+    await files.writeTextFile(file, JSON.stringify(report, null, 2));
     toast(t("diagnostics.exported"), "success");
-  } catch (err) { toast(`${err}`, "error"); }
+  } catch (err) { toast(fileErrorText(err), "error"); }
 }
 
 function setAboutUpdateStatus(text, type = "") {
@@ -4277,17 +4284,17 @@ async function refreshKeepassStatus() {
 }
 
 async function browseKeepassPath() {
-  const selected = await openDialog({
-    multiple: false,
+  const selected = await files.pickFilePath({
     filters: [{ name: "KeePass", extensions: ["kdbx"] }],
-  });
+  }).catch((err) => { toast(fileErrorText(err), "error"); return null; });
   if (typeof selected === "string") {
     document.getElementById("pref-keepass-path").value = selected;
   }
 }
 
 async function browseKeepassKeyfile() {
-  const selected = await openDialog({ multiple: false });
+  const selected = await files.pickFilePath()
+    .catch((err) => { toast(fileErrorText(err), "error"); return null; });
   if (typeof selected === "string") {
     document.getElementById("pref-keepass-keyfile").value = selected;
   }
@@ -12894,19 +12901,19 @@ async function exportMetricsSnapshot(sessionId) {
   };
   const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
   const safeHost = String(host).replace(/[^a-zA-Z0-9._-]+/g, "-");
-  let path;
+  let file;
   try {
-    path = await saveDialog({
+    file = await files.pickFileToSave({
       title: t("metrics.export"),
       defaultPath: `rustty-metrics-${safeHost}-${stamp}.json`,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
-  } catch (err) { toast(`${err}`, "error"); return; }
-  if (!path) return;
+  } catch (err) { toast(fileErrorText(err), "error"); return; }
+  if (!file) return;
   try {
-    await invoke("write_text_file", { path, contents: JSON.stringify(doc, null, 2) });
+    await files.writeTextFile(file, JSON.stringify(doc, null, 2));
     toast(t("metrics.exported"), "success");
-  } catch (err) { toast(`${err}`, "error"); }
+  } catch (err) { toast(fileErrorText(err), "error"); }
 }
 
 /**
@@ -16154,44 +16161,43 @@ async function exportScriptToMarkdown(id) {
   const s = scriptsCache.find((x) => x.id === id);
   if (!s) return;
   const base = (s.name || "script").replace(/[^\p{L}\p{N}._-]+/gu, "-").toLowerCase() || "script";
-  let path;
+  let file;
   try {
-    path = await saveDialog({
+    file = await files.pickFileToSave({
       title: t("scripts.export_title"),
       defaultPath: `${base}.md`,
       filters: [{ name: "Markdown", extensions: ["md"] }],
     });
   } catch (err) {
-    toast(`${err}`, "error");
+    toast(fileErrorText(err), "error");
     return;
   }
-  if (!path) return;
+  if (!file) return;
   try {
-    await invoke("write_text_file", { path, contents: scriptToMarkdown(s) });
+    await files.writeTextFile(file, scriptToMarkdown(s));
     toast(t("scripts.exported"), "success");
   } catch (err) {
-    toast(`${err}`, "error");
+    toast(fileErrorText(err), "error");
   }
 }
 
 async function importScriptFromMarkdown() {
-  let path;
+  let file;
   try {
-    path = await openDialog({
+    file = await files.pickFileToOpen({
       title: t("scripts.import_title"),
-      multiple: false,
       filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
     });
   } catch (err) {
-    toast(`${err}`, "error");
+    toast(fileErrorText(err), "error");
     return;
   }
-  if (!path) return;
+  if (!file) return;
   let script = null;
   let ignored = [];
   try {
     ({ script, ignored } = parseRunbook(
-      await invoke("read_text_file", { path, maxBytes: FILE_READ_LIMITS.runbook })
+      await files.readTextFile(file, FILE_READ_LIMITS.runbook)
     ));
   } catch {
     script = null;
@@ -16222,7 +16228,7 @@ async function importScriptFromMarkdown() {
   try {
     await invoke("scripts_save", { script });
   } catch (err) {
-    toast(`${err}`, "error");
+    toast(fileErrorText(err), "error");
     return;
   }
   toast(t("scripts.imported", { name: script.name }), "success");
@@ -16930,23 +16936,23 @@ async function copyScriptHostOutput(pid) {
 async function exportScriptRunLog(run) {
   if (!run) return;
   const base = (run.script?.name || "script").replace(/[^\p{L}\p{N}._-]+/gu, "-").toLowerCase() || "script";
-  let path;
+  let file;
   try {
-    path = await saveDialog({
+    file = await files.pickFileToSave({
       title: t("scripts.export_log_title"),
       defaultPath: `${base}.log`,
       filters: [{ name: "Log", extensions: ["log", "txt"] }],
     });
   } catch (err) {
-    toast(`${err}`, "error");
+    toast(fileErrorText(err), "error");
     return;
   }
-  if (!path) return;
+  if (!file) return;
   try {
-    await invoke("write_text_file", { path, contents: scriptRunToText(run) });
+    await files.writeTextFile(file, scriptRunToText(run));
     toast(t("scripts.exported_log"), "success");
   } catch (err) {
-    toast(`${err}`, "error");
+    toast(fileErrorText(err), "error");
   }
 }
 
@@ -21086,20 +21092,14 @@ async function confirmDeleteRows(sessionId, side, rows) {
 async function uploadLocalFilesFromDialog(sessionId) {
   const s = sessions.get(sessionId);
   if (!s?.sftp?.sftpSessionId) return;
-  let paths;
+  let selected;
   try {
-    paths = await openDialog({
-      title: t("sftp.upload_dialog_title"),
-      multiple: true,
-      directory: false,
-    });
+    selected = await files.pickFiles({ title: t("sftp.upload_dialog_title") });
   } catch (err) {
     toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
-  if (!paths) return;
-  const selected = Array.isArray(paths) ? paths : [paths];
-  if (!selected.length) return;
+  if (!selected) return;
   const rows = selected.map((path) => ({
     path,
     name: localNameFromPath(path),
@@ -21786,9 +21786,9 @@ async function exportConnections(folderFilter, workspaceId = getActiveWorkspaceI
   const suffix = folderFilter ? `-${folderFilter.replace(/\//g, "_")}` : "";
   const defaultName = `rustty-connections${suffix}-${new Date().toISOString().slice(0, 10)}.json`;
 
-  let path;
+  let file;
   try {
-    path = await saveDialog({
+    file = await files.pickFileToSave({
       title: t("prefs_data.export_dialog_title"),
       defaultPath: defaultName,
       filters: [{ name: "JSON", extensions: ["json"] }],
@@ -21797,19 +21797,16 @@ async function exportConnections(folderFilter, workspaceId = getActiveWorkspaceI
     toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
-  if (!path) return; // usuario canceló
+  if (!file) return; // usuario canceló
 
   try {
-    await invoke("write_text_file", {
-      path,
-      contents: JSON.stringify(data, null, 2),
-    });
+    await files.writeTextFile(file, JSON.stringify(data, null, 2));
     toast(
       `${profilesToExport.length} conexiones exportadas${folderFilter ? ` (${folderFilter})` : ""}`,
       "success"
     );
   } catch (err) {
-    toast(`Error al escribir fichero: ${err}`, "error");
+    toast(fileErrorText(err), "error");
   }
 }
 
@@ -21834,9 +21831,9 @@ async function exportConnectionsByWorkspace(workspaceId) {
   const safeName = wsName.replace(/[^\w\-]+/g, "_");
   const defaultName = `rustty-connections-${safeName}-${new Date().toISOString().slice(0, 10)}.json`;
 
-  let path;
+  let file;
   try {
-    path = await saveDialog({
+    file = await files.pickFileToSave({
       title: t("prefs_data.export_dialog_title"),
       defaultPath: defaultName,
       filters: [{ name: "JSON", extensions: ["json"] }],
@@ -21845,16 +21842,13 @@ async function exportConnectionsByWorkspace(workspaceId) {
     toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
-  if (!path) return;
+  if (!file) return;
 
   try {
-    await invoke("write_text_file", {
-      path,
-      contents: JSON.stringify(data, null, 2),
-    });
+    await files.writeTextFile(file, JSON.stringify(data, null, 2));
     toast(`${profilesToExport.length} conexiones exportadas (${wsName})`, "success");
   } catch (err) {
-    toast(`Error al escribir fichero: ${err}`, "error");
+    toast(fileErrorText(err), "error");
   }
 }
 
@@ -21863,21 +21857,20 @@ async function exportConnectionsByWorkspace(workspaceId) {
  * Hace merge: actualiza si el id existe, añade si no.
  */
 async function importConnections() {
-  let path;
+  let file;
   try {
-    path = await openDialog({
+    file = await files.pickFileToOpen({
       title: t("import_wizard.title"),
-      multiple: false,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
   } catch (err) {
     toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
-  if (!path) return; // usuario canceló
+  if (!file) return; // usuario canceló
 
   try {
-    const text = await invoke("read_text_file", { path, maxBytes: FILE_READ_LIMITS.profiles });
+    const text = await files.readTextFile(file, FILE_READ_LIMITS.profiles);
     const data = JSON.parse(text);
 
     if (!data.profiles || !Array.isArray(data.profiles)) {
@@ -21923,7 +21916,7 @@ async function importConnections() {
       "success",
     );
   } catch (err) {
-    toast(`Error al importar: ${err}`, "error");
+    toast(t("toast.import_failed", { err: fileErrorText(err) }), "error");
   }
 }
 
@@ -22002,7 +21995,9 @@ async function expandSshIncludes(content, homeDir, seen, depth, unsupported) {
         seen.add(file);
         let inner;
         try {
-          inner = await invoke("read_text_file", { path: file, maxBytes: FILE_READ_LIMITS.sshConfig });
+          // Sin diálogo: el backend solo lo lee si está bajo ~/.ssh (o el ssh
+          // del sistema) y no es una clave privada.
+          inner = await invoke("read_ssh_config_include", { path: file, maxBytes: FILE_READ_LIMITS.sshConfig });
         } catch {
           unsupported.add(`Include ${pat}`);
           continue;
@@ -22144,28 +22139,27 @@ async function parseSshConfig(content, homeDir) {
  * el mismo `name` ya existe en esa carpeta, no se duplica.
  */
 async function importFromSshConfig() {
-  let path;
+  let file;
   try {
     const home = await invoke("local_home_dir").catch(() => null);
     const defaultPath = home ? `${home}/.ssh/config` : null;
-    path = await openDialog({
+    file = await files.pickFileToOpen({
       title: t("import_ssh.title"),
-      multiple: false,
       defaultPath,
     });
   } catch (err) {
     toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
-  if (!path) return;
+  if (!file) return;
 
   let parsed, home;
   try {
     home = await invoke("local_home_dir").catch(() => null);
-    const text = await invoke("read_text_file", { path, maxBytes: FILE_READ_LIMITS.sshConfig });
+    const text = await files.readTextFile(file, FILE_READ_LIMITS.sshConfig);
     parsed = await parseSshConfig(text, home);
   } catch (err) {
-    toast(`No se pudo leer ${path}: ${err}`, "error");
+    toast(t("import_ssh.read_failed", { path: file.path, err: fileErrorText(err) }), "error");
     return;
   }
   const { blocks, unsupported } = parsed;
@@ -22598,19 +22592,18 @@ async function importWizardPickFile() {
   const filters = importWizard.source === "asbru"
     ? [{ name: "Ásbrú Connection Manager", extensions: ["yml", "yaml"] }]
     : [{ name: "mRemoteNG", extensions: ["xml"] }];
-  let path;
+  let file;
   try {
-    path = await openDialog({
+    file = await files.pickFileToOpen({
       title: t("import_wizard.pick_file"),
-      multiple: false,
       filters,
     });
   } catch (err) {
-    toast(`${err}`, "error");
+    toast(fileErrorText(err), "error");
     return;
   }
-  if (!path) return;
-  importWizard.fileName = Array.isArray(path) ? path[0] : path;
+  if (!file) return;
+  importWizard.fileName = file.path;
   document.getElementById("iw-parse-error").textContent = "";
   try {
     let meta, tree, defaultName;
@@ -22619,7 +22612,7 @@ async function importWizardPickFile() {
       // backend devuelve códigos estables («code» o «code|detalle») que se
       // traducen aquí.
       try {
-        tree = await invoke("parse_asbru", { path: importWizard.fileName });
+        tree = await invoke("parse_asbru", { grant: file.grant });
       } catch (e) {
         const [code, detail] = `${e}`.split("|");
         const key = {
@@ -22645,10 +22638,7 @@ async function importWizardPickFile() {
       };
       defaultName = "Ásbrú";
     } else {
-      const text = await invoke("read_text_file", {
-        path: importWizard.fileName,
-        maxBytes: FILE_READ_LIMITS.importer,
-      });
+      const text = await files.readTextFile(file, FILE_READ_LIMITS.importer);
       ({ meta, tree } = parseMremoteng(text));
       if (meta.fullFileEncryption) {
         document.getElementById("iw-parse-error").textContent = t("import_wizard.err_full_encryption");
@@ -22691,7 +22681,8 @@ async function importWizardPickFile() {
     document.getElementById("iw-workspace-name").value = defaultName;
   } catch (err) {
     importWizard.tree = null;
-    document.getElementById("iw-parse-error").textContent = `${err.message || err}`;
+    document.getElementById("iw-parse-error").textContent =
+      isFileGrantError(err) ? t("toast.file_grant_invalid") : `${err.message || err}`;
     document.getElementById("iw-next").disabled = true;
   }
 }
@@ -24530,18 +24521,31 @@ async function runLocalCommand(cmd) {
     });
     if (!ok) return;
   }
-  const resolved = await resolveCommandText(cmd.command || "");
-  if (resolved === null) return;
-  const value = resolved.trim();
-  if (!value) return;
+  const template = String(cmd.command || "").trim();
+  if (!template) return;
   try {
-    if (cmd.type === "url") {
-      await invoke("plugin:opener|open_url", { url: value });
-      toast(t("prefs_commands.toast_opened"), "success");
-    } else if (cmd.type === "path") {
-      await invoke("plugin:opener|open_path", { path: value });
+    if (cmd.type === "url" || cmd.type === "path") {
+      const resolved = await resolveCommandText(template);
+      if (resolved === null) return;
+      const value = resolved.trim();
+      if (!value) return;
+      if (cmd.type === "url") {
+        await invoke("plugin:opener|open_url", { url: value });
+      } else {
+        await invoke("plugin:opener|open_path", { path: value });
+      }
       toast(t("prefs_commands.toast_opened"), "success");
     } else {
+      // Aquí solo se preguntan los `${ask:}`. La orden no se resuelve en el
+      // renderer: el backend recibe la plantilla, exige que esté autorizada en
+      // este equipo (diálogo nativo la primera vez) y pasa cada valor por el
+      // entorno, sin que el shell lo interprete (`local_command_policy.rs`).
+      const specs = collectAskSpecs(template);
+      let asks = {};
+      if (specs.length) {
+        asks = await promptAsks(specs);
+        if (asks === null) return;
+      }
       const runId = crypto.randomUUID();
       const timeoutSecs = localCmdTimeoutSecs();
       // El aviso vive mientras dura el comando: da la vía de cancelación y se
@@ -24559,10 +24563,16 @@ async function runLocalCommand(cmd) {
       let out;
       try {
         out = await invoke("run_local_command", {
-          command: value,
-          runId,
-          timeoutSecs,
-          maxOutputKb: localCmdMaxOutputKb(),
+          request: {
+            template,
+            name: cmd.name || "",
+            context: activeSubstContext(),
+            asks,
+            lang: getLanguage(),
+            runId,
+            timeoutSecs,
+            maxOutputKb: localCmdMaxOutputKb(),
+          },
         });
       } finally {
         if (runningToast) dismissToast(runningToast, runningToast.dataset.category);
@@ -24585,7 +24595,14 @@ async function runLocalCommand(cmd) {
       }
     }
   } catch (err) {
-    toast(String(err), "error");
+    const policy = localCommandError(err);
+    if (policy?.code === "rejected") {
+      toast(t("prefs_commands.toast_not_authorized", { name: cmd.name }), "info");
+    } else if (policy) {
+      toast(t(`prefs_commands.err_${policy.code}`, { detail: policy.detail }), "error", 8000);
+    } else {
+      toast(String(err), "error");
+    }
   }
 }
 
@@ -25351,19 +25368,19 @@ async function exportActiveBlockMarkdown() {
   if (!ctx) return;
   const { command } = commandBlockText(ctx.session, ctx.block);
   const markdown = blockMarkdownFor(ctx.session, ctx.block);
-  let path;
+  let file;
   try {
-    path = await saveDialog({
+    file = await files.pickFileToSave({
       title: t("blocks.export_title"),
       defaultPath: blockFileName(command),
       filters: [{ name: "Markdown", extensions: ["md"] }],
     });
-  } catch (err) { toast(`${err}`, "error"); return; }
-  if (!path) return;
+  } catch (err) { toast(fileErrorText(err), "error"); return; }
+  if (!file) return;
   try {
-    await invoke("write_text_file", { path, contents: markdown });
+    await files.writeTextFile(file, markdown);
     toast(t("blocks.exported"), "success");
-  } catch (err) { toast(`${err}`, "error"); }
+  } catch (err) { toast(fileErrorText(err), "error"); }
 }
 
 /* ── Diff entre bloques ───────────────────────────────────────────────────
@@ -25750,45 +25767,41 @@ function normalizeShortcutMap(raw) {
 }
 
 async function exportShortcuts() {
-  let path;
+  let file;
   try {
-    path = await saveDialog({
+    file = await files.pickFileToSave({
       title: t("prefs_shortcuts.export_title"),
       defaultPath: "rustty-shortcuts.json",
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
-  } catch (err) { toast(String(err), "error"); return; }
-  if (!path) return;
+  } catch (err) { toast(fileErrorText(err), "error"); return; }
+  if (!file) return;
 
   try {
-    await invoke("write_text_file", {
-      path,
-      contents: JSON.stringify({
-        formatVersion: 1,
-        exportedAt: new Date().toISOString(),
-        shortcuts: prefs.shortcuts || {},
-      }, null, 2),
-    });
+    await files.writeTextFile(file, JSON.stringify({
+      formatVersion: 1,
+      exportedAt: new Date().toISOString(),
+      shortcuts: prefs.shortcuts || {},
+    }, null, 2));
     toast(t("prefs_shortcuts.export_done"), "success");
   } catch (err) {
-    toast(String(err), "error");
+    toast(fileErrorText(err), "error");
   }
 }
 
 async function importShortcuts() {
-  let path;
+  let file;
   try {
-    path = await openDialog({
+    file = await files.pickFileToOpen({
       title: t("prefs_shortcuts.import_title"),
-      multiple: false,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
   } catch (err) { toast(String(err), "error"); return; }
-  if (!path) return;
+  if (!file) return;
 
   let imported;
   try {
-    const text = await invoke("read_text_file", { path, maxBytes: FILE_READ_LIMITS.shortcuts });
+    const text = await files.readTextFile(file, FILE_READ_LIMITS.shortcuts);
     imported = normalizeShortcutMap(JSON.parse(text));
   } catch {
     toast(t("prefs_shortcuts.import_invalid"), "error");
@@ -27918,9 +27931,9 @@ async function exportSessionHistory(sessionId) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const defaultName = `rustty-${safeName}-${stamp}.txt`;
 
-  let path;
+  let file;
   try {
-    path = await saveDialog({
+    file = await files.pickFileToSave({
       title: t("tabctx.export_history"),
       defaultPath: defaultName,
       filters: [{ name: "Texto", extensions: ["txt"] }],
@@ -27929,13 +27942,13 @@ async function exportSessionHistory(sessionId) {
     toast(t("toast.dialog_open_error", { err }), "error");
     return;
   }
-  if (!path) return; // usuario canceló
+  if (!file) return; // usuario canceló
 
   try {
-    await invoke("write_text_file", { path, contents: lines.join("\n") + "\n" });
+    await files.writeTextFile(file, lines.join("\n") + "\n");
     toast(t("toast.history_exported") || "Historial exportado", "success");
   } catch (err) {
-    toast(`Error al escribir fichero: ${err}`, "error");
+    toast(fileErrorText(err), "error");
   }
 }
 

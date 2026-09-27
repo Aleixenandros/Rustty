@@ -17,6 +17,14 @@ Rustty está diseñado como aplicación local-first: no requiere cuenta propia, 
 - La base KeePass desbloqueada nunca se sincroniza.
 - En Unix, los ficheros locales sensibles (`profiles.json`, `credentials.json` y las notas `notes/*.md`) se escriben con permisos privados `0600`.
 
+## Ficheros locales: la ruta la eliges tú
+
+Importar y exportar (temas, conexiones, runbooks, atajos, diagnósticos, backups cifrados, la imagen de fondo del terminal…) pasa siempre por el **diálogo de ficheros del sistema**, y ese diálogo lo abre el núcleo de la aplicación, no la interfaz web. Lo que recibe la interfaz es la ruta, para enseñarla, y un **permiso** que vale para una sola operación —leer o escribir, no las dos— sobre esa ruta y durante quince minutos. Si un enlace de la ruta se cambia después de elegirla para apuntar a otro sitio, la operación se rechaza. Así, aunque algo llegara a ejecutar código en la interfaz, no podría leer tus claves de `~/.ssh` ni reescribir tus ficheros sin que tú los eligieras.
+
+Al importar `~/.ssh/config`, sus `Include` se leen sin preguntar solo si están dentro de `~/.ssh` (o del `ssh` del sistema) y nunca si el fichero contiene una clave privada; un `Include` que apunte fuera aparece en la lista de lo no importado.
+
+El panel de archivos local del SFTP es otra cosa: es un gestor de ficheros y trabaja con las carpetas por las que navegas.
+
 ## Notas de conexión
 
 Las notas son archivos Markdown (`notes/<id>.md`) pensados para runbooks: comandos, rutas o pasos de mantenimiento. Se renderizan de forma **segura** (el HTML de la nota se escapa; los enlaces solo abren `http`/`https`/`mailto`), así que una nota sincronizada desde otro equipo no puede inyectar código en la app. **No guardes secretos en las notas**: viajan en la copia E2E como el resto de la configuración (no tras el opt-in de contraseñas), pero su contenido no está pensado para credenciales; para eso usa el keyring, KeePass o las credenciales maestras.
@@ -26,6 +34,12 @@ Las notas son archivos Markdown (`notes/<id>.md`) pensados para runbooks: comand
 Los snippets se insertan en la terminal activa y pueden sincronizarse dentro del backup cifrado. Trátalos como texto operativo: si contienen comandos destructivos, activa **Pedir confirmación** y revisa si deben enviar `Enter` automáticamente.
 
 Los comandos locales se guardan solo en este equipo (`localStorage`) y **no se sincronizan**. Los de tipo shell se ejecutan con el shell del sistema (`sh -c` o `cmd /C`), así que la confirmación viene activada por defecto y el modal los trata como acciones sensibles. En snippets y comandos locales se resuelven variables internas, `${var:...}` y `${ask:...}`; los marcadores de secretos (`${master:...}` / `${secret:...}`) quedan literales para no exponer valores sensibles en el frontend.
+
+Desde la versión 2.14, la interfaz ya no puede pedir que se ejecute una orden cualquiera: manda la **plantilla** del comando tal como la guardaste, y es el núcleo de la aplicación quien decide.
+
+- **Autorización por equipo.** La primera vez que ejecutas un comando en un equipo —y cada vez que lo editas— aparece un diálogo **del sistema** con la orden completa, que solo tú puedes aceptar. Lo autorizado se recuerda por su huella (SHA-256) en `trusted_local_commands.json`, junto a los datos de la app y con permisos privados. Los comandos que ya tenías antes de actualizar preguntan una vez.
+- **Los valores no se interpretan como órdenes.** Cada `${host}`, `${var:...}` o `${ask:...}` llega al shell como **un único argumento**, a través de una variable de entorno: un valor con `;`, `|` o `$(...)` se pasa tal cual y no ejecuta nada. Si tu plantilla contaba con que un `${ask:...}` se partiera en varias palabras, ahora llega entero. En Windows, un valor con comillas o saltos de línea se rechaza, y en todos los sistemas un `${host}`, `${user}` o `${port}` que empiece por `-` (se tomaría por una opción del programa).
+- Lo que se garantiza es que **el shell de tu equipo** no reinterpreta los valores. Si la plantilla los entrega a otro intérprete —`sh -c '…'`, `ssh servidor "…"`, `eval`—, ese intérprete sí los analiza: es la orden que escribiste y autorizaste.
 
 La ejecución está **acotada**: un plazo máximo configurable (30 s por defecto, desactivable), un tope de salida capturada y un botón **Cancelar** en el aviso mientras el comando corre. Al cancelar o agotarse el plazo se termina el comando **y el árbol de procesos que haya lanzado**, de modo que un comando que no termina no puede quedarse consumiendo recursos de fondo. Los detalles están en la [guía de scripts y comandos](Scripts).
 

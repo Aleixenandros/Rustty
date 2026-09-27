@@ -238,12 +238,23 @@ fn check_alias_budget(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Parsea el export YAML de Ásbrú y devuelve el árbol normalizado de nodos raíz.
+/// Parsea el export YAML de Ásbrú elegido en el diálogo (`grant`, ver
+/// [`crate::file_grants`]) y devuelve el árbol normalizado de nodos raíz.
 #[tauri::command]
-pub fn parse_asbru(path: String) -> Result<Vec<AsbruNode>, String> {
+pub fn parse_asbru(
+    grants: tauri::State<crate::file_grants::FileGrants>,
+    grant: String,
+) -> Result<Vec<AsbruNode>, String> {
+    let path = grants
+        .take(&grant, crate::file_grants::GrantMode::Read)
+        .map_err(|e| format!("read|{e}"))?;
+    parse_asbru_file(&path)
+}
+
+fn parse_asbru_file(path: &std::path::Path) -> Result<Vec<AsbruNode>, String> {
     // Los errores se devuelven como códigos estables («code» o «code|detalle»)
     // para que el frontend los traduzca; ver `import_wizard.err_*` en i18n.js.
-    let text = crate::commands::read_text_capped(std::path::Path::new(&path), ASBRU_READ_LIMIT)
+    let text = crate::commands::read_text_capped(path, ASBRU_READ_LIMIT)
         .map_err(|e| format!("read|{e}"))?;
     check_alias_budget(&text)?;
     let doc: serde_yaml_ng::Value =
@@ -434,13 +445,13 @@ mod tests {
         assert_eq!(pt, "<password|/Fujitsu/AD>");
     }
 
-    /// Escribe un YAML temporal y lo pasa por `parse_asbru`.
+    /// Escribe un YAML temporal y lo pasa por `parse_asbru_file`.
     fn parse_yaml(tag: &str, yaml: &str) -> Result<Vec<AsbruNode>, String> {
         let dir = std::env::temp_dir().join(format!("rustty-asbru-{tag}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("crea dir temporal de test");
         let path = dir.join("asbru.yml");
         std::fs::write(&path, yaml).expect("escribe el yaml");
-        let res = parse_asbru(path.to_string_lossy().into_owned());
+        let res = parse_asbru_file(&path);
         let _ = std::fs::remove_dir_all(&dir);
         res
     }

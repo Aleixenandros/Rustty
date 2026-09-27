@@ -72,6 +72,42 @@ export async function openSession({ application, driver = "http://127.0.0.1:4444
       session.exec(
         "const tabs = document.querySelectorAll('.tab[data-session]'); return tabs.length ? tabs[tabs.length - 1].dataset.session : null;",
       ),
+    /**
+     * Llama a un comando IPC desde la página y espera su promesa. Devuelve
+     * `{ ok: true, value }` o `{ ok: false, reason }` (el texto del rechazo; no
+     * se llama `error` porque `call` tomaría el objeto por un fallo del driver).
+     */
+    invoke: (cmd, args = {}) =>
+      call("POST", `${base}/execute/async`, {
+        script:
+          "const done = arguments[arguments.length - 1];" +
+          "window.__TAURI_INTERNALS__.invoke(arguments[0], arguments[1]).then(" +
+          "(value) => done({ ok: true, value: value === undefined ? null : value })," +
+          "(e) => done({ ok: false, reason: String((e && e.message) || e) }));",
+        args: [cmd, args],
+      }),
+    /**
+     * Lanza un comando IPC sin esperarlo (uno que abre un diálogo nativo y
+     * bloquea); el resultado se recoge después con `result(key)`.
+     */
+    invokeDetached: (key, cmd, args = {}) =>
+      session.exec(
+        "const [key, cmd, args] = arguments; window.__e2e = window.__e2e || {}; window.__e2e[key] = null;" +
+          "window.__TAURI_INTERNALS__.invoke(cmd, args).then(" +
+          "(value) => { window.__e2e[key] = { ok: true, value: value === undefined ? null : value }; }," +
+          "(e) => { window.__e2e[key] = { ok: false, reason: String((e && e.message) || e) }; });" +
+          "return true;",
+        [key, cmd, args],
+      ),
+    /** Espera el resultado de un `invokeDetached`; `null` si no llega a tiempo. */
+    async result(key, timeoutMs = 15000) {
+      const started = Date.now();
+      for (;;) {
+        const value = await session.exec("return (window.__e2e && window.__e2e[arguments[0]]) || null;", [key]);
+        if (value || Date.now() - started > timeoutMs) return value;
+        await sleep(250);
+      }
+    },
     /** Escribe en una consola local por el comando IPC que usa el teclado. */
     typeIntoLocalShell: (sessionId, text) =>
       session.exec(

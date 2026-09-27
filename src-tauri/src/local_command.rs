@@ -1,7 +1,9 @@
 //! Ejecución **acotada** de los «Comandos locales» del catálogo del usuario.
 //!
-//! El catálogo lo define el propio usuario en su equipo (no hay allowlist: es su
-//! shell), pero un comando que no termina (`yes`, un hijo que se queda colgado,
+//! El catálogo lo define el propio usuario en su equipo; qué plantilla se puede
+//! ejecutar y cómo entran sus valores lo decide [`crate::local_command_policy`]
+//! (autorización por equipo y valores por variables de entorno). Aquí solo se
+//! acota la ejecución: un comando que no termina (`yes`, un hijo que se queda colgado,
 //! un `tail -f` despistado) no puede secuestrar un worker ni reventar la RAM del
 //! proceso. Este módulo envuelve la ejecución con cuatro garantías:
 //!
@@ -105,17 +107,20 @@ impl LocalCommandRegistry {
     }
 
     /// Ejecuta `command` con el shell del SO (`sh -c` en Unix, `cmd /C` en
-    /// Windows) capturando su salida de forma acotada. Bloquea el hilo llamador:
-    /// el comando Tauri lo llama dentro de `spawn_blocking`.
+    /// Windows) capturando su salida de forma acotada, con `env` añadido al
+    /// entorno del proceso (los valores de los marcadores de la plantilla).
+    /// Bloquea el hilo llamador: el comando Tauri lo llama dentro de
+    /// `spawn_blocking`.
     pub fn run_blocking(
         &self,
         run_id: &str,
         command: &str,
+        env: &[(String, String)],
         timeout_secs: u64,
         max_output_bytes: usize,
     ) -> std::io::Result<LocalCommandOutput> {
         let started = Instant::now();
-        let mut child = spawn_shell(command)?;
+        let mut child = spawn_shell(command, env)?;
         let pid = child.id();
         let cancel = Arc::new(AtomicBool::new(false));
         self.register(run_id, pid, Arc::clone(&cancel));
@@ -227,7 +232,7 @@ fn read_capped<R: Read>(mut reader: R, cap: usize) -> (Vec<u8>, bool) {
 /// Lanza el shell del SO con la orden del usuario, con las tuberías capturadas
 /// y stdin cerrado (no es interactivo: un comando que pregunte no debe quedarse
 /// esperando a un teclado que no existe).
-fn spawn_shell(command: &str) -> std::io::Result<std::process::Child> {
+fn spawn_shell(command: &str, env: &[(String, String)]) -> std::io::Result<std::process::Child> {
     #[cfg(windows)]
     use std::process::Command;
     use std::process::Stdio;
@@ -260,6 +265,9 @@ fn spawn_shell(command: &str) -> std::io::Result<std::process::Child> {
         c.process_group(0);
         c
     };
+    // Bajo Flatpak llegan igual al proceso del host: `flatpak-spawn` reenvía su
+    // propio entorno (ver `sandbox::host_command`).
+    cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -360,10 +368,21 @@ mod tests {
         } else {
             "printf hola"
         };
-        let out = reg.run_blocking("t-ok", cmd, 10, 4096).expect("ejecuta");
+        let out = reg.run_blocking("t-ok", cmd, &[], 10, 4096).expect("ejecuta");
         assert_eq!(out.code, 0);
         assert!(out.stdout.contains("hola"));
         assert!(!out.timed_out && !out.canceled && !out.truncated);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn los_valores_llegan_por_el_entorno_sin_interpretarse() {
+        let reg = LocalCommandRegistry::new();
+        let env = vec![("RUSTTY_ARG_0".to_string(), "a; echo inyectado".to_string())];
+        let out = reg
+            .run_blocking("t-env", "printf '[%s]' \"${RUSTTY_ARG_0}\"", &env, 10, 4096)
+            .expect("ejecuta");
+        assert_eq!(out.stdout, "[a; echo inyectado]");
     }
 
     #[cfg(unix)]
@@ -373,7 +392,7 @@ mod tests {
         // `sleep 60` con 1 s de plazo: debe volver marcado como timed_out muy
         // antes de los 60 s (el grace period añade como mucho 2 s).
         let inicio = Instant::now();
-        let out = reg.run_blocking("t-timeout", "sleep 60", 1, 4096).unwrap();
+        let out = reg.run_blocking("t-timeout", "sleep 60", &[], 1, 4096).unwrap();
         assert!(out.timed_out, "debería marcar timeout");
         assert!(!out.canceled);
         assert!(inicio.elapsed() < Duration::from_secs(10));
@@ -384,7 +403,7 @@ mod tests {
     fn salida_enorme_no_bloquea_al_hijo() {
         let reg = LocalCommandRegistry::new();
         // `yes` escribe sin parar: sin drenaje + kill, esto no terminaría nunca.
-        let out = reg.run_blocking("t-yes", "yes", 1, 1024).unwrap();
+        let out = reg.run_blocking("t-yes", "yes", &[], 1, 1024).unwrap();
         assert!(out.timed_out);
         assert!(out.truncated);
         assert!(out.stdout.len() <= 1024);
@@ -405,7 +424,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(20));
             }
         });
-        let out = reg.run_blocking("t-cancel", "sleep 30", 0, 4096).unwrap();
+        let out = reg.run_blocking("t-cancel", "sleep 30", &[], 0, 4096).unwrap();
         assert!(out.canceled, "debería marcar cancelado");
         assert!(!out.timed_out);
     }

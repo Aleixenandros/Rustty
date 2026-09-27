@@ -29,7 +29,6 @@
         { "path": "$HOME/**" }
       ]
     },
-    "dialog:default",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "window-state:default",

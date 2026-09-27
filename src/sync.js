@@ -17,7 +17,7 @@
 // ═══════════════════════════════════════════════════════════════════
 
 import { invoke } from "@tauri-apps/api/core";
-import { save as saveDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { createFileApi } from "./modules/ipc/files.js";
 import { IPC_ERROR_KIND, ipcErrorKind, ipcErrorText } from "./modules/ipc/errors.js";
 import { t } from "./i18n.js";
 
@@ -942,14 +942,18 @@ function requireDialogs(ctx) {
   return ctx.dialogs;
 }
 
+// Diálogos nativos abiertos por el backend: devuelven la ruta y un permiso de un
+// solo uso, que es lo único que aceptan `sync_export_file`/`sync_import_file`.
+const files = createFileApi(invoke);
+
 export async function exportToFile(ctx) {
   const dialogs = requireDialogs(ctx);
-  const path = await saveDialog({
+  const file = await files.pickFileToSave({
     title: t("prefs_sync.export_dialog_title"),
     defaultPath: `rustty-sync-${new Date().toISOString().slice(0, 10)}.bin`,
     filters: [{ name: "Rustty sync", extensions: ["bin"] }],
   });
-  if (!path) return null;
+  if (!file) return null;
 
   // Pide passphrase al usuario
   const passphrase = await dialogs.promptSecret({
@@ -968,18 +972,17 @@ export async function exportToFile(ctx) {
     exportedSecrets: ctx.exportedSecrets,
   });
 
-  await invoke("sync_export_file", { path, passphrase, state });
-  return path;
+  await invoke("sync_export_file", { grant: file.grant, passphrase, state });
+  return file.path;
 }
 
 export async function importFromFile(ctx) {
   const dialogs = requireDialogs(ctx);
-  const path = await openDialog({
+  const file = await files.pickFileToOpen({
     title: t("prefs_sync.import_dialog_title"),
-    multiple: false,
     filters: [{ name: "Rustty sync", extensions: ["bin"] }],
   });
-  if (!path) return null;
+  if (!file) return null;
 
   const passphrase = await dialogs.promptSecret({
     title: t("prefs_sync.import_pass_title"),
@@ -988,7 +991,7 @@ export async function importFromFile(ctx) {
   });
   if (!passphrase) return null;
 
-  const state = await invoke("sync_import_file", { path, passphrase });
+  const state = await invoke("sync_import_file", { grant: file.grant, passphrase });
   const okImport = await dialogs.confirm({
     title: t("prefs_sync.import_confirm_title"),
     message: t("prefs_sync.import_confirm_msg"),

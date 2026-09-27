@@ -128,7 +128,7 @@ pub fn substitute(template: &str, resolver: &dyn Resolver) -> String {
 }
 
 /// Reconstruye el texto literal original de un marcador no resuelto.
-fn render_literal(marker: &Marker) -> String {
+pub fn render_literal(marker: &Marker) -> String {
     match marker {
         Marker::Literal(text) => text.clone(),
         Marker::Internal(var) => {

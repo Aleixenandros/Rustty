@@ -9,6 +9,7 @@ mod credentials;
 mod error;
 mod ftps_certs;
 mod external_client;
+mod file_grants;
 mod host_keys;
 // `pub`: los EventKind de tmux (F2.1) aún no tienen emisor en producción (el
 // wiring llega en la fase 2); como API pública de la lib no disparan
@@ -21,6 +22,7 @@ mod keepass_manager;
 pub mod key_setup;
 mod keyring_scope;
 mod local_command;
+mod local_command_policy;
 mod local_shell_manager;
 mod locks;
 mod metrics;
@@ -304,6 +306,9 @@ pub fn run() {
             app.manage(TelnetManager::new());
             app.manage(LocalShellManager::new());
             app.manage(LocalCommandRegistry::new());
+            // Permisos de ruta de un solo uso: los emite `fs_pick` tras el
+            // diálogo nativo y los consumen las lecturas/escrituras de ficheros.
+            app.manage(file_grants::FileGrants::new());
             app.manage(SftpManager::new());
             let profile_manager = ProfileManager::new(data_dir.clone());
             // Migración idempotente: vuelca el campo inline `notes` de los
@@ -318,6 +323,7 @@ pub fn run() {
             app.manage(CredentialStore::new(data_dir.clone()));
             app.manage(ScriptManager::new(data_dir.clone()));
             app.manage(SyncManager::new(data_dir.clone()));
+            app.manage(local_command_policy::LocalCommandTrust::new(&data_dir));
             app.manage(DataDir(data_dir));
             // Señal de arranque minimizado: el frontend la consulta al inicio
             // para decidir si ocultar la ventana en lugar de mostrarla.
@@ -505,8 +511,10 @@ pub fn run() {
             commands::local_path_join,
             // ── Utilidades
             commands::get_data_dir,
+            commands::fs_pick,
             commands::write_text_file,
             commands::read_text_file,
+            commands::read_ssh_config_include,
             commands::read_file_base64,
             asbru::parse_asbru,
             asbru::asbru_decrypt,

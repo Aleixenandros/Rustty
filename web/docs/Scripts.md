@@ -124,6 +124,10 @@ Tipos disponibles:
 
 La confirmación está activada por defecto y los comandos de tipo shell se tratan como acciones sensibles en el modal de confirmación.
 
+### Autorización en cada equipo
+
+La primera vez que ejecutas un comando de tipo shell en un equipo, y cada vez que cambias su texto, Rustty abre un diálogo **del sistema** con la orden completa: **Autorizar y ejecutar** lo recuerda en ese equipo; **Cancelar** (o cerrar el diálogo) no ejecuta nada. Es independiente de **Pedir confirmación**, que sigue preguntando en cada ejecución si lo tienes activo. El diálogo existe para que solo tú, y no la propia interfaz, puedas dar por buena una orden nueva; los detalles están en la [guía de seguridad](?page=Seguridad).
+
 ### Límites de ejecución
 
 Un comando local es tu shell, pero no puede quedarse colgado indefinidamente ni llenar la memoria con su salida. En **Preferencias → Comandos** eliges los dos límites:
@@ -143,7 +147,11 @@ Snippets y comandos locales comparten el mismo resolutor de plantillas del clien
 - `${ask:Etiqueta}` para pedir un valor al ejecutar.
 - `${ask:Etiqueta|opción1|opción2}` para pedir una selección.
 
-Las respuestas de `${ask:...}` se piden una vez por ejecución y no se guardan. Los marcadores de secretos (`${master:...}`, `${secret:...}`), entorno (`${env:...}`) y comandos reservados (`${cmd:...}`) quedan literales en snippets y comandos locales para no exponer secretos en el frontend. Los pasos **Enviar comando** de los scripts sí resuelven todos los marcadores, porque la resolución ocurre en el backend en el momento de enviar.
+Las respuestas de `${ask:...}` se piden una vez por ejecución y no se guardan.
+
+En los comandos locales de tipo shell, cada valor sustituido llega a la orden como **un único argumento** —aunque tenga espacios, `;` o `$(...)`—, sin que el shell lo interprete: `ping -c 3 ${host}` funciona igual que siempre, pero un `${ask:opciones}` pensado para varias opciones a la vez llega entero, como una sola. Un marcador justo detrás de `\` (o de `^` en Windows) o dentro de `$'…'` se rechaza con un aviso, porque ahí no se puede sustituir con seguridad.
+
+Los marcadores de secretos (`${master:...}`, `${secret:...}`), entorno (`${env:...}`) y comandos reservados (`${cmd:...}`) quedan literales en snippets y comandos locales para no exponer secretos en el frontend. Los pasos **Enviar comando** de los scripts sí resuelven todos los marcadores, porque la resolución ocurre en el backend en el momento de enviar.
 
 Para escribir un marcador literal sin resolver, usa el escape `$${...}`.
 

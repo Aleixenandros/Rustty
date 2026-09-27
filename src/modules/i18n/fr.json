@@ -224,7 +224,14 @@
     "output_label": "Sortie capturée",
     "output_hint": "Quantité de sortie conservée pour chaque commande. Le surplus est ignoré et la notification l'indique ; la commande continue de s'exécuter normalement.",
     "delete_snippet_title": "Supprimer le snippet ?",
-    "delete_cmd_title": "Supprimer la commande locale ?"
+    "delete_cmd_title": "Supprimer la commande locale ?",
+    "toast_not_authorized": "« {name} » n'a pas été exécutée : elle n'a pas été autorisée sur cet ordinateur.",
+    "err_empty": "La commande est vide.",
+    "err_too_long": "La commande dépasse {detail} caractères : raccourcissez-la, ou enregistrez-la dans un script et appelez ce script.",
+    "err_escaped_marker": "{detail} suit directement un caractère d'échappement (\\ ou ^) ; retirez-le pour que la substitution soit possible.",
+    "err_ansi_marker": "{detail} se trouve dans $'…', où la substitution n'est pas sûre ; utilisez des guillemets simples ou doubles.",
+    "err_unsafe_value": "La valeur de {detail} contient des caractères que le shell de ce système ne peut pas recevoir en toute sécurité (guillemets ou sauts de ligne).",
+    "err_option_value": "La valeur de {detail} commence par « - » et le programme la prendrait pour une option ; vérifiez le profil."
   },
   "templates": {
     "field_label": "Modèle",
@@ -281,7 +288,7 @@
     "label_shell": "Commande",
     "label_url": "URL",
     "label_path": "Chemin",
-    "hint_shell": "S'exécute sur cet ordinateur avec le shell du système. Accepte ${host}, ${user}, ${var:nom} et ${ask:Libellé}.",
+    "hint_shell": "S'exécute sur cet ordinateur avec le shell du système. Accepte ${host}, ${user}, ${var:nom} et ${ask:Libellé} ; chaque valeur est passée comme un seul argument. Une autorisation est demandée la première fois sur chaque ordinateur et après chaque modification.",
     "hint_url": "S'ouvre dans le navigateur. Accepte ${var:nom} et ${ask:Libellé}.",
     "hint_path": "S'ouvre avec l'application par défaut du système."
   },
@@ -867,7 +874,8 @@
     "nothing": "Rien à appliquer.",
     "done": "SSH Config : {new} nouveaux, {update} mis à jour, {same} inchangés",
     "no_hosts": "Aucune entrée Host valide trouvée dans le fichier",
-    "failed": "Impossible d'importer le fichier : {err}"
+    "failed": "Impossible d'importer le fichier : {err}",
+    "read_failed": "Impossible de lire {path} : {err}"
   },
   "import_wizard": {
     "title": "Importer des connexions",
@@ -1875,7 +1883,9 @@
     "transfer_pause_failed": "Impossible de mettre en pause : {err}",
     "transfer_resume_failed": "Impossible de reprendre : {err}",
     "transfer_skipped": "Ignoré : {name}",
-    "transfers_pause_all_failed": "Impossible de changer la pause générale : {err}"
+    "transfers_pause_all_failed": "Impossible de changer la pause générale : {err}",
+    "file_grant_invalid": "L'autorisation pour ce fichier n'est plus valable (elle a expiré, a déjà servi ou le chemin a changé). Choisissez-le à nouveau.",
+    "import_failed": "Échec de l'importation : {err}"
   },
   "sftp": {
     "symlinks_skipped": "{n} liens symboliques ignorés (non copiés)",

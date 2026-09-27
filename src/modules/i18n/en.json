@@ -224,7 +224,14 @@
     "output_label": "Captured output",
     "output_hint": "How much output is kept from each command. Anything beyond it is discarded and the notice says so; the command itself keeps running normally.",
     "delete_snippet_title": "Delete snippet?",
-    "delete_cmd_title": "Delete local command?"
+    "delete_cmd_title": "Delete local command?",
+    "toast_not_authorized": "“{name}” was not run: it wasn't authorized on this computer.",
+    "err_empty": "The command is empty.",
+    "err_too_long": "The command is longer than {detail} characters: shorten it, or save it as a script and call the script.",
+    "err_escaped_marker": "{detail} comes right after an escape character (\\ or ^); remove the escape so it can be substituted.",
+    "err_ansi_marker": "{detail} is inside $'…', where it can't be substituted safely; use single or double quotes instead.",
+    "err_unsafe_value": "The value of {detail} contains characters this system's shell can't receive safely (quotes or line breaks).",
+    "err_option_value": "The value of {detail} starts with “-” and the program would take it as an option; check the profile."
   },
   "templates": {
     "field_label": "Template",
@@ -281,7 +288,7 @@
     "label_shell": "Command",
     "label_url": "URL",
     "label_path": "Path",
-    "hint_shell": "Runs on this machine with the system shell. Accepts ${host}, ${user}, ${var:name} and ${ask:Label}.",
+    "hint_shell": "Runs on this machine with the system shell. Accepts ${host}, ${user}, ${var:name} and ${ask:Label}; each value is passed as a single argument. It asks for authorization the first time on each computer and after you edit it.",
     "hint_url": "Opens in the browser. Accepts ${var:name} and ${ask:Label}.",
     "hint_path": "Opens with the system's default application."
   },
@@ -867,7 +874,8 @@
     "nothing": "Nothing to apply.",
     "done": "SSH Config: {new} new, {update} updated, {same} unchanged",
     "no_hosts": "No valid Host entries found in the file",
-    "failed": "Could not import the file: {err}"
+    "failed": "Could not import the file: {err}",
+    "read_failed": "Couldn't read {path}: {err}"
   },
   "import_wizard": {
     "title": "Import connections",
@@ -1869,7 +1877,9 @@
     "transfer_pause_failed": "Could not pause: {err}",
     "transfer_resume_failed": "Could not resume: {err}",
     "transfer_skipped": "Skipped: {name}",
-    "transfers_pause_all_failed": "Could not change the global pause: {err}"
+    "transfers_pause_all_failed": "Could not change the global pause: {err}",
+    "file_grant_invalid": "The permission for that file is no longer valid (it expired, was already used or the path changed). Choose it again.",
+    "import_failed": "Import failed: {err}"
   },
   "time": {
     "now": "just now",

@@ -224,7 +224,14 @@
     "output_label": "Erfasste Ausgabe",
     "output_hint": "Wie viel Ausgabe je Befehl aufbewahrt wird. Alles darüber hinaus wird verworfen und der Hinweis weist darauf hin; der Befehl läuft normal weiter.",
     "delete_snippet_title": "Snippet löschen?",
-    "delete_cmd_title": "Lokalen Befehl löschen?"
+    "delete_cmd_title": "Lokalen Befehl löschen?",
+    "toast_not_authorized": "„{name}“ wurde nicht ausgeführt: Der Befehl wurde auf diesem Computer nicht erlaubt.",
+    "err_empty": "Der Befehl ist leer.",
+    "err_too_long": "Der Befehl ist länger als {detail} Zeichen: Kürze ihn oder speichere ihn als Skript und rufe das Skript auf.",
+    "err_escaped_marker": "{detail} steht direkt hinter einem Escape-Zeichen (\\ oder ^); entferne es, damit ersetzt werden kann.",
+    "err_ansi_marker": "{detail} steht in $'…', wo es nicht sicher ersetzt werden kann; nutze einfache oder doppelte Anführungszeichen.",
+    "err_unsafe_value": "Der Wert von {detail} enthält Zeichen, die die Shell dieses Systems nicht sicher empfangen kann (Anführungszeichen oder Zeilenumbrüche).",
+    "err_option_value": "Der Wert von {detail} beginnt mit „-“ und das Programm würde ihn als Option lesen; prüfe das Profil."
   },
   "templates": {
     "field_label": "Vorlage",
@@ -281,7 +288,7 @@
     "label_shell": "Befehl",
     "label_url": "URL",
     "label_path": "Pfad",
-    "hint_shell": "Läuft auf diesem Rechner mit der System-Shell. Unterstützt ${host}, ${user}, ${var:name} und ${ask:Bezeichnung}.",
+    "hint_shell": "Läuft auf diesem Rechner mit der System-Shell. Unterstützt ${host}, ${user}, ${var:name} und ${ask:Bezeichnung}; jeder Wert wird als ein einziges Argument übergeben. Beim ersten Mal auf jedem Computer und nach jeder Änderung wird um Erlaubnis gebeten.",
     "hint_url": "Wird im Browser geöffnet. Unterstützt ${var:name} und ${ask:Bezeichnung}.",
     "hint_path": "Wird mit der Standardanwendung des Systems geöffnet."
   },
@@ -867,7 +874,8 @@
     "nothing": "Nichts anzuwenden.",
     "done": "SSH Config: {new} neu, {update} aktualisiert, {same} unverändert",
     "no_hosts": "Keine gültigen Host-Einträge in der Datei gefunden",
-    "failed": "Die Datei konnte nicht importiert werden: {err}"
+    "failed": "Die Datei konnte nicht importiert werden: {err}",
+    "read_failed": "{path} konnte nicht gelesen werden: {err}"
   },
   "import_wizard": {
     "title": "Verbindungen importieren",
@@ -1869,7 +1877,9 @@
     "transfer_pause_failed": "Pausieren nicht möglich: {err}",
     "transfer_resume_failed": "Fortsetzen nicht möglich: {err}",
     "transfer_skipped": "Übersprungen: {name}",
-    "transfers_pause_all_failed": "Die allgemeine Pause ließ sich nicht ändern: {err}"
+    "transfers_pause_all_failed": "Die allgemeine Pause ließ sich nicht ändern: {err}",
+    "file_grant_invalid": "Die Berechtigung für diese Datei ist nicht mehr gültig (abgelaufen, schon benutzt oder der Pfad hat sich geändert). Wähle sie erneut aus.",
+    "import_failed": "Import fehlgeschlagen: {err}"
   },
   "time": {
     "now": "gerade eben",

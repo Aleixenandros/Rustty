@@ -14,7 +14,9 @@ use crate::host_keys::fingerprint_sha256;
 use crate::ipc_error::{IpcError, IpcErrorKind};
 use crate::keepass_manager;
 use crate::keyring_scope;
+use crate::file_grants::{self, FileGrants, GrantMode};
 use crate::local_command::{self, LocalCommandOutput, LocalCommandRegistry};
+use crate::local_command_policy::{self, Dialect, LocalCommandTrust};
 use crate::local_shell_manager::{LocalShellManager, LocalShellOptions};
 use crate::notes::{NoteDoc, NoteSummary, NotesManager};
 use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
@@ -1773,12 +1775,147 @@ fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     crate::atomic_file::write(path, data, false)
 }
 
-/// Escribe texto (ej. JSON de export) a un path absoluto, de forma atómica
-/// (temporal + rename) para no dejar exports a medias ni escribir a través de
-/// un symlink preparado en el destino.
+// ─── Diálogos de fichero y permisos de ruta ──────────────────────────────────
+
+/// Qué diálogo abrir en [`fs_pick`].
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PickMode {
+    /// Elegir un fichero para leerlo: emite un permiso de lectura.
+    Open,
+    /// Elegir dónde guardar: emite un permiso de escritura.
+    Save,
+    /// Elegir un fichero cuya ruta se guarda en la configuración (base KeePass,
+    /// fichero de clave): solo la ruta, sin permiso.
+    OpenPath,
+    /// Elegir varios ficheros (subidas SFTP): solo rutas, sin permiso.
+    OpenMany,
+    /// Elegir una carpeta (sync local, carpeta del log): solo la ruta.
+    Directory,
+}
+
+/// Filtro de extensiones del diálogo.
+#[derive(Debug, serde::Deserialize)]
+pub struct PickFilter {
+    name: String,
+    extensions: Vec<String>,
+}
+
+/// Opciones de [`fs_pick`]; mismas que el `open`/`save` del plugin de diálogos.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickOptions {
+    mode: PickMode,
+    title: Option<String>,
+    default_path: Option<String>,
+    #[serde(default)]
+    filters: Vec<PickFilter>,
+}
+
+/// Lo elegido: las rutas (para enseñarlas o para los comandos que las usan tal
+/// cual) y, en `open`/`save`, el permiso de un solo uso para leer o escribir.
+#[derive(Debug, serde::Serialize)]
+pub struct PickResult {
+    paths: Vec<String>,
+    grant: Option<String>,
+}
+
+/// Réplica del `set_default_path` de escritorio del plugin: una carpeta abre el
+/// diálogo en ella; una ruta de fichero, en su carpeta con ese nombre propuesto.
+fn apply_default_path<R: tauri::Runtime>(
+    builder: tauri_plugin_dialog::FileDialogBuilder<R>,
+    default_path: PathBuf,
+) -> tauri_plugin_dialog::FileDialogBuilder<R> {
+    let default_path: PathBuf = default_path.components().collect();
+    if default_path.is_dir() {
+        return builder.set_directory(default_path);
+    }
+    match (default_path.parent(), default_path.file_name()) {
+        (Some(parent), Some(name)) => {
+            let builder = if parent.components().count() > 0 {
+                builder.set_directory(parent)
+            } else {
+                builder
+            };
+            builder.set_file_name(name.to_string_lossy())
+        }
+        _ => builder.set_directory(default_path),
+    }
+}
+
+/// Abre el diálogo nativo de fichero **desde el backend**. Es la única puerta
+/// por la que el renderer consigue un permiso para `read_text_file`,
+/// `write_text_file`, `read_file_base64`, `parse_asbru` o los backups cifrados:
+/// la ruta la elige el usuario, no el código de la página. Ver
+/// [`crate::file_grants`].
 #[tauri::command]
-pub fn write_text_file(path: String, contents: String) -> Result<(), String> {
-    write_atomic(std::path::Path::new(&path), contents.as_bytes()).map_err(|e| e.to_string())
+pub async fn fs_pick(
+    window: tauri::Window,
+    grants: State<'_, FileGrants>,
+    options: PickOptions,
+) -> Result<Option<PickResult>, String> {
+    use tauri_plugin_dialog::{DialogExt, FilePath};
+
+    fn to_path(file: FilePath) -> Option<PathBuf> {
+        file.into_path().ok()
+    }
+
+    let mut builder = window.dialog().file();
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        builder = builder.set_parent(&window);
+    }
+    if let Some(title) = options.title.filter(|t| !t.is_empty()) {
+        builder = builder.set_title(title);
+    }
+    if let Some(default_path) = options.default_path.filter(|p| !p.is_empty()) {
+        builder = apply_default_path(builder, PathBuf::from(default_path));
+    }
+    for filter in &options.filters {
+        let extensions: Vec<&str> = filter.extensions.iter().map(String::as_str).collect();
+        builder = builder.add_filter(&filter.name, &extensions);
+    }
+    // Igual que el comando del plugin: las variantes bloqueantes, desde el hilo
+    // del comando asíncrono (nunca el principal, que es el que pinta el diálogo).
+    let picked: Option<Vec<PathBuf>> = match options.mode {
+        PickMode::Open | PickMode::OpenPath => {
+            builder.blocking_pick_file().and_then(to_path).map(|p| vec![p])
+        }
+        PickMode::Save => builder.blocking_save_file().and_then(to_path).map(|p| vec![p]),
+        PickMode::OpenMany => builder
+            .blocking_pick_files()
+            .map(|files| files.into_iter().filter_map(to_path).collect()),
+        PickMode::Directory => builder.blocking_pick_folder().and_then(to_path).map(|p| vec![p]),
+    };
+    let Some(paths) = picked.filter(|p| !p.is_empty()) else {
+        return Ok(None);
+    };
+    let grant = match options.mode {
+        PickMode::Open => Some(grants.issue(&paths[0], GrantMode::Read)?),
+        PickMode::Save => Some(grants.issue(&paths[0], GrantMode::Write)?),
+        PickMode::OpenPath | PickMode::OpenMany | PickMode::Directory => None,
+    };
+    Ok(Some(PickResult {
+        paths: paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
+        grant,
+    }))
+}
+
+/// Escribe texto (ej. JSON de export) en la ruta que el usuario eligió en
+/// [`fs_pick`] (`grant`, de escritura), de forma atómica (temporal + rename)
+/// para no dejar exports a medias ni escribir a través de un symlink preparado
+/// en el destino.
+#[tauri::command]
+pub fn write_text_file(
+    grants: State<FileGrants>,
+    grant: String,
+    contents: String,
+) -> Result<(), String> {
+    let path = grants.take(&grant, GrantMode::Write)?;
+    write_atomic(&path, contents.as_bytes()).map_err(|e| e.to_string())
 }
 
 /// Tope por defecto de las lecturas de texto locales cuando el llamador no fija
@@ -1847,56 +1984,186 @@ pub(crate) fn read_text_capped(path: &Path, limit: u64) -> Result<String, String
     text_payload(buf)
 }
 
-/// Lee un fichero de texto (ej. JSON para import) con un tope de tamaño por
-/// operación. `max_bytes` lo fija el llamador según lo que espere leer (un tema,
-/// un runbook, un `~/.ssh/config`…); sin él se aplica [`DEFAULT_READ_LIMIT`].
+/// Lee un fichero de texto (ej. JSON para import) que el usuario eligió en
+/// [`fs_pick`] (`grant`, de lectura), con un tope de tamaño por operación.
+/// `max_bytes` lo fija el llamador según lo que espere leer (un tema, un
+/// runbook, un `~/.ssh/config`…); sin él se aplica [`DEFAULT_READ_LIMIT`].
 #[tauri::command]
-pub fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, String> {
-    read_text_capped(Path::new(&path), max_bytes.unwrap_or(DEFAULT_READ_LIMIT))
+pub fn read_text_file(
+    grants: State<FileGrants>,
+    grant: String,
+    max_bytes: Option<u64>,
+) -> Result<String, String> {
+    let path = grants.take(&grant, GrantMode::Read)?;
+    read_text_capped(&path, max_bytes.unwrap_or(DEFAULT_READ_LIMIT))
 }
 
-/// Lee un fichero binario acotado y lo devuelve en base64 (p. ej. la imagen de
-/// fondo del terminal). El tope evita cargar cualquier cosa gigante en la
-/// WebView; el llamador lo ajusta a lo que espera leer.
+/// Lee un fichero de un `Include` de `~/.ssh/config` durante su importación: la
+/// única lectura sin diálogo que queda. Solo dentro de `~/.ssh/` (o el `ssh` del
+/// sistema) y nunca un fichero con una clave privada; ver
+/// [`crate::file_grants::check_ssh_config_path`].
 #[tauri::command]
-pub fn read_file_base64(path: String, max_bytes: Option<u64>) -> Result<String, String> {
-    use base64::Engine as _;
-    let limit = max_bytes.unwrap_or(DEFAULT_READ_LIMIT);
-    let p = Path::new(&path);
-    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
-    if meta.len() > limit {
+pub fn read_ssh_config_include(path: String, max_bytes: Option<u64>) -> Result<String, String> {
+    let home = dirs::home_dir().ok_or_else(|| "No se pudo resolver el home del usuario".to_string())?;
+    let canonical = file_grants::check_ssh_config_path(Path::new(&path), &home)?;
+    let text = read_text_capped(&canonical, max_bytes.unwrap_or(DEFAULT_READ_LIMIT))?;
+    if file_grants::looks_like_private_key(&text) {
         return Err(format!(
-            "el fichero supera el límite de {} de esta operación",
-            human_size(limit)
+            "{} el fichero contiene una clave privada",
+            file_grants::GRANT_ERROR_MARKER
         ));
     }
-    let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
+    Ok(text)
+}
+
+/// Lee un fichero binario acotado (elegido en [`fs_pick`]) y lo devuelve en
+/// base64 (p. ej. la imagen de fondo del terminal). El tope evita cargar
+/// cualquier cosa gigante en la WebView; el llamador lo ajusta a lo que espera
+/// leer.
+#[tauri::command]
+pub fn read_file_base64(
+    grants: State<FileGrants>,
+    grant: String,
+    max_bytes: Option<u64>,
+) -> Result<String, String> {
+    use base64::Engine as _;
+    use std::io::Read;
+    let path = grants.take(&grant, GrantMode::Read)?;
+    let limit = max_bytes.unwrap_or(DEFAULT_READ_LIMIT).clamp(1, MAX_READ_LIMIT);
+    let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let too_big = || {
+        format!(
+            "el fichero supera el límite de {} de esta operación",
+            human_size(limit)
+        )
+    };
+    if file.metadata().map_err(|e| e.to_string())?.len() > limit {
+        return Err(too_big());
+    }
+    // Como en `read_text_capped`: el tope se mide también en el flujo.
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > limit {
+        return Err(too_big());
+    }
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// Petición de [`run_local_command`]: la **plantilla** del catálogo (no el texto
+/// ya resuelto) y los valores de sus marcadores.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalCommandRequest {
+    /// Texto del comando tal como está guardado, con sus `${…}`.
+    template: String,
+    /// Nombre del comando, para el diálogo de autorización.
+    #[serde(default)]
+    name: String,
+    /// `host`, `port`, `user`, `profileName` y `workspace` de la sesión activa.
+    #[serde(default)]
+    context: std::collections::HashMap<String, String>,
+    /// Respuestas a los `${ask:…}`, por etiqueta.
+    #[serde(default)]
+    asks: std::collections::HashMap<String, String>,
+    /// Idioma de la interfaz (`es`, `en`…), para el diálogo de autorización.
+    #[serde(default)]
+    lang: String,
+    run_id: Option<String>,
+    timeout_secs: Option<u64>,
+    max_output_kb: Option<usize>,
+}
+
+/// Pide al usuario, con un diálogo **nativo**, que autorice en este equipo una
+/// plantilla que aún no lo está. Devuelve si aceptó.
+fn confirm_local_command(app: &AppHandle, name: &str, template: &str, lang: &str) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let texts = local_command_policy::prompt_texts(lang);
+    let (head, rest) = texts.message.split_once("{name}").unwrap_or((texts.message, ""));
+    let (middle, tail) = rest.split_once("{command}").unwrap_or((rest, ""));
+    let message = format!(
+        "{head}{}{middle}{}{tail}",
+        local_command_policy::display_name(name),
+        local_command_policy::displayable(template)
+    );
+    let dialog = app
+        .dialog()
+        .message(message)
+        .title(texts.title)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            texts.accept.to_string(),
+            texts.cancel.to_string(),
+        ));
+    #[cfg(any(windows, target_os = "macos"))]
+    let dialog = match app.get_webview_window("main") {
+        Some(window) => dialog.parent(&window),
+        None => dialog,
+    };
+    dialog.blocking_show()
 }
 
 /// Comando IPC que ejecuta un comando local del catálogo del usuario y devuelve
 /// código + stdout/stderr, **acotado** en tiempo y en salida y cancelable desde
-/// la UI con el mismo `run_id` (ver [`crate::local_command`]). El catálogo lo
-/// define el propio usuario en su equipo y la UI pide confirmación antes de las
-/// acciones marcadas como peligrosas; aquí no hay allowlist, pero sí límites.
+/// la UI con el mismo `run_id` (ver [`crate::local_command`]).
+///
+/// Recibe la plantilla, no la orden: la plantilla tiene que estar autorizada en
+/// este equipo (si no, se pregunta con un diálogo nativo) y los valores de sus
+/// marcadores viajan como variables de entorno, sin pasar por el analizador del
+/// shell. Ver [`crate::local_command_policy`].
 #[tauri::command]
 pub async fn run_local_command(
+    app: AppHandle,
     state: State<'_, LocalCommandRegistry>,
-    command: String,
-    run_id: Option<String>,
-    timeout_secs: Option<u64>,
-    max_output_kb: Option<usize>,
+    trust: State<'_, LocalCommandTrust>,
+    creds: State<'_, CredentialStore>,
+    request: LocalCommandRequest,
 ) -> Result<LocalCommandOutput, String> {
-    let command = command.trim().to_string();
-    if command.is_empty() {
-        return Err("comando vacío".into());
+    use crate::subst::{InternalVar, Marker};
+    let template = request.template.trim().to_string();
+    let catalog = creds.load_all().unwrap_or_default();
+    let context = &request.context;
+    let asks = &request.asks;
+    let resolve = |marker: &Marker| -> Option<String> {
+        match marker {
+            Marker::Internal(var) => match var {
+                InternalVar::Date => Some(chrono::Local::now().format("%Y-%m-%d").to_string()),
+                InternalVar::Time => Some(chrono::Local::now().format("%H:%M:%S").to_string()),
+                InternalVar::Host => context.get("host").cloned(),
+                InternalVar::Port => context.get("port").cloned(),
+                InternalVar::User => context.get("user").cloned(),
+                InternalVar::ProfileName => context.get("profileName").cloned(),
+                InternalVar::Workspace => context.get("workspace").cloned(),
+            },
+            Marker::Var(name) => credentials::resolve_var(&catalog, name),
+            Marker::Ask { label, .. } => asks.get(label).cloned(),
+            // env/secret/master/cmd no se resuelven en los comandos locales:
+            // quedan literales, como hasta ahora.
+            _ => None,
+        }
+    };
+    let rendered = local_command_policy::render(&template, Dialect::native(), &resolve)
+        .map_err(|e| e.to_ipc())?;
+
+    if !trust.is_trusted(&template) {
+        if !confirm_local_command(&app, &request.name, &template, &request.lang) {
+            return Err(format!("{}rejected|", local_command_policy::ERROR_MARKER));
+        }
+        if let Err(err) = trust.trust(&template) {
+            // Autorizado para esta vez; la próxima volverá a preguntar.
+            log::warn!("no se pudo recordar la autorización del comando local: {err}");
+        }
     }
-    let run_id = run_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let timeout = local_command::effective_timeout_secs(timeout_secs);
-    let max_output = local_command::effective_output_bytes(max_output_kb);
+
+    let run_id = request
+        .run_id
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let timeout = local_command::effective_timeout_secs(request.timeout_secs);
+    let max_output = local_command::effective_output_bytes(request.max_output_kb);
     let registry = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        registry.run_blocking(&run_id, &command, timeout, max_output)
+        registry.run_blocking(&run_id, &rendered.command, &rendered.env, timeout, max_output)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2385,17 +2652,21 @@ pub async fn sync_rotate_passphrase(
 /// de backup portable, transferible por USB/email.
 /// Comando **async**: el scrypt de `age` tarda cientos de ms; fuera del hilo
 /// principal para no congelar la UI al exportar.
+///
+/// La ruta es la que el usuario eligió en [`fs_pick`] (`grant`, de escritura).
 #[tauri::command]
 pub async fn sync_export_file(
-    path: String,
+    grants: State<'_, FileGrants>,
+    grant: String,
     passphrase: String,
     state: SyncState,
 ) -> Result<(), String> {
+    let path = grants.take(&grant, GrantMode::Write)?;
     tauri::async_runtime::spawn_blocking(move || {
         let bytes = pack_state(&passphrase, &state).map_err(|e| e.to_string())?;
         // Escritura atómica: un backup interrumpido a medias quedaría corrupto
         // y no descifraría al importarlo.
-        write_atomic(std::path::Path::new(&path), &bytes).map_err(|e| e.to_string())
+        write_atomic(&path, &bytes).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("La exportación no respondió: {e}"))?
@@ -2404,8 +2675,14 @@ pub async fn sync_export_file(
 /// Importa un fichero cifrado y devuelve el estado descifrado. El frontend
 /// luego decide si reemplaza, fusiona o solo previsualiza.
 /// Comando **async**: simétrico a `sync_export_file` (scrypt en descifrado).
+/// La ruta es la que el usuario eligió en [`fs_pick`] (`grant`, de lectura).
 #[tauri::command]
-pub async fn sync_import_file(path: String, passphrase: String) -> Result<SyncState, String> {
+pub async fn sync_import_file(
+    grants: State<'_, FileGrants>,
+    grant: String,
+    passphrase: String,
+) -> Result<SyncState, String> {
+    let path = grants.take(&grant, GrantMode::Read)?;
     tauri::async_runtime::spawn_blocking(move || {
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
         unpack_state(&passphrase, &bytes).map_err(|e| e.to_string())

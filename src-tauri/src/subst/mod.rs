@@ -16,6 +16,6 @@ pub mod engine;
 pub mod redact;
 pub mod types;
 
-pub use engine::{parse, substitute};
+pub use engine::{parse, render_literal, substitute};
 pub use redact::{redact_secrets, REDACTED};
 pub use types::{DefaultResolver, InternalVar, Marker, Resolver, SubstContext};

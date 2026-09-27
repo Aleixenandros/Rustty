@@ -224,7 +224,14 @@
     "output_label": "Saída capturada",
     "output_hint": "Quanta saída se guarda de cada comando. O que exceder é descartado e o aviso indica-o; o comando continua a executar normalmente.",
     "delete_snippet_title": "Eliminar snippet?",
-    "delete_cmd_title": "Eliminar comando local?"
+    "delete_cmd_title": "Eliminar comando local?",
+    "toast_not_authorized": "«{name}» não foi executado: não foi autorizado neste computador.",
+    "err_empty": "O comando está vazio.",
+    "err_too_long": "O comando tem mais de {detail} caracteres: encurte-o, ou guarde-o num script e chame o script.",
+    "err_escaped_marker": "{detail} vem logo a seguir a um carácter de escape (\\ ou ^); retire o escape para que possa ser substituído.",
+    "err_ansi_marker": "{detail} está dentro de $'…', onde não pode ser substituído com segurança; use aspas simples ou duplas.",
+    "err_unsafe_value": "O valor de {detail} contém caracteres que a shell deste sistema não pode receber com segurança (aspas ou quebras de linha).",
+    "err_option_value": "O valor de {detail} começa por «-» e o programa tomá-lo-ia por uma opção; reveja o perfil."
   },
   "templates": {
     "field_label": "Modelo",
@@ -281,7 +288,7 @@
     "label_shell": "Comando",
     "label_url": "URL",
     "label_path": "Caminho",
-    "hint_shell": "É executado neste computador com a shell do sistema. Aceita ${host}, ${user}, ${var:nome} e ${ask:Rótulo}.",
+    "hint_shell": "É executado neste computador com a shell do sistema. Aceita ${host}, ${user}, ${var:nome} e ${ask:Rótulo}; cada valor entra como um único argumento. Pede autorização da primeira vez em cada computador e depois de ser editado.",
     "hint_url": "Abre no navegador. Aceita ${var:nome} e ${ask:Rótulo}.",
     "hint_path": "Abre com a aplicação predefinida do sistema."
   },
@@ -867,7 +874,8 @@
     "nothing": "Nada para aplicar.",
     "done": "SSH Config: {new} novos, {update} atualizados, {same} sem alterações",
     "no_hosts": "Não foram encontradas entradas Host válidas no ficheiro",
-    "failed": "Não foi possível importar o ficheiro: {err}"
+    "failed": "Não foi possível importar o ficheiro: {err}",
+    "read_failed": "Não foi possível ler {path}: {err}"
   },
   "import_wizard": {
     "title": "Importar ligações",
@@ -1875,7 +1883,9 @@
     "transfer_pause_failed": "Não foi possível pausar: {err}",
     "transfer_resume_failed": "Não foi possível retomar: {err}",
     "transfer_skipped": "Omitido: {name}",
-    "transfers_pause_all_failed": "Não foi possível mudar a pausa geral: {err}"
+    "transfers_pause_all_failed": "Não foi possível mudar a pausa geral: {err}",
+    "file_grant_invalid": "A permissão para esse ficheiro já não é válida (expirou, já foi usada ou o caminho mudou). Escolha-o de novo.",
+    "import_failed": "Erro ao importar: {err}"
   },
   "sftp": {
     "symlinks_skipped": "{n} ligações simbólicas ignoradas (não são copiadas)",

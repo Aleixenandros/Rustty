@@ -224,7 +224,14 @@
     "output_label": "Salida capturada",
     "output_hint": "Cuánta salida se guarda de cada comando. Lo que exceda se descarta y el aviso lo indica; el comando sigue ejecutándose con normalidad.",
     "delete_snippet_title": "¿Eliminar snippet?",
-    "delete_cmd_title": "¿Eliminar comando local?"
+    "delete_cmd_title": "¿Eliminar comando local?",
+    "toast_not_authorized": "«{name}» no se ha ejecutado: no se autorizó en este equipo.",
+    "err_empty": "El comando está vacío.",
+    "err_too_long": "El comando supera los {detail} caracteres: acórtalo o guárdalo en un script y llama al script.",
+    "err_escaped_marker": "{detail} va justo detrás de un carácter de escape (\\ o ^); quita el escape para que se pueda sustituir.",
+    "err_ansi_marker": "{detail} está dentro de $'…', donde no se puede sustituir con seguridad; usa comillas simples o dobles.",
+    "err_unsafe_value": "El valor de {detail} contiene caracteres que el shell de este sistema no puede recibir con seguridad (comillas o saltos de línea).",
+    "err_option_value": "El valor de {detail} empieza por «-» y el programa lo tomaría por una opción; revisa el perfil."
   },
   "templates": {
     "field_label": "Plantilla",
@@ -281,7 +288,7 @@
     "label_shell": "Comando",
     "label_url": "URL",
     "label_path": "Ruta",
-    "hint_shell": "Se ejecuta en este equipo con el shell del sistema. Admite ${host}, ${user}, ${var:nombre} y ${ask:Etiqueta}.",
+    "hint_shell": "Se ejecuta en este equipo con el shell del sistema. Admite ${host}, ${user}, ${var:nombre} y ${ask:Etiqueta}; cada valor entra como un único argumento. La primera vez en cada equipo, y tras editarlo, se pide autorización.",
     "hint_url": "Se abre en el navegador. Admite ${var:nombre} y ${ask:Etiqueta}.",
     "hint_path": "Se abre con la aplicación predeterminada del sistema."
   },
@@ -867,7 +874,8 @@
     "nothing": "No hay cambios que aplicar.",
     "done": "SSH Config: {new} nuevos, {update} actualizados, {same} sin cambios",
     "no_hosts": "No se encontraron entradas Host válidas en el fichero",
-    "failed": "No se pudo importar el fichero: {err}"
+    "failed": "No se pudo importar el fichero: {err}",
+    "read_failed": "No se pudo leer {path}: {err}"
   },
   "import_wizard": {
     "title": "Importar conexiones",
@@ -1869,7 +1877,9 @@
     "transfer_pause_failed": "No se pudo pausar: {err}",
     "transfer_resume_failed": "No se pudo reanudar: {err}",
     "transfer_skipped": "Omitido: {name}",
-    "transfers_pause_all_failed": "No se pudo cambiar la pausa general: {err}"
+    "transfers_pause_all_failed": "No se pudo cambiar la pausa general: {err}",
+    "file_grant_invalid": "El permiso para ese fichero ya no es válido (caducó, ya se usó o la ruta cambió). Vuelve a elegirlo.",
+    "import_failed": "Error al importar: {err}"
   },
   "time": {
     "now": "ahora",
