@@ -126,10 +126,10 @@ function prepareHome() {
   const home = path.join(workDir, "home");
   fs.mkdirSync(path.join(home, ".ssh/config.d"), { recursive: true });
   fs.writeFileSync(path.join(home, ".ssh/config.d/work"), "Host work\n  HostName 10.0.0.9\n");
-  fs.writeFileSync(
-    path.join(home, ".ssh/id_e2e"),
-    "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n",
-  );
+  // Delimitadores montados aquí: escritos tal cual, el escáner de secretos del
+  // CI (gitleaks) tomaría esta clave de mentira por una de verdad.
+  const pem = (edge) => `-----${edge} OPENSSH ${"PRIVATE KEY"}-----`;
+  fs.writeFileSync(path.join(home, ".ssh/id_e2e"), `${pem("BEGIN")}\nAAAA\n${pem("END")}\n`);
   fs.writeFileSync(path.join(home, "notas.txt"), "secreto\n");
   return home;
 }

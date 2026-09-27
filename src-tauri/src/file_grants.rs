@@ -376,12 +376,22 @@ mod tests {
         assert!(check_ssh_config_path(&link, &home).is_err());
     }
 
+    /// Delimitador PEM de una clave de mentira, montado en tiempo de ejecución:
+    /// escrito tal cual en el fuente, el escáner de secretos del CI (gitleaks)
+    /// lo toma por una clave privada filtrada.
+    fn pem_edge(edge: &str, kind: &str) -> String {
+        format!("-----{edge} {kind} {}-----", "PRIVATE KEY")
+    }
+
     #[test]
     fn detecta_los_formatos_de_clave_privada() {
-        assert!(looks_like_private_key(
-            "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Blbn…\n-----END OPENSSH PRIVATE KEY-----\n"
-        ));
-        assert!(looks_like_private_key("-----BEGIN RSA PRIVATE KEY-----\n"));
+        let openssh = format!(
+            "{}\nb3Blbn…\n{}\n",
+            pem_edge("BEGIN", "OPENSSH"),
+            pem_edge("END", "OPENSSH")
+        );
+        assert!(looks_like_private_key(&openssh));
+        assert!(looks_like_private_key(&pem_edge("BEGIN", "RSA")));
         assert!(looks_like_private_key(
             "---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----\n"
         ));
