@@ -1967,7 +1967,16 @@
     "pause_all": "Alles pausieren",
     "pause_all_title": "Alle Übertragungen aller Sitzungen pausieren",
     "resume_all": "Alles fortsetzen",
-    "resume_all_title": "Allgemeine Pause aufheben (einzeln pausierte Übertragungen bleiben pausiert)"
+    "resume_all_title": "Allgemeine Pause aufheben (einzeln pausierte Übertragungen bleiben pausiert)",
+    "progress_current_download": "Herunterladen: {name}",
+    "progress_current_upload": "Hochladen: {name}",
+    "uploaded_to": "✓ Hochgeladen nach {path}",
+    "saved_to": "✓ Gespeichert unter {path}",
+    "partial_of": "{done} von {total}",
+    "protected_path": "Dieser Pfad liegt im Datenordner von Rustty (oder enthält ihn) und kann im Dateibereich nicht geändert werden.",
+    "upload_not_confirmed": "„{name}“ wurde nicht hochgeladen: Es wurde nicht bestätigt.",
+    "invalid_path": "Ungültiger Pfad: {path}",
+    "op_failed": "Fehler: {err}"
   },
   "sftp_nav": {
     "back": "Zurück",

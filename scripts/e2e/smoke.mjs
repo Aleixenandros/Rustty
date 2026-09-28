@@ -14,6 +14,12 @@
 //      (se cierra con `wmctrl`, que equivale a no autorizar); el selector de
 //      ficheros lo abre el backend y el renderer ya no alcanza el plugin.
 //      Elegir un fichero de verdad en el diálogo GTK no se puede automatizar.
+//   6. Panel SFTP contra un `sshd` real (si la máquina lo tiene): sube y baja
+//      una carpeta de 300+ ficheros —los pequeños viajan en lotes— y compara el
+//      contenido fichero a fichero; y los límites del panel local: la carpeta
+//      de datos no se toca ni desde una descarga ni desde un borrado, tampoco
+//      borrando una carpeta que la contenga, y subir una clave privada abre el
+//      diálogo nativo de confirmación (cerrarlo cancela la subida).
 //
 // Requisitos (solo Linux): `tauri-driver` en el PATH (o en $TAURI_DRIVER),
 // `WebKitWebDriver` (paquete webkit2gtk-driver / webkitgtk), el binario debug
@@ -29,6 +35,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { findSshd, startSshd } from "./sshd.mjs";
 import { openSession, sleep } from "./webdriver.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -121,17 +128,197 @@ function seedTrustedCommand(template) {
   fs.writeFileSync(file, JSON.stringify(doc, null, 2), { mode: 0o600 });
 }
 
+/**
+ * Clave privada de mentira. Los delimitadores se montan aquí: escritos tal cual,
+ * el escáner de secretos del CI (gitleaks) la tomaría por una de verdad.
+ */
+function fakePrivateKey() {
+  const pem = (edge) => `-----${edge} OPENSSH ${"PRIVATE KEY"}-----`;
+  return `${pem("BEGIN")}\nAAAA\n${pem("END")}\n`;
+}
+
 /** HOME falso con un ~/.ssh de prueba: un Include legítimo y una clave. */
 function prepareHome() {
   const home = path.join(workDir, "home");
   fs.mkdirSync(path.join(home, ".ssh/config.d"), { recursive: true });
   fs.writeFileSync(path.join(home, ".ssh/config.d/work"), "Host work\n  HostName 10.0.0.9\n");
-  // Delimitadores montados aquí: escritos tal cual, el escáner de secretos del
-  // CI (gitleaks) tomaría esta clave de mentira por una de verdad.
-  const pem = (edge) => `-----${edge} OPENSSH ${"PRIVATE KEY"}-----`;
-  fs.writeFileSync(path.join(home, ".ssh/id_e2e"), `${pem("BEGIN")}\nAAAA\n${pem("END")}\n`);
+  fs.writeFileSync(path.join(home, ".ssh/id_e2e"), fakePrivateKey());
   fs.writeFileSync(path.join(home, "notas.txt"), "secreto\n");
   return home;
+}
+
+/**
+ * Árbol de prueba para las transferencias de carpeta: muchos ficheros pequeños
+ * (los que viajan en lotes), un par grandes, subcarpetas y dos nombres que solo
+ * se distinguen por mayúsculas.
+ */
+function buildTree(root) {
+  fs.mkdirSync(path.join(root, "sub/deep"), { recursive: true });
+  const put = (rel, size) => fs.writeFileSync(path.join(root, rel), crypto.randomBytes(size));
+  for (let i = 0; i < 300; i++) put(`f${i}.txt`, 200 + ((i * 37) % 9000));
+  for (let i = 0; i < 40; i++) put(`sub/deep/g${i}.bin`, 1 + i * 113);
+  put("grande.bin", 1536 * 1024);
+  put("sub/mediano.bin", 600 * 1024);
+  fs.writeFileSync(path.join(root, "Caso.txt"), "mayúscula");
+  fs.writeFileSync(path.join(root, "caso.txt"), "minúscula");
+}
+
+/** Huella SHA-256 de cada fichero del árbol, por ruta relativa y ordenada. */
+function treeDigest(root) {
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) {
+        const hash = crypto.createHash("sha256").update(fs.readFileSync(full)).digest("hex");
+        out.push(`${path.relative(root, full)} ${hash}`);
+      }
+    }
+  };
+  if (fs.existsSync(root)) walk(root);
+  return out.sort();
+}
+
+/** Arranca el `sshd` de prueba y deja listos el perfil SFTP y su host key. */
+async function prepareSftpServer(home) {
+  const sshd = findSshd();
+  if (!sshd) return null;
+  const server = await startSshd(sshd, path.join(workDir, "sshd"));
+  children.push({ kill: server.stop });
+  // La host key, ya conocida: la primera conexión no pregunta.
+  fs.writeFileSync(path.join(home, ".ssh/known_hosts"), `${server.knownHostsLine}\n`);
+  // El perfil entra por la propia CLI (`--import`), con los datos aislados.
+  const profileFile = path.join(workDir, "perfil-sftp.json");
+  fs.writeFileSync(
+    profileFile,
+    JSON.stringify({
+      name: "e2e-sftp",
+      host: "127.0.0.1",
+      port: server.port,
+      username: server.user,
+      auth_type: "public_key",
+      key_path: server.clientKey,
+      connection_type: "sftp",
+    }),
+  );
+  execFileSync(application, ["--import", profileFile, "--workspace", "Default", "--quiet"], {
+    env: { ...process.env, XDG_DATA_HOME: workDir, HOME: home },
+    stdio: "ignore",
+  });
+  return server;
+}
+
+/** Sección 6: panel SFTP contra el `sshd` real. */
+async function checkSftpPanel(app) {
+  const profiles = await app.invoke("get_profiles");
+  const profile = profiles.ok ? profiles.value.find((p) => p.name === "e2e-sftp") : null;
+  check("el perfil SFTP importado por la CLI está en la app", Boolean(profile), profiles.reason || "");
+  if (!profile) return;
+  const connected = await app.invoke("sftp_connect", { profileId: profile.id, sessionId: "e2e-sftp", maxConcurrent: 4 });
+  check("el panel SFTP conecta con el sshd real", connected.ok, connected.reason || "");
+  if (!connected.ok) return;
+  const sessionId = connected.value;
+
+  // Subir y bajar una carpeta grande: los pequeños viajan en lotes.
+  const tree = path.join(workDir, "arbol");
+  const remoteTree = path.join(workDir, "remoto", "arbol");
+  const back = path.join(workDir, "vuelta", "arbol");
+  buildTree(tree);
+  fs.mkdirSync(path.dirname(remoteTree), { recursive: true });
+  fs.mkdirSync(path.dirname(back), { recursive: true });
+  const expected = treeDigest(tree);
+  let started = Date.now();
+  const up = await app.invoke("sftp_upload_dir", {
+    request: { sessionId, localPath: tree, remotePath: remoteTree, transferId: "e2e-up", conflictPolicy: "overwrite", lang: "es" },
+  });
+  const upMs = Date.now() - started;
+  const upDigest = treeDigest(remoteTree);
+  const upDiff = expected.filter((line) => !upDigest.includes(line)).map((line) => line.split(" ")[0]);
+  check(
+    `sube una carpeta de ${expected.length} ficheros intacta`,
+    up.ok && upDiff.length === 0,
+    up.ok
+      ? `${upDigest.length}/${expected.length} ficheros en ${upMs} ms${upDiff.length ? `; distintos: ${upDiff.slice(0, 5).join(", ")}` : ""}`
+      : up.reason,
+  );
+  started = Date.now();
+  const down = await app.invoke("sftp_download_dir", {
+    request: { sessionId, remotePath: remoteTree, localPath: back, transferId: "e2e-down", conflictPolicy: "overwrite" },
+  });
+  const downMs = Date.now() - started;
+  const downDigest = treeDigest(back);
+  check(
+    "la baja de vuelta intacta",
+    down.ok && JSON.stringify(downDigest) === JSON.stringify(expected),
+    down.ok ? `${downDigest.length}/${expected.length} ficheros en ${downMs} ms` : down.reason,
+  );
+
+  // La carpeta de datos no se toca desde el panel.
+  const dataDir = path.join(workDir, "com.rustty.app");
+  const profilesFile = path.join(dataDir, "profiles.json");
+  const before = fs.readFileSync(profilesFile, "utf8");
+  const intoData = await app.invoke("sftp_download", {
+    request: { sessionId, remotePath: path.join(remoteTree, "f1.txt"), localPath: profilesFile, transferId: "e2e-d1" },
+  });
+  check(
+    "una descarga no puede escribir en la carpeta de datos",
+    !intoData.ok && intoData.reason.startsWith("local-fs:protected") && fs.readFileSync(profilesFile, "utf8") === before,
+    intoData.reason || "se descargó",
+  );
+  const removeData = await app.invoke("local_remove", { path: profilesFile });
+  check(
+    "el panel no borra ficheros de la carpeta de datos",
+    !removeData.ok && removeData.reason.startsWith("local-fs:protected") && fs.existsSync(profilesFile),
+    removeData.reason || "se borró",
+  );
+  const removeParent = await app.invoke("local_remove", { path: workDir });
+  check(
+    "ni una carpeta que la contenga",
+    !removeParent.ok && removeParent.reason.startsWith("local-fs:protected") && fs.existsSync(profilesFile),
+    removeParent.reason || "se borró",
+  );
+  const mkdirData = await app.invoke("local_mkdir", { path: path.join(dataDir, "intrusa") });
+  check(
+    "ni crea carpetas dentro",
+    !mkdirData.ok && !fs.existsSync(path.join(dataDir, "intrusa")),
+    mkdirData.reason || "se creó",
+  );
+
+  // Subir una clave privada pide confirmación nativa; cerrarla cancela.
+  const secrets = path.join(workDir, "proyecto");
+  fs.mkdirSync(secrets, { recursive: true });
+  const key = path.join(secrets, "prod.pem");
+  fs.writeFileSync(key, fakePrivateKey());
+  const remoteKey = path.join(workDir, "remoto", "prod.pem");
+  const promptTitle = "Subir un fichero sensible";
+  await app.invokeDetached("key-upload", "sftp_upload", {
+    request: { sessionId, localPath: key, remotePath: remoteKey, transferId: "e2e-key", lang: "es" },
+  });
+  const prompted = await waitForWindow(promptTitle, 15000);
+  check("subir una clave privada abre el diálogo nativo", prompted);
+  if (prompted) {
+    await sleep(500);
+    captureWindow(promptTitle, process.env.E2E_UPLOAD_DIALOG_SCREENSHOT);
+    closeWindow(promptTitle);
+  }
+  const keyResult = await app.result("key-upload");
+  check(
+    "cerrar ese diálogo no sube nada",
+    Boolean(keyResult) && !keyResult.ok && keyResult.reason.startsWith("local-fs:rejected") && !fs.existsSync(remoteKey),
+    JSON.stringify(keyResult),
+  );
+  const plain = path.join(secrets, "leeme.txt");
+  fs.writeFileSync(plain, "nada que esconder\n");
+  const plainUp = await app.invoke("sftp_upload", {
+    request: { sessionId, localPath: plain, remotePath: path.join(workDir, "remoto", "leeme.txt"), transferId: "e2e-plain", lang: "es" },
+  });
+  check(
+    "un fichero normal sube sin preguntar",
+    plainUp.ok && fs.existsSync(path.join(workDir, "remoto", "leeme.txt")),
+    plainUp.reason || "",
+  );
+  await app.invoke("sftp_disconnect", { sessionId });
 }
 
 /** Sección 5: los límites del IPC de ficheros y de los comandos locales. */
@@ -216,7 +403,8 @@ async function main() {
     throw new Error(`falta ${application}: compila antes con «cargo build» en src-tauri/`);
   }
   // El binario debug carga la interfaz del servidor de desarrollo.
-  start("npx", ["vite", "--strictPort"]);
+  // Sin vigilante de ficheros (ver `vite.config.js`): el test no recarga nada.
+  start("npx", ["vite", "--strictPort"], { RUSTTY_E2E_NO_WATCH: "1" });
   // Vite escucha en `localhost`, que aquí es solo ::1; el `fetch` de Node
   // resuelve `localhost` a 127.0.0.1 y se queda esperando a nadie.
   await waitForHttp(["http://[::1]:1420", "http://127.0.0.1:1420"], 60000);
@@ -225,6 +413,7 @@ async function main() {
   // herramientas de captura. HOME apunta a un ~/.ssh de prueba; XAUTHORITY se
   // fija para que el cambio de HOME no deje a la app sin acceso al display.
   const home = prepareHome();
+  const sftpServer = await prepareSftpServer(home);
   start(driverBin, ["--port", "4444"], {
     XDG_DATA_HOME: workDir,
     GDK_BACKEND: "x11",
@@ -272,6 +461,11 @@ async function main() {
     check("al terminar el shell la pestaña pasa a cerrada", /error/.test(String(closed)), String(closed));
 
     await checkIpcLeastPrivilege(app, home);
+    if (sftpServer) {
+      await checkSftpPanel(app);
+    } else {
+      console.log("  --   sin sshd en esta máquina: se salta la sección del panel SFTP");
+    }
     if (process.env.E2E_SCREENSHOT) await app.screenshot(process.env.E2E_SCREENSHOT);
   } finally {
     await app.close().catch(() => {});

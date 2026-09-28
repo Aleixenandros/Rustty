@@ -22,6 +22,9 @@ export const FILE_GRANT_MARKER = "fs-grant:";
 /** Prefijo de los errores con código de los comandos locales (`ERROR_MARKER`). */
 export const LOCAL_COMMAND_MARKER = "local-command:";
 
+/** Prefijo de los errores del panel de archivos local (`local_fs_guard.rs`). */
+export const LOCAL_FS_MARKER = "local-fs:";
+
 /**
  * @typedef {{ name: string, extensions: string[] }} FileFilter
  * @typedef {{ title?: string, defaultPath?: string|null, filters?: FileFilter[] }} PickOptions
@@ -88,13 +91,34 @@ export function isFileGrantError(err) {
  * @returns {{ code: string, detail: string }|null}
  */
 export function localCommandError(err) {
+  return markedError(err, LOCAL_COMMAND_MARKER);
+}
+
+/**
+ * Separa `<prefijo><código>|<detalle>`, o `null` si el error no lleva ese prefijo.
+ * @param {unknown} err
+ * @param {string} marker
+ * @returns {{ code: string, detail: string }|null}
+ */
+function markedError(err, marker) {
   const text = String(err ?? "");
-  if (!text.startsWith(LOCAL_COMMAND_MARKER)) return null;
-  const body = text.slice(LOCAL_COMMAND_MARKER.length);
+  if (!text.startsWith(marker)) return null;
+  const body = text.slice(marker.length);
   const bar = body.indexOf("|");
   return bar < 0
     ? { code: body, detail: "" }
     : { code: body.slice(0, bar), detail: body.slice(bar + 1) };
+}
+
+/**
+ * Código y detalle de un error del panel de archivos local
+ * (`local-fs:protected|ruta`, `local-fs:rejected|nombre`, `local-fs:invalid|ruta`),
+ * o `null` si no viene del guardián de rutas.
+ * @param {unknown} err
+ * @returns {{ code: string, detail: string }|null}
+ */
+export function localFsError(err) {
+  return markedError(err, LOCAL_FS_MARKER);
 }
 
 /**

@@ -93,7 +93,7 @@ import { ipcErrorText, isHostKeyError } from "./modules/ipc/errors.js";
 // Los selectores de fichero son nativos y los abre el backend (`fs_pick`), que
 // devuelve con la ruta un permiso de un solo uso para leerla o escribirla; las
 // confirmaciones usan confirmThemed para respetar el tema de la app.
-import { createFileApi, isFileGrantError, localCommandError } from "./modules/ipc/files.js";
+import { createFileApi, isFileGrantError, localCommandError, localFsError } from "./modules/ipc/files.js";
 import { buildDropInsertText } from "./modules/shell-quote.js";
 import { generatePassphrase, passphraseStrength } from "./modules/passphrase.js";
 import { rankCommandSuggestions } from "./modules/command-suggest.js";
@@ -448,6 +448,19 @@ const files = createFileApi(invoke);
  */
 function fileErrorText(err) {
   return isFileGrantError(err) ? t("toast.file_grant_invalid") : ipcErrorText(err);
+}
+
+/**
+ * Texto de un error del panel de archivos: traduce los del guardián de rutas
+ * locales (`local_fs_guard.rs`) y deja el resto tal cual.
+ * @param {unknown} err
+ */
+function sftpErrorText(err) {
+  const guard = localFsError(err);
+  if (!guard) return ipcErrorText(err);
+  if (guard.code === "protected") return t("sftp.protected_path");
+  if (guard.code === "rejected") return t("sftp.upload_not_confirmed", { name: guard.detail });
+  return t("sftp.invalid_path", { path: guard.detail });
 }
 
 /**
@@ -20704,9 +20717,9 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
     if (current && !done) {
       const detailEl = transferEl.querySelector(".sftp-transfer-detail");
       if (detailEl) {
-        const verb = (transferEl.dataset.label || "").startsWith("⬇") ? "Descargando" : "Subiendo";
         const counter = filesTotal > 0 ? ` (${filesDone || 0}/${filesTotal})` : "";
-        detailEl.textContent = `${verb}: ${current}${counter}`;
+        const key = direction === "download" ? "sftp.progress_current_download" : "sftp.progress_current_upload";
+        detailEl.textContent = t(key, { name: current }) + counter;
         detailEl.title = current;
       }
     }
@@ -20732,8 +20745,10 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
       });
       await revealTransferBeforeInvoke(panel, transferEl);
       const cmd = isDir ? "sftp_upload_dir" : "sftp_upload";
-      await invoke(cmd, invokeArgs);
-      markTransferSuccess(transferEl, `✓ Subido a ${remotePath}`);
+      // El idioma viaja para el diálogo nativo que pide confirmar una subida
+      // sensible (una clave privada, ~/.ssh…).
+      await invoke(cmd, { request: { ...invokeArgs, lang: getLanguage() } });
+      markTransferSuccess(transferEl, t("sftp.uploaded_to", { path: remotePath }));
       if (job) job.status = "done";
       appendSftpActivity(panel, {
         status: resultStatus,
@@ -20766,8 +20781,8 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
       });
       await revealTransferBeforeInvoke(panel, transferEl);
       const cmd = isDir ? "sftp_download_dir" : "sftp_download";
-      await invoke(cmd, invokeArgs);
-      markTransferSuccess(transferEl, `✓ Guardado en ${localPath}`);
+      await invoke(cmd, { request: invokeArgs });
+      markTransferSuccess(transferEl, t("sftp.saved_to", { path: localPath }));
       if (job) job.status = "done";
       appendSftpActivity(panel, {
         status: resultStatus,
@@ -20780,30 +20795,33 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
       await navigateSftpLocal(sessionId, s.sftp.localCwd);
     }
   } catch (err) {
-    const canceled = /cancelad|cancel/i.test(String(err));
+    // Una subida sensible que el usuario no confirmó en el diálogo nativo es una
+    // cancelación suya, no un fallo.
+    const canceled = localFsError(err)?.code === "rejected" || /cancelad|cancel/i.test(String(err));
+    const errText = sftpErrorText(err);
     if (canceled) {
       markTransferCanceled(transferEl);
       if (job) job.status = "canceled";
     } else {
-      markTransferError(transferEl, String(err));
+      markTransferError(transferEl, errText);
       if (job) job.status = "error";
     }
     const transferredBytes = parseInt(transferEl.dataset.lastTransferred || "0", 10);
     const totalBytes = parseInt(transferEl.dataset.lastTotal || "0", 10);
     const partialDetail = totalBytes > 0
-      ? ` (${formatSize(transferredBytes)} de ${formatSize(totalBytes)})`
+      ? ` (${t("sftp.partial_of", { done: formatSize(transferredBytes), total: formatSize(totalBytes) })})`
       : "";
     appendSftpActivity(panel, {
       status: canceled ? "canceled" : "error",
       label: `${transferDirectionLabel(direction)} ${label}`,
-      detail: `${srcPath}${finalTargetPath ? ` → ${finalTargetPath}` : ""}${partialDetail}: ${String(err)}`,
+      detail: `${srcPath}${finalTargetPath ? ` → ${finalTargetPath}` : ""}${partialDetail}: ${errText}`,
       bytes: transferredBytes,
       startedAt,
       actionLabel: canceled ? t("activity.view") : t("activity.retry"),
       action: canceled ? (() => revealSftpActivity(panel)) : (() => retrySftpTransfer(sessionId, transferId)),
     });
     if (!canceled) {
-      toast(t("sftp.transfer_failed", { err }), "error", 8000, {
+      toast(t("sftp.transfer_failed", { err: errText }), "error", 8000, {
         category: "transfer",
         actionLabel: t("sftp.view_log"),
         onAction: () => revealSftpActivity(panel),
@@ -20905,11 +20923,11 @@ async function promptMkdir(sessionId, side) {
       detail: path,
     });
   } catch (err) {
-    toast(`Error: ${err}`, "error");
+    toast(t("sftp.op_failed", { err: sftpErrorText(err) }), "error");
     appendSftpActivity(s.sftp.panel, {
       status: "error",
       label: `Mkdir ${where}`,
-      detail: `${name}: ${String(err)}`,
+      detail: `${name}: ${sftpErrorText(err)}`,
     });
   }
 }
@@ -20945,11 +20963,11 @@ async function promptCreateFile(sessionId, side) {
       detail: path,
     });
   } catch (err) {
-    toast(`Error: ${err}`, "error");
+    toast(t("sftp.op_failed", { err: sftpErrorText(err) }), "error");
     appendSftpActivity(s.sftp.panel, {
       status: "error",
       label: `${t("sftp_nav.touch")} ${where}`,
-      detail: `${name}: ${String(err)}`,
+      detail: `${name}: ${sftpErrorText(err)}`,
     });
   }
 }
@@ -20991,11 +21009,11 @@ async function promptRename(sessionId, side, oldPath, oldName) {
       detail: `${oldPath} → ${newPath}`,
     });
   } catch (err) {
-    toast(`Error: ${err}`, "error");
+    toast(t("sftp.op_failed", { err: sftpErrorText(err) }), "error");
     appendSftpActivity(s.sftp.panel, {
       status: "error",
       label: `${t("sftp.rename_submit")} ${where}`,
-      detail: `${oldPath} → ${newName}: ${String(err)}`,
+      detail: `${oldPath} → ${newName}: ${sftpErrorText(err)}`,
     });
   }
 }
@@ -21030,11 +21048,11 @@ async function confirmDelete(sessionId, side, path, name, isDir) {
       detail: path,
     });
   } catch (err) {
-    toast(`Error: ${err}`, "error");
+    toast(t("sftp.op_failed", { err: sftpErrorText(err) }), "error");
     appendSftpActivity(s.sftp.panel, {
       status: "error",
       label: `${t("sftp.delete_title")} ${where}`,
-      detail: `${path}: ${String(err)}`,
+      detail: `${path}: ${sftpErrorText(err)}`,
     });
   }
 }
@@ -21073,7 +21091,7 @@ async function confirmDeleteRows(sessionId, side, rows) {
       appendSftpActivity(s.sftp.panel, {
         status: "error",
         label: `${t("sftp.delete_title")} ${where}`,
-        detail: `${row.path}: ${String(err)}`,
+        detail: `${row.path}: ${sftpErrorText(err)}`,
       });
     }
   }
@@ -21163,7 +21181,7 @@ async function promptSftpPermissions(sessionId, side, rows) {
       appendSftpActivity(s.sftp.panel, {
         status: "error",
         label: `${t("sftp.chmod_label")} ${where}`,
-        detail: `${row.path}: ${String(err)}`,
+        detail: `${row.path}: ${sftpErrorText(err)}`,
       });
     }
   }

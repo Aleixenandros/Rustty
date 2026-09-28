@@ -22,14 +22,14 @@ Al tratarse de un proyecto mantenido de forma voluntaria, no se garantizan plazo
 
 ## Versiones soportadas
 
-Solo la última versión menor publicada recibe parches de seguridad. La versión actual es la línea **2.14.x** (`package.json` y `src-tauri/Cargo.toml` declaran `2.14.0`).
+Solo la última versión menor publicada recibe parches de seguridad. La versión actual es la línea **2.15.x** (`package.json` y `src-tauri/Cargo.toml` declaran `2.15.0`).
 
 | Versión | Soporte de seguridad |
 | ------- | -------------------- |
-| 2.14.x  | Sí                   |
-| < 2.14  | No                   |
+| 2.15.x  | Sí                   |
+| < 2.15  | No                   |
 
-Si usas una versión anterior, actualiza a la última 2.14.x para recibir correcciones.
+Si usas una versión anterior, actualiza a la última 2.15.x para recibir correcciones.
 
 ## Superficie de seguridad
 
@@ -77,7 +77,7 @@ La interfaz (el WebView) se trata como no confiable frente al núcleo en Rust, c
 - **Ficheros locales**: la interfaz no puede leer ni escribir una ruta que nombre ella. Los diálogos de abrir y guardar los abre el núcleo, y lo que devuelve es un **permiso de un solo uso** para leer *o* escribir esa ruta, con caducidad; la ruta se canonicaliza al emitirlo y se vuelve a comprobar antes de usarla, así que un enlace simbólico cambiado después de elegirla invalida la operación. La única lectura sin diálogo son los `Include` de `~/.ssh/config`, limitados a `~/.ssh` (o al `ssh` del sistema) y rechazados si el fichero contiene una clave privada. La interfaz no tiene acceso directo al plugin de diálogos.
 - **Comandos locales**: el núcleo recibe la plantilla del catálogo, no una orden; una plantilla solo se ejecuta si el usuario la ha autorizado en ese equipo en un diálogo **nativo**, y los valores sustituidos viajan como variables de entorno, sin que el shell los interprete.
 - **Keyring**: servicio fijo y lista cerrada de espacios de nombres.
-- El panel de archivos local del SFTP es un gestor de ficheros y opera sobre las rutas que el usuario navega; queda fuera de esta restricción.
+- **Panel de archivos local**: es un gestor de ficheros y opera sobre las rutas que el usuario navega, pero no puede escribir, borrar, renombrar ni cambiar permisos en la carpeta de datos de la aplicación (ni borrar o mover una carpeta que la contenga), y subir un fichero sensible —una clave privada por su contenido, lo no público de `~/.ssh` o la carpeta de datos— exige confirmación en un diálogo **nativo**. Sobrescribir o borrar ficheros normales del usuario sigue siendo posible desde el panel: es su función.
 
 ### Ejecución de comandos y SFTP elevado
 

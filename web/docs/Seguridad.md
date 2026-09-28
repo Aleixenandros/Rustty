@@ -23,7 +23,7 @@ Importar y exportar (temas, conexiones, runbooks, atajos, diagnósticos, backups
 
 Al importar `~/.ssh/config`, sus `Include` se leen sin preguntar solo si están dentro de `~/.ssh` (o del `ssh` del sistema) y nunca si el fichero contiene una clave privada; un `Include` que apunte fuera aparece en la lista de lo no importado.
 
-El panel de archivos local del SFTP es otra cosa: es un gestor de ficheros y trabaja con las carpetas por las que navegas.
+El panel de archivos local del SFTP es otra cosa: es un gestor de ficheros y trabaja con las carpetas por las que navegas. Aun así, desde la versión 2.15 **no puede tocar la carpeta de datos de Rustty** —ni descargar encima de un fichero de ahí, ni borrar, renombrar o crear nada dentro—: sobrescribir la lista de comandos autorizados anularía su diálogo de autorización. Y **subir algo sensible pide confirmación con un diálogo del sistema**: un fichero que parece una clave privada (por su contenido, no por su nombre), lo demás de `~/.ssh` salvo lo público y lo que salga de la carpeta de datos, como los registros de sesión. Los detalles están en la [guía de SFTP](?page=SFTP).
 
 ## Notas de conexión
 

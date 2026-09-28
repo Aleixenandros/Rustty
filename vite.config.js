@@ -18,10 +18,16 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: "localhost",
-    watch: {
-      // Ignorar cambios en el core Rust para evitar reloads innecesarios
-      ignored: ["**/src-tauri/**"],
-    },
+    // El smoke E2E (`scripts/e2e/`) arranca Vite con RUSTTY_E2E_NO_WATCH: no
+    // necesita recarga en caliente, y sin vigilante no depende de que queden
+    // instancias de inotify libres en el equipo (con un IDE y varios servidores
+    // de lenguaje abiertos se agotan y Vite muere con EMFILE).
+    watch: process.env.RUSTTY_E2E_NO_WATCH
+      ? null
+      : {
+          // Ignorar cambios en el core Rust para evitar reloads innecesarios
+          ignored: ["**/src-tauri/**"],
+        },
   },
 
   // Exponer variables de entorno de Tauri al frontend

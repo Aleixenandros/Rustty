@@ -3,6 +3,7 @@ import {
   createFileApi,
   isFileGrantError,
   localCommandError,
+  localFsError,
   pickedFile,
   pickedPaths,
   pickRequest,
@@ -109,5 +110,15 @@ describe("errores con marcador", () => {
     expect(localCommandError("local-command:rejected|")).toEqual({ code: "rejected", detail: "" });
     expect(localCommandError("local-command:empty")).toEqual({ code: "empty", detail: "" });
     expect(localCommandError("comando vacío")).toBeNull();
+  });
+
+  it("separa código y detalle de los errores del panel de archivos local", () => {
+    expect(localFsError("local-fs:protected|/home/a/.local/share/com.rustty.app/x")).toEqual({
+      code: "protected",
+      detail: "/home/a/.local/share/com.rustty.app/x",
+    });
+    expect(localFsError("local-fs:rejected|id_ed25519")).toEqual({ code: "rejected", detail: "id_ed25519" });
+    expect(localFsError("local-command:rejected|")).toBeNull();
+    expect(localFsError(undefined)).toBeNull();
   });
 });

@@ -1967,7 +1967,16 @@
     "pause_all": "Pause all",
     "pause_all_title": "Pause every transfer, across all sessions",
     "resume_all": "Resume all",
-    "resume_all_title": "Lift the global pause (transfers paused one by one stay paused)"
+    "resume_all_title": "Lift the global pause (transfers paused one by one stay paused)",
+    "progress_current_download": "Downloading: {name}",
+    "progress_current_upload": "Uploading: {name}",
+    "uploaded_to": "✓ Uploaded to {path}",
+    "saved_to": "✓ Saved to {path}",
+    "partial_of": "{done} of {total}",
+    "protected_path": "That path is inside Rustty's data folder (or contains it), and the file panel can't modify it.",
+    "upload_not_confirmed": "“{name}” was not uploaded: it wasn't confirmed.",
+    "invalid_path": "Invalid path: {path}",
+    "op_failed": "Error: {err}"
   },
   "sftp_nav": {
     "back": "Back",

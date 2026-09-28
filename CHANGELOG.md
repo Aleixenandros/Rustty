@@ -2,6 +2,23 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.15.0] - 2026-09-28
+
+### Añadido
+
+- **Las carpetas con muchos ficheros pequeños se transfieren mucho más rápido por SFTP.** Al subir o bajar una carpeta, los ficheros de hasta 256 KiB viajan varios a la vez —tantos como marque «Transferencias simultáneas (SFTP)», 4 por defecto— en vez de uno detrás de otro. En una carpeta con cientos o miles de ficheros pequeños (código, configuraciones, un sitio web) el tiempo lo marcaba la ida y vuelta de abrir y cerrar cada uno, no la velocidad de la red; ahora esas esperas se solapan, y cuanto más lejos está el servidor, más se nota. Cada fichero pequeño usa un solo fichero abierto en el servidor, así que el límite de servidores como el Storage Box de Hetzner se respeta igual. Los ficheros grandes siguen de uno en uno con su propio pipelining, y FTP/FTPS en serie como siempre.
+
+### Cambiado
+
+- **El panel de archivos no puede tocar la carpeta de datos de Rustty.** Ni descargar encima de un fichero de ahí, ni crear, borrar, renombrar o cambiar permisos dentro, ni borrar o mover una carpeta que la contenga; si lo intentas, lo dice. Ahí viven tus conexiones y la lista de comandos locales autorizados en la 2.14: sobrescribirla desde una descarga habría anulado ese diálogo de autorización sin que lo vieras.
+- **Subir algo sensible pide confirmación.** Un fichero que por su contenido parece una clave privada —esté donde esté y se llame como se llame, también si se ha renombrado a `.pub`—, cualquier otro de `~/.ssh` salvo los públicos (`*.pub`, `known_hosts`, `config`, `authorized_keys`) y lo que salga de la carpeta de datos, como los registros de sesión, abren un diálogo del sistema con el fichero, el destino y el motivo. Una carpeta que contenga alguno de ellos también pregunta. «Cancelar» cancela esa subida y el panel la marca como cancelada, no como fallida.
+- Los estados de una transferencia («Subiendo…», «Descargando…», «Subido a…», «Guardado en…», «X de Y») y los errores del panel de archivos se muestran en el idioma de la aplicación; algunos salían siempre en castellano.
+- **Bibliotecas al día**: `thiserror`, la CLI de Tauri, `vite` y las acciones de la integración continua.
+
+### Corregido
+
+- **Una subida SFTP ya no se da por terminada antes de que el servidor la confirme.** Las últimas escrituras de cada fichero podían seguir en camino cuando Rustty marcaba la subida como completada, y si el servidor fallaba al escribirlas —disco lleno, cuota agotada— el error se perdía y el fichero quedaba incompleto con aviso de éxito. Ahora la subida espera a que el servidor confirme cada escritura y cierre el fichero, y si algo falla, lo dice. La línea de comandos (`--put`) no tenía este problema.
+
 ## [2.14.0] - 2026-09-27
 
 ### Cambiado

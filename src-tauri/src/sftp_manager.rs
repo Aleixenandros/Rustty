@@ -40,6 +40,7 @@ use russh_sftp::protocol::{FileAttributes, OpenFlags};
 use crate::host_keys;
 use crate::ipc::{event_name, EventKind};
 use crate::profiles::{AuthType, ConnectionProfile};
+use crate::transfer_batch::{self, Batch};
 use crate::transfer_resume;
 
 // ─── Tipos expuestos al frontend ─────────────────────────────────────────────
@@ -284,6 +285,42 @@ trait FileTransfer {
         ctx: TransferCtx<'_>,
     ) -> Result<(), String>;
     async fn close(&mut self);
+
+    /// Cuántos ficheros pequeños puede mover a la vez en una transferencia de
+    /// carpeta (ver [`crate::transfer_batch`]). Por defecto 1: en serie, como FTP,
+    /// que tiene una sola conexión de control.
+    fn small_file_concurrency(&self) -> usize {
+        1
+    }
+
+    /// Mueve un lote de ficheros pequeños y devuelve un resultado por fichero.
+    /// Por defecto, uno detrás de otro, parando en el primer error.
+    async fn transfer_small_batch(
+        &mut self,
+        direction: BatchDirection,
+        jobs: &[BatchJob],
+        ctx: TransferCtx<'_>,
+    ) -> Vec<Result<(), String>> {
+        let mut results = Vec::with_capacity(jobs.len());
+        for job in jobs {
+            let result = match direction {
+                BatchDirection::Download => {
+                    self.download(&job.remote, &job.local, ctx.child(&job.sub_id))
+                        .await
+                }
+                BatchDirection::Upload => {
+                    self.upload(&job.local, &job.remote, ctx.child(&job.sub_id))
+                        .await
+                }
+            };
+            let failed = result.is_err();
+            results.push(result);
+            if failed {
+                break;
+            }
+        }
+        results
+    }
 }
 
 struct SftpBackend {
@@ -1240,6 +1277,34 @@ impl FileTransfer for SftpBackend {
     async fn close(&mut self) {
         let _ = self.sftp.close().await;
     }
+
+    /// El tope de handles de la sesión: un fichero pequeño usa exactamente uno.
+    fn small_file_concurrency(&self) -> usize {
+        self.max_parallelism.clamp(1, SFTP_PIPELINE)
+    }
+
+    /// Los ficheros del lote viajan a la vez sobre la misma sesión SFTP, cada
+    /// uno con un solo handle (paralelismo 1 por fichero).
+    async fn transfer_small_batch(
+        &mut self,
+        direction: BatchDirection,
+        jobs: &[BatchJob],
+        ctx: TransferCtx<'_>,
+    ) -> Vec<Result<(), String>> {
+        let sftp = &self.sftp;
+        let limit = self.small_file_concurrency();
+        transfer_batch::run_bounded(jobs, limit, |job| async move {
+            match direction {
+                BatchDirection::Download => {
+                    do_download(sftp, &job.remote, &job.local, ctx.child(&job.sub_id), 1).await
+                }
+                BatchDirection::Upload => {
+                    do_upload(sftp, &job.local, &job.remote, ctx.child(&job.sub_id), 1).await
+                }
+            }
+        })
+        .await
+    }
 }
 
 enum FtpConnection {
@@ -1745,6 +1810,10 @@ fn ftp_file_entry(base: &str, file: &FtpListFile) -> FileEntry {
 // es 256 KiB; usar el tope reduce el número de round-trips frente a buffers
 // más pequeños.
 const SFTP_CHUNK: u64 = 256 * 1024;
+// Un fichero «pequeño» de las transferencias de carpeta es el que cabe en un
+// trozo: así se mueve con un solo handle y un lote nunca pasa del tope de la
+// sesión (ver `transfer_batch`).
+const _: () = assert!(crate::transfer_batch::SMALL_FILE_MAX == SFTP_CHUNK);
 // Peticiones SFTP simultáneas en vuelo durante una transferencia. Mantener N
 // peticiones a la vez satura el ancho de banda real cuando el RTT no es
 // despreciable (sin pipelining el techo es chunk_size / RTT).
@@ -2134,7 +2203,8 @@ async fn pipelined_upload(
         .map_err(|e| e.to_string())?;
 
     if total == 0 {
-        drop(first);
+        let mut first = first;
+        close_written(&mut first).await?;
         let _ = app.emit(
             &event,
             serde_json::json!({ "transferred": 0u64, "total": 0u64, "done": true }),
@@ -2249,10 +2319,10 @@ async fn pipelined_upload(
         }
     }
 
-    // Cerrar los handles de forma ordenada antes de informar "done" para que
-    // el servidor haya flusheado al volver al main loop.
-    for f in idle_files.drain(..) {
-        drop(f);
+    // Cerrar los handles de forma ordenada antes de informar "done": que el
+    // servidor haya confirmado cada escritura y cerrado el fichero.
+    for mut f in idle_files.drain(..) {
+        close_written(&mut f).await?;
     }
 
     let _ = app.emit(
@@ -2260,6 +2330,23 @@ async fn pipelined_upload(
         serde_json::json!({ "transferred": transferred, "total": total, "done": true }),
     );
     Ok(())
+}
+
+/// Espera a que el servidor confirme las escrituras encoladas en `file` y lo
+/// cierra.
+///
+/// `write` de russh-sftp **no espera** el acuse del servidor (lo encola; solo lo
+/// recoge si hay demasiados pendientes) y `drop` cierra **sin esperar**. Hasta
+/// v2.14.0 la subida hacía `drop` y se daba por terminada con las últimas
+/// escrituras aún en vuelo: en serie casi no se notaba —el fichero siguiente
+/// hacía cola detrás—, pero un error del servidor al escribirlas (disco lleno,
+/// cuota) se perdía y el fichero quedaba incompleto con aviso de éxito. Lo cazó
+/// el smoke E2E al subir ficheros en lote. `shutdown` recoge todos los acuses
+/// (y su error, si lo hay) y cierra el handle esperando la respuesta.
+async fn close_written(file: &mut SftpFile) -> Result<(), String> {
+    file.shutdown()
+        .await
+        .map_err(|e| format!("el servidor no confirmó la escritura: {e}"))
 }
 
 async fn write_chunk_at(file: &mut SftpFile, offset: u64, data: &[u8]) -> Result<(), String> {
@@ -2670,6 +2757,162 @@ async fn gate_dir_transfer(
     }
 }
 
+/// Progreso de una transferencia de carpeta: lo movido, lo que hay y a quién
+/// contárselo. Lo comparten el bucle y [`flush_batch`].
+struct DirProgress<'a> {
+    app: &'a AppHandle,
+    event: &'a str,
+    transfer_id: &'a str,
+    controls: &'a Arc<TransferControls>,
+    bytes_done: u64,
+    bytes_total: u64,
+    files_done: u32,
+    files_total: u32,
+}
+
+impl DirProgress<'_> {
+    /// Punto de pausa/cancelación entre ficheros (y entre lotes).
+    async fn gate(&self) -> Result<(), String> {
+        gate_dir_transfer(
+            self.transfer_id,
+            self.event,
+            self.bytes_done,
+            self.bytes_total,
+            self.app,
+            self.controls,
+        )
+        .await
+    }
+
+    /// Anuncia el fichero (o el primero del lote) que empieza.
+    fn starting(&self, current: &str) {
+        emit_dir_progress(
+            self.app,
+            self.event,
+            self.bytes_done,
+            self.bytes_total,
+            current,
+            self.files_done + 1,
+            self.files_total,
+        );
+    }
+
+    fn finished(&mut self, bytes: u64) {
+        self.bytes_done += bytes;
+        self.files_done += 1;
+    }
+
+    /// Cierre de la transferencia de carpeta.
+    fn done(&self, skipped_symlinks: u32) {
+        let _ = self.app.emit(
+            self.event,
+            serde_json::json!({
+                "transferred": self.bytes_total, "total": self.bytes_total, "done": true, "kind": "dir",
+                "filesDone": self.files_total, "filesTotal": self.files_total,
+                "skippedSymlinks": skipped_symlinks,
+            }),
+        );
+    }
+}
+
+/// Sentido de un lote de ficheros pequeños.
+#[derive(Debug, Clone, Copy)]
+enum BatchDirection {
+    Download,
+    Upload,
+}
+
+/// Un fichero de un lote: ruta remota, ruta local, tamaño, id de progreso y
+/// ruta relativa para enseñarla.
+struct BatchJob {
+    remote: String,
+    local: PathBuf,
+    size: u64,
+    sub_id: String,
+    rel: String,
+}
+
+/// Envía el lote pendiente y apunta lo que llegó. Si algo falló, devuelve el
+/// primer error **después** de que el lote entero haya terminado.
+async fn flush_batch(
+    backend: &mut dyn FileTransfer,
+    direction: BatchDirection,
+    batch: &mut Batch<BatchJob>,
+    ctx: TransferCtx<'_>,
+    progress: &mut DirProgress<'_>,
+) -> Result<(), String> {
+    if batch.is_empty() {
+        return Ok(());
+    }
+    let jobs = batch.take();
+    progress.gate().await?;
+    progress.starting(&jobs[0].rel);
+    let results = backend.transfer_small_batch(direction, &jobs, ctx).await;
+    let mut first_err = None;
+    for (job, result) in jobs.iter().zip(results) {
+        match result {
+            Ok(()) => progress.finished(job.size),
+            Err(e) => {
+                first_err.get_or_insert(e);
+            }
+        }
+    }
+    first_err.map_or(Ok(()), Err)
+}
+
+/// Destino local de un fichero según la política de conflictos (`None` =
+/// omitirlo).
+async fn resolve_local_target(target: PathBuf, policy: TransferConflictPolicy) -> Option<PathBuf> {
+    let Ok(meta) = tokio::fs::metadata(&target).await else {
+        return Some(target);
+    };
+    match policy {
+        TransferConflictPolicy::Skip => None,
+        TransferConflictPolicy::Rename => Some(auto_rename_local_path(&target).await),
+        TransferConflictPolicy::Overwrite if meta.is_dir() => {
+            Some(auto_rename_local_path(&target).await)
+        }
+        TransferConflictPolicy::Overwrite => Some(target),
+    }
+}
+
+/// Destino remoto de un fichero según la política de conflictos (`None` =
+/// omitirlo).
+async fn resolve_remote_target(
+    backend: &mut dyn FileTransfer,
+    target: String,
+    policy: TransferConflictPolicy,
+) -> Option<String> {
+    let Ok(meta) = backend.stat(&target).await else {
+        return Some(target);
+    };
+    match policy {
+        TransferConflictPolicy::Skip => None,
+        TransferConflictPolicy::Rename => Some(auto_rename_remote_path(backend, &target).await),
+        TransferConflictPolicy::Overwrite if meta.is_dir => {
+            Some(auto_rename_remote_path(backend, &target).await)
+        }
+        TransferConflictPolicy::Overwrite => Some(target),
+    }
+}
+
+/// Ruta de una entrada remota relativa a la raíz de la transferencia.
+fn remote_rel(root: &str, entry: &FileEntry) -> String {
+    let rel = entry
+        .path
+        .strip_prefix(root)
+        .unwrap_or(&entry.path)
+        .trim_start_matches('/');
+    if rel.is_empty() {
+        entry.name.clone()
+    } else {
+        rel.to_string()
+    }
+}
+
+/// Descarga recursivamente el directorio `remote` en `local`. Los ficheros
+/// pequeños viajan en lotes cuando el backend lo admite (ver
+/// [`crate::transfer_batch`]); los grandes, de uno en uno con su pipelining.
 async fn do_download_dir(
     backend: &mut dyn FileTransfer,
     remote: &str,
@@ -2678,7 +2921,10 @@ async fn do_download_dir(
     conflict_policy: TransferConflictPolicy,
 ) -> Result<(), String> {
     let TransferCtx {
-        transfer_id, app, ..
+        transfer_id,
+        app,
+        controls,
+        ..
     } = ctx;
     tokio::fs::create_dir_all(local)
         .await
@@ -2688,93 +2934,97 @@ async fn do_download_dir(
 
     // Pre-conteo del árbol remoto para mostrar archivo actual + N/total.
     let precount = count_remote_tree(backend, remote).await;
-    let (files_total, bytes_total) = (precount.files, precount.bytes);
-    let mut files_done: u32 = 0;
-    let mut bytes_done: u64 = 0;
+    let mut progress = DirProgress {
+        app,
+        event: &summary_event,
+        transfer_id,
+        controls,
+        bytes_done: 0,
+        bytes_total: precount.bytes,
+        files_done: 0,
+        files_total: precount.files,
+    };
     let mut skipped_symlinks: u32 = 0;
-    emit_dir_progress(app, &summary_event, 0, bytes_total, "", 0, files_total);
+    emit_dir_progress(app, &summary_event, 0, progress.bytes_total, "", 0, progress.files_total);
+    let concurrency = backend.small_file_concurrency();
+    let direction = BatchDirection::Download;
 
     let mut stack = vec![(remote.to_string(), local.to_path_buf())];
     while let Some((rdir, ldir)) = stack.pop() {
         let entries = backend.list_dir(&rdir).await?;
+        let mut batch = Batch::new(concurrency);
         for e in entries {
             safe_entry_name(&e.name)?;
-            gate_dir_transfer(
-                transfer_id,
-                &summary_event,
-                bytes_done,
-                bytes_total,
-                app,
-                ctx.controls,
-            )
-            .await?;
-            let mut local_target = ldir.join(&e.name);
+            progress.gate().await?;
             if e.is_dir {
-                tokio::fs::create_dir_all(&local_target)
+                let target = ldir.join(&e.name);
+                tokio::fs::create_dir_all(&target)
                     .await
                     .map_err(|err| err.to_string())?;
-                stack.push((e.path.clone(), local_target));
-            } else if e.is_symlink {
+                stack.push((e.path.clone(), target));
+                continue;
+            }
+            if e.is_symlink {
                 // Se omite (ver `TreeCount`), pero queda contado para avisar al final.
                 skipped_symlinks += 1;
-            } else {
-                if let Ok(meta) = tokio::fs::metadata(&local_target).await {
-                    match conflict_policy {
-                        TransferConflictPolicy::Skip => continue,
-                        TransferConflictPolicy::Rename => {
-                            local_target = auto_rename_local_path(&local_target).await;
-                        }
-                        TransferConflictPolicy::Overwrite => {
-                            if meta.is_dir() {
-                                local_target = auto_rename_local_path(&local_target).await;
-                            }
-                        }
-                    }
-                }
-                let rel = {
-                    let r = e
-                        .path
-                        .strip_prefix(remote)
-                        .unwrap_or(&e.path)
-                        .trim_start_matches('/');
-                    if r.is_empty() {
-                        e.name.clone()
-                    } else {
-                        r.to_string()
-                    }
+                continue;
+            }
+            let small = transfer_batch::is_small(e.size, concurrency);
+            if !small {
+                // Uno grande no convive con un lote: cada uno gasta su cupo de
+                // handles. Y su conflicto se decide con el lote ya en disco.
+                flush_batch(backend, direction, &mut batch, ctx, &mut progress).await?;
+            }
+            let Some(mut local_target) =
+                resolve_local_target(ldir.join(&e.name), conflict_policy).await
+            else {
+                continue;
+            };
+            if small && batch.collides(&local_target.to_string_lossy()) {
+                // Iría al mismo sitio que uno del lote: se espera a que exista y
+                // la política de conflictos decide sobre él, como en serie.
+                flush_batch(backend, direction, &mut batch, ctx, &mut progress).await?;
+                let Some(target) = resolve_local_target(ldir.join(&e.name), conflict_policy).await
+                else {
+                    continue;
                 };
-                emit_dir_progress(
-                    app,
-                    &summary_event,
-                    bytes_done,
-                    bytes_total,
-                    &rel,
-                    files_done + 1,
-                    files_total,
+                local_target = target;
+            }
+            let rel = remote_rel(remote, &e);
+            idx += 1;
+            let sub_id = format!("{transfer_id}-{idx}");
+            if small {
+                let key = local_target.to_string_lossy().into_owned();
+                batch.push(
+                    &key,
+                    BatchJob {
+                        remote: e.path.clone(),
+                        local: local_target,
+                        size: e.size,
+                        sub_id,
+                        rel,
+                    },
                 );
-                idx += 1;
-                let sub_id = format!("{transfer_id}-{idx}");
+                if batch.is_full() {
+                    flush_batch(backend, direction, &mut batch, ctx, &mut progress).await?;
+                }
+            } else {
+                progress.starting(&rel);
                 backend
                     .download(&e.path, &local_target, ctx.child(&sub_id))
                     .await?;
-                bytes_done += e.size;
-                files_done += 1;
+                progress.finished(e.size);
             }
         }
+        flush_batch(backend, direction, &mut batch, ctx, &mut progress).await?;
     }
-    let _ = app.emit(
-        &summary_event,
-        serde_json::json!({
-            "transferred": bytes_total, "total": bytes_total, "done": true, "kind": "dir",
-            "filesDone": files_total, "filesTotal": files_total,
-            "skippedSymlinks": skipped_symlinks,
-        }),
-    );
+    progress.done(skipped_symlinks);
     Ok(())
 }
 
 /// Sube recursivamente un directorio local al `remote`. Crea las carpetas
-/// remotas conforme avanza y reusa `do_upload` para los archivos.
+/// remotas conforme avanza; los ficheros pequeños viajan en lotes cuando el
+/// backend lo admite y los grandes reusan `upload` de uno en uno.
 async fn do_upload_dir(
     backend: &mut dyn FileTransfer,
     local: &Path,
@@ -2783,7 +3033,10 @@ async fn do_upload_dir(
     conflict_policy: TransferConflictPolicy,
 ) -> Result<(), String> {
     let TransferCtx {
-        transfer_id, app, ..
+        transfer_id,
+        app,
+        controls,
+        ..
     } = ctx;
     let _ = backend.mkdir(remote).await; // ignorar si ya existe
     let summary_event = event_name(EventKind::SftpProgress, transfer_id);
@@ -2791,85 +3044,98 @@ async fn do_upload_dir(
 
     // Pre-conteo para conocer el total (estilo FileZilla: archivo actual + N/total).
     let precount = count_local_tree(local).await;
-    let (files_total, bytes_total) = (precount.files, precount.bytes);
-    let mut files_done: u32 = 0;
-    let mut bytes_done: u64 = 0;
+    let mut progress = DirProgress {
+        app,
+        event: &summary_event,
+        transfer_id,
+        controls,
+        bytes_done: 0,
+        bytes_total: precount.bytes,
+        files_done: 0,
+        files_total: precount.files,
+    };
     let mut skipped_symlinks: u32 = 0;
-    emit_dir_progress(app, &summary_event, 0, bytes_total, "", 0, files_total);
+    emit_dir_progress(app, &summary_event, 0, progress.bytes_total, "", 0, progress.files_total);
+    let concurrency = backend.small_file_concurrency();
+    let direction = BatchDirection::Upload;
 
     let mut stack = vec![(local.to_path_buf(), remote.to_string())];
     while let Some((ldir, rdir)) = stack.pop() {
         let mut read = tokio::fs::read_dir(&ldir)
             .await
             .map_err(|e| e.to_string())?;
+        let mut batch = Batch::new(concurrency);
         while let Some(entry) = read.next_entry().await.map_err(|e| e.to_string())? {
             let name = entry.file_name().to_string_lossy().into_owned();
-            gate_dir_transfer(
-                transfer_id,
-                &summary_event,
-                bytes_done,
-                bytes_total,
-                app,
-                ctx.controls,
-            )
-            .await?;
+            progress.gate().await?;
             let path = entry.path();
-            let mut remote_target = join_remote(&rdir, &name);
             let ft = entry.file_type().await.map_err(|e| e.to_string())?;
             if ft.is_symlink() {
                 // Se omite (ver `TreeCount`), pero queda contado para avisar al final.
                 skipped_symlinks += 1;
-            } else if ft.is_dir() {
-                let _ = backend.mkdir(&remote_target).await;
-                stack.push((path, remote_target));
-            } else if ft.is_file() {
-                if let Ok(meta) = backend.stat(&remote_target).await {
-                    match conflict_policy {
-                        TransferConflictPolicy::Skip => continue,
-                        TransferConflictPolicy::Rename => {
-                            remote_target = auto_rename_remote_path(backend, &remote_target).await;
-                        }
-                        TransferConflictPolicy::Overwrite => {
-                            if meta.is_dir {
-                                remote_target =
-                                    auto_rename_remote_path(backend, &remote_target).await;
-                            }
-                        }
-                    }
-                }
-                let fsize = entry.metadata().await.map(|m| m.len()).unwrap_or(0);
-                let rel = path
-                    .strip_prefix(local)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                emit_dir_progress(
-                    app,
-                    &summary_event,
-                    bytes_done,
-                    bytes_total,
-                    &rel,
-                    files_done + 1,
-                    files_total,
+                continue;
+            }
+            if ft.is_dir() {
+                let target = join_remote(&rdir, &name);
+                let _ = backend.mkdir(&target).await;
+                stack.push((path, target));
+                continue;
+            }
+            if !ft.is_file() {
+                continue;
+            }
+            let fsize = entry.metadata().await.map(|m| m.len()).unwrap_or(0);
+            let small = transfer_batch::is_small(fsize, concurrency);
+            if !small {
+                flush_batch(backend, direction, &mut batch, ctx, &mut progress).await?;
+            }
+            let Some(mut remote_target) =
+                resolve_remote_target(backend, join_remote(&rdir, &name), conflict_policy).await
+            else {
+                continue;
+            };
+            if small && batch.collides(&remote_target) {
+                flush_batch(backend, direction, &mut batch, ctx, &mut progress).await?;
+                let Some(target) =
+                    resolve_remote_target(backend, join_remote(&rdir, &name), conflict_policy).await
+                else {
+                    continue;
+                };
+                remote_target = target;
+            }
+            let rel = path
+                .strip_prefix(local)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            idx += 1;
+            let sub_id = format!("{transfer_id}-{idx}");
+            if small {
+                let key = remote_target.clone();
+                batch.push(
+                    &key,
+                    BatchJob {
+                        remote: remote_target,
+                        local: path,
+                        size: fsize,
+                        sub_id,
+                        rel,
+                    },
                 );
-                idx += 1;
-                let sub_id = format!("{transfer_id}-{idx}");
+                if batch.is_full() {
+                    flush_batch(backend, direction, &mut batch, ctx, &mut progress).await?;
+                }
+            } else {
+                progress.starting(&rel);
                 backend
                     .upload(&path, &remote_target, ctx.child(&sub_id))
                     .await?;
-                bytes_done += fsize;
-                files_done += 1;
+                progress.finished(fsize);
             }
         }
+        flush_batch(backend, direction, &mut batch, ctx, &mut progress).await?;
     }
-    let _ = app.emit(
-        &summary_event,
-        serde_json::json!({
-            "transferred": bytes_total, "total": bytes_total, "done": true, "kind": "dir",
-            "filesDone": files_total, "filesTotal": files_total,
-            "skippedSymlinks": skipped_symlinks,
-        }),
-    );
+    progress.done(skipped_symlinks);
     Ok(())
 }
 

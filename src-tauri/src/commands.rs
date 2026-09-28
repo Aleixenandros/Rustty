@@ -17,6 +17,7 @@ use crate::keyring_scope;
 use crate::file_grants::{self, FileGrants, GrantMode};
 use crate::local_command::{self, LocalCommandOutput, LocalCommandRegistry};
 use crate::local_command_policy::{self, Dialect, LocalCommandTrust};
+use crate::local_fs_guard::{self, LocalFsGuard};
 use crate::local_shell_manager::{LocalShellManager, LocalShellOptions};
 use crate::notes::{NoteDoc, NoteSummary, NotesManager};
 use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
@@ -1348,24 +1349,107 @@ pub async fn sftp_chmod(
     sftp_state.chmod(&session_id, path, mode).await
 }
 
+/// Petición de una transferencia del panel de ficheros. Un struct y no
+/// argumentos sueltos: las cuatro transferencias comparten forma y, con el
+/// guardián de rutas y el idioma del diálogo, pasarían del límite razonable.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferRequest {
+    session_id: String,
+    local_path: String,
+    remote_path: String,
+    transfer_id: String,
+    /// Solo en las de carpeta: `overwrite` (por defecto), `skip` o `rename`.
+    conflict_policy: Option<String>,
+    verify_size: Option<bool>,
+    /// Idioma de la interfaz, para el diálogo de subida sensible.
+    lang: Option<String>,
+}
+
+impl TransferRequest {
+    fn conflict_policy(&self) -> TransferConflictPolicy {
+        TransferConflictPolicy::from_str(self.conflict_policy.as_deref().unwrap_or("overwrite"))
+    }
+}
+
+/// [`confirm_upload`] fuera del hilo del runtime: recorrer una carpeta grande
+/// en busca de claves y esperar al diálogo son esperas bloqueantes.
+async fn confirm_upload_off_thread(
+    app: &AppHandle,
+    guard: &LocalFsGuard,
+    request: &TransferRequest,
+    is_dir: bool,
+) -> Result<(), String> {
+    let (app, guard, request) = (app.clone(), guard.clone(), request.clone());
+    tauri::async_runtime::spawn_blocking(move || confirm_upload(&app, &guard, &request, is_dir))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Antes de subir algo sensible (una clave privada, `~/.ssh`, la carpeta de
+/// datos), pregunta con un diálogo **nativo**; ver [`crate::local_fs_guard`].
+fn confirm_upload(app: &AppHandle, guard: &LocalFsGuard, request: &TransferRequest, is_dir: bool) -> Result<(), String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let local = Path::new(&request.local_path);
+    let concern = if is_dir {
+        guard.upload_dir_concern(local)?
+    } else {
+        guard.upload_concern(local)?
+    };
+    let Some(concern) = concern else {
+        return Ok(());
+    };
+    let lang = request.lang.as_deref().unwrap_or("es");
+    let texts = local_fs_guard::upload_texts(lang);
+    let name = local
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| request.local_path.clone());
+    let message = local_fs_guard::upload_message(
+        lang,
+        &concern,
+        &local_command_policy::display_name(&name),
+        &local_command_policy::displayable(&request.remote_path),
+        is_dir,
+    );
+    let dialog = app
+        .dialog()
+        .message(message)
+        .title(texts.title)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            texts.accept.to_string(),
+            texts.cancel.to_string(),
+        ));
+    #[cfg(any(windows, target_os = "macos"))]
+    let dialog = match app.get_webview_window("main") {
+        Some(window) => dialog.parent(&window),
+        None => dialog,
+    };
+    if dialog.blocking_show() {
+        Ok(())
+    } else {
+        Err(local_fs_guard::rejected_error(&name))
+    }
+}
+
 /// Descarga un fichero remoto a `local_path`.
 /// Emite `sftp-progress-{transfer_id}` con { transferred, total, done }.
 #[tauri::command]
 pub async fn sftp_download(
     sftp_state: State<'_, SftpManager>,
-    session_id: String,
-    remote_path: String,
-    local_path: String,
-    transfer_id: String,
-    verify_size: Option<bool>,
+    guard: State<'_, LocalFsGuard>,
+    request: TransferRequest,
 ) -> Result<(), String> {
+    guard.check_write(Path::new(&request.local_path))?;
+    let verify = request.verify_size.unwrap_or(false);
     sftp_state
         .download(
-            &session_id,
-            remote_path,
-            PathBuf::from(local_path),
-            transfer_id,
-            verify_size.unwrap_or(false),
+            &request.session_id,
+            request.remote_path,
+            PathBuf::from(request.local_path),
+            request.transfer_id,
+            verify,
         )
         .await
 }
@@ -1373,20 +1457,20 @@ pub async fn sftp_download(
 /// Sube un fichero local a `remote_path`.
 #[tauri::command]
 pub async fn sftp_upload(
+    app: AppHandle,
     sftp_state: State<'_, SftpManager>,
-    session_id: String,
-    local_path: String,
-    remote_path: String,
-    transfer_id: String,
-    verify_size: Option<bool>,
+    guard: State<'_, LocalFsGuard>,
+    request: TransferRequest,
 ) -> Result<(), String> {
+    confirm_upload_off_thread(&app, &guard, &request, false).await?;
+    let verify = request.verify_size.unwrap_or(false);
     sftp_state
         .upload(
-            &session_id,
-            PathBuf::from(local_path),
-            remote_path,
-            transfer_id,
-            verify_size.unwrap_or(false),
+            &request.session_id,
+            PathBuf::from(request.local_path),
+            request.remote_path,
+            request.transfer_id,
+            verify,
         )
         .await
 }
@@ -1395,21 +1479,22 @@ pub async fn sftp_upload(
 #[tauri::command]
 pub async fn sftp_download_dir(
     sftp_state: State<'_, SftpManager>,
-    session_id: String,
-    remote_path: String,
-    local_path: String,
-    transfer_id: String,
-    conflict_policy: Option<String>,
-    verify_size: Option<bool>,
+    guard: State<'_, LocalFsGuard>,
+    request: TransferRequest,
 ) -> Result<(), String> {
+    // `check_remove`: la raíz tampoco puede **contener** la carpeta de datos,
+    // o el árbol remoto podría acabar escribiendo dentro.
+    guard.check_remove(Path::new(&request.local_path))?;
+    let policy = request.conflict_policy();
+    let verify = request.verify_size.unwrap_or(false);
     sftp_state
         .download_dir(
-            &session_id,
-            remote_path,
-            PathBuf::from(local_path),
-            transfer_id,
-            TransferConflictPolicy::from_str(conflict_policy.as_deref().unwrap_or("overwrite")),
-            verify_size.unwrap_or(false),
+            &request.session_id,
+            request.remote_path,
+            PathBuf::from(request.local_path),
+            request.transfer_id,
+            policy,
+            verify,
         )
         .await
 }
@@ -1417,22 +1502,22 @@ pub async fn sftp_download_dir(
 /// Sube un directorio local recursivamente a `remote_path`.
 #[tauri::command]
 pub async fn sftp_upload_dir(
+    app: AppHandle,
     sftp_state: State<'_, SftpManager>,
-    session_id: String,
-    local_path: String,
-    remote_path: String,
-    transfer_id: String,
-    conflict_policy: Option<String>,
-    verify_size: Option<bool>,
+    guard: State<'_, LocalFsGuard>,
+    request: TransferRequest,
 ) -> Result<(), String> {
+    confirm_upload_off_thread(&app, &guard, &request, true).await?;
+    let policy = request.conflict_policy();
+    let verify = request.verify_size.unwrap_or(false);
     sftp_state
         .upload_dir(
-            &session_id,
-            PathBuf::from(local_path),
-            remote_path,
-            transfer_id,
-            TransferConflictPolicy::from_str(conflict_policy.as_deref().unwrap_or("overwrite")),
-            verify_size.unwrap_or(false),
+            &request.session_id,
+            PathBuf::from(request.local_path),
+            request.remote_path,
+            request.transfer_id,
+            policy,
+            verify,
         )
         .await
 }
@@ -1593,14 +1678,19 @@ pub async fn tcp_ping(host: String, port: u16) -> Result<u64, String> {
     Ok(start.elapsed().as_millis() as u64)
 }
 
+// Las operaciones locales del panel pasan por `LocalFsGuard`: ninguna puede
+// tocar la carpeta de datos de la app (ver `local_fs_guard.rs`).
+
 #[tauri::command]
-pub fn local_mkdir(path: String) -> Result<(), String> {
+pub fn local_mkdir(guard: State<LocalFsGuard>, path: String) -> Result<(), String> {
+    guard.check_write(Path::new(&path))?;
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())
 }
 
 /// Crea un archivo vacío. Falla si ya existe para no sobrescribir contenido.
 #[tauri::command]
-pub fn local_create_file(path: String) -> Result<(), String> {
+pub fn local_create_file(guard: State<LocalFsGuard>, path: String) -> Result<(), String> {
+    guard.check_write(Path::new(&path))?;
     std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1611,7 +1701,8 @@ pub fn local_create_file(path: String) -> Result<(), String> {
 
 /// Borra un fichero o directorio local. Si es directorio, borra recursivamente.
 #[tauri::command]
-pub fn local_remove(path: String) -> Result<(), String> {
+pub fn local_remove(guard: State<LocalFsGuard>, path: String) -> Result<(), String> {
+    guard.check_remove(Path::new(&path))?;
     let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
     if meta.is_dir() && !meta.file_type().is_symlink() {
         std::fs::remove_dir_all(&path).map_err(|e| e.to_string())
@@ -1621,12 +1712,15 @@ pub fn local_remove(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn local_rename(from: String, to: String) -> Result<(), String> {
+pub fn local_rename(guard: State<LocalFsGuard>, from: String, to: String) -> Result<(), String> {
+    guard.check_remove(Path::new(&from))?;
+    guard.check_write(Path::new(&to))?;
     std::fs::rename(&from, &to).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn local_chmod(path: String, mode: u32) -> Result<(), String> {
+pub fn local_chmod(guard: State<LocalFsGuard>, path: String, mode: u32) -> Result<(), String> {
+    guard.check_write(Path::new(&path))?;
     validate_octal_mode(mode)?;
     set_local_mode(&path, mode)
 }

@@ -1967,7 +1967,16 @@
     "pause_all": "Pausar tudo",
     "pause_all_title": "Pausar todas as transferências, de todas as sessões",
     "resume_all": "Retomar tudo",
-    "resume_all_title": "Levantar a pausa geral (as pausadas uma a uma continuam em pausa)"
+    "resume_all_title": "Levantar a pausa geral (as pausadas uma a uma continuam em pausa)",
+    "progress_current_download": "A transferir: {name}",
+    "progress_current_upload": "A enviar: {name}",
+    "uploaded_to": "✓ Enviado para {path}",
+    "saved_to": "✓ Guardado em {path}",
+    "partial_of": "{done} de {total}",
+    "protected_path": "Esse caminho está dentro da pasta de dados do Rustty (ou contém-na), e o painel de ficheiros não o pode alterar.",
+    "upload_not_confirmed": "«{name}» não foi enviado: não foi confirmado.",
+    "invalid_path": "Caminho inválido: {path}",
+    "op_failed": "Erro: {err}"
   },
   "sftp_nav": {
     "back": "Anterior",

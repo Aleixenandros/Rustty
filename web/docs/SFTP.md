@@ -113,6 +113,19 @@ El número de peticiones SFTP en paralelo por transferencia se ajusta en **Prefe
 
 Algunos servidores con SFTP restringido —como el **Storage Box de Hetzner**— imponen un límite bajo de *handles* (ficheros abiertos) por sesión. Un valor de concurrencia alto abre demasiados handles a la vez y dispara ese error, sobre todo al descargar carpetas recursivas. Con el valor por defecto de 4 no debería ocurrir. El cambio se aplica a las **sesiones nuevas**.
 
+### Carpetas con muchos ficheros pequeños
+
+Al subir o bajar una carpeta por SFTP, los ficheros de hasta 256 KiB viajan **varios a la vez** —tantos como el valor de *Transferencias simultáneas (SFTP)*— en vez de uno detrás de otro. En una carpeta con cientos o miles de ficheros pequeños (código, configuraciones, un sitio web) el tiempo lo marcaba la ida y vuelta de abrir y cerrar cada fichero, no la velocidad de la red; ahora esas esperas se solapan. Cada fichero pequeño usa un solo *handle*, así que nunca hay más ficheros abiertos a la vez que ese mismo valor: el límite de servidores como el Storage Box se respeta igual. Los ficheros más grandes siguen de uno en uno, con su propio pipelining, y las carpetas por FTP/FTPS, en serie como siempre (una conexión FTP no puede mover dos ficheros a la vez).
+
+Una subida se da por buena solo cuando el servidor ha **confirmado cada escritura y cerrado el fichero**. Si el servidor falla al escribir —disco lleno, cuota agotada—, la transferencia termina con error en vez de dejar un fichero incompleto con aviso de éxito.
+
+## Límites del panel local
+
+El panel local es un gestor de ficheros, pero hay dos cosas que no hace sin más:
+
+- **No toca la carpeta de datos de Rustty** (donde viven tus conexiones y la lista de comandos locales autorizados): no descarga ahí, no crea, borra, renombra ni cambia permisos dentro, ni borra o mueve una carpeta que la contenga. Si lo intentas, lo dice.
+- **Subir algo sensible pide confirmación** con un diálogo del sistema: un fichero que por su contenido parece una clave privada —esté donde esté, aunque se llame `.pub`—, cualquier otro de `~/.ssh` salvo los públicos (`*.pub`, `known_hosts`, `config`, `authorized_keys`) y lo que salga de la carpeta de datos, como los registros de sesión. Una carpeta que contenga alguno de ellos también pregunta. «Cancelar» (o cerrar el diálogo) cancela esa subida y no sube nada.
+
 ## SFTP elevado
 
 El botón **sudo** reconecta el SFTP usando `sudo sftp-server` en el servidor remoto. Requiere que el usuario tenga `NOPASSWD` configurado para el binario `sftp-server` correspondiente.

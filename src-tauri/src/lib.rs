@@ -23,6 +23,7 @@ pub mod key_setup;
 mod keyring_scope;
 mod local_command;
 mod local_command_policy;
+mod local_fs_guard;
 mod local_shell_manager;
 mod locks;
 mod metrics;
@@ -54,6 +55,7 @@ mod sync;
 // `pub` por el mismo motivo que `mux`: fase 1 del modo control, todavía sin
 // llamador en producción.
 pub mod tmux;
+mod transfer_batch;
 mod transfer_rate;
 mod transfer_resume;
 mod workspace_index;
@@ -324,6 +326,12 @@ pub fn run() {
             app.manage(ScriptManager::new(data_dir.clone()));
             app.manage(SyncManager::new(data_dir.clone()));
             app.manage(local_command_policy::LocalCommandTrust::new(&data_dir));
+            // Límites del panel de archivos local: la carpeta de datos no se toca
+            // y subir algo sensible pide confirmación nativa.
+            app.manage(local_fs_guard::LocalFsGuard::new(
+                &data_dir,
+                dirs::home_dir().as_deref(),
+            ));
             app.manage(DataDir(data_dir));
             // Señal de arranque minimizado: el frontend la consulta al inicio
             // para decidir si ocultar la ventana en lugar de mostrarla.
