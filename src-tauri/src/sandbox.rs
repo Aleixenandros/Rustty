@@ -13,6 +13,7 @@
 //! cual, sin envoltorio ni coste.
 
 use std::path::Path;
+#[cfg(unix)]
 use std::process::Command;
 
 use portable_pty::CommandBuilder;
@@ -64,6 +65,10 @@ fn spawn_args(opts: &HostSpawn) -> Vec<String> {
 /// Las variables de entorno puestas con `.env()` sobre el `Command` devuelto
 /// llegan al proceso del host: `flatpak-spawn` reenvía su propio entorno salvo
 /// que se le pase `--clear-env`.
+///
+/// Solo existe en Unix: en Windows no hay Flatpak y los lanzadores de allí
+/// (`cmd`, `mstsc`) van directos.
+#[cfg(unix)]
 pub fn host_command(program: &str, opts: HostSpawn) -> Command {
     if !in_flatpak() {
         let mut cmd = Command::new(program);
@@ -105,7 +110,9 @@ pub fn host_pty_command(program: &str, cwd: Option<&Path>) -> CommandBuilder {
 }
 
 /// ¿Existe `program` en el `PATH`? Dentro de Flatpak pregunta por el `PATH`
-/// **del host**, que es donde se va a ejecutar de verdad.
+/// **del host**, que es donde se va a ejecutar de verdad. Solo lo usan los
+/// lanzadores de Linux (RDP, VNC, telnet).
+#[cfg(target_os = "linux")]
 pub fn host_which(program: &str) -> bool {
     host_command("which", HostSpawn::default())
         .arg(program)
@@ -120,7 +127,8 @@ pub fn host_which(program: &str) -> bool {
 /// del contenedor y puede apuntar a un binario que en el host no existe, así
 /// que se consulta la base de datos de usuarios del sistema anfitrión.
 /// Devuelve `None` si la consulta falla, para que quien llame decida el
-/// fallback.
+/// fallback. En Windows la consola local no tiene login shell que buscar.
+#[cfg(unix)]
 pub fn host_login_shell() -> Option<String> {
     if !in_flatpak() {
         return std::env::var("SHELL").ok().filter(|s| !s.is_empty());
@@ -243,6 +251,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn fuera_de_flatpak_el_comando_es_directo() {
         // La suite no corre dentro de un sandbox, así que `host_command`

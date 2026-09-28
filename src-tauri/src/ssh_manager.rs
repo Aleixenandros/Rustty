@@ -3897,7 +3897,9 @@ mod tests {
     /// Mata el servidor tmux del socket del test aunque el test falle a
     /// mitad: el tmux corre en esta misma máquina (sshd de localhost), así
     /// que un `kill-server` local llega igual.
+    #[cfg(target_os = "linux")]
     struct TmuxServerGuard(String);
+    #[cfg(target_os = "linux")]
     impl Drop for TmuxServerGuard {
         fn drop(&mut self) {
             let _ = std::process::Command::new("tmux")
@@ -3909,6 +3911,7 @@ mod tests {
     /// Bombea bytes del canal por el pipeline completo del modo control
     /// (parser → cliente → manager) hasta que el predicado dé por buena una
     /// actualización del modelo. Devuelve todo lo visto hasta entonces.
+    #[cfg(target_os = "linux")]
     async fn pump_updates(
         channel: &mut russh::Channel<client::Msg>,
         control: &mut crate::tmux::client::ControlClient,

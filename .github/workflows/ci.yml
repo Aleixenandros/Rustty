@@ -339,9 +339,13 @@ jobs:
             src-tauri/coverage-summary.txt
           if-no-files-found: error
 
-  # ── Regresión de plataforma: solo build JS + cargo check ──────────
+  # ── Regresión de plataforma: build JS + clippy estricto ───────────
   # Más ligeros que el job Linux; detectan roturas específicas de SO antes
-  # de publicar con build.yml.
+  # de publicar con build.yml. Clippy con `-D warnings` y `--all-targets`, como
+  # en Linux: con un `cargo check` suelto, el código que solo se compila en
+  # Windows o macOS (y el que allí sobra) avisaba sin romper nada, y los avisos
+  # se acumulaban sin que nadie los viera —la 2.15.0 salió con 6 en macOS y 5 en
+  # Windows—. El clippy bloqueante de Linux no ve ese código.
   platform-check:
     strategy:
       fail-fast: false
@@ -371,6 +375,7 @@ jobs:
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: ${{ steps.rust.outputs.channel }}
+          components: clippy
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -400,9 +405,9 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: cargo check
+      - name: cargo clippy (estricto, con tests)
         working-directory: src-tauri
-        run: cargo check --locked
+        run: cargo clippy --all-targets --locked -- -D warnings
 
   # ── Integración con clientes reales ───────────────────────────────────
   # Los tests marcados `#[ignore]` necesitan binarios y un display que la

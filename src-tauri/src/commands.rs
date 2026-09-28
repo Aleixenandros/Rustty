@@ -3581,7 +3581,7 @@ fn autostart_handle(minimized: bool) -> Result<auto_launch::AutoLaunch, String> 
     #[cfg(target_os = "macos")]
     {
         // macOS: usar Launch Agent (plist en ~/Library/LaunchAgents/)
-        builder.set_use_launch_agent(true);
+        builder.set_macos_launch_mode(auto_launch::MacOSLaunchMode::LaunchAgent);
         // Si el exe está dentro de un .app, registrar el bundle
         let path_str = exe
             .canonicalize()

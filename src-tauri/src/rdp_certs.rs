@@ -181,8 +181,8 @@ pub fn stored_fingerprint(host: &str, port: u16) -> Option<String> {
 /// Rutas donde el cliente pudo dejar el PEM de `host:puerto`, en el mismo orden
 /// en que se consultan (la primera es donde lo escribiría FreeRDP 3). Solo la
 /// usa el test de integración, que siembra el almacén para provocar el aviso de
-/// certificado cambiado con un cliente real.
-#[cfg(test)]
+/// certificado cambiado con un cliente real (solo en Linux, como el fixture).
+#[cfg(all(test, target_os = "linux"))]
 #[must_use]
 pub fn cert_paths(host: &str, port: u16) -> Vec<PathBuf> {
     freerdp_dirs()

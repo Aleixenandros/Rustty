@@ -340,7 +340,7 @@ fn get_default_shell() -> String {
                 return candidate.to_string();
             }
         }
-        return std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
     }
     #[cfg(not(windows))]
     {

@@ -8,6 +8,8 @@ use crate::locks::MutexExt;
 
 /// Máximo de stdout+stderr del cliente externo que conservamos como cola
 /// rodante para diagnosticar por qué murió (certificado, NLA, argumentos…).
+/// Solo el lanzador de Linux lee la salida del cliente.
+#[cfg(target_os = "linux")]
 const OUTPUT_TAIL_MAX: usize = 4096;
 /// Longitud máxima del `detail` que viaja al frontend en `rdp-closed-*`.
 const DETAIL_MAX: usize = 700;
@@ -130,7 +132,9 @@ impl RdpDisplay {
         }
     }
 
-    /// Argumentos de tamaño para xfreerdp, en orden.
+    /// Argumentos de tamaño para xfreerdp, en orden. Los usa el lanzador de
+    /// Linux; se compilan también en test para probarlos en cualquier sistema.
+    #[cfg(any(target_os = "linux", test))]
     fn freerdp_args(self, width: u32, height: u32) -> Vec<String> {
         match self {
             // `/dynamic-resolution` es lo que hace la ventana redimensionable:
@@ -148,6 +152,7 @@ impl RdpDisplay {
 
     /// Equivalente para rdesktop, el cliente de respaldo. No tiene resolución
     /// dinámica, así que `Window` y `Fixed` acaban en la misma geometría fija.
+    #[cfg(target_os = "linux")]
     fn rdesktop_args(self, width: u32, height: u32) -> Vec<String> {
         match self {
             Self::Fullscreen => vec!["-f".into()],
@@ -158,8 +163,11 @@ impl RdpDisplay {
 }
 
 /// Tamaño con el que arranca una ventana RDP cuando el modo no lo deriva del
-/// monitor. Es el que Rustty ha usado siempre.
+/// monitor. Es el que Rustty ha usado siempre. En macOS la ventana la gestiona
+/// la app del sistema y no hace falta.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const DEFAULT_RDP_WIDTH: u32 = 1280;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const DEFAULT_RDP_HEIGHT: u32 = 800;
 
 /// A dónde y con qué credencial se conecta una sesión RDP.

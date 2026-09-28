@@ -102,19 +102,15 @@ fn keyring_set_value(kind: CredentialKind, id: &str, value: &str) -> Result<(), 
 fn keyring_get_value(kind: CredentialKind, id: &str) -> Option<String> {
     let key = keyring_key(kind, id)?;
     let entry = keyring::Entry::new(KEYRING_SERVICE, &key).ok()?;
-    match entry.get_password() {
-        Ok(value) => {
-            #[cfg(target_os = "linux")]
-            {
-                // El backend combinado de Linux lee las entradas legacy de
-                // keyutils como caché y reescribe en Secret Service para que
-                // persistan tras reiniciar (mismo patrón que `keyring_get`).
-                let _ = entry.set_password(&value);
-            }
-            Some(value)
-        }
-        Err(_) => None,
+    let value = entry.get_password().ok()?;
+    #[cfg(target_os = "linux")]
+    {
+        // El backend combinado de Linux lee las entradas legacy de keyutils
+        // como caché y reescribe en Secret Service para que persistan tras
+        // reiniciar (mismo patrón que `keyring_get`).
+        let _ = entry.set_password(&value);
     }
+    Some(value)
 }
 
 /// Borra el valor de una credencial secreta del keyring (idempotente).

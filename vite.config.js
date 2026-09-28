@@ -50,5 +50,12 @@ export default defineConfig({
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
     // Tauri usa archivos, no servidor; ajustamos las rutas
     assetsDir: "assets",
+    // Presupuesto del bundle, no un silenciador. El aviso por defecto (500 kB)
+    // piensa en una web que se descarga; aquí el bundle se lee del disco y el
+    // `main.js` monolítico hace que el chunk principal ronde los 1.500 kB. El
+    // proyecto decidió trocear solo donde el perfilador demuestre ganancia
+    // (tareas.md, «Presupuesto de bundle y arranque»), así que el tope avisa de
+    // un crecimiento brusco. Si salta, mirar qué ha entrado antes de subirlo.
+    chunkSizeWarningLimit: 1800,
   },
 });

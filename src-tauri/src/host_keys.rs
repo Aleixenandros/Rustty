@@ -374,8 +374,9 @@ pub fn client_with_remote_forwards(
 /// Como [`client`], pero con el `known_hosts` en un fichero concreto en vez del
 /// `~/.ssh/known_hosts` del usuario. Existe **solo para los tests de
 /// integración**, que ejercitan el flujo TOFU real contra un `sshd` de pruebas y
-/// no deben tocar el known_hosts de la máquina.
-#[cfg(test)]
+/// no deben tocar el known_hosts de la máquina (y que, como el fixture, solo
+/// corren en Linux).
+#[cfg(all(test, target_os = "linux"))]
 pub fn client_with_known_hosts(
     host: String,
     port: u16,
