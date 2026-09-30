@@ -1,0 +1,61 @@
+name: E2E Rustty
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: App real · Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Leer el toolchain fijado
+        id: rust
+        run: sed -n 's/^channel = "\(.*\)"/channel=\1/p' src-tauri/rust-toolchain.toml >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: ${{ steps.rust.outputs.channel }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri
+      - name: Dependencias de la aplicación y del escritorio de prueba
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libdbus-1-dev libssl-dev pkg-config \
+            webkit2gtk-driver xvfb xauth openbox wmctrl dbus-x11 openssh-server
+          sudo mkdir -p /run/sshd
+      - run: npm ci
+      - name: Compilar el binario debug
+        working-directory: src-tauri
+        run: cargo build --locked
+      - name: Instalar el controlador de la app
+        working-directory: src-tauri
+        run: cargo install tauri-driver --version 2.1.0 --locked
+      - name: Consola, preferencias, nube, IPC y SFTP
+        timeout-minutes: 10
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/rustty-e2e-artifacts
+          E2E_REQUIRE_SFTP: "1"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: npm run e2e:headless
+      - name: Logs y capturas del entorno de prueba
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-linux
+          path: ${{ runner.temp }}/rustty-e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7

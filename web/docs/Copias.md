@@ -42,7 +42,13 @@ Los cortes de red no generan errores rojos: los fallos de conectividad se muestr
 
 ## Primera sincronización con vista previa
 
-Al activar la sincronización en un equipo cuando el servidor **ya contiene datos**, Rustty muestra primero el alcance del primer merge —cuántos perfiles, temas, notas… se añadirían, cambiarían o borrarían, con una muestra de nombres— y pide confirmación antes de aplicar nada. Si el remoto está vacío o idéntico, no pregunta.
+Para conectar otro equipo, elige el mismo proveedor y cuenta, introduce la **misma frase de cifrado** y pulsa **Sincronizar ahora**. Conectar la cuenta de Google autoriza el acceso; la transferencia ocurre al sincronizar.
+
+Si la nube **ya contiene datos** y el equipo nuevo todavía no tiene conexiones, espacios ni otros datos propios, la opción principal es **Recuperar en este equipo**. Descarga las conexiones y la configuración de la nube, incluidos los nombres de los espacios, el tema y el pegado. Los ajustes locales ceden a la nube aunque los hayas cambiado más recientemente. Después, los cambios se sincronizan entre equipos. También puedes elegir **Combinar y sincronizar** si quieres conservar ajustes locales más recientes.
+
+Si ya hay datos propios, Rustty muestra **Combinar con la nube**, con las diferencias por categoría. La combinación utiliza las fechas de modificación para resolver coincidencias y borrados; las preferencias, incluidos los espacios, viajan como un conjunto. Puedes cancelar antes de que se suba o aplique nada. Si no se puede leer la nube para preparar esta vista, la sincronización se detiene y muestra el error.
+
+Si la nube está vacía o el estado es idéntico, no hace falta elegir.
 
 ## Actividad de sincronización
 
@@ -59,6 +65,8 @@ Los **registros de borrado** (lo que impide que un elemento eliminado «resucite
 En WebDAV, si dos equipos suben cambios a la vez, la escritura es condicional: el choque se detecta, se vuelve a fusionar y se sube el resultado combinado en vez de pisar el push ajeno. En Google Drive, si dos equipos estrenan la sincronización en el mismo momento y crean dos archivos, Rustty los detecta, fusiona su contenido y deja uno solo.
 
 Cuando configuras la sincronización en un **equipo recién instalado**, su configuración local (workspaces, carpetas, favoritos) aún no tiene cambios propios, así que el primer sync **adopta la del equipo que ya tenía datos** en lugar de sobrescribirla. A partir de ahí, las ediciones que hagas en cualquier equipo se propagan por fecha de modificación.
+
+Guardar la configuración del proveedor o cambiar un ajuste local no cuenta como una modificación de las preferencias sincronizadas. Si llegan ajustes de otro equipo mientras tienes Preferencias abierto, **Guardar** conserva los valores recibidos de los controles que no has tocado; solo aplica las ediciones que hayas hecho en el formulario.
 
 ## Restaurar una copia previa
 

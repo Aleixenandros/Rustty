@@ -11,7 +11,7 @@
  * Cómo funciona: por cada tarea pendiente busca lo que la propia tarea *cita* y
  * comprueba si ya existe en el código:
  *
- *   - **Preferencia** (`prefs.algo`) presente en `DEFAULT_PREFS` de `main.js`.
+ *   - **Preferencia** (`prefs.algo`) presente en `modules/prefs/defaults.js`.
  *   - **Comando IPC** (`algo_asado`) registrado en el `generate_handler!` de `lib.rs`.
  *   - **Módulo** (`src/modules/x.js`, `x.rs`) que existe en el árbol.
  *
@@ -28,6 +28,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { DEFAULT_PREFS } from "../src/modules/prefs/defaults.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const BACKLOG = resolve(ROOT, "memoria/tareas.md");
@@ -39,17 +40,6 @@ const MODULE_ROOTS = ["", "src/", "src/modules/", "src-tauri/src/", "scripts/", 
 function read(path) {
   const full = resolve(ROOT, path);
   return existsSync(full) ? readFileSync(full, "utf8") : "";
-}
-
-/** Claves de `DEFAULT_PREFS` (el objeto literal de `main.js`). */
-function loadPrefKeys() {
-  const src = read("src/main.js");
-  const start = src.indexOf("const DEFAULT_PREFS");
-  if (start < 0) return new Set();
-  // Hasta el cierre del literal en columna 0: `};`
-  const end = src.indexOf("\n};", start);
-  const body = src.slice(start, end < 0 ? undefined : end);
-  return new Set([...body.matchAll(/^\s{2}([A-Za-z_][\w]*)\s*:/gm)].map((m) => m[1]));
 }
 
 /** Comandos Tauri registrados en el `generate_handler!` de `lib.rs`. */
@@ -124,7 +114,7 @@ if (!existsSync(BACKLOG)) {
   process.exit(0);
 }
 
-const prefKeys = loadPrefKeys();
+const prefKeys = new Set(Object.keys(DEFAULT_PREFS));
 const commands = loadCommands();
 const tasks = pendingTasks(readFileSync(BACKLOG, "utf8"));
 

@@ -83,10 +83,13 @@ import { extractBlockText, blockToMarkdown, blockFileName } from "./modules/term
 import { diffLines, pairDiffRows, diffToUnifiedText } from "./modules/terminal/diff.js";
 import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
-import { defaultHighlightRules, compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
+import { compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
 import { createChunkDecoder } from "./modules/terminal/chunk-decoder.js";
 import { createShellCloseGate } from "./modules/terminal/shell-close.js";
-import { normalizePrefs } from "./modules/prefs/normalize.js";
+import { DEFAULT_PREFS, createDefaultPrefs } from "./modules/prefs/defaults.js";
+import { loadPrefs as readSavedPrefs, savePrefs as writeSavedPrefs } from "./modules/prefs/storage.js";
+import { applyPrefsForm } from "./modules/prefs/sync.js";
+import { hasLocalSyncData } from "./modules/prefs/first-sync.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { ipcErrorText, isHostKeyError } from "./modules/ipc/errors.js";
@@ -478,274 +481,6 @@ const FILE_READ_LIMITS = Object.freeze({
   shortcuts:  512 * 1024,        // mapa de atajos
 });
 
-const DEFAULT_PREFS = {
-  // Monitor de recursos por sesión SSH (opt-in). Cuando está activo, la sesión
-  // muestrea el servidor cada `metricsSecs` segundos y pinta CPU/RAM/disco en la
-  // barra inferior. Solo Linux de momento (degrada a nada en otros SO).
-  metricsEnabled:  false,
-  metricsSecs:     3,
-  metricsPanelVertical: false,
-  // Umbrales de alerta del monitor (opt-in): aviso al cruzar el % configurado,
-  // con histéresis para no repetir. 0 = métrica sin alerta.
-  metricsAlerts:   false,
-  metricsAlertCpu:  90,
-  metricsAlertMem:  90,
-  metricsAlertDisk: 90,
-  theme:           "dark",    // "dark" | "light" | "system"
-  // Tema del terminal independiente del de UI.
-  // null / "inherit" = seguir a `theme`; cualquier otro id válido = tema fijo para el terminal.
-  terminalTheme:   null,
-  copyOnSelect:    false,
-  rightClickPaste: false,
-  // Si está activo, los pegados peligrosos en el terminal (multilínea, muy
-  // largos o con caracteres de control) muestran una previsualización
-  // tematizada que el usuario debe confirmar antes de enviarse a la sesión.
-  confirmRiskyPaste: true,
-  // Primera conexión SSH: si está activo (default), se muestra la huella de la
-  // host key desconocida y se pide confirmación antes de guardarla. Al
-  // desactivarlo se vuelve al TOFU automático clásico (la primera clave se
-  // aprende en silencio), que es cómodo pero no detecta un intermediario
-  // presente ya en esa primera conexión. La política vive en el backend
-  // (`host_keys`): esta pref solo la fija con `set_host_key_policy`.
-  strictHostKey:   true,
-  // Host key CAMBIADA: activo (default) pregunta con un diálogo de peligro y,
-  // si el usuario acepta, reemplaza la entrada de known_hosts y la conexión
-  // continúa; desactivado, rechazo clásico con instrucciones manuales. La
-  // política vive en el backend: se fija con `set_host_key_change_policy`.
-  hostKeyChangePrompt: true,
-  // Primera conexión FTPS: igual que `strictHostKey` pero para el certificado
-  // TLS del servidor (TOFU por huella). Activo (default) pide confirmar la huella
-  // de un certificado nuevo; desactivado la aprende en silencio. La política vive
-  // en el backend (`ftps_certs`); esta pref la fija con `set_ftps_cert_policy`.
-  strictFtpsCert:  true,
-  // Certificado RDP CAMBIADO: el TOFU lo hace el cliente externo (xfreerdp con
-  // `/cert:tofu`), que ante un cambio aborta sin preguntar —no tiene terminal
-  // donde hacerlo—. Activo (default), Rustty enseña las dos huellas y, si el
-  // usuario acepta, olvida el certificado guardado (`rdp_forget_cert`) y
-  // reconecta, igual que con una host key SSH cambiada. Desactivado, el aviso
-  // clásico con las instrucciones para borrarlo a mano.
-  rdpCertChangePrompt: true,
-  // Cómo abre la ventana el cliente RDP por defecto: "window" (redimensionable,
-  // la resolución sigue al tamaño), "fullscreen", "workarea" o "fixed" (el
-  // tamaño clavado de siempre, para servidores sin Display Control). Cada perfil
-  // puede llevar su propio `rdp_display` y entonces manda el del perfil.
-  rdpDisplay:      "window",
-  // Captura la pantalla de cada sesión SSH (no privada) en disco para poder
-  // restaurarla luego con «Conectar y restaurar pantalla anterior». Solo es la
-  // salida visual; puede contener datos sensibles. Excluido de sync.
-  captureScreen:   true,
-  // Pegado de contraseña (Ctrl+P) cuando el modo broadcast replica la entrada en
-  // varias panes. Filosofía: nunca bloquear; el usuario elige.
-  //   "all"    → difundir la contraseña a todas las panes del broadcast
-  //   "active" → pegarla solo en la pane enfocada
-  //   "ask"    → preguntar en cada pegado
-  pastePasswordBroadcast: "all", // "all" | "active" | "ask"
-  sftpConflictPolicy: "ask",   // "ask" | "overwrite" | "skip" | "rename"
-  // Aviso de fin de transferencia SFTP por el router de notificaciones.
-  // On por defecto (era el comportamiento existente); ahora desactivable y
-  // con umbral de duración configurable (los errores avisan siempre).
-  transferDoneNotify:     true,
-  transferDoneNotifySecs: 5,
-  sftpVerifySize:  false,
-  // Máximo de peticiones SFTP simultáneas (handles en vuelo) por transferencia
-  // en cada sesión. Conservador por defecto: servidores como Hetzner Storage Box
-  // limitan los handles abiertos y un valor alto provoca "Handle limit reached".
-  sftpMaxConcurrent: 4,        // 1–64
-
-  // Techos de velocidad de las transferencias, en KiB/s. `0` = sin límite, que
-  // es lo de siempre. Servir para dejar una descarga larga de fondo sin que el
-  // resto de la red se resienta. El límite es del enlace, no de cada
-  // transferencia: dos descargas a la vez se reparten el mismo techo.
-  transferLimitUpKib:   0,
-  transferLimitDownKib: 0,
-
-  // Techo de transferencias **simultáneas** de toda la aplicación (0 = sin
-  // techo, lo de siempre). No confundir con `sftpMaxConcurrent`, que son
-  // peticiones en vuelo dentro de una misma transferencia.
-  transferMaxConcurrent: 0,    // 0–32
-  // Conservar el trozo ya bajado de una descarga interrumpida para continuarla
-  // después, en vez de empezar de cero. Apagado por defecto: reanudar exige
-  // dejar el temporal en disco cuando algo falla.
-  transferResume:  false,
-
-  // Disposición del panel SFTP: lado donde se muestra el panel remoto.
-  sftpRemoteSide:  "left",     // "left" | "right"
-  fontSize:        14,
-  // Tipografía fina del terminal
-  fontFamily:      "",        // "" = usar cadena por defecto con fallback monospace
-  lineHeight:      1.0,       // 1.0 = normal; xterm.js admite >0
-  letterSpacing:   0,         // píxeles; positivo separa, negativo junta
-  // Ligaduras tipográficas en el terminal (==, =>, ->, !=, ===, etc.).
-  // Requiere fuente con soporte (FiraCode, JetBrains Mono, Cascadia Code, …).
-  // Solo se aplica a sesiones nuevas: cambiar el toggle no afecta a las ya abiertas.
-  terminalLigatures: false,
-  cursorStyle:     "block",   // "block" | "bar" | "underline"
-  cursorBlink:     true,
-  // Aviso de fin de comando largo (OSC 133 C→D). Opt-in: sin marcas OSC 133
-  // del shell no hace nada. El umbral es la duración mínima para avisar.
-  cmdDoneNotify:      false,
-  cmdDoneNotifySecs:  15,
-  scrollback:      5000,
-  // Directorio inicial de las consolas locales nuevas. "" = $HOME (o el dir del
-  // usuario). Una ruta válida se usa como cwd al abrir/reabrir la consola; si no
-  // existe, el backend cae a $HOME.
-  localShellCwd:   "",
-  // Integración de shell en la consola local (bash/zsh/fish/PowerShell): marcas OSC 133
-  // (bloques de comando, aviso de fin de comando largo) y OSC 7 (carpeta
-  // actual) sin tocar los dotfiles del usuario. Opt-in: cambia cómo arranca
-  // el shell, así que solo se aplica a consolas nuevas.
-  localShellIntegration: false,
-  // Comandos locales del catálogo: plazo máximo de ejecución en segundos
-  // (0 = sin límite, opción explícita del usuario) y tope de salida capturada
-  // por flujo en KiB. Al agotarse el plazo se termina el árbol de procesos.
-  localCmdTimeoutSecs: 30,     // 0 | 10 | 30 | 60 | 300 | 900
-  localCmdMaxOutputKb: 512,    // 64 | 512 | 2048 | 8192
-  bell:            "none",    // "none" | "visual" | "sound"
-  // Contraste mínimo del texto del terminal (xterm `minimumContrastRatio`).
-  // Adapta dinámicamente los colores ANSI poco legibles contra el fondo de su
-  // celda. "off" = sin ajuste (1:1); "aa" = 4.5:1; "aaa" = 7:1.
-  terminalMinContrast: "off", // "off" | "aa" | "aaa"
-  // Cursor del terminal más visible: tinta de alto contraste (blanco/negro
-  // según el fondo) en cualquier estilo de cursor + caret más grueso cuando el
-  // estilo es «bar». No cambia el estilo elegido en `cursorStyle`.
-  terminalCursorHighVis: false,
-  // KeePass: rutas persistentes (sin contraseña maestra)
-  keepassPath:     "",
-  keepassKeyfile:  "",
-  // Qué hacer con las sesiones al volver de una suspensión o al recuperar la red:
-  //   "nothing"   → no tocar nada (el usuario decide)
-  //   "check"     → avisar y comprobar cuáles siguen vivas (default)
-  //   "reconnect" → además, reenganchar las caídas de forma escalonada
-  onWakeAction:    "check",
-  // Autobloqueo de la base KeePass, en minutos de inactividad (0 = nunca).
-  // El contador solo lo reinicia el uso REAL de la base (ver `touchKeepass`).
-  keepassAutoLockMinutes: 0,
-  // Bloquear la base si el equipo se suspende (se detecta por el salto de reloj).
-  keepassLockOnSuspend: true,
-  // Idioma de la interfaz: "es" | "en" | "fr" | "pt"
-  lang:            null, // null → usar detectLanguage() en loadPrefs
-  // Overrides de atajos: { [actionId]: accelerator | null }
-  // Solo se almacenan los atajos que el usuario ha modificado respecto al default.
-  shortcuts:       {},
-  checkUpdatesOnStartup: true,
-  // [legacy] Carpetas manuales globales. Se mantiene por compatibilidad para
-  // migrar a userFoldersByWorkspace en el primer arranque tras la 0.2.6.
-  userFolders:     [],
-  // Carpetas manuales por workspace. Mapa { workspaceId: ["A", "A/B", ...] }.
-  userFoldersByWorkspace: {},
-  // Perfiles-contenedor (workspaces). Cada perfil agrupa su propio árbol de
-  // carpetas y conexiones. Por defecto solo existe "default".
-  workspaces:      [{ id: "default", name: "Default" }],
-  activeWorkspaceId: "default",
-  // IDs de conexiones marcadas como favoritas.
-  favorites:       [],
-  // IDs de conexiones ancladas en el dashboard como tiles grandes.
-  pinnedProfiles:  [],
-  // Modo de la vista de la sidebar: "current" | "all" | "favorites".
-  sidebarViewMode: "current",
-  // Si está activo, las búsquedas de conexiones recorren todos los workspaces.
-  // Si se desactiva, solo consultan el workspace activo.
-  searchAllWorkspaces: true,
-  // Resultados de búsqueda agrupados por relevancia: conexiones directas,
-  // carpetas coincidentes (una entrada con recuento) y coincidencias en notas.
-  // Desactivado, vuelve la lista plana alfabética clásica.
-  searchGroupedResults: true,
-  // Densidad compacta para listas largas de conexiones en la sidebar.
-  sidebarCompact:  false,
-  // Zoom de la UI (rail, sidebar, tabs, status, modales) sin afectar al
-  // buffer xterm. Rango clampeado en `adjustUiZoom`. Atajos Ctrl+Alt +/-/0.
-  uiZoom:          1.0,
-  // Orden de las conexiones en la sidebar: "alpha" (alfabético, por defecto)
-  // o "manual" (subir/bajar con flechas, persistido en `connectionOrder`).
-  connectionSortMode: "alpha",
-  // Orden manual de conexiones por contenedor. Clave = `${workspaceId}|${group}`,
-  // valor = array de profileId en el orden deseado. Las conexiones no listadas
-  // se añaden al final ordenadas alfabéticamente. Solo se usa con
-  // `connectionSortMode === "manual"`.
-  connectionOrder: {},
-  // Orden manual de carpetas por contenedor padre. Clave = `${workspaceId}|${parentPath}`
-  // (parentPath = "" para las carpetas de primer nivel), valor = array de
-  // nombres de carpeta hija en el orden deseado. Las no listadas se añaden al
-  // final alfabéticamente. Solo se usa con `connectionSortMode === "manual"`.
-  folderOrder: {},
-  // Si está activo, las carpetas se renderizan antes que las conexiones dentro
-  // de cada nodo del árbol de la sidebar, respetando luego el modo de orden.
-  foldersFirst: true,
-  // Color por carpeta. Mapa { `${workspaceId}|${folderPath}`: colorId } donde
-  // colorId es uno de los presets en FOLDER_COLOR_PRESETS o null para "sin color".
-  folderColors:    {},
-  // Color del icono de la carpeta raíz de cada perfil-contenedor.
-  // Mapa { workspaceId: colorId }.
-  workspaceColors: {},
-  // Reglas de resaltado por regex aplicadas a la salida del terminal.
-  // Cada regla: { pattern: string, color: "red"|"yellow"|"green"|"blue"|"magenta"|"cyan"|"white", bold: bool }.
-  // Se aplican en orden — la primera coincidencia gana.
-  highlightRules:  defaultHighlightRules(),
-  _highlightRulesSeeded: true,
-  // Densidad de la interfaz: "comfortable" (por defecto) o "compact".
-  // Reduce padding/altura en sidebar, tabs y modales sin tocar xterm.
-  uiDensity:       "comfortable",
-  uiTextSize:      "normal",
-  trashRetentionDays: 30,
-  terminalBgOpacity: 0.25,
-  terminalBgBlur: 0,
-  restoreWorkTabs: false,
-  tmuxScrollbackLines: 2000,
-  // Modo daltónico: dots de estado se diferencian también por forma
-  // (círculo / cuadrado / diamante) además de por color.
-  colorBlindSafe:  false,
-  // ─── Accesibilidad ───────────────────────────────────────────
-  // Nivel de contraste de la interfaz, independiente del tema. En "high"/"max"
-  // los tokens de texto/overlay más tenues se acercan a --text (reforzando con
-  // ellos bordes, foco y selección) sin obligar a cambiar de tema. "normal" no
-  // toca nada.
-  uiContrast:      "normal", // "normal" | "high" | "max"
-  // Reduce o elimina animaciones y transiciones de la interfaz aunque el sistema
-  // operativo no anuncie `prefers-reduced-motion`.
-  reduceMotion:    false,
-  // Refuerza el anillo de foco (grosor y contraste) en la navegación por teclado.
-  strongFocus:     false,
-  // Fundido corto al pasar del panel de inicio al terminal (y a la inversa).
-  // «Reducir movimiento» (arriba) también lo anula.
-  viewFade:        true,
-  // Pantalla de carga al arrancar: logotipo e «Iniciando…» en cuanto se abre la
-  // ventana, mientras init() termina. Off = la ventana no aparece hasta que la
-  // interfaz está montada. La lee también `public/boot.js`, antes del bundle.
-  bootScreen:      true,
-  // Barras de desplazamiento superpuestas: el pulgar flota sobre el contenido,
-  // fino en reposo y más ancho al pasar el ratón. Off = las finas normales.
-  overlayScrollbars: false,
-  // Barras nativas del sistema (anchas, siempre visibles). Accesibilidad: hay
-  // quien las necesita. Gana sobre `overlayScrollbars` y desmonta TODO el
-  // estilizado propio; en WebKit basta una regla custom para perder la nativa.
-  nativeScrollbars: false,
-  // Renderer del terminal. "auto" intenta WebGL y cae a DOM si la GPU no está
-  // disponible o pierde el contexto; "dom" fuerza el backend DOM (útil en
-  // máquinas virtuales o drivers con parpadeos). El default sigue siendo auto:
-  // el WebGL es lo que evita que un `cat` de un log grande cuelgue la UI.
-  terminalRenderer: "auto",
-  // UUIDs de las últimas entradas KeePass seleccionadas (más reciente primero,
-  // máx 8). Usado por el selector avanzado para sugerir entradas habituales.
-  recentKeepassEntries: [],
-  // Retención de logs de sesión. null = sin límite.
-  // sessionLogMaxAgeDays: borra logs más antiguos que N días.
-  // sessionLogMaxTotalMb: si el total supera N MB, borra los más antiguos.
-  sessionLogMaxAgeDays: null,
-  sessionLogMaxTotalMb: null,
-  // Arranque automático con el sistema (opt-in, desactivado por defecto).
-  // `autostart`: registra la app en el arranque del SO.
-  // `autostartMinimized`: si está activo, la ventana no se muestra al frente;
-  //   la app arranca oculta al tray.
-  autostart:          false,
-  autostartMinimized: false,
-  // Borradores del editor multilínea (Ctrl+Shift+E), por profileId / "local".
-  commandDrafts:      {},
-  // Historial de comandos compartido entre pestañas (opt-in). El contenido del
-  // historial vive en localStorage (clave `rustty-command-history`), no en
-  // prefs, para no entrar en la sincronización en la nube.
-  shareCommandHistory: false,
-};
-
 // Paleta de colores predefinidos para las carpetas. Cada entrada es el id que
 // se persiste en prefs.folderColors[workspaceId|path] y el color (var CSS) que se usa
 // para pintar el icono SVG y la franja izquierda del folder-header (--folder-tint).
@@ -766,57 +501,49 @@ function folderIconSvg() {
   </svg>`;
 }
 
-let prefs = { ...DEFAULT_PREFS };
+let prefs = createDefaultPrefs();
 
 function folderColorKey(path, workspaceId = getActiveWorkspaceId()) {
   return `${workspaceId || "default"}|${path}`;
 }
 
-function migrateLegacyFolderColors() {
-  if (!prefs.folderColors || typeof prefs.folderColors !== "object" || Array.isArray(prefs.folderColors)) {
+function migrateLegacyFolderColors(target = prefs) {
+  if (!target.folderColors || typeof target.folderColors !== "object" || Array.isArray(target.folderColors)) {
     // Inicialización de un default vacío: NO es una edición del usuario, así que
     // NO debe tocar `_prefsUpdatedAt`. Si lo hiciera, una instalación nueva
     // marcaría su bundle de prefs con fecha "ahora" y ganaría el LWW del primer
     // sync, descartando los workspaces/carpetas/favoritos remotos (los perfiles
     // sí bajan y quedan colgando de "default").
-    prefs.folderColors = {};
+    target.folderColors = {};
     return false;
   }
   const migrated = {};
   let mutated = false;
-  for (const [key, color] of Object.entries(prefs.folderColors)) {
+  for (const [key, color] of Object.entries(target.folderColors)) {
     if (key.includes("|")) migrated[key] = color;
   }
-  for (const [key, color] of Object.entries(prefs.folderColors)) {
+  for (const [key, color] of Object.entries(target.folderColors)) {
     if (key.includes("|")) continue;
     mutated = true;
-    const scopedKey = folderColorKey(key);
+    const scopedKey = `${target.activeWorkspaceId || "default"}|${key}`;
     if (!(scopedKey in migrated)) migrated[scopedKey] = color;
   }
   if (!mutated) return false;
-  prefs.folderColors = migrated;
-  prefs._prefsUpdatedAt = new Date().toISOString();
+  target.folderColors = migrated;
+  target._prefsUpdatedAt = new Date().toISOString();
   return true;
 }
 
-function normalizeWorkspaceColors() {
-  if (!prefs.workspaceColors || typeof prefs.workspaceColors !== "object" || Array.isArray(prefs.workspaceColors)) {
-    prefs.workspaceColors = {};
+function normalizeWorkspaceColors(target = prefs) {
+  if (!target.workspaceColors || typeof target.workspaceColors !== "object" || Array.isArray(target.workspaceColors)) {
+    target.workspaceColors = {};
   }
 }
 
 function loadPrefs() {
-  let stored = null;
-  try {
-    stored = JSON.parse(localStorage.getItem("rustty-prefs") || "null");
-    if (stored) prefs = { ...DEFAULT_PREFS, ...stored };
-  } catch {}
-  // Normalización y migraciones: núcleo puro en `modules/prefs/normalize.js`
-  // (mismo orden histórico; las migraciones de colores van inyectadas).
-  normalizePrefs(prefs, stored, {
+  prefs = readSavedPrefs(localStorage, {
     migrateFolderColors: migrateLegacyFolderColors,
     normalizeWorkspaceColors,
-    defaultHighlightRules,
     supportedLangs: SUPPORTED_LANGS,
     detectLanguage,
   });
@@ -920,7 +647,7 @@ function toggleFavoriteProfile(id) {
 }
 
 function savePrefs() {
-  localStorage.setItem("rustty-prefs", JSON.stringify(prefs));
+  writeSavedPrefs(localStorage, prefs);
   scheduleTrayQuickLauncherUpdate();
   syncWorkspaceIndex();
 }
@@ -2169,6 +1896,10 @@ function openSettingsModal() {
   // Credenciales maestras: pintar la lista actual
   renderCredList();
 
+  _prefsFormSnapshot = readPrefsFromModal();
+  // La lista de fuentes se carga de forma asíncrona; su valor inicial es la
+  // fuente solicitada, aunque el select aún no tenga sus opciones.
+  _prefsFormSnapshot.fontFamily = prefs.fontFamily || "";
   document.getElementById("modal-prefs-overlay").classList.remove("hidden");
 }
 
@@ -2610,7 +2341,8 @@ async function persistSyncConfig() {
   // Privacidad: al desactivar la sincronización, la caché local del último
   // merge (todos los hosts/usuarios) no debe quedarse en disco.
   if (wasEnabled && !config.enabled) {
-    sync.clearLocalCache().catch((e) => console.error("[sync] limpiar caché", e));
+    await sync.clearLocalCache();
+    _syncFirstRunOk = false;
   }
   updateSidebarSyncStatus();
   return config;
@@ -2692,20 +2424,21 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     if (!_syncDeviceIdCache) {
       _syncDeviceIdCache = await sync.getDeviceId().catch(() => "—");
     }
-    // Vista previa de la primera sincronización: si este equipo nunca
-    // completó una sync y el remoto ya tiene datos, se muestra el alcance
-    // del merge (altas/cambios/bajas) y se pide confirmación antes de tocar
-    // nada — es el momento de mayor riesgo percibido.
+    // Un equipo nuevo recupera la nube por elección explícita; uno con datos
+    // propios confirma la combinación. No dar la primera pasada por completada
+    // antes de que termine: un fallo debe conservar esta decisión al reintentar.
+    let firstSyncMode = "merge";
     if (!_syncFirstRunOk) {
-      const proceed = await confirmFirstSyncIfNeeded();
-      if (!proceed) return null;
-      _syncFirstRunOk = true;
+      firstSyncMode = await confirmFirstSyncIfNeeded();
+      if (!firstSyncMode) return null;
     }
     const summary = await sync.runSync({
       profiles, prefs, deviceId: _syncDeviceIdCache,
       deviceName: prefs.syncDeviceName || "",
       devicePlatform: syncDevicePlatform(),
+      firstSyncMode,
     });
+    _syncFirstRunOk = true;
     const total = summary.addedProfiles + summary.deletedProfiles
       + (summary.updatedProfiles || 0)
       + summary.themesChanged + summary.shortcutsChanged
@@ -2736,6 +2469,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
       renderConnectionList();
       // Reaplica tema y prefs solo si de verdad cambiaron (evita el flash)
       if (summary.prefsChanged || summary.themesChanged) {
+        if (summary.prefsChanged) refreshPrefsPreviewSnapshots();
         applyTheme(prefs.theme);
         applyPrefsToAllTerminals();
       }
@@ -2906,44 +2640,52 @@ function formatSyncDiffDetail(diff) {
 /**
  * Vista previa (dry-run) de la primera sincronización: si este equipo no
  * tiene caché de un merge anterior y el remoto ya está poblado, muestra el
- * alcance (altas/cambios/bajas por tipo) y pide confirmación. Devuelve si se
- * puede continuar. Ante cualquier fallo de la previsualización no bloquea: la
- * sync real reportará el error con su clasificación normal.
+ * alcance y ofrece recuperar la nube en un equipo nuevo o combinar los datos.
+ * Devuelve "download", "merge" o null al cancelar. Un fallo de lectura se
+ * propaga: nunca autoriza por accidente una subida sin la vista previa.
  */
 async function confirmFirstSyncIfNeeded() {
   try {
-    if (await sync.cacheExists()) return true;
+    if (await sync.cacheExists()) return "merge";
     const remote = await sync.peekRemote();
-    if (!remote) return true; // remoto vacío: no hay nada que previsualizar
-    const config = _syncConfigCache || (await sync.getConfig());
+    if (!remote) return "merge"; // remoto vacío: crear la primera copia
     const current = await sync.buildSyncState({
       profiles,
       prefs,
       deviceId: _syncDeviceIdCache,
       selective: {
-        profiles: !!config.selective?.profiles,
-        prefs: !!config.selective?.prefs,
-        themes: !!config.selective?.themes,
-        shortcuts: !!config.selective?.shortcuts,
-        snippets: !!config.selective?.snippets,
-        notes: config.selective?.notes ?? true,
+        // Detectar también datos propios de categorías desmarcadas: no es
+        // una instalación vacía solo porque no quiera subir sus perfiles.
+        profiles: true, prefs: true, themes: true,
+        shortcuts: true, snippets: true, notes: true,
         // El diff no necesita leer secretos del keyring.
         secrets: false,
       },
       snippets: sync.loadLocalSnippets(),
     });
     const diff = sync.diffRemoteAgainstLocal(remote, current);
-    if (!diff.total) return true; // idéntico: aplicar sin preguntar
+    if (!diff.total) return "merge";
+
+    if (!hasLocalSyncData(current)) {
+      const choice = await chooseThemed({
+        title: t("prefs_sync.first_download_title"),
+        message: `${t("prefs_sync.first_download_message")}\n\n${formatSyncDiffDetail(diff)}`,
+        submitLabel: t("prefs_sync.first_download_apply"),
+        actions: [{ value: "merge", label: t("prefs_sync.first_sync_apply") }],
+      });
+      return choice ? (choice.action === "merge" ? "merge" : "download") : null;
+    }
 
     const message = `${t("prefs_sync.first_sync_message")} ${formatSyncDiffDetail(diff)}`;
-    return await confirmThemed({
+    const confirmed = await confirmThemed({
       title: t("prefs_sync.first_sync_title"),
       message,
       submitLabel: t("prefs_sync.first_sync_apply"),
     });
+    return confirmed ? "merge" : null;
   } catch (e) {
     console.error("[sync] vista previa primera sync", e);
-    return true;
+    throw e;
   }
 }
 
@@ -3375,6 +3117,7 @@ async function syncImportFile() {
       profiles, prefs, deviceId: _syncDeviceIdCache, dialogs: syncDialogs,
     });
     if (!summary) return;
+    if (summary.prefsChanged) refreshPrefsPreviewSnapshots();
     migrateLegacyFolderColors();
     normalizeWorkspaceColors();
     applySyncedUserFolders();
@@ -3471,6 +3214,7 @@ async function syncRestoreSnapshot() {
       : await sync.restoreSnapshot(id, {
           profiles, prefs, deviceId: _syncDeviceIdCache, dialogs: syncDialogs,
         });
+    if (summary?.prefsChanged) refreshPrefsPreviewSnapshots();
     migrateLegacyFolderColors();
     normalizeWorkspaceColors();
     applySyncedUserFolders();
@@ -3499,6 +3243,8 @@ async function populateFontFamilySelect(selected) {
   const sel = document.getElementById("pref-font-family");
   if (!sel) return;
   if (!_cachedSystemFonts) {
+    // Guardar antes de que fontdb responda debe conservar la fuente vigente.
+    sel.innerHTML = `<option value="${escHtml(selected)}" selected>${escHtml(selected)}</option>`;
     try { _cachedSystemFonts = await invoke("list_monospace_fonts"); }
     catch { _cachedSystemFonts = []; }
   }
@@ -4011,6 +3757,20 @@ function renderActivityCenter() {
 
 let _terminalThemeSnapshot = undefined;
 let _typographySnapshot = null;
+let _prefsFormSnapshot = null;
+
+// Si llegan preferencias con el modal abierto, Cancelar debe volver a lo
+// recién recibido, no al tema y la tipografía anteriores a la sincronización.
+function refreshPrefsPreviewSnapshots() {
+  if (!_prefsFormSnapshot) return;
+  _terminalThemeSnapshot = prefs.terminalTheme;
+  _typographySnapshot = {
+    fontFamily: prefs.fontFamily,
+    fontSize: prefs.fontSize,
+    lineHeight: prefs.lineHeight,
+    letterSpacing: prefs.letterSpacing,
+  };
+}
 
 function closeSettingsModal() {
   // Si se canceló: revertir el preview del tema de UI, del terminal y de tipografía.
@@ -4024,13 +3784,15 @@ function closeSettingsModal() {
   }
   _terminalThemeSnapshot = undefined;
   _typographySnapshot = null;
+  _prefsFormSnapshot = null;
   uiThemePreview = null;
   applyTheme(prefs.theme);
+  applyPrefsToAllTerminals();
   cancelShortcutCapture();
   document.getElementById("modal-prefs-overlay").classList.add("hidden");
 }
 
-function savePrefsFromModal() {
+function readPrefsFromModal() {
   const previousPrefs = prefs;
   // Tema: leer desde radio (fuente única de verdad) con fallback a prefs actuales
   const selectedTheme =
@@ -4050,7 +3812,7 @@ function savePrefsFromModal() {
   const rawLang = document.getElementById("pref-language")?.value || "system";
   const newLang = rawLang === "system" ? null : rawLang;
 
-  prefs = {
+  return {
     theme:           selectedTheme,
     terminalTheme:   selectedTerminalTheme,
     copyOnSelect:    document.getElementById("pref-copy-on-select").checked,
@@ -4162,29 +3924,13 @@ function savePrefsFromModal() {
     // actualiza mediante applyAutostartSetting() al guardar preferencias.
     autostart:          !!document.getElementById("pref-autostart")?.checked,
     autostartMinimized: !!document.getElementById("pref-autostart-minimized")?.checked,
-    // Los atajos se editan en vivo (setShortcut/resetShortcut ya guardan), así
-    // que aquí solo arrastramos lo que haya en memoria para no sobrescribirlos.
-    shortcuts:       previousPrefs.shortcuts || {},
-    // Temas importados persistidos aparte; evitar que se borren al guardar prefs.
-    customThemes:    previousPrefs.customThemes || [],
-    // Metadatos internos que no pertenecen al formulario pero sí deben sobrevivir.
-    userFolders:     [], // legacy: vacío — fuente de verdad: userFoldersByWorkspace
-    userFoldersByWorkspace: previousPrefs.userFoldersByWorkspace || {},
-    favorites:       Array.isArray(previousPrefs.favorites) ? [...previousPrefs.favorites] : [],
-    workspaces:      previousPrefs.workspaces || [{ id: "default", name: "Default" }],
-    activeWorkspaceId: previousPrefs.activeWorkspaceId || "default",
-    sidebarViewMode: previousPrefs.sidebarViewMode || "current",
-    folderColors:    previousPrefs.folderColors || {},
-    workspaceColors: previousPrefs.workspaceColors || {},
     highlightRules:  readHighlightRulesFromEditor(),
-    _highlightRulesSeeded: true,
-    templateProfileIds: previousPrefs.templateProfileIds || [],
-    tombstones:      previousPrefs.tombstones || {},
-    _shortcutsTs:    previousPrefs._shortcutsTs || {},
-    _lastSyncAt:     previousPrefs._lastSyncAt || null,
-    _prefsUpdatedAt: new Date().toISOString(),
   };
+}
 
+function savePrefsFromModal() {
+  if (!_prefsFormSnapshot) return;
+  applyPrefsForm(prefs, _prefsFormSnapshot, readPrefsFromModal());
   savePrefs();
   // Reajusta el vigilante de KeePass al nuevo intervalo (o lo para si se ha
   // puesto en «Nunca» y tampoco se bloquea al suspender).
@@ -5402,8 +5148,10 @@ async function handleWorkspaceMenuClick(action, wsId) {
       prefs.activeWorkspaceId = id;
       userFolders = new Set();
       prefs.sidebarViewMode = "current";
+      prefs._prefsUpdatedAt = new Date().toISOString();
       savePrefs();
       renderConnectionList();
+      scheduleProfileAutoSync();
     }
     return;
   }
@@ -5416,10 +5164,12 @@ async function handleWorkspaceMenuClick(action, wsId) {
       label: t("sidebar.workspace_prompt_rename"),
       initialValue: cur.name,
     });
-    if (name) {
+    if (name && name !== cur.name) {
       cur.name = name;
+      prefs._prefsUpdatedAt = new Date().toISOString();
       savePrefs();
       renderConnectionList();
+      scheduleProfileAutoSync();
     }
     return;
   }
@@ -7548,11 +7298,12 @@ async function renameWorkspaceById(wsId) {
     label: t("sidebar.workspace_prompt_rename"),
     initialValue: ws.name,
   });
-  if (!name) return;
+  if (!name || name === ws.name) return;
   ws.name = name;
   prefs._prefsUpdatedAt = new Date().toISOString();
   savePrefs();
   renderConnectionList();
+  scheduleProfileAutoSync();
 }
 
 async function deleteWorkspaceById(wsId) {
@@ -22960,6 +22711,7 @@ async function importWizardRun() {
   prefs.activeWorkspaceId = wsId;
   prefs.sidebarViewMode = "current";
   userFolders = new Set(prefs.userFoldersByWorkspace[wsId]);
+  prefs._prefsUpdatedAt = new Date().toISOString();
   savePrefs();
   renderConnectionList();
   scheduleProfileAutoSync();

@@ -20,6 +20,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { createFileApi } from "./modules/ipc/files.js";
 import { IPC_ERROR_KIND, ipcErrorKind, ipcErrorText } from "./modules/ipc/errors.js";
 import { t } from "./i18n.js";
+import { SYNCED_PREF_KEYS } from "./modules/prefs/sync.js";
+import { firstSyncUpload } from "./modules/prefs/first-sync.js";
 
 const KEYRING_SERVICE = "rustty";
 const KEY_PASSPHRASE = "sync:passphrase";
@@ -46,17 +48,6 @@ export function isBadPassphraseError(err) {
   return ipcErrorKind(err) === IPC_ERROR_KIND.badPassphrase
     || ipcErrorText(err).includes(SYNC_BAD_PASSPHRASE_MARKER);
 }
-
-// Subset de prefs que se sincroniza (excluimos rutas locales; los secretos
-// viajan como items `secret:*` solo si el usuario activa esa opción).
-const SYNCED_PREF_KEYS = [
-  "theme", "terminalTheme", "copyOnSelect", "rightClickPaste",
-  "fontFamily", "fontSize", "lineHeight", "letterSpacing",
-  "cursorStyle", "cursorBlink", "scrollback", "bell", "lang",
-  "userFolders", "userFoldersByWorkspace",
-  "workspaces", "favorites", "searchAllWorkspaces",
-  "folderColors", "workspaceColors", "highlightRules",
-];
 
 // Estado local de navegación. No debe viajar ni re-aplicarse desde otra
 // máquina porque hace que la sidebar cambie o se repliegue al terminar sync.
@@ -401,7 +392,7 @@ export async function applyMergedState(merged, ctx) {
       // Se conserva lo local y el caller programa un push de seguimiento.
       const liveTs = typeof prefs._prefsUpdatedAt === "string" ? prefs._prefsUpdatedAt : "";
       const snapshotTs = typeof ctx.prefsSnapshotTs === "string" ? ctx.prefsSnapshotTs : "";
-      if (liveTs && snapshotTs && liveTs > snapshotTs) {
+      if (typeof ctx.prefsSnapshotTs === "string" && liveTs && liveTs > snapshotTs) {
         prefsSkippedNewerLocal = true;
         continue;
       }
@@ -816,6 +807,8 @@ export async function runSync(ctx) {
     profiles: ctx.profiles,
     prefs: ctx.prefs,
     deviceId: ctx.deviceId,
+    deviceName: ctx.deviceName,
+    devicePlatform: ctx.devicePlatform,
     selective: {
       profiles: !!config.selective?.profiles,
       prefs: !!config.selective?.prefs,
@@ -831,7 +824,7 @@ export async function runSync(ctx) {
   });
 
   const outcome = await invoke("sync_run", {
-    current,
+    current: firstSyncUpload(current, ctx.firstSyncMode),
     passphrase,
     webdavPassword,
   });

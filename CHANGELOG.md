@@ -2,6 +2,22 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.16.0] - 2026-10-01
+
+### Añadido
+
+- **Pruebas de la aplicación desde GitHub Actions.** El workflow manual E2E Rustty abre la app en un escritorio virtual, comprueba la consola, la recuperación desde una nube cifrada, las preferencias, los límites de archivos y una transferencia SFTP real. Conserva logs y capturas para investigar fallos sin utilizar datos ni cuentas reales.
+
+### Cambiado
+
+- La primera sincronización distingue **Recuperar en este equipo**, para descargar la configuración existente en una instalación nueva aunque sus ajustes locales sean más recientes, de **Combinar y sincronizar**, para reunir datos propios. La pantalla explica la cuenta y la frase de cifrado que hay que usar, sitúa la acción junto a esos campos y aclara que conectar la cuenta todavía no transfiere los datos. Si falla la vista previa, no se inicia una subida sin confirmación.
+- Los valores de fábrica y la carga y el guardado de preferencias pasan a módulos independientes con pruebas de persistencia y migración. Cada carga tiene sus propias listas y mapas, para que editar un espacio o un atajo no altere los valores de fábrica compartidos.
+
+### Corregido
+
+- Al configurar la sincronización en una instalación nueva, guardar Preferencias ya no convierte los valores de fábrica en cambios más recientes que los del equipo anterior: se conservan los nombres de los espacios de trabajo, el tema y el pegado con botón derecho de la nube. Guardar o cancelar un formulario que estaba abierto durante la descarga tampoco revierte los ajustes recibidos, y las ediciones hechas durante la primera sincronización se conservan.
+- Crear, importar o renombrar un espacio de trabajo marca la modificación para sincronizarla; algunos menús guardaban el nombre solo en el equipo, sin fecharlo ni programar su subida. El nombre y la plataforma del dispositivo también llegan al registro de sincronización.
+
 ## [2.15.0] - 2026-09-28
 
 ### Añadido

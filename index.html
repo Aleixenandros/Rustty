@@ -3028,6 +3028,12 @@
                 Sincroniza perfiles, preferencias, temas y atajos entre equipos. Cifrado de extremo a extremo (E2E) con tu passphrase. El servidor solo ve datos opacos.
               </p>
 
+              <ol class="prefs-panel-hint">
+                <li data-i18n="prefs_sync.setup_provider">Elige dónde sincronizar. Con Google Drive, conecta la misma cuenta que en el otro equipo.</li>
+                <li data-i18n="prefs_sync.setup_passphrase">Introduce la misma frase de cifrado que en el otro equipo. Si es tu primera instalación, crea una nueva.</li>
+                <li data-i18n="prefs_sync.setup_sync">Pulsa «Sincronizar ahora»: podrás recuperar tu configuración o combinar los datos si ya tienes conexiones aquí.</li>
+              </ol>
+
               <div id="sync-backend-cards" class="sync-backend-cards" role="list"></div>
 
               <div class="settings-row">
@@ -3038,7 +3044,7 @@
               </div>
 
               <div class="settings-row settings-row-inline">
-                <label for="sync-backend" data-i18n="prefs_sync.backend">Backend</label>
+                <label for="sync-backend" data-i18n="prefs_sync.backend">Proveedor</label>
                 <div class="settings-control settings-control-wide">
                   <select id="sync-backend">
                     <option value="none" data-i18n="prefs_sync.backend_none">Ninguno</option>
@@ -3103,9 +3109,11 @@
                 </div>
               </div>
 
+              <p class="settings-hint sync-oauth-only hidden" data-i18n="prefs_sync.oauth_hint">Conectar la cuenta autoriza el acceso a la nube. Los datos se transfieren al sincronizar.</p>
+
               <!-- Passphrase maestro -->
               <div class="settings-row settings-row-inline" id="sync-passphrase-row">
-                <label for="sync-passphrase" data-i18n="prefs_sync.passphrase">Passphrase maestra</label>
+                <label for="sync-passphrase" data-i18n="prefs_sync.passphrase">Frase de cifrado</label>
                 <div class="settings-control settings-control-wide">
                   <input type="password" id="sync-passphrase" placeholder="••••••••" autocomplete="new-password" />
                   <div class="sync-pass-meter hidden" id="sync-pass-meter" aria-hidden="true">
@@ -3122,6 +3130,22 @@
                 </div>
               </div>
 
+              <!-- Estado y acciones -->
+              <div class="settings-row sync-actions" id="sync-actions-row">
+                <div class="sync-status">
+                  <span class="sync-dot" id="sync-status-dot"></span>
+                  <span id="sync-status-text" data-i18n="prefs_sync.status_idle">Listo</span>
+                </div>
+                <div class="sync-buttons">
+                  <button type="button" class="btn-secondary" id="btn-sync-test" data-i18n="prefs_sync.test">Probar conexión</button>
+                  <button type="button" class="btn-primary" id="btn-sync-now" data-i18n="prefs_sync.run_now">Sincronizar ahora</button>
+                </div>
+                <p class="settings-hint" id="sync-meta">
+                  <span data-i18n="prefs_sync.device_id">Dispositivo</span>: <code id="sync-device-id">…</code>
+                  · <span data-i18n="prefs_sync.last_sync">Última sincronización</span>: <span id="sync-last-time">—</span>
+                </p>
+              </div>
+
               <!-- Selectivo: qué sincronizar -->
               <div class="settings-row" id="sync-selective-row">
                 <label data-i18n="prefs_sync.selective">Sincronizar</label>
@@ -3132,7 +3156,7 @@
                   </label>
                   <label class="checkbox-label">
                     <input type="checkbox" id="sync-sel-prefs" checked />
-                    <span data-i18n="prefs_sync.sel_prefs">Preferencias (tema, fuente, idioma…)</span>
+                    <span data-i18n="prefs_sync.sel_prefs">Espacios de trabajo y preferencias (tema, fuente, idioma…)</span>
                   </label>
                   <label class="checkbox-label">
                     <input type="checkbox" id="sync-sel-themes" checked />
@@ -3227,22 +3251,6 @@
                   <button type="button" class="btn-icon" id="btn-sync-snapshots-refresh" data-i18n-aria-label="prefs_sync.snapshots_refresh" aria-label="Refrescar copias">⟳</button>
                   <p class="form-hint" data-i18n="prefs_sync.snapshots_hint">Selecciona una copia previa y pulsa "Restaurar" para sustituir tu estado actual con esa versión.</p>
                 </div>
-              </div>
-
-              <!-- Estado y acciones -->
-              <div class="settings-row sync-actions" id="sync-actions-row">
-                <div class="sync-status">
-                  <span class="sync-dot" id="sync-status-dot"></span>
-                  <span id="sync-status-text" data-i18n="prefs_sync.status_idle">Listo</span>
-                </div>
-                <div class="sync-buttons">
-                  <button type="button" class="btn-secondary" id="btn-sync-test" data-i18n="prefs_sync.test">Probar conexión</button>
-                  <button type="button" class="btn-primary" id="btn-sync-now" data-i18n="prefs_sync.run_now">Sincronizar ahora</button>
-                </div>
-                <p class="settings-hint" id="sync-meta">
-                  <span data-i18n="prefs_sync.device_id">Dispositivo</span>: <code id="sync-device-id">…</code>
-                  · <span data-i18n="prefs_sync.last_sync">Última sincronización</span>: <span id="sync-last-time">—</span>
-                </p>
               </div>
 
               <!-- Journal: qué hizo cada ciclo -->

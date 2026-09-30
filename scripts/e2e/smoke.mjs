@@ -27,7 +27,7 @@
 //
 //   npm run e2e:smoke
 //
-// No corre en CI a propósito: depende del WebKitWebDriver del sistema.
+// El workflow manual E2E Rustty ejecuta este mismo smoke con Xvfb y Openbox.
 
 import { execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
@@ -37,6 +37,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { findSshd, startSshd } from "./sshd.mjs";
 import { openSession, sleep } from "./webdriver.mjs";
+import { checkPrefsSync } from "./prefs-sync.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const application = path.join(root, "src-tauri/target/debug/rustty");
@@ -44,6 +45,8 @@ const driverBin = process.env.TAURI_DRIVER || "tauri-driver";
 const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "rustty-e2e-"));
 const children = [];
 const failures = [];
+const artifactsDir = process.env.E2E_ARTIFACT_DIR ? path.resolve(process.env.E2E_ARTIFACT_DIR) : null;
+if (artifactsDir) fs.mkdirSync(artifactsDir, { recursive: true });
 
 function check(name, ok, detail = "") {
   console.log(`${ok ? "  ok " : " FALLO"}  ${name}${detail ? ` — ${detail}` : ""}`);
@@ -413,7 +416,6 @@ async function main() {
   // herramientas de captura. HOME apunta a un ~/.ssh de prueba; XAUTHORITY se
   // fija para que el cambio de HOME no deje a la app sin acceso al display.
   const home = prepareHome();
-  const sftpServer = await prepareSftpServer(home);
   start(driverBin, ["--port", "4444"], {
     XDG_DATA_HOME: workDir,
     GDK_BACKEND: "x11",
@@ -424,6 +426,16 @@ async function main() {
 
   const app = await openSession({ application });
   try {
+    await app.waitFor("#btn-welcome-local", 60000);
+    // El updater puede abrir un diálogo en mitad de otro caso y consumir su
+    // confirmación. Preferencias solo del webview aislado; la recarga cancela
+    // la comprobación inicial que ya pudiera estar en vuelo.
+    await app.exec(`
+      localStorage.setItem("rustty-prefs", JSON.stringify({ checkUpdatesOnStartup: false, lang: "es" }));
+      setTimeout(() => location.reload(), 50);
+      return true;
+    `);
+    await sleep(2000);
     await app.waitFor("#btn-welcome-local", 60000);
     await sleep(2500);
     check("la interfaz monta y enseña el dashboard", true);
@@ -460,13 +472,19 @@ async function main() {
     );
     check("al terminar el shell la pestaña pasa a cerrada", /error/.test(String(closed)), String(closed));
 
+    await checkPrefsSync(app, workDir, check);
     await checkIpcLeastPrivilege(app, home);
+    const sftpServer = await prepareSftpServer(home);
     if (sftpServer) {
       await checkSftpPanel(app);
     } else {
+      if (process.env.E2E_REQUIRE_SFTP === "1") throw new Error("falta sshd: SFTP es obligatorio en esta ejecución");
       console.log("  --   sin sshd en esta máquina: se salta la sección del panel SFTP");
     }
     if (process.env.E2E_SCREENSHOT) await app.screenshot(process.env.E2E_SCREENSHOT);
+  } catch (err) {
+    if (artifactsDir) await app.screenshot(path.join(artifactsDir, "failure.png")).catch(() => {});
+    throw err;
   } finally {
     await app.close().catch(() => {});
   }
@@ -480,6 +498,7 @@ try {
   console.error(`\nE2E abortado: ${err.message}`);
   exitCode = 2;
 } finally {
+  if (artifactsDir) fs.writeFileSync(path.join(artifactsDir, "rustty.log"), readLog());
   for (const child of children) child.kill("SIGTERM");
   // Los procesos recién terminados pueden seguir escribiendo un instante
   // (cachés de GTK en el HOME de prueba): se reintenta en vez de fallar.
