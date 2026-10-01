@@ -52,7 +52,6 @@ import { foldSearchText, groupConnectionSearch, matchSegments } from "./modules/
 import { clampUiZoom } from "./modules/num.js";
 import { baseSlugifyThemeId } from "./modules/text.js";
 import { formatTime, formatRelativeTimeShort, formatDashboardTime } from "./modules/datetime.js";
-import { formatAccelerator } from "./modules/platform.js";
 import { compareVersions, normalizeVersion } from "./modules/version.js";
 import {
   groupActivityByDay,
@@ -70,6 +69,7 @@ import { compilePromptRegex, segmentByPrompt, DEFAULT_PROMPT_PATTERN } from "./m
 import { layoutToTree, paneDims, layoutSize } from "./modules/tmux/layout-view.js";
 import { leafIds } from "./modules/panes/tree.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
+import { createShortcutController } from "./modules/shortcuts/controller.js";
 import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { tabIndexForKey } from "./modules/tab-navigation.js";
 import {
@@ -1671,7 +1671,7 @@ function switchPrefsTab(tab) {
   if (tab === "sync") tab = "data";
   if (tab === "keepass") tab = "credentials";
   prefsActiveTab = tab;
-  cancelShortcutCapture();
+  shortcuts.cancelCapture();
   document.querySelectorAll(".prefs-nav-item").forEach((el) => {
     const name = el.dataset.prefsTab;
     const active = name === tab;
@@ -1888,7 +1888,7 @@ function openSettingsModal() {
   refreshAppLogInfo();
 
   // Atajos: (re)render con los valores actuales
-  renderShortcutsList();
+  shortcuts.render();
 
   // Sincronización: cargar config + secretos
   populateSyncTab();
@@ -2402,6 +2402,7 @@ function shouldAutoSyncProfiles() {
     && (
       (_syncConfigCache.selective?.profiles ?? true)
       || (_syncConfigCache.selective?.prefs ?? true)
+      || (_syncConfigCache.selective?.shortcuts ?? true)
       || (_syncConfigCache.selective?.notes ?? true)
       || (_syncConfigCache.selective?.secrets ?? false)
     );
@@ -3807,7 +3808,7 @@ function closeSettingsModal() {
   uiThemePreview = null;
   applyTheme(prefs.theme);
   applyPrefsToAllTerminals();
-  cancelShortcutCapture();
+  shortcuts.cancelCapture();
   document.getElementById("modal-prefs-overlay").classList.add("hidden");
 }
 
@@ -22908,7 +22909,7 @@ function bindUIEvents() {
     });
     sidebarSearch.addEventListener("keydown", (e) => {
       const combo = comboFromEvent(e);
-      const clearCombo = getShortcut("clear_sidebar_search");
+      const clearCombo = shortcuts.get("clear_sidebar_search");
       if (combo && clearCombo && combo === clearCombo) {
         clearSidebarSearch();
         e.preventDefault();
@@ -23188,24 +23189,7 @@ function bindUIEvents() {
     tabs[next].focus();
   });
 
-  // Atajos de teclado: delegación sobre la lista
-  const shortcutsList = document.getElementById("shortcuts-list");
-  if (shortcutsList) {
-    shortcutsList.addEventListener("click", (e) => {
-      const row = e.target.closest(".shortcut-row");
-      if (!row) return;
-      const id = row.dataset.shortcutId;
-      if (e.target.classList.contains("btn-shortcut-edit"))  startShortcutCapture(id, row);
-      if (e.target.classList.contains("btn-shortcut-clear")) setShortcut(id, null);
-      if (e.target.classList.contains("btn-shortcut-reset")) resetShortcut(id);
-    });
-  }
-  document.getElementById("btn-shortcuts-export")
-    ?.addEventListener("click", () => exportShortcuts());
-  document.getElementById("btn-shortcuts-import")
-    ?.addEventListener("click", () => importShortcuts());
-  document.getElementById("btn-shortcuts-apply-preset")
-    ?.addEventListener("click", () => applyShortcutPresetFromUi());
+  shortcuts.bind();
 
   // Acerca de: enlaces externos (pasan por el opener del sistema)
   document.querySelectorAll(".about-link").forEach((a) => {
@@ -25263,51 +25247,53 @@ async function copyBlockDiffUnified() {
   toast(t("blocks.diff_copied"), "success");
 }
 
-const SHORTCUT_ACTIONS = {
-  paste_terminal:    { default: "Ctrl+Alt+V",     run: () => pasteIntoActiveTerminal() },
-  copy_terminal:     { default: "Ctrl+Alt+C",     run: () => copyActiveSelection() },
-  paste_password:    { default: "Ctrl+P",         run: () => pasteSessionPasswordIntoActiveTerminal() },
-  new_local_shell:   { default: "Ctrl+Shift+T",   run: () => openLocalShell() },
-  new_connection:    { default: "Ctrl+Shift+N",   run: () => openNewConnectionModal() },
-  search_connections:{ default: "Ctrl+K",         run: () => focusConnectionSearch() },
-  clear_sidebar_search:{ default: "Escape",       scope: "sidebar-search", run: () => clearSidebarSearch() },
-  close_tab:         { default: "Ctrl+W",         run: () => { if (activeSessionId) closeSession(activeSessionId); } },
-  next_tab:          { default: "Ctrl+Tab",       run: () => switchTab(1) },
-  prev_tab:          { default: "Ctrl+Shift+Tab", run: () => switchTab(-1) },
-  next_pane:         { default: "Ctrl+Alt+ArrowRight", run: () => focusPaneByOffset(+1) },
-  prev_pane:         { default: "Ctrl+Alt+ArrowLeft",  run: () => focusPaneByOffset(-1) },
-  prev_command_block:{ default: "Alt+ArrowUp",    run: () => navigateCommandBlock(-1) },
-  next_command_block:{ default: "Alt+ArrowDown",  run: () => navigateCommandBlock(1) },
-  // Acciones sobre el bloque actual. Sin atajo por defecto: son de uso puntual
-  // y cualquier combinación razonable ya la usan las TUIs.
-  copy_block_command:{ default: "",               run: () => copyActiveBlockCommand() },
-  copy_block_output: { default: "",               run: () => copyActiveBlockOutput() },
-  copy_block_markdown:{ default: "",              run: () => copyActiveBlockMarkdown() },
-  export_block_markdown:{ default: "",            run: () => exportActiveBlockMarkdown() },
-  diff_block_previous:{ default: "",              run: () => openBlockDiff(-1) },
-  show_blocks_panel: { default: "",              run: () => toggleBlocksPanel() },
-  open_preferences:  { default: "Ctrl+,",         run: () => openSettingsModal() },
-  zoom_in:           { default: "Ctrl+=",         run: () => adjustTerminalFontSize(+1) },
-  zoom_out:          { default: "Ctrl+-",         run: () => adjustTerminalFontSize(-1) },
-  zoom_reset:        { default: "Ctrl+0",         run: () => adjustTerminalFontSize("reset") },
-  ui_zoom_in:        { default: "Ctrl+Alt+=",     run: () => adjustUiZoom(+1) },
-  ui_zoom_out:       { default: "Ctrl+Alt+-",     run: () => adjustUiZoom(-1) },
-  ui_zoom_reset:     { default: "Ctrl+Alt+0",     run: () => adjustUiZoom("reset") },
-  reconnect_session: { default: "Ctrl+Shift+R",   run: () => { if (activeSessionId) reconnectSession(activeSessionId); } },
-  find_in_terminal:  { default: "Ctrl+F",         run: () => toggleTerminalSearch() },
-  clear_terminal:    { default: null,             run: () => clearActiveTerminal() },
-  sftp_toggle_panel: { default: "Ctrl+Shift+F",   run: () => toggleActiveSftpPanel() },
-  sftp_toggle_follow:{ default: null,             run: () => toggleActiveSftpFollow() },
-  sftp_toggle_sudo:  { default: null,             run: () => toggleActiveSftpElevated() },
-  toggle_zen_mode:   { default: "F11",            run: () => toggleZenMode() },
-  disconnect_all:    { default: "",               run: () => disconnectAll() },
-  open_command_editor: { default: "Ctrl+Shift+E", run: () => openCommandEditor() },
-  open_note_editor:    { default: "Ctrl+Shift+M", run: () => openActiveSessionNote() },
-  command_palette:     { default: "Ctrl+Shift+P", run: () => openCommandPalette() },
-  // Sin atajo por defecto: Ctrl+U lo usan TUIs (vim/less), así que dejamos que
-  // el usuario elija la combinación en Preferencias → Atajos.
-  clear_prompt_line:   { default: "",            run: () => clearActivePromptLine() },
-};
+const shortcuts = createShortcutController({
+  getPrefs: () => prefs,
+  save: () => { savePrefs(); scheduleProfileAutoSync(); },
+  toast, confirm: confirmThemed, files, readLimit: FILE_READ_LIMITS.shortcuts,
+  t, applyTranslations, fileErrorText,
+  actions: {
+    paste_terminal: () => pasteIntoActiveTerminal(),
+    copy_terminal: () => copyActiveSelection(),
+    paste_password: () => pasteSessionPasswordIntoActiveTerminal(),
+    new_local_shell: () => openLocalShell(),
+    new_connection: () => openNewConnectionModal(),
+    search_connections: () => focusConnectionSearch(),
+    clear_sidebar_search: () => clearSidebarSearch(),
+    close_tab: () => { if (activeSessionId) closeSession(activeSessionId); },
+    next_tab: () => switchTab(1),
+    prev_tab: () => switchTab(-1),
+    next_pane: () => focusPaneByOffset(+1),
+    prev_pane: () => focusPaneByOffset(-1),
+    prev_command_block: () => navigateCommandBlock(-1),
+    next_command_block: () => navigateCommandBlock(1),
+    copy_block_command: () => copyActiveBlockCommand(),
+    copy_block_output: () => copyActiveBlockOutput(),
+    copy_block_markdown: () => copyActiveBlockMarkdown(),
+    export_block_markdown: () => exportActiveBlockMarkdown(),
+    diff_block_previous: () => openBlockDiff(-1),
+    show_blocks_panel: () => toggleBlocksPanel(),
+    open_preferences: () => openSettingsModal(),
+    zoom_in: () => adjustTerminalFontSize(+1),
+    zoom_out: () => adjustTerminalFontSize(-1),
+    zoom_reset: () => adjustTerminalFontSize("reset"),
+    ui_zoom_in: () => adjustUiZoom(+1),
+    ui_zoom_out: () => adjustUiZoom(-1),
+    ui_zoom_reset: () => adjustUiZoom("reset"),
+    reconnect_session: () => { if (activeSessionId) reconnectSession(activeSessionId); },
+    find_in_terminal: () => toggleTerminalSearch(),
+    clear_terminal: () => clearActiveTerminal(),
+    sftp_toggle_panel: () => toggleActiveSftpPanel(),
+    sftp_toggle_follow: () => toggleActiveSftpFollow(),
+    sftp_toggle_sudo: () => toggleActiveSftpElevated(),
+    toggle_zen_mode: () => toggleZenMode(),
+    disconnect_all: () => disconnectAll(),
+    open_command_editor: () => openCommandEditor(),
+    open_note_editor: () => openActiveSessionNote(),
+    command_palette: () => openCommandPalette(),
+    clear_prompt_line: () => clearActivePromptLine(),
+  },
+});
 
 /** Abre el editor de notas del perfil de la sesión activa (atajo). */
 function openActiveSessionNote() {
@@ -25319,51 +25305,6 @@ function openActiveSessionNote() {
   const pid = activeProfileId();
   if (pid) openNoteEditor(pid);
   else toast(t("notes.toast_no_profile"), "warning");
-}
-
-const SHORTCUT_IDS = Object.keys(SHORTCUT_ACTIONS);
-
-/**
- * Presets de atajos. Al aplicar uno, los valores definidos sobreescriben
- * `prefs.shortcuts`; los `id` ausentes se borran (vuelven al default de
- * cada acción). El preset `default` deja el mapa vacío.
- *
- * Sin soporte de chord (Ctrl+B,N estilo tmux), `tmux` aproxima la
- * convención con combos Alt+letra: prefix C-b queda implícito.
- */
-const SHORTCUT_PRESETS = {
-  default: {},
-  vim: {
-    next_pane: "Ctrl+Alt+L",
-    prev_pane: "Ctrl+Alt+H",
-    next_tab:  "Ctrl+Alt+J",
-    prev_tab:  "Ctrl+Alt+K",
-    new_connection:   "Ctrl+Alt+N",
-    new_local_shell:  "Ctrl+Alt+T",
-    find_in_terminal: "Ctrl+Alt+F",
-    close_tab:        "Ctrl+Alt+Q",
-  },
-  tmux: {
-    next_tab:         "Alt+N",
-    prev_tab:         "Alt+P",
-    next_pane:        "Alt+O",
-    prev_pane:        "Alt+Shift+O",
-    new_local_shell:  "Alt+C",
-    new_connection:   "Alt+Shift+N",
-    close_tab:        "Alt+X",
-    find_in_terminal: "Alt+/",
-  },
-};
-
-/* `CODE_LABEL_MAP`, `MODIFIER_KEYS`, `keyLabelFromCode` y `comboFromEvent` viven
-   ahora en `modules/shortcuts/combo.js` (con tests); es el núcleo puro del
-   dominio de atajos. `comboFromEvent` se importa arriba. */
-
-function getShortcut(id) {
-  const override = prefs.shortcuts?.[id];
-  if (override === null) return null;           // explícitamente desactivado
-  if (typeof override === "string") return override;
-  return SHORTCUT_ACTIONS[id]?.default ?? null;
 }
 
 // F2: renombra el elemento seleccionado según el contexto enfocado. En un panel
@@ -25407,31 +25348,9 @@ function handleRenameHotkey(e) {
 }
 
 function handleGlobalShortcut(e) {
+  if (shortcuts.capture(e)) return;
   if (handleRenameHotkey(e)) return;
-  const combo = comboFromEvent(e);
-  if (!combo) return;
-  // En layouts con +/= compartidos (US, ES…) "Ctrl++" se teclea como
-  // Ctrl+Shift+=. Lo aceptamos como alias del combo que tenga el usuario
-  // asignado a Ctrl+= (por defecto zoom_in) para que el "Ctrl con +" funcione
-  // sin tener que recordar la variante sin Shift.
-  const candidates = combo === "Ctrl+Shift+=" ? [combo, "Ctrl+="] : [combo];
-  for (const candidate of candidates) {
-    for (const id of SHORTCUT_IDS) {
-      // Las acciones con `scope` solo se ejecutan desde su contexto local
-      // (por ejemplo el input de búsqueda de la sidebar), no como atajo global.
-      if (SHORTCUT_ACTIONS[id].scope) continue;
-      if (getShortcut(id) === candidate) {
-        // Las acciones condicionales (hoy, la navegación OSC 133) devuelven
-        // `false` cuando no tienen destino: no secuestramos entonces la tecla
-        // que necesita el shell o TUI remoto.
-        const handled = SHORTCUT_ACTIONS[id].run();
-        if (handled === false) return;
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-    }
-  }
+  if (shortcuts.handle(e)) return;
 
   // Ctrl/Cmd+1…9 salta a la pestaña N (9 = última, convención de navegadores).
   // Va después del bucle de atajos configurables para no pisar un combo que el
@@ -25512,201 +25431,6 @@ function handleZoomWheel(e) {
   e.preventDefault();
   if (e.deltaY < 0) adjustTerminalFontSize(+1);
   else adjustTerminalFontSize(-1);
-}
-
-// ─── Editor de atajos ─────────────────────────────────────────
-
-/** Formatea un accelerator para visualización (mostrar "Cmd" en macOS). */
-/* `formatAccelerator` vive ahora en `modules/platform.js` (con tests); detecta
-   la plataforma con `isMacPlatform()`. */
-
-function renderShortcutsList() {
-  const root = document.getElementById("shortcuts-list");
-  if (!root) return;
-  const overrides = prefs.shortcuts || {};
-  let html = "";
-  for (const id of SHORTCUT_IDS) {
-    const current = getShortcut(id);
-    const isOverridden = Object.prototype.hasOwnProperty.call(overrides, id);
-    const label = t(`prefs_shortcuts.action_${id}`);
-    const placeholder = t("prefs_shortcuts.disabled");
-    html += `
-      <div class="shortcut-row" data-shortcut-id="${id}">
-        <div class="shortcut-label">${escHtml(label)}</div>
-        <kbd class="shortcut-combo">${current ? escHtml(formatAccelerator(current)) : `<em>${escHtml(placeholder)}</em>`}</kbd>
-        <div class="shortcut-row-actions">
-          <button type="button" class="btn-secondary btn-shortcut-edit" data-i18n="prefs_shortcuts.edit">Editar</button>
-          <button type="button" class="btn-secondary btn-shortcut-clear" data-i18n="prefs_shortcuts.disable">Desactivar</button>
-          <button type="button" class="btn-secondary btn-shortcut-reset" ${isOverridden ? "" : "disabled"} data-i18n="prefs_shortcuts.reset">Restablecer</button>
-        </div>
-      </div>`;
-  }
-  root.innerHTML = html;
-  applyTranslations(root);
-}
-
-function normalizeShortcutMap(raw) {
-  const input = raw?.shortcuts && typeof raw.shortcuts === "object" ? raw.shortcuts : raw;
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new Error("invalid shortcut map");
-  }
-  const out = {};
-  for (const id of SHORTCUT_IDS) {
-    if (!Object.prototype.hasOwnProperty.call(input, id)) continue;
-    const value = input[id];
-    if (value === null || typeof value === "string") {
-      out[id] = value;
-    }
-  }
-  return out;
-}
-
-async function exportShortcuts() {
-  let file;
-  try {
-    file = await files.pickFileToSave({
-      title: t("prefs_shortcuts.export_title"),
-      defaultPath: "rustty-shortcuts.json",
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    });
-  } catch (err) { toast(fileErrorText(err), "error"); return; }
-  if (!file) return;
-
-  try {
-    await files.writeTextFile(file, JSON.stringify({
-      formatVersion: 1,
-      exportedAt: new Date().toISOString(),
-      shortcuts: prefs.shortcuts || {},
-    }, null, 2));
-    toast(t("prefs_shortcuts.export_done"), "success");
-  } catch (err) {
-    toast(fileErrorText(err), "error");
-  }
-}
-
-async function importShortcuts() {
-  let file;
-  try {
-    file = await files.pickFileToOpen({
-      title: t("prefs_shortcuts.import_title"),
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    });
-  } catch (err) { toast(String(err), "error"); return; }
-  if (!file) return;
-
-  let imported;
-  try {
-    const text = await files.readTextFile(file, FILE_READ_LIMITS.shortcuts);
-    imported = normalizeShortcutMap(JSON.parse(text));
-  } catch {
-    toast(t("prefs_shortcuts.import_invalid"), "error");
-    return;
-  }
-
-  const ok = await confirmThemed({
-    title: t("prefs_shortcuts.import_title"),
-    message: t("prefs_shortcuts.import_confirm"),
-    submitLabel: t("prefs_shortcuts.import"),
-  });
-  if (!ok) return;
-
-  const now = new Date().toISOString();
-  prefs.shortcuts = imported;
-  prefs._shortcutsTs = Object.fromEntries(Object.keys(imported).map((id) => [id, now]));
-  prefs._prefsUpdatedAt = now;
-  savePrefs();
-  renderShortcutsList();
-  scheduleProfileAutoSync();
-  toast(t("prefs_shortcuts.import_done"), "success");
-}
-
-async function applyShortcutPresetFromUi() {
-  const select = document.getElementById("shortcuts-preset-select");
-  if (!select) return;
-  const presetId = select.value;
-  const preset = SHORTCUT_PRESETS[presetId];
-  if (!preset) return;
-
-  const ok = await confirmThemed({
-    title: t("prefs_shortcuts.preset_apply_title"),
-    message: t("prefs_shortcuts.preset_apply_confirm", {
-      preset: t(`prefs_shortcuts.preset_${presetId}`),
-    }),
-    submitLabel: t("prefs_shortcuts.preset_apply"),
-    danger: true,
-  });
-  if (!ok) return;
-
-  const now = new Date().toISOString();
-  prefs.shortcuts = { ...preset };
-  prefs._shortcutsTs = Object.fromEntries(
-    Object.keys(prefs.shortcuts).map((id) => [id, now])
-  );
-  prefs._prefsUpdatedAt = now;
-  savePrefs();
-  renderShortcutsList();
-  scheduleProfileAutoSync();
-  toast(t("prefs_shortcuts.preset_applied", {
-    preset: t(`prefs_shortcuts.preset_${presetId}`),
-  }), "success");
-}
-
-let _captureState = null; // { id, row, comboEl }
-
-function startShortcutCapture(id, rowEl) {
-  cancelShortcutCapture();
-  const comboEl = rowEl.querySelector(".shortcut-combo");
-  comboEl.innerHTML = `<em>${escHtml(t("prefs_shortcuts.press_keys"))}</em>`;
-  rowEl.classList.add("capturing");
-  _captureState = { id, row: rowEl, comboEl };
-  document.addEventListener("keydown", onCaptureKeydown, { capture: true });
-}
-
-function cancelShortcutCapture() {
-  if (!_captureState) return;
-  document.removeEventListener("keydown", onCaptureKeydown, { capture: true });
-  _captureState.row.classList.remove("capturing");
-  _captureState = null;
-  renderShortcutsList();
-}
-
-function onCaptureKeydown(e) {
-  if (!_captureState) return;
-  e.preventDefault();
-  e.stopPropagation();
-  if (e.key === "Escape") { cancelShortcutCapture(); return; }
-  const combo = comboFromEvent(e);
-  if (!combo) return; // solo modificadores: esperar a la tecla final
-  // Conflicto: si el combo ya está en uso por otra acción, aviso pero aplico (el usuario elige)
-  const conflict = SHORTCUT_IDS.find((other) => other !== _captureState.id && getShortcut(other) === combo);
-  setShortcut(_captureState.id, combo);
-  if (conflict) {
-    toast(
-      t("prefs_shortcuts.conflict_warn").replace("{action}", t(`prefs_shortcuts.action_${conflict}`)),
-      "warning",
-      4000,
-    );
-  }
-  cancelShortcutCapture();
-}
-
-function setShortcut(id, accel) {
-  const def = SHORTCUT_ACTIONS[id]?.default ?? null;
-  prefs.shortcuts = prefs.shortcuts || {};
-  if (accel === def) {
-    delete prefs.shortcuts[id]; // vuelve al default, no guardamos override
-  } else {
-    prefs.shortcuts[id] = accel;
-  }
-  savePrefs();
-  renderShortcutsList();
-}
-
-function resetShortcut(id) {
-  if (!prefs.shortcuts) return;
-  delete prefs.shortcuts[id];
-  savePrefs();
-  renderShortcutsList();
 }
 
 /** Ajusta el tamaño de fuente global del terminal y persiste. */

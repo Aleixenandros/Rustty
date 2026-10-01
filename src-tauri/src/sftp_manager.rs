@@ -1494,7 +1494,7 @@ impl FtpConnection {
                     controls,
                     false,
                 )?;
-                ftp.finalize_retr_stream(remote_file)
+                remote_file.finish()
                     .map_err(|e| e.to_string())?;
             }
             Self::ExplicitTls(ftp) => {
@@ -1508,7 +1508,7 @@ impl FtpConnection {
                     controls,
                     false,
                 )?;
-                ftp.finalize_retr_stream(remote_file)
+                remote_file.finish()
                     .map_err(|e| e.to_string())?;
             }
         }
@@ -1537,7 +1537,7 @@ impl FtpConnection {
                     controls,
                     true,
                 )?;
-                ftp.finalize_put_stream(remote_file)
+                remote_file.finish()
                     .map_err(|e| e.to_string())?;
             }
             Self::ExplicitTls(ftp) => {
@@ -1551,7 +1551,7 @@ impl FtpConnection {
                     controls,
                     true,
                 )?;
-                ftp.finalize_put_stream(remote_file)
+                remote_file.finish()
                     .map_err(|e| e.to_string())?;
             }
         }
@@ -3204,6 +3204,30 @@ mod tests {
         serde_json::from_str(&json).expect("perfil FTP válido")
     }
 
+    /// La API de streams de suppaftp 12 debe cerrar y consumir el acuse antes
+    /// de reutilizar el canal de control, tanto con FTP como con TLS.
+    #[cfg(target_os = "linux")]
+    fn check_ftp_stream_roundtrip(conn: &mut FtpConnection) {
+        fn roundtrip<T: suppaftp::TlsStream>(ftp: &mut suppaftp::ImplFtpStream<T>) {
+            let payload: Vec<u8> = (0..131_073).map(|n| (n % 251) as u8).collect();
+            let mut upload = ftp.put_with_stream("stream.bin").expect("abrir STOR");
+            std::io::Write::write_all(&mut upload, &payload).expect("escribir contenido");
+            upload.finish().expect("acuse de subida");
+            assert_eq!(ftp.size("stream.bin").expect("SIZE tras STOR"), payload.len());
+            let mut download = ftp.retr_as_stream("stream.bin").expect("abrir RETR");
+            let mut received = Vec::new();
+            std::io::Read::read_to_end(&mut download, &mut received).expect("leer contenido");
+            download.finish().expect("acuse de descarga");
+            assert_eq!(received, payload, "transferencia binaria íntegra");
+            assert_eq!(ftp.pwd().expect("PWD tras RETR"), "/");
+            ftp.rm("stream.bin").expect("limpiar fichero remoto");
+        }
+        match conn {
+            FtpConnection::Plain(ftp) => roundtrip(ftp),
+            FtpConnection::ExplicitTls(ftp) => roundtrip(ftp),
+        }
+    }
+
     /// **Integración**: recorre el CRUD del backend FTP contra un servidor
     /// `libunftp` real por el camino de producción (`connect_ftp` →
     /// `FtpConnection`): login anónimo, `pwd`, crear carpeta (MKD), subir un
@@ -3226,6 +3250,7 @@ mod tests {
         assert_eq!(conn.pwd().expect("pwd"), "/");
 
         // MKD + STOR (fichero vacío) por el camino real.
+        check_ftp_stream_roundtrip(&mut conn);
         conn.mkdir("carpeta").expect("crear carpeta");
         conn.create_file("carpeta/hola.txt").expect("crear fichero");
 
@@ -3281,6 +3306,7 @@ mod tests {
         let mut conn =
             connect_ftp(&profile, None, store.clone()).expect("primera conexión FTPS autofirmada");
         assert_eq!(conn.pwd().expect("pwd"), "/");
+        check_ftp_stream_roundtrip(&mut conn);
         conn.quit();
         assert!(store.exists(), "el TOFU debió guardar la huella del certificado");
 

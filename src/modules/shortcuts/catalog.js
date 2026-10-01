@@ -1,0 +1,71 @@
+// @ts-check
+/** Catálogo estable: ids de intercambio, combinaciones de fábrica y ámbito. */
+/** @type {Record<string, {default: string|null, scope?: string}>} */
+export const SHORTCUT_ACTIONS = {
+  paste_terminal: { default: "Ctrl+Alt+V" },
+  copy_terminal: { default: "Ctrl+Alt+C" },
+  paste_password: { default: "Ctrl+P" },
+  new_local_shell: { default: "Ctrl+Shift+T" },
+  new_connection: { default: "Ctrl+Shift+N" },
+  search_connections: { default: "Ctrl+K" },
+  clear_sidebar_search: { default: "Escape", scope: "sidebar-search" },
+  close_tab: { default: "Ctrl+W" },
+  next_tab: { default: "Ctrl+Tab" },
+  prev_tab: { default: "Ctrl+Shift+Tab" },
+  next_pane: { default: "Ctrl+Alt+ArrowRight" },
+  prev_pane: { default: "Ctrl+Alt+ArrowLeft" },
+  prev_command_block: { default: "Alt+ArrowUp" },
+  next_command_block: { default: "Alt+ArrowDown" },
+  copy_block_command: { default: "" },
+  copy_block_output: { default: "" },
+  copy_block_markdown: { default: "" },
+  export_block_markdown: { default: "" },
+  diff_block_previous: { default: "" },
+  show_blocks_panel: { default: "" },
+  open_preferences: { default: "Ctrl+," },
+  zoom_in: { default: "Ctrl+=" },
+  zoom_out: { default: "Ctrl+-" },
+  zoom_reset: { default: "Ctrl+0" },
+  ui_zoom_in: { default: "Ctrl+Alt+=" },
+  ui_zoom_out: { default: "Ctrl+Alt+-" },
+  ui_zoom_reset: { default: "Ctrl+Alt+0" },
+  reconnect_session: { default: "Ctrl+Shift+R" },
+  find_in_terminal: { default: "Ctrl+F" },
+  clear_terminal: { default: null },
+  sftp_toggle_panel: { default: "Ctrl+Shift+F" },
+  sftp_toggle_follow: { default: null },
+  sftp_toggle_sudo: { default: null },
+  toggle_zen_mode: { default: "F11" },
+  disconnect_all: { default: "" },
+  open_command_editor: { default: "Ctrl+Shift+E" },
+  open_note_editor: { default: "Ctrl+Shift+M" },
+  command_palette: { default: "Ctrl+Shift+P" },
+  clear_prompt_line: { default: "" },
+};
+
+export const SHORTCUT_IDS = Object.keys(SHORTCUT_ACTIONS);
+
+/** @type {Record<string, Record<string, string|null>>} */
+export const SHORTCUT_PRESETS = {
+  default: {},
+  vim: {
+    next_pane: "Ctrl+Alt+L",
+    prev_pane: "Ctrl+Alt+H",
+    next_tab:  "Ctrl+Alt+J",
+    prev_tab:  "Ctrl+Alt+K",
+    new_connection:   "Ctrl+Alt+N",
+    new_local_shell:  "Ctrl+Alt+T",
+    find_in_terminal: "Ctrl+Alt+F",
+    close_tab:        "Ctrl+Alt+Q",
+  },
+  tmux: {
+    next_tab:         "Alt+N",
+    prev_tab:         "Alt+P",
+    next_pane:        "Alt+O",
+    prev_pane:        "Alt+Shift+O",
+    new_local_shell:  "Alt+C",
+    new_connection:   "Alt+Shift+N",
+    close_tab:        "Alt+X",
+    find_in_terminal: "Alt+/",
+  },
+};

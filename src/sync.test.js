@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { applyMergedState, buildSyncState } from "./sync.js";
 import { applyPrefsForm } from "./modules/prefs/sync.js";
+import { setShortcut } from "./modules/shortcuts/model.js";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -12,6 +13,19 @@ const remotePrefs = {
   userFoldersByWorkspace: { "ws-work": ["Producción"] },
 };
 const remote = { items: { "prefs:bundle": { data: remotePrefs, updated_at: linuxTimestamp, device_id: "linux" } } };
+
+it("editar, desactivar y restablecer un atajo viaja sin alterar las preferencias", async () => {
+  const source = { theme: "nord", _prefsUpdatedAt: linuxTimestamp };
+  const target = { theme: "light" };
+  for (const value of ["Alt+N", null, "Ctrl+Shift+N"]) {
+    setShortcut(source, "new_connection", value, windowsTimestamp);
+    const state = await buildSyncState({ profiles: [], prefs: source, deviceId: "linux", selective: { shortcuts: true }, credsCatalog: [] });
+    await applyMergedState(state, { profiles: [], prefs: target });
+    expect(target.shortcuts?.new_connection).toBe(value === "Ctrl+Shift+N" ? undefined : value);
+    expect(target.theme).toBe("light");
+    expect(source._prefsUpdatedAt).toBe(linuxTimestamp);
+  }
+});
 
 describe("preferencias de un equipo nuevo", () => {
   it("configurar sync no antepone los defaults de Windows al bundle de Linux", async () => {

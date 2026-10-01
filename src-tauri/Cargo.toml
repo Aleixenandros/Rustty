@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "2.16.0"
+version = "2.17.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -32,7 +32,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 # Notificaciones nativas del SO (aviso de fin de comando largo con la app en
 # segundo plano). El contenido lo compone el frontend; nunca lleva secretos.
-tauri-plugin-notification = "2"
+tauri-plugin-notification = "2.5.0"
 # Persistencia automática de tamaño y posición de la ventana entre ejecuciones
 tauri-plugin-window-state = "2"
 # Logs técnicos de diagnóstico a fichero con rotación acotada (no contenido de
@@ -96,7 +96,7 @@ reqwest = { version = "0.13.2", default-features = false, features = ["rustls", 
 urlencoding = "2"
 sha2 = "0.11"
 base64 = "0.23"
-tauri-plugin-clipboard-manager = "2"
+tauri-plugin-clipboard-manager = "2.4.0"
 # Importador de Ásbrú Connection Manager: parseo YAML + descifrado de contraseñas
 # (Blowfish-CBC con KDF de OpenSSL/MD5). WebCrypto no ofrece ni Blowfish ni MD5,
 # por eso este flujo vive en el backend.
@@ -111,8 +111,8 @@ hex = "0.4"
 # directamente para construir la entrada de autostart con o sin `--minimized`
 # y para consultar su estado, sin depender de un plugin adicional.
 auto-launch = "0.6"
-tauri-plugin-updater = "2.11.0"
-tauri-plugin-process = "2.3.1"
+tauri-plugin-updater = "2.13.0"
+tauri-plugin-process = "2.4.0"
 # Coincidencia de patrones para el paso `waitRegex` del motor de scripts. Ya
 # presente en el árbol de dependencias; se declara directo para poder usarlo.
 regex = "1.12.4"

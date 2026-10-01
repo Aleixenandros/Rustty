@@ -7,6 +7,12 @@ preferencias y nombres, el botón de sincronización lateral (configuración
 guardada, progreso, cancelación y reintento), los permisos del IPC y una transferencia SFTP contra
 un `sshd` efímero. No utiliza cuentas de nube ni secretos reales.
 
+La sección de atajos recorre Preferencias con eventos de teclado en el WebView,
+captura combinaciones ya asignadas sin ejecutarlas, cancela con Escape, cambia y
+restablece atajos, confirma/cancela presets y abre el formulario de conexión con
+una combinación personalizada. Comprueba el foco y los datos persistidos; no
+simula la distribución física del teclado ni los atajos reservados por el SO.
+
 En Linux hacen falta `cargo build --locked` en `src-tauri/`, `npm ci`,
 `tauri-driver` 2.1.0, WebKitWebDriver, `wmctrl` y un escritorio con gestor de
 ventanas. `TAURI_DRIVER` permite indicar la ruta del controlador. Con Rustty

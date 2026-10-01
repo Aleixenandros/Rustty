@@ -126,6 +126,8 @@ El capturador detecta cualquier combinación de **Ctrl / Alt / Shift / Meta** m�
 
 Si un atajo entra en conflicto con otro ya asignado, Rustty te avisa con un toast pero deja que decidas: puedes mantener el conflicto (uno de los dos no funcionará) o elegir una combinación distinta.
 
+Mientras se captura una combinación, su acción habitual no se ejecuta. **Escape** cancela la captura y devuelve el foco al botón **Editar**. Los cambios se guardan al asignar, desactivar o restablecer el atajo; con la sincronización de atajos habilitada también llegan a los demás equipos. **Restablecer** elimina la combinación personalizada en todos ellos y recupera la de fábrica.
+
 Dentro de **Preferencias**, las secciones laterales forman una lista de
 pestañas accesible: **↑/↓** o **←/→** cambian de sección, e **Inicio/Fin** saltan
 a los extremos. El foco y los estados `aria-selected` acompañan siempre a la

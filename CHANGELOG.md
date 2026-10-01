@@ -2,11 +2,21 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
-## [Sin publicar]
+## [2.17.0] - 2026-10-02
 
 ### Añadido
 
 - Botón **Sincronizar ahora** junto al estado al pie de la barra lateral, también en el modo de solo iconos. Usa la configuración guardada, indica el progreso y se desactiva durante la sincronización o si no está habilitada; pulsar el estado sigue abriendo las preferencias de copias de seguridad.
+
+### Cambiado
+
+- El catálogo, el editor y el manejo de los atajos de teclado pasan a módulos independientes, con pruebas de combinaciones, ámbitos y persistencia. Las pruebas de la aplicación cubren la navegación por Preferencias, la captura, la cancelación, los presets y la ejecución de atajos personalizados.
+- Dependencias actualizadas: Tauri y sus plugins de JavaScript y Rust se actualizan juntos; suppaftp 12 usa el cierre explícito de sus streams para comprobar el resultado de las transferencias FTP/FTPS. También se actualizan reqwest, rcgen, el plugin de logs y las herramientas de CI.
+
+### Corregido
+
+- Editar, desactivar o restablecer un atajo registra y sincroniza esa modificación. Restablecer los valores de fábrica, también al aplicar presets o importar atajos, comunica la retirada del atajo personalizado para que no reaparezca desde otro equipo.
+- Al capturar un atajo ya asignado se guarda la combinación sin ejecutar su acción global; Escape cancela la captura y devuelve el foco al editor. Cancelar la primera sincronización también restaura el estado previo y libera el botón lateral.
 
 ## [2.16.0] - 2026-10-01
 
