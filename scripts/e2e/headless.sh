@@ -14,6 +14,7 @@ fi
 export E2E_ARTIFACT_DIR="${E2E_ARTIFACT_DIR:-$(mktemp -d /tmp/rustty-e2e-artifacts-XXXXXX)}"
 mkdir -p "$E2E_ARTIFACT_DIR"
 export E2E_SYNC_SCREENSHOT="$E2E_ARTIFACT_DIR/first-sync.png"
+export E2E_SIDEBAR_SCREENSHOT="$E2E_ARTIFACT_DIR/sidebar-sync.png"
 export E2E_SCREENSHOT="$E2E_ARTIFACT_DIR/final.png"
 openbox >"$E2E_ARTIFACT_DIR/openbox.log" 2>&1 &
 window_manager_pid=$!

@@ -2107,7 +2107,7 @@ async function populateSyncTab() {
   const lastSyncAt = syncLastSyncAt();
   document.getElementById("sync-last-time").textContent =
     lastSyncAt ? new Date(lastSyncAt).toLocaleString() : "—";
-  if (config.enabled && backend !== "none" && lastSyncAt) {
+  if (!_syncInFlight && config.enabled && backend !== "none" && lastSyncAt) {
     setSyncStatus("success", "prefs_sync.status_success");
   }
   updateSidebarSyncStatus();
@@ -2172,6 +2172,7 @@ function updateSidebarSyncStatus() {
   const dot = document.getElementById("sidebar-sync-dot");
   const label = document.getElementById("sidebar-sync-label");
   const meta = document.getElementById("sidebar-sync-meta");
+  const runButton = document.getElementById("sidebar-sync-now");
   const enabled = !!_syncConfigCache?.enabled && _syncConfigCache.backend !== "none";
   const state = enabled ? _syncSidebarState : "idle";
   const backend = syncBackendLabel(_syncConfigCache?.backend || "none");
@@ -2184,6 +2185,17 @@ function updateSidebarSyncStatus() {
     dot.classList.add(state);
     label.textContent = enabled ? t(_syncSidebarTextKey) : t("prefs_sync.status_disabled");
     meta.textContent = enabled ? `${backend} · ${last}` : backend;
+  }
+  if (runButton) {
+    const busy = _syncInFlight || _syncSidebarState === "busy";
+    const actionKey = !enabled ? "prefs_sync.status_disabled"
+      : busy ? "prefs_sync.status_busy" : "prefs_sync.run_now";
+    runButton.disabled = !enabled || busy;
+    runButton.setAttribute("aria-busy", String(busy));
+    runButton.dataset.i18nTitle = actionKey;
+    runButton.dataset.i18nAriaLabel = actionKey;
+    runButton.title = t(actionKey);
+    runButton.setAttribute("aria-label", t(actionKey));
   }
   renderSyncBackendCards();
   renderDashboard();
@@ -2406,7 +2418,7 @@ function scheduleProfileAutoSync() {
 }
 
 async function runSyncWithCurrentState({ persistConfig = false, announce = false } = {}) {
-  if (persistConfig && _syncProfileAutoTimer) {
+  if ((persistConfig || announce) && _syncProfileAutoTimer) {
     clearTimeout(_syncProfileAutoTimer);
     _syncProfileAutoTimer = null;
   }
@@ -2415,6 +2427,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     return null;
   }
 
+  const previousStatus = { state: _syncSidebarState, textKey: _syncSidebarTextKey };
   _syncInFlight = true;
   setSyncStatus("busy", "prefs_sync.status_busy");
   try {
@@ -2584,6 +2597,12 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     throw err;
   } finally {
     _syncInFlight = false;
+    // Cancelar la primera sincronización también libera el botón y el estado.
+    if (_syncSidebarState === "busy") {
+      setSyncStatus(previousStatus.state, previousStatus.textKey);
+    } else {
+      updateSidebarSyncStatus();
+    }
     if (_syncPending) {
       _syncPending = false;
       scheduleProfileAutoSync();
@@ -23061,6 +23080,12 @@ function bindUIEvents() {
     ?.addEventListener("click", () => {
       prefsActiveTab = "data";
       openSettingsModal();
+    });
+  document.getElementById("sidebar-sync-now")
+    ?.addEventListener("click", () => {
+      // La barra lateral usa lo guardado, nunca los controles del modal oculto.
+      runSyncWithCurrentState({ persistConfig: false, announce: true })
+        .catch((err) => console.error("[sync] sidebar", err));
     });
 
   // Botón de shell local ($_ )

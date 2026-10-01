@@ -1118,17 +1118,26 @@ body:not(.native-scrollbars) #connection-list::-webkit-scrollbar-thumb:hover {
   padding: 4px 0;
 }
 
+.sidebar-sync-footer {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-right: 8px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+}
+
 .sidebar-sync-status {
   display: flex;
   align-items: center;
+  flex: 1;
   gap: 9px;
-  width: 100%;
+  min-width: 0;
   min-height: 48px;
   padding: 8px 12px;
   border: 0;
-  border-top: 1px solid var(--border-subtle);
   border-radius: 0;
-  background: var(--surface-sunken);
+  background: transparent;
   color: var(--text);
   text-align: left;
   cursor: pointer;
@@ -1136,6 +1145,43 @@ body:not(.native-scrollbars) #connection-list::-webkit-scrollbar-thumb:hover {
 
 .sidebar-sync-status:hover {
   background: var(--row-hover-bg);
+}
+
+.sidebar-sync-status .sync-dot {
+  flex-shrink: 0;
+}
+
+.sidebar-sync-now {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--subtext0);
+}
+
+.sidebar-sync-now:hover:not(:disabled) {
+  background: var(--row-hover-bg);
+  color: var(--text);
+}
+
+.sidebar-sync-now:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.sidebar-sync-now[aria-busy="true"] {
+  color: var(--text);
+  opacity: 1;
+  cursor: progress;
+}
+
+.sidebar-sync-now[aria-busy="true"] svg {
+  animation: sync-boot-spin 0.9s linear infinite;
 }
 
 .sidebar-sync-copy {
@@ -9096,6 +9142,21 @@ body.sidebar-mode-rail #sidebar {
 body.sidebar-mode-rail #sidebar-header {
   padding: 0 8px;
   justify-content: center;
+}
+
+body.sidebar-mode-rail .sidebar-sync-footer {
+  flex-direction: column;
+  padding: 0 0 8px;
+}
+
+body.sidebar-mode-rail .sidebar-sync-status {
+  width: 100%;
+  min-height: 32px;
+  justify-content: center;
+}
+
+body.sidebar-mode-rail .sidebar-sync-copy {
+  display: none;
 }
 
 body.sidebar-mode-rail #sidebar-header .sidebar-logo,

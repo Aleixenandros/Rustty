@@ -179,13 +179,18 @@
             <button class="btn-link" id="btn-first-import" data-i18n="sidebar.empty_import">Importar de otro cliente…</button>
           </div>
         </div>
-        <button id="sidebar-sync-status" class="sidebar-sync-status" type="button" data-i18n-title="prefs_sync.title" title="Sincronización">
-          <span class="sync-dot idle" id="sidebar-sync-dot"></span>
-          <span class="sidebar-sync-copy">
-            <span id="sidebar-sync-label" data-i18n="prefs_sync.status_disabled">Sync desactivado</span>
-            <span id="sidebar-sync-meta">—</span>
-          </span>
-        </button>
+        <div class="sidebar-sync-footer">
+          <button id="sidebar-sync-status" class="sidebar-sync-status" type="button" data-i18n-title="prefs_sync.title" data-i18n-aria-label="prefs_sync.title" title="Sincronización">
+            <span class="sync-dot idle" id="sidebar-sync-dot"></span>
+            <span class="sidebar-sync-copy">
+              <span id="sidebar-sync-label" data-i18n="prefs_sync.status_disabled">Sync desactivado</span>
+              <span id="sidebar-sync-meta">—</span>
+            </span>
+          </button>
+          <button id="sidebar-sync-now" class="sidebar-sync-now" type="button" data-i18n-title="prefs_sync.run_now" data-i18n-aria-label="prefs_sync.run_now" title="Sincronizar ahora" disabled>
+            <svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg>
+          </button>
+        </div>
       </aside>
 
       <div id="sidebar-resize-handle" aria-hidden="true"></div>

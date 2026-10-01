@@ -2,6 +2,12 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [Sin publicar]
+
+### Añadido
+
+- Botón **Sincronizar ahora** junto al estado al pie de la barra lateral, también en el modo de solo iconos. Usa la configuración guardada, indica el progreso y se desactiva durante la sincronización o si no está habilitada; pulsar el estado sigue abriendo las preferencias de copias de seguridad.
+
 ## [2.16.0] - 2026-10-01
 
 ### Añadido

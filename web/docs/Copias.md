@@ -32,7 +32,7 @@ La sincronización comprueba el estado **al iniciar la app** y se dispara **cada
 
 Desde la v1.51.0 existe además la **sincronización periódica**: un selector en Preferencias → Copias de seguridad para buscar cambios de otros equipos cada 1, 5, 15, 30 o 60 minutos mientras la app está abierta. Viene **desactivada por defecto** y el intervalo lo eliges tú. Si una pasada (periódica o la del arranque) no trae ningún cambio, no reescribe nada y **no toca la interfaz**: ni redibuja la barra lateral ni interrumpe lo que estés haciendo.
 
-Si pulsas **Sincronizar ahora**, Rustty cancela cualquier autosync pendiente y ejecuta la sincronización al momento.
+Si pulsas **Sincronizar ahora**, Rustty cancela cualquier autosync pendiente y ejecuta la sincronización al momento. El botón de flecha circular junto al estado, al pie de la barra lateral izquierda, permite hacerlo sin abrir Preferencias y usa la configuración guardada. Se desactiva mientras sincroniza o si la sincronización no está habilitada. Pulsar el texto del estado sigue abriendo **Copias de seguridad** para configurar la nube.
 
 Al abrir Rustty, si ya tienes una sincronización configurada, la app hace una comprobación silenciosa de arranque. Si el estado lógico local y remoto ya coincide, no reescribe el blob cifrado ni crea un snapshot histórico nuevo. Cuando termina correctamente, el estado muestra **Sincronizado** y conserva la última fecha real de sincronización. Durante esa pasada inicial, un **indicador discreto** en la esquina inferior muestra «Sincronizando…» y después «Al día» (desactivable en Preferencias).
 

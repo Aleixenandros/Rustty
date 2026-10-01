@@ -3,7 +3,8 @@
 `npm run e2e:smoke` abre el binario debug con `tauri-driver` y WebKitWebDriver,
 un directorio de datos temporal y un HOME de prueba. Comprueba la consola local,
 la recuperación inicial desde una nube cifrada local, la conservación de
-preferencias y nombres, los permisos del IPC y una transferencia SFTP contra
+preferencias y nombres, el botón de sincronización lateral (configuración
+guardada, progreso, cancelación y reintento), los permisos del IPC y una transferencia SFTP contra
 un `sshd` efímero. No utiliza cuentas de nube ni secretos reales.
 
 En Linux hacen falta `cargo build --locked` en `src-tauri/`, `npm ci`,
