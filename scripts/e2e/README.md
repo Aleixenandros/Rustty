@@ -7,6 +7,10 @@ preferencias y nombres, el botón de sincronización lateral (configuración
 guardada, progreso, cancelación y reintento), los permisos del IPC y una transferencia SFTP contra
 un `sshd` efímero. No utiliza cuentas de nube ni secretos reales.
 
+También crea una carpeta y mueve dos conexiones desde la interfaz: comprueba
+que llegan al backend cifrado, que el mensaje y el historial cuentan los
+cambios enviados y que repetir la sincronización indica que todo está al día.
+
 La sección de atajos recorre Preferencias con eventos de teclado en el WebView,
 captura combinaciones ya asignadas sin ejecutarlas, cancela con Escape, cambia y
 restablece atajos, confirma/cancela presets y abre el formulario de conexión con

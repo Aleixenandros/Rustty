@@ -836,6 +836,7 @@ export async function runSync(ctx) {
     notesDocs,
     credsCatalog,
   });
+  summary.uploaded = outcome.uploaded || {};
   // Metadatos del ciclo (toasts/journal del caller): timestamps futuros
   // acotados, tombstones podados, duplicados fusionados y desvío de reloj.
   summary.meta = {
@@ -847,6 +848,25 @@ export async function runSync(ctx) {
   // Mitad frontend del GC de tombstones (el backend ya podó el estado).
   pruneLocalTombstones(ctx.prefs, config.tombstone_retention_days);
   return summary;
+}
+
+/** Desglosa los cambios enviados y los aplicados aquí sin confundirlos con el refresco de UI. */
+export function summarizeSyncChanges(summary) {
+  const received = {
+    profiles: (summary.addedProfiles || 0) + (summary.updatedProfiles || 0) + (summary.deletedProfiles || 0),
+    prefs: summary.prefsChanged ? 1 : 0,
+    themes: summary.themesChanged || 0,
+    shortcuts: summary.shortcutsChanged || 0,
+    snippets: summary.snippetsChanged || 0,
+    notes: summary.notesChanged || 0,
+    creds: summary.credsChanged || 0,
+    secrets: summary.secretsChanged || 0,
+  };
+  const sent = Object.fromEntries(Object.keys(received).map((key) => [key, summary.uploaded?.[key] || 0]));
+  const counts = Object.fromEntries(Object.keys(received).map((key) => [key, received[key] + sent[key]]));
+  const uploaded = Object.values(sent).reduce((sum, n) => sum + n, 0);
+  const downloaded = Object.values(received).reduce((sum, n) => sum + n, 0);
+  return { sent, received, counts, uploaded, downloaded, total: uploaded + downloaded };
 }
 
 /**

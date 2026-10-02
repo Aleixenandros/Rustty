@@ -97,6 +97,10 @@ export async function checkPrefsSync(app, workDir, check) {
         },
       },
     };
+    current.items["profile:e2e-sync-b"] = {
+      ...current.items["profile:e2e-sync"],
+      data: { ...current.items["profile:e2e-sync"].data, id: "e2e-sync-b", name: "Servidor secundario", host: "192.0.2.2" },
+    };
     await invoke("sync_save_config", { config });
     await invoke("sync_run", { current, passphrase });
     await invoke("sync_clear_local_cache");
@@ -190,6 +194,52 @@ export async function checkPrefsSync(app, workDir, check) {
     const renamedCloud = await invoke("sync_peek_remote", { passphrase });
     check("el nombre corregido llega a la nube", renamedCloud.items["prefs:bundle"].data.workspaces.some((w) => w.id === "ws-sync" && w.name === "Producción renombrada"));
     await app.jsClick("#btn-prefs-cancel");
+
+    // Reproduce el incidente: crear carpeta, mover dos conexiones por los
+    // handlers reales de selección/drag y pulsar la sincronización lateral.
+    await app.exec(`
+      document.getElementById("connection-list").dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true, cancelable: true, clientX: 100, clientY: 150,
+      }));
+      return true;
+    `);
+    await app.jsClick('[data-ctx="new-folder"]');
+    await app.waitFor(".folder-inline-input input");
+    await app.exec(`
+      const input = document.querySelector(".folder-inline-input input");
+      input.value = "Nueva carpeta";
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+      const a = document.querySelector('.conn-item[data-id="e2e-sync"]');
+      const b = document.querySelector('.conn-item[data-id="e2e-sync-b"]');
+      a.click();
+      b.dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
+      const dataTransfer = new DataTransfer();
+      a.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer }));
+      document.querySelector('[data-folder-path="Nueva carpeta"] .folder-header')
+        .dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }));
+      return true;
+    `);
+    await app.waitFor('[data-folder-path="Nueva carpeta"] .conn-item[data-id="e2e-sync-b"]');
+    const beforeMoveSync = await readPrefs();
+    await app.jsClick("#sidebar-sync-now");
+    received = await waitSync(beforeMoveSync._lastSyncAt);
+    check("mover dos conexiones informa de los cambios enviados",
+      await app.exec('return [...document.querySelectorAll(".toast-message")].some((el) => el.textContent.includes("3 cambios enviados y 0 recibidos"));'));
+    const movedCloud = await invoke("sync_peek_remote", { passphrase });
+    check("la nueva carpeta y las dos conexiones llegan al backend cifrado",
+      movedCloud.items["prefs:bundle"].data.userFoldersByWorkspace["ws-sync"].includes("Nueva carpeta")
+      && ["e2e-sync", "e2e-sync-b"].every((id) => movedCloud.items[`profile:${id}`].data.group === "Nueva carpeta"));
+    const journalBeforeRepeat = await app.exec('return JSON.parse(localStorage.getItem("rustty-sync-journal"));');
+    check("el historial registra las subidas aunque no haya descargas",
+      journalBeforeRepeat[0].uploaded === 3 && journalBeforeRepeat[0].downloaded === 0
+      && journalBeforeRepeat[0].counts.profiles === 2 && journalBeforeRepeat[0].counts.prefs === 1);
+    await app.waitFor("#sidebar-sync-now:not(:disabled)");
+    await app.jsClick("#sidebar-sync-now");
+    received = await waitSync(received._lastSyncAt);
+    check("repetir la sincronización informa de que todo está al día",
+      await app.exec('return [...document.querySelectorAll(".toast-message")].some((el) => el.textContent.includes("Todo al día. No había cambios pendientes."));'));
+    check("un ciclo vacío no añade otra entrada de cambios al historial",
+      await app.exec('return JSON.parse(localStorage.getItem("rustty-sync-journal")).length;') === journalBeforeRepeat.length);
 
     // Retener la respuesta permite observar el progreso y dos clics rápidos,
     // sin depender de cuánto tarde el cifrado en cada máquina.

@@ -2547,7 +2547,7 @@ pub async fn sync_run(
     // equipo empujó entre nuestro read y nuestro write: se re-lee, re-mezcla
     // y reintenta una vez en lugar de pisar su push en silencio.
     let mut retried_conflict = false;
-    let (merged, clamped, pruned_tombstones, deduped) = loop {
+    let (merged, uploaded, clamped, pruned_tombstones, deduped) = loop {
         // 1. Pull. `read_all` trae también los blobs duplicados que una
         // carrera de primera sync entre dos equipos pudo dejar en Drive:
         // se fusionan aquí (LWW) y el write posterior retira los sobrantes.
@@ -2591,7 +2591,10 @@ pub async fn sync_run(
                 return Err(IpcError::from(msg));
             }
         }
-        break (merged, clamped, pruned, deduped);
+        // Se informa solo del intento confirmado: un 412 vuelve a leer y
+        // recalcular contra el remoto nuevo, sin sumar el intento fallido.
+        let uploaded = merged.user_changes_since(&remote);
+        break (merged, uploaded, clamped, pruned, deduped);
     };
 
     // 4. Cache local (snapshot del último merge). No persistimos secretos en
@@ -2614,6 +2617,7 @@ pub async fn sync_run(
 
     Ok(SyncRunOutcome {
         state: merged,
+        uploaded,
         clamped,
         pruned_tombstones,
         deduped,

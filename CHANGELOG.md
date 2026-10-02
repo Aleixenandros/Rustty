@@ -6,6 +6,7 @@ Todas las novedades reseñables del proyecto Rustty.
 
 ### Corregido
 
+- La sincronización distingue los cambios enviados de los recibidos y registra también las subidas en el historial. Crear una carpeta o mover conexiones ya no muestra «0 cambios» cuando la operación ha enviado esas modificaciones; si no queda nada pendiente, indica que todo está al día.
 - La publicación crea un único borrador antes de compilar las plataformas y comparte su identificador. Así se evita repartir los instaladores entre varios borradores del mismo tag; además, se exige que el manifiesto del actualizador incluya Linux, Windows y macOS antes de publicar.
 
 ## [2.17.0] - 2026-10-02

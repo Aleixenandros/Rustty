@@ -77,8 +77,15 @@ export async function checkShortcuts(app, check) {
   await app.jsClick("#btn-prefs-cancel");
 
   await press("KeyK", "k", { ctrlKey: true });
-  await app.waitFor("#sidebar-search:focus, #dashboard-search:focus");
+  // Esperar al foco del documento: la ventana de prueba puede estar detrás
+  // de otra app, y WebKit no siempre aplica :focus en ese estado.
+  let searchFocused = false;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    searchFocused = await app.exec('return ["sidebar-search", "dashboard-search"].includes(document.activeElement.id);');
+    if (searchFocused) break;
+    await sleep(100);
+  }
   check("el atajo de búsqueda lleva el foco a las conexiones",
-    await app.exec('return ["sidebar-search", "dashboard-search"].includes(document.activeElement.id);'));
+    searchFocused, searchFocused ? "" : await app.exec('return JSON.stringify({ active: document.activeElement.id, visibility: document.visibilityState, windowFocused: document.hasFocus() });'));
   await press("Escape", "Escape");
 }

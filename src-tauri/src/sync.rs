@@ -308,6 +308,8 @@ pub struct SyncItem {
 #[derive(Serialize)]
 pub struct SyncRunOutcome {
     pub state: SyncState,
+    /// Cambios de datos enviados al remoto, por categoría (sin dispositivos).
+    pub uploaded: HashMap<String, usize>,
     /// Timestamps futuros acotados al recibir el remoto (relojes desviados).
     pub clamped: usize,
     /// Tombstones podados por antigüedad en este ciclo.
@@ -346,6 +348,37 @@ impl Default for SyncState {
 }
 
 impl SyncState {
+    /// Diferencias de contenido que aporta este estado al anterior. No cuenta
+    /// relojes, presencia de equipos ni la poda de tombstones antiguos.
+    pub fn user_changes_since(&self, previous: &Self) -> HashMap<String, usize> {
+        let mut counts = HashMap::new();
+        let mut count = |key: &str| {
+            let category = match key.split(':').next().unwrap_or("") {
+                "profile" => "profiles",
+                "prefs" => "prefs",
+                "theme" => "themes",
+                "shortcut" => "shortcuts",
+                "snippet" => "snippets",
+                "note" => "notes",
+                "cred" => "creds",
+                "secret" => "secrets",
+                _ => return,
+            };
+            *counts.entry(category.to_string()).or_insert(0) += 1;
+        };
+        for (key, item) in &self.items {
+            if previous.items.get(key).is_none_or(|old| old.data != item.data) {
+                count(key);
+            }
+        }
+        for key in self.tombstones.keys() {
+            if !previous.tombstones.contains_key(key) {
+                count(key);
+            }
+        }
+        counts
+    }
+
     /// Igualdad **de contenido**: ignora los `updated_at` de items y
     /// tombstones y el `device_id`. Compara solo qué datos hay y qué claves
     /// están borradas. Sirve para decidir si un push aporta un cambio real al
@@ -665,6 +698,50 @@ mod tests {
         b.tombstones.insert("profile:x".into(), ts(500));
 
         assert!(a.content_eq(&b));
+    }
+
+    #[test]
+    fn cambios_enviados_carpeta_y_dos_conexiones() {
+        let mut remote = SyncState::default();
+        remote.items.insert("prefs:bundle".into(), item_en(0, json!({"userFoldersByWorkspace": {"default": []}})));
+        for id in ["a", "b"] {
+            remote.items.insert(format!("profile:{id}"), item_en(0, json!({"id": id, "group": null})));
+        }
+        let mut local = remote.clone();
+        local.items.insert("prefs:bundle".into(), item_en(10, json!({"userFoldersByWorkspace": {"default": ["Nueva"]}})));
+        for id in ["a", "b"] {
+            local.items.insert(format!("profile:{id}"), item_en(10, json!({"id": id, "group": "Nueva"})));
+        }
+        local.merge(remote.clone());
+        assert_eq!(local.user_changes_since(&remote), HashMap::from([("profiles".into(), 2), ("prefs".into(), 1)]));
+        assert!(local.user_changes_since(&local).is_empty(), "repetir la sync no vuelve a contar la subida");
+    }
+
+    #[test]
+    fn cambios_enviados_excluyen_presencia_relojes_y_poda() {
+        let mut previous = SyncState::default();
+        previous.items.insert("shortcut:x".into(), item_en(0, json!("Alt+X")));
+        previous.tombstones.insert("profile:borrado".into(), ts(0));
+        let mut next = previous.clone();
+        next.items.insert("shortcut:x".into(), item_en(10, json!("Alt+X")));
+        next.items.insert("device:equipo".into(), item_en(10, json!({"last_seen": "2026-10-03"})));
+        next.tombstones.clear();
+        assert!(next.user_changes_since(&previous).is_empty());
+    }
+
+    #[test]
+    fn cambios_enviados_cuentan_borrados_una_vez_y_no_descargas() {
+        let mut previous = SyncState::default();
+        previous.items.insert("profile:a".into(), item_en(0, json!({"name": "A"})));
+        let mut next = SyncState::default();
+        next.tombstones.insert("profile:a".into(), ts(10));
+        assert_eq!(next.user_changes_since(&previous), HashMap::from([("profiles".into(), 1)]));
+        let mut again = next.clone();
+        again.tombstones.insert("profile:a".into(), ts(20));
+        assert!(again.user_changes_since(&next).is_empty());
+        let mut local = SyncState::default();
+        local.merge(previous.clone());
+        assert!(local.user_changes_since(&previous).is_empty(), "descargar no es subir");
     }
 
     // Construye un SyncItem con un timestamp explícito (segundos desde epoch

@@ -2453,14 +2453,11 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
       firstSyncMode,
     });
     _syncFirstRunOk = true;
-    const total = summary.addedProfiles + summary.deletedProfiles
-      + (summary.updatedProfiles || 0)
-      + summary.themesChanged + summary.shortcutsChanged
-      + (summary.snippetsChanged || 0)
-      + (summary.secretsChanged || 0)
-      + (summary.credsChanged || 0)
-      + (summary.notesChanged || 0)
-      + (summary.prefsChanged ? 1 : 0);
+    const transfer = sync.summarizeSyncChanges(summary);
+    const total = transfer.downloaded;
+    const syncMessage = transfer.total > 0
+      ? t("prefs_sync.done_sync_directions", { sent: transfer.uploaded, received: transfer.downloaded })
+      : t("prefs_sync.done_sync_unchanged");
     // Sin cambios (el caso común del arranque y del pull periódico), la sync
     // debe ser INVISIBLE: nada de recargar perfiles, re-renderizar la sidebar
     // y el dashboard ni re-aplicar tema/prefs — eso tiraba el foco, cerraba
@@ -2497,7 +2494,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
       new Date(lastSyncAt).toLocaleString();
     setSyncStatus("success", "prefs_sync.status_success");
     if (announce) {
-      toast(t("prefs_sync.done_sync").replace("{n}", total), "success", { category: "sync" });
+      toast(syncMessage, "success", { category: "sync" });
     }
     // Aviso único por arranque si el reloj local difiere del servidor: el
     // LWW confía en la hora de pared y un desvío grande reparte "victorias"
@@ -2510,21 +2507,14 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
         "warning", 8000, { category: "sync" }
       );
     }
-    // Journal: qué hizo cada ciclo con cambios (y desde qué equipo).
-    if (total > 0) {
+    // Journal: incluye las subidas aunque no haya nada que aplicar aquí.
+    if (transfer.total > 0) {
       sync.recordSyncJournal({
         backend: _syncConfigCache?.backend || "none",
-        total,
-        counts: {
-          profiles: summary.addedProfiles + (summary.updatedProfiles || 0) + summary.deletedProfiles,
-          themes: summary.themesChanged,
-          shortcuts: summary.shortcutsChanged,
-          snippets: summary.snippetsChanged || 0,
-          notes: summary.notesChanged || 0,
-          creds: summary.credsChanged || 0,
-          secrets: summary.secretsChanged || 0,
-          prefs: !!summary.prefsChanged,
-        },
+        total: transfer.total,
+        counts: transfer.counts,
+        uploaded: transfer.uploaded,
+        downloaded: transfer.downloaded,
         devices: summary.originDevices || [],
         manual: !!announce,
       });
@@ -2532,11 +2522,11 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     }
     // El centro de actividad solo registra syncs con cambios (o manuales):
     // con el pull periódico, anotar cada ciclo vacío sería puro ruido.
-    if (total > 0 || announce) {
+    if (transfer.total > 0 || announce) {
       recordActivity({
         kind: "sync",
         status: "ok",
-        title: t("prefs_sync.done_sync").replace("{n}", total),
+        title: syncMessage,
         detail: new Date(lastSyncAt).toLocaleString(),
         actionLabel: t("activity.open"),
         action: () => {
@@ -2738,7 +2728,10 @@ function renderSyncJournal() {
     const from = devices.length
       ? ` · ${t("prefs_sync.journal_from", { device: devices.join(", ") })}`
       : "";
-    const what = parts.join(", ") || t("prefs_sync.journal_no_changes");
+    const detail = parts.join(", ") || t("prefs_sync.journal_no_changes");
+    const what = typeof entry.uploaded === "number"
+      ? `${t("prefs_sync.transfer_counts", { sent: entry.uploaded, received: entry.downloaded })} · ${detail}`
+      : detail;
     return `<li class="sync-journal-item"><span class="sync-journal-when">${escHtml(when)}</span> — ${escHtml(what)}${escHtml(from)}</li>`;
   }).join("");
 }

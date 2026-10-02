@@ -34,6 +34,8 @@ Desde la v1.51.0 existe además la **sincronización periódica**: un selector e
 
 Si pulsas **Sincronizar ahora**, Rustty cancela cualquier autosync pendiente y ejecuta la sincronización al momento. El botón de flecha circular junto al estado, al pie de la barra lateral izquierda, permite hacerlo sin abrir Preferencias y usa la configuración guardada. Se desactiva mientras sincroniza o si la sincronización no está habilitada. Pulsar el texto del estado sigue abriendo **Copias de seguridad** para configurar la nube.
 
+El resultado distingue los cambios **enviados** a la nube de los **recibidos** en este equipo. El historial registra ambos. Si no queda nada pendiente —por ejemplo, porque la sincronización automática ya envió los cambios—, el mensaje indica **Todo al día**.
+
 Al abrir Rustty, si ya tienes una sincronización configurada, la app hace una comprobación silenciosa de arranque. Si el estado lógico local y remoto ya coincide, no reescribe el blob cifrado ni crea un snapshot histórico nuevo. Cuando termina correctamente, el estado muestra **Sincronizado** y conserva la última fecha real de sincronización. Durante esa pasada inicial, un **indicador discreto** en la esquina inferior muestra «Sincronizando…» y después «Al día» (desactivable en Preferencias).
 
 Al **cerrar la app** con cambios aún pendientes de subir, Rustty hace una sincronización final rápida (máximo 3 segundos) para que no se pierdan hasta el próximo arranque. Se controla con el toggle **Sincronizar al salir** (activado por defecto).
