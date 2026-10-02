@@ -2,6 +2,12 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [Unreleased]
+
+### Corregido
+
+- La publicación crea un único borrador antes de compilar las plataformas y comparte su identificador. Así se evita repartir los instaladores entre varios borradores del mismo tag; además, se exige que el manifiesto del actualizador incluya Linux, Windows y macOS antes de publicar.
+
 ## [2.17.0] - 2026-10-02
 
 ### Añadido

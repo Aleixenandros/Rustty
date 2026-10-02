@@ -7,7 +7,12 @@ on:
   workflow_dispatch:  # También se puede lanzar manualmente desde GitHub
 
 permissions:
-  contents: write     # Necesario para que tauri-action pueda crear el release
+  contents: write
+
+# Dos ejecuciones del mismo tag tampoco deben crear/publicar borradores a la vez.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   # ── Gate de publicación ───────────────────────────────────────
@@ -127,8 +132,47 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets --locked -- -D warnings
 
-  build:
+  # Un único creador antes de la matriz: GitHub admite varios borradores con
+  # el mismo tag si las plataformas intentan crearlos simultáneamente.
+  prepare_release:
     needs: verify
+    runs-on: ubuntu-latest
+    name: Crear borrador único
+    outputs:
+      release_id: ${{ steps.release.outputs.id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Crear o recuperar el borrador del tag
+        id: release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate --slurp |
+            jq --arg tag "$GITHUB_REF_NAME" '[.[][] | select(.tag_name == $tag)]' > releases.json
+          count=$(jq 'length' releases.json)
+          if [ "$count" -gt 1 ]; then
+            echo "::error::Hay varios borradores para ${GITHUB_REF_NAME}; hay que reunir sus assets antes de continuar."
+            exit 1
+          elif [ "$count" -eq 1 ]; then
+            jq -e '.[0].draft == true' releases.json > /dev/null || {
+              echo "::error::La versión ya está publicada; no se reemplazan sus artefactos."
+              exit 1
+            }
+            release_id=$(jq -r '.[0].id' releases.json)
+          else
+            ./scripts/changelog-section.sh "${GITHUB_REF_NAME#v}" > release-notes.md
+            printf '\n---\n\nRegistro completo: [CHANGELOG.md](https://github.com/%s/blob/main/CHANGELOG.md)\n' "$GITHUB_REPOSITORY" >> release-notes.md
+            release_id=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" \
+              -f tag_name="$GITHUB_REF_NAME" -f name="Rustty ${GITHUB_REF_NAME}" \
+              -f target_commitish="$GITHUB_SHA" -F draft=true -F prerelease=false \
+              -F body=@release-notes.md --jq '.id')
+          fi
+          echo "id=$release_id" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: [verify, prepare_release]
     strategy:
       fail-fast: false
       matrix:
@@ -211,33 +255,6 @@ jobs:
             echo "macOS dependencies already installed."
           fi
 
-      # ── Notas del release ─────────────────────────────────────
-      # Las notas son el changelog de esa versión: quien entra en la página del
-      # release quiere leer ahí mismo qué cambia, no un «ver CHANGELOG para
-      # detalles» que le obliga a salir. La sección la extrae
-      # `scripts/changelog-section.sh` del propio CHANGELOG.md, que el job
-      # `verify` ya ha comprobado que existe para este tag.
-      - name: Preparar notas del release
-        id: notas
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${GITHUB_REF_NAME:0:1}" = "v" ]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-            CUERPO=$(./scripts/changelog-section.sh "$VERSION")
-          else
-            CUERPO=""
-          fi
-          {
-            echo "cuerpo<<RUSTTY_EOF"
-            echo "$CUERPO"
-            echo ""
-            echo "---"
-            echo ""
-            echo "Registro completo: [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md)"
-            echo "RUSTTY_EOF"
-          } >> "$GITHUB_OUTPUT"
-
       # ── Dependencias JS ───────────────────────────────────────
       - name: Install JS dependencies
         run: npm ci
@@ -263,22 +280,16 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          # Solo publicar release cuando el disparador es un tag `v*`. En un
-          # `workflow_dispatch` desde `main`, `github.ref_name` sería «main» y
-          # crearía un release «Rustty main»; con tagName vacío tauri-action se
-          # limita a compilar (smoke test) sin tocar releases.
-          tagName:       ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName:   ${{ startsWith(github.ref, 'refs/tags/') && format('Rustty {0}', github.ref_name) || '' }}
-          releaseBody:   ${{ steps.notas.outputs.cuerpo }}
-          releaseDraft:  true
-          prerelease:    false
+          # La matriz comparte el id creado antes de compilar. Desde main queda
+          # vacío: el workflow manual sigue siendo una prueba de compilación.
+          releaseId: ${{ needs.prepare_release.outputs.release_id }}
           args:          --target ${{ matrix.target }}
 
       # ── Extras de Linux: empaquetar .pkg.tar.zst para Arch ────
       # Tauri no tiene target pacman; reusamos el .deb (mismo árbol)
       # extrayéndolo y empaquetándolo de nuevo como paquete Arch.
       - name: Build Arch Linux package (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-22.04' && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -332,7 +343,7 @@ jobs:
       # manifest `es.rustty.Rustty.yml` que compila desde fuente sin red—; aquí
       # se usa `es.rustty.Rustty.bundle.yml`.
       - name: Build Flatpak (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-22.04' && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -380,7 +391,7 @@ jobs:
 
       # ── Extras de Windows: MSI sin sufijo _en-US + .exe portable ──
       - name: Rename MSI and publish portable exe (Windows)
-        if: matrix.platform == 'windows-latest'
+        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -400,7 +411,7 @@ jobs:
           # antes de este paso— se queda apuntando al id borrado: 404 para el
           # updater de Windows. Un PATCH conserva el id, así que el manifiesto sigue
           # siendo válido y no hay nada que reescribir.
-          $releaseId = gh api "repos/$repo/releases" --paginate --jq "map(select(.tag_name==`"$tag`"))[0].id"
+          $releaseId = "${{ needs.prepare_release.outputs.release_id }}"
           if (-not $releaseId) { throw "No se encontró el release del tag $tag" }
 
           $assets = gh api "repos/$repo/releases/$releaseId/assets" --paginate | ConvertFrom-Json
@@ -419,7 +430,7 @@ jobs:
           gh release upload $tag "$base/$portable" --clobber
 
   publish_release:
-    needs: build
+    needs: [build, prepare_release]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     name: Publish release
@@ -447,16 +458,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if ! gh release download "${GITHUB_REF_NAME}" \
-                 --pattern latest.json --dir . --clobber \
-                 --repo "${GITHUB_REPOSITORY}" 2>/dev/null; then
-            echo "::warning::El release no tiene latest.json; se omite la verificación."
-            exit 0
-          fi
-          jq -e . latest.json > /dev/null   # debe ser JSON válido
+          gh release download "${GITHUB_REF_NAME}" \
+            --pattern latest.json --dir . --clobber --repo "${GITHUB_REPOSITORY}"
+          # Además de ids válidos, exigir las tres plataformas: una escritura
+          # concurrente del manifiesto no puede dejar una versión incompleta.
+          jq -e --arg version "${GITHUB_REF_NAME#v}" '
+            .version == $version and
+            (.platforms | has("linux-x86_64") and has("windows-x86_64") and
+              has("darwin-aarch64") and all(.[]; .signature | type == "string" and length > 0))
+          ' latest.json > /dev/null
 
-          RELEASE_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
-            --jq "map(select(.tag_name==\"${GITHUB_REF_NAME}\"))[0].id")
+          RELEASE_ID="${{ needs.prepare_release.outputs.release_id }}"
           gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" --paginate \
             --jq '.[] | "\(.id) \(.name)"' > assets.txt
           cut -d' ' -f1 assets.txt | sort > asset_ids.txt
@@ -487,8 +499,8 @@ jobs:
           mkdir -p dist-assets
           gh release download "${GITHUB_REF_NAME}" \
             --dir dist-assets --clobber --repo "${GITHUB_REPOSITORY}"
-          # Fuera del manifiesto: `latest.json` lo genera tauri-action y ya va
-          # firmado con la clave del updater, y `SHA256SUMS.txt` no puede
+          # Fuera del manifiesto: `latest.json` lo genera tauri-action y contiene
+          # las firmas de los artefactos del updater, y `SHA256SUMS.txt` no puede
           # firmarse a sí mismo. Se descartan DESPUÉS de descargar porque
           # `gh release download` no sabe excluir por nombre — solo incluir con
           # `--pattern`, que obligaría a enumerar todos los formatos.
