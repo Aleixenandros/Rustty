@@ -15387,7 +15387,7 @@ async function renderKnownHostsList() {
           <span class="global-tunnel-profile">${escHtml(hostLabel)}</span>
           <span class="global-tunnel-desc">${escHtml(e.fingerprint)}</span>
           <span class="global-tunnel-row-actions">
-            <button type="button" class="global-tunnel-action danger" data-known-host-action="remove">${escHtml(t("modal_known_hosts.remove"))}</button>
+            <button type="button" class="btn-secondary btn-compact danger" data-known-host-action="remove">${escHtml(t("modal_known_hosts.remove"))}</button>
           </span>
         </div>`;
     })
@@ -15637,11 +15637,11 @@ function renderScriptsList() {
           <span class="script-row-target" title="${escHtml(scriptTargetLabel(s.target))}">${escHtml(scriptTargetLabel(s.target))}</span>
           <span class="script-row-meta">${escHtml(meta)}</span>
           <span class="script-row-actions">
-            <button type="button" class="global-tunnel-action" data-script-action="run">${escHtml(t("scripts.run"))}</button>
-            <button type="button" class="global-tunnel-action" data-script-action="edit">${escHtml(t("scripts.edit"))}</button>
-            <button type="button" class="global-tunnel-action" data-script-action="duplicate">${escHtml(t("scripts.duplicate"))}</button>
-            <button type="button" class="global-tunnel-action" data-script-action="export">${escHtml(t("scripts.export_md"))}</button>
-            <button type="button" class="global-tunnel-action danger" data-script-action="delete">${escHtml(t("scripts.delete"))}</button>
+            <button type="button" class="btn-secondary btn-compact" data-script-action="run">${escHtml(t("scripts.run"))}</button>
+            <button type="button" class="btn-secondary btn-compact" data-script-action="edit">${escHtml(t("scripts.edit"))}</button>
+            <button type="button" class="btn-secondary btn-compact" data-script-action="duplicate">${escHtml(t("scripts.duplicate"))}</button>
+            <button type="button" class="btn-secondary btn-compact" data-script-action="export">${escHtml(t("scripts.export_md"))}</button>
+            <button type="button" class="btn-secondary btn-compact danger" data-script-action="delete">${escHtml(t("scripts.delete"))}</button>
           </span>
         </div>`;
     })
@@ -16462,8 +16462,8 @@ function renderScriptRunHosts() {
         <div class="script-run-host-top">
           <span class="script-run-host-name" title="${escHtml(h.name)}">${escHtml(h.name)}</span>
           <span class="script-status-badge" data-role="badge">${escHtml(t("scripts.status_pending"))}</span>
-          <button type="button" class="global-tunnel-action" data-script-run-copy="${escHtml(pid)}">${escHtml(t("scripts.copy"))}</button>
-          ${readonly ? "" : `<button type="button" class="global-tunnel-action danger" data-script-run-abort="${escHtml(pid)}">${escHtml(t("scripts.abort_host"))}</button>`}
+          <button type="button" class="btn-secondary btn-compact" data-script-run-copy="${escHtml(pid)}">${escHtml(t("scripts.copy"))}</button>
+          ${readonly ? "" : `<button type="button" class="btn-secondary btn-compact danger" data-script-run-abort="${escHtml(pid)}">${escHtml(t("scripts.abort_host"))}</button>`}
         </div>
         <div class="script-run-host-error hidden" data-role="error"></div>
         <details class="script-run-log-details" ${single ? "open" : ""}>
@@ -16852,8 +16852,8 @@ function renderScriptRunsHistory() {
           <span class="script-row-target" title="${escHtml(hostsLabel)}">${escHtml(hostsLabel)}</span>
           <span class="script-row-meta ${allOk ? "" : "error"}">${escHtml(when)} · ${escHtml(badge)}</span>
           <span class="script-row-actions">
-            <button type="button" class="global-tunnel-action" data-run-action="open">${escHtml(t("scripts.history_open"))}</button>
-            <button type="button" class="global-tunnel-action" data-run-action="export">${escHtml(t("scripts.export_log"))}</button>
+            <button type="button" class="btn-secondary btn-compact" data-run-action="open">${escHtml(t("scripts.history_open"))}</button>
+            <button type="button" class="btn-secondary btn-compact" data-run-action="export">${escHtml(t("scripts.export_log"))}</button>
           </span>
         </div>`;
     })
@@ -16901,7 +16901,7 @@ async function openScriptPicker(presetTarget) {
             <span class="script-row-target"></span>
             <span class="script-row-meta">${escHtml(steps)}</span>
             <span class="script-row-actions">
-              <button type="button" class="global-tunnel-action" data-script-pick-run="${escHtml(s.id)}">${escHtml(t("scripts.run"))}</button>
+              <button type="button" class="btn-secondary btn-compact" data-script-pick-run="${escHtml(s.id)}">${escHtml(t("scripts.run"))}</button>
             </span>
           </div>`;
       })
@@ -17162,8 +17162,8 @@ async function renderCredList() {
               ${badge}
               ${desc}
               <span class="cred-row-actions">
-                <button type="button" class="global-tunnel-action" data-cred-action="edit">${escHtml(t("prefs_credentials.edit"))}</button>
-                <button type="button" class="global-tunnel-action danger" data-cred-action="delete">${escHtml(t("prefs_credentials.delete"))}</button>
+                <button type="button" class="btn-secondary btn-compact" data-cred-action="edit">${escHtml(t("prefs_credentials.edit"))}</button>
+                <button type="button" class="btn-secondary btn-compact danger" data-cred-action="delete">${escHtml(t("prefs_credentials.delete"))}</button>
               </span>
             </div>
             <button type="button" class="cred-var" data-cred-action="copy" title="${escHtml(t("prefs_credentials.copy_var"))}">
@@ -17548,7 +17548,7 @@ function renderGlobalTunnelLists() {
           <span class="global-tunnel-desc">${escHtml(describeTunnel(tunnel))}</span>
           <span class="global-tunnel-meta">↑ ${formatSize(tunnel.bytesUp || 0)} · ↓ ${formatSize(tunnel.bytesDown || 0)}</span>
           <span class="global-tunnel-row-actions">
-            <button type="button" class="global-tunnel-action danger" data-global-tunnel-action="stop-active">${escHtml(t("tunnels.stop_short"))}</button>
+            <button type="button" class="btn-secondary btn-compact danger" data-global-tunnel-action="stop-active">${escHtml(t("tunnels.stop_short"))}</button>
           </span>
         </div>`)
       .join("")
@@ -17569,8 +17569,8 @@ function renderGlobalTunnelLists() {
             <span class="global-tunnel-desc">${escHtml(tunnel.name || describeTunnel(tunnel))}</span>
             <span class="global-tunnel-meta">${escHtml(describeTunnel(tunnel))}${tunnel.autoStart ? ` · ${escHtml(t("tunnels.auto_check"))}` : ""}</span>
             <span class="global-tunnel-row-actions">
-              <button type="button" class="global-tunnel-action" data-global-tunnel-action="start-saved" ${isActive ? "disabled" : ""}>${escHtml(isActive ? t("tunnels.active_badge") : t("tunnels.open"))}</button>
-              <button type="button" class="global-tunnel-action danger" data-global-tunnel-action="delete-saved">${escHtml(t("tunnels.delete_saved_submit"))}</button>
+              <button type="button" class="btn-secondary btn-compact" data-global-tunnel-action="start-saved" ${isActive ? "disabled" : ""}>${escHtml(isActive ? t("tunnels.active_badge") : t("tunnels.open"))}</button>
+              <button type="button" class="btn-secondary btn-compact danger" data-global-tunnel-action="delete-saved">${escHtml(t("tunnels.delete_saved_submit"))}</button>
             </span>
           </div>`;
       }).join("")
@@ -24103,9 +24103,9 @@ function renderSnippetList() {
           <span class="cred-name" title="${escHtml(s.name)}">${escHtml(s.name)}</span>
           ${sub}
           <span class="cred-row-actions">
-            <button type="button" class="global-tunnel-action" data-snippet-action="run">${escHtml(t("prefs_commands.insert"))}</button>
-            <button type="button" class="global-tunnel-action" data-snippet-action="edit">${escHtml(t("prefs_commands.edit"))}</button>
-            <button type="button" class="global-tunnel-action danger" data-snippet-action="delete">${escHtml(t("prefs_commands.delete"))}</button>
+            <button type="button" class="btn-secondary btn-compact" data-snippet-action="run">${escHtml(t("prefs_commands.insert"))}</button>
+            <button type="button" class="btn-secondary btn-compact" data-snippet-action="edit">${escHtml(t("prefs_commands.edit"))}</button>
+            <button type="button" class="btn-secondary btn-compact danger" data-snippet-action="delete">${escHtml(t("prefs_commands.delete"))}</button>
           </span>
         </div>
         <div class="cmd-row-preview">${escHtml(s.command || "")}</div>
@@ -24250,9 +24250,9 @@ function renderLocalCommandList() {
           ${badge}
           ${meta}
           <span class="cred-row-actions">
-            <button type="button" class="global-tunnel-action" data-localcmd-action="run">${escHtml(t("prefs_commands.run"))}</button>
-            <button type="button" class="global-tunnel-action" data-localcmd-action="edit">${escHtml(t("prefs_commands.edit"))}</button>
-            <button type="button" class="global-tunnel-action danger" data-localcmd-action="delete">${escHtml(t("prefs_commands.delete"))}</button>
+            <button type="button" class="btn-secondary btn-compact" data-localcmd-action="run">${escHtml(t("prefs_commands.run"))}</button>
+            <button type="button" class="btn-secondary btn-compact" data-localcmd-action="edit">${escHtml(t("prefs_commands.edit"))}</button>
+            <button type="button" class="btn-secondary btn-compact danger" data-localcmd-action="delete">${escHtml(t("prefs_commands.delete"))}</button>
           </span>
         </div>
         <div class="cmd-row-preview">${escHtml(c.command || "")}</div>

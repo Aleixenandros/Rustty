@@ -39,6 +39,7 @@ import { findSshd, startSshd } from "./sshd.mjs";
 import { openSession, sleep } from "./webdriver.mjs";
 import { checkPrefsSync } from "./prefs-sync.mjs";
 import { checkShortcuts } from "./shortcuts.mjs";
+import { checkTunnels } from "./tunnels.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const application = path.join(root, "src-tauri/target/debug/rustty");
@@ -483,6 +484,7 @@ async function main() {
       if (process.env.E2E_REQUIRE_SFTP === "1") throw new Error("falta sshd: SFTP es obligatorio en esta ejecución");
       console.log("  --   sin sshd en esta máquina: se salta la sección del panel SFTP");
     }
+    await checkTunnels(app, check, artifactsDir);
     if (process.env.E2E_SCREENSHOT) await app.screenshot(process.env.E2E_SCREENSHOT);
   } catch (err) {
     if (artifactsDir) await app.screenshot(path.join(artifactsDir, "failure.png")).catch(() => {});

@@ -17,6 +17,11 @@ restablece atajos, confirma/cancela presets y abre el formulario de conexión co
 una combinación personalizada. Comprueba el foco y los datos persistidos; no
 simula la distribución física del teclado ni los atajos reservados por el SO.
 
+El panel de túneles se comprueba en claro, oscuro y una ventana de 800 px:
+controles de cabecera juntos, contenido sin desbordar, minimizar/reabrir,
+cerrar y confirmar/cancelar el borrado de un túnel guardado. Las capturas se
+guardan en `E2E_ARTIFACT_DIR`; no se abren conexiones SSH para esta sección.
+
 En Linux hacen falta `cargo build --locked` en `src-tauri/`, `npm ci`,
 `tauri-driver` 2.1.0, WebKitWebDriver, `wmctrl` y un escritorio con gestor de
 ventanas. `TAURI_DRIVER` permite indicar la ruta del controlador. Con Rustty

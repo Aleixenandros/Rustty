@@ -55,6 +55,7 @@ export async function openSession({ application, driver = "http://127.0.0.1:4444
       ),
     screenshot: async (file) =>
       fs.writeFileSync(file, Buffer.from(await call("GET", `${base}/screenshot`), "base64")),
+    resize: (width, height) => call("POST", `${base}/window/rect`, { width, height }),
     close: () => call("DELETE", base),
     async waitFor(css, timeoutMs = 30000) {
       const started = Date.now();

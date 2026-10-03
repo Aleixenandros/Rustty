@@ -2,7 +2,11 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
-## [Unreleased]
+## [2.17.1] - 2026-10-03
+
+### Cambiado
+
+- El panel de túneles SSH agrupa minimizar y cerrar a la derecha, distribuye el formulario en columnas equilibradas y ajusta las filas a ventanas estrechas. Abrir, borrar y las acciones de listas de scripts, credenciales y comandos comparten los botones de la aplicación, incluidos el foco de teclado y los estados deshabilitados.
 
 ### Corregido
 

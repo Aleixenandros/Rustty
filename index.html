@@ -1286,10 +1286,12 @@
                deja los túneles corriendo (lo que hacía el aspa, sin decirlo).
                El aspa, cuando hay túneles activos, pregunta: es el único sitio
                desde el que cerrarlos todos de una vez. -->
-          <button class="btn-icon" id="btn-global-tunnels-minimize" data-i18n-title="tunnels.minimize_title" data-i18n-aria-label="tunnels.minimize" aria-label="Minimizar">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3.5 8.5h9"/></svg>
-          </button>
-          <button class="btn-icon" id="btn-global-tunnels-close" data-i18n-title="tunnels.close_title" data-i18n-aria-label="tunnels.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+          <div class="modal-header-actions">
+            <button type="button" class="btn-icon" id="btn-global-tunnels-minimize" data-i18n-title="tunnels.minimize_title" data-i18n-aria-label="tunnels.minimize" aria-label="Minimizar">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3.5 8.5h9"/></svg>
+            </button>
+            <button type="button" class="btn-icon" id="btn-global-tunnels-close" data-i18n-title="tunnels.close_title" data-i18n-aria-label="tunnels.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+          </div>
         </div>
 
         <div class="global-tunnels-body">
@@ -1543,10 +1545,10 @@
             <div class="script-run-footer">
               <span id="script-run-summary-line"></span>
               <span class="script-run-footer-actions">
-                <button type="button" class="global-tunnel-action hidden" id="btn-script-run-retry-failed">Reintentar fallidos</button>
-                <button type="button" class="global-tunnel-action hidden" id="btn-script-run-retry-all" data-i18n="scripts.retry_all">Reintentar todo</button>
-                <button type="button" class="global-tunnel-action" id="btn-script-run-export" data-i18n="scripts.export_log">Exportar .log</button>
-                <button type="button" class="global-tunnel-action danger" id="btn-script-abort-all" data-i18n="scripts.abort_all">Abortar todo</button>
+                <button type="button" class="btn-secondary btn-compact hidden" id="btn-script-run-retry-failed">Reintentar fallidos</button>
+                <button type="button" class="btn-secondary btn-compact hidden" id="btn-script-run-retry-all" data-i18n="scripts.retry_all">Reintentar todo</button>
+                <button type="button" class="btn-secondary btn-compact" id="btn-script-run-export" data-i18n="scripts.export_log">Exportar .log</button>
+                <button type="button" class="btn-secondary btn-compact danger" id="btn-script-abort-all" data-i18n="scripts.abort_all">Abortar todo</button>
                 <button type="button" class="btn-secondary" id="btn-script-run-done" data-i18n="scripts.close_btn">Cerrar</button>
               </span>
             </div>
