@@ -219,7 +219,7 @@ jobs:
       # `cargo-deny` y `cargo-cyclonedx` como binarios precompilados: compilarlos
       # desde fuente en cada run costaría más que todo el resto del job.
       - name: Install cargo-deny + cargo-cyclonedx
-        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2
         with:
           tool: cargo-deny,cargo-cyclonedx
 
@@ -308,7 +308,7 @@ jobs:
             pkg-config
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2
         with:
           tool: cargo-llvm-cov
 
