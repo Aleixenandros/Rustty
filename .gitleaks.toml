@@ -1,0 +1,21 @@
+# Configuración de gitleaks (escaneo de secretos del job «Cadena de suministro»).
+#
+# Parte de las reglas por defecto y solo añade exenciones con motivo escrito:
+# una exención sin justificación es una exención que nadie vuelve a revisar.
+
+title = "Rustty"
+
+[extend]
+useDefault = true
+
+# Huellas SHA256 de host keys SSH (`SHA256:` + 43 caracteres base64). Son
+# públicas por definición —las enseña `ssh-keygen -lf` y las imprime cada
+# cliente SSH en la primera conexión— y aparecen en la documentación de
+# `--host-key`, en los mensajes de error de la CLI y en los tests de
+# `host_keys`. La regla genérica (`generic-api-key`) las toma por un secreto
+# porque van detrás de la palabra «key» y tienen entropía alta (falso positivo
+# en v2.18.0, `web/docs/CLI.md`). Una clave privada SSH no tiene esta forma.
+[[allowlists]]
+description = "Huellas SHA256 de host keys SSH: públicas, no secretos"
+regexTarget = "line"
+regexes = ['''SHA256:[A-Za-z0-9+/]{43}''']
