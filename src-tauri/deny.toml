@@ -39,8 +39,10 @@ ignore = [
   # ── Excepciones añadidas el 2026-10-17 ─────────────────────────────────────
   #
   # Las tres son del crate `zip` 4.x y se arreglan en `zip` >= 9, pero llegan
-  # por `tauri-plugin-updater` (2.13.1, la última estable; la 3.x es alfa), que
-  # pide `zip 4`: no hay versión que forzar desde nuestro Cargo.toml. Alcance en
+  # por `tauri-plugin-updater`, que pide `zip ^4` en todas sus versiones
+  # publicadas (comprobado en el índice de crates.io el 2026-10-18: hasta la
+  # 2.14.0 y también la 3.0 alfa): no hay versión que forzar desde nuestro
+  # Cargo.toml. Alcance en
   # Rustty: el updater solo descomprime el paquete de actualización que él mismo
   # ha descargado de nuestra release y cuya firma minisign ha **verificado
   # antes** contra la clave pública embebida; un archivo malicioso no llega a
