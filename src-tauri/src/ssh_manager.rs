@@ -3188,10 +3188,54 @@ pub(crate) async fn authenticate_handle(
     } = result
     {
         if remaining_methods.contains(&MethodKind::KeyboardInteractive) {
-            return keyboard_interactive_auth(handle, username, host).await;
+            return keyboard_interactive_auth(handle, username, host, None).await;
         }
     }
     Ok(result)
+}
+
+/// Autenticación por contraseña, con el camino de PAM. Un `sshd` con
+/// `PasswordAuthentication no` y `KbdInteractiveAuthentication yes` —lo
+/// habitual con PAM y en muchos servidores corporativos— no ofrece el método
+/// `password`: pide la contraseña como primera pregunta de un intercambio
+/// `keyboard-interactive`. Quien teclea en `ssh` ni lo nota; un cliente que
+/// solo intente `password` falla con «métodos restantes: keyboard-interactive»
+/// aunque la contraseña sea buena. Aquí, si el servidor rechaza `password`
+/// **sin ofrecerlo** entre los métodos restantes y sí ofrece
+/// `keyboard-interactive`, la misma contraseña se entrega a su primera
+/// pregunta (ver [`keyboard_interactive_auth`]). Si el servidor sí ofrece
+/// `password` y lo ha rechazado, es que era incorrecta: reintentarla por el
+/// otro camino solo sumaría un intento fallido más (y un aviso de `fail2ban`).
+pub(crate) async fn password_auth_with_fallback(
+    handle: &mut client::Handle<host_keys::KnownHostsClient>,
+    username: &str,
+    host: &str,
+    password: String,
+) -> Result<AuthResult, AppError> {
+    let result = handle
+        .authenticate_password(username.to_string(), password.clone())
+        .await
+        .map_err(|e| AppError::Auth(format!("Autenticación por contraseña fallida: {e}")))?;
+    if let AuthResult::Failure {
+        ref remaining_methods,
+        partial_success: false,
+    } = result
+    {
+        if !remaining_methods.contains(&MethodKind::Password)
+            && remaining_methods.contains(&MethodKind::KeyboardInteractive)
+        {
+            return keyboard_interactive_auth(handle, username, host, Some(&password)).await;
+        }
+    }
+    Ok(result)
+}
+
+/// ¿Esta ronda de `keyboard-interactive` es la petición de contraseña de PAM?
+/// Una sola pregunta y sin eco. Cualquier otra forma —dos preguntas, o una con
+/// eco, como «Username:»— no es una contraseña y debe ir al usuario: el texto
+/// del prompt no sirve de criterio porque cada servidor lo traduce a su idioma.
+fn round_asks_for_password(prompts: &[auth_prompt::AuthPromptField]) -> bool {
+    matches!(prompts, [single] if !single.echo)
 }
 
 /// El método que el perfil declara, sin encadenar segundos factores.
@@ -3209,10 +3253,7 @@ async fn authenticate_first_factor(
             let pass = password
                 .cloned()
                 .ok_or_else(|| AppError::Auth("Se requiere contraseña".into()))?;
-            handle
-                .authenticate_password(username.to_string(), pass)
-                .await
-                .map_err(|e| AppError::Auth(format!("Autenticación por contraseña fallida: {e}")))
+            password_auth_with_fallback(handle, username, host, pass).await
         }
         AuthType::PublicKey => {
             let key_path = key_path
@@ -3234,7 +3275,9 @@ async fn authenticate_first_factor(
                 .map_err(|e| AppError::Auth(format!("Autenticación por clave fallida: {e}")))
         }
         AuthType::Agent => authenticate_with_agent(handle, username).await,
-        AuthType::KeyboardInteractive => keyboard_interactive_auth(handle, username, host).await,
+        AuthType::KeyboardInteractive => {
+            keyboard_interactive_auth(handle, username, host, None).await
+        }
     }
 }
 
@@ -3252,17 +3295,25 @@ const MAX_INTERACTIVE_ROUNDS: usize = 12;
 /// Las respuestas **no se guardan**: viven lo que dura el intercambio. Un
 /// código de un solo uso caduca en segundos, así que persistirlo solo añadiría
 /// un secreto en disco sin ninguna utilidad.
+///
+/// `password`: la contraseña del perfil cuando se llega aquí por el camino de
+/// PAM ([`password_auth_with_fallback`]). Se entrega **solo** a la primera
+/// ronda y solo si tiene la forma de una petición de contraseña
+/// ([`round_asks_for_password`]); todo lo demás —un segundo factor después,
+/// una ronda con otra forma, una contraseña que el servidor vuelve a pedir— va
+/// al usuario como siempre.
 pub(crate) async fn keyboard_interactive_auth(
     handle: &mut client::Handle<host_keys::KnownHostsClient>,
     username: &str,
     host: &str,
+    password: Option<&str>,
 ) -> Result<AuthResult, AppError> {
     let mut response = handle
         .authenticate_keyboard_interactive_start(username.to_string(), None)
         .await
         .map_err(|e| AppError::Auth(format!("Autenticación interactiva fallida: {e}")))?;
 
-    for _ in 0..MAX_INTERACTIVE_ROUNDS {
+    for round in 0..MAX_INTERACTIVE_ROUNDS {
         let (name, instructions, prompts) = match response {
             KeyboardInteractiveAuthResponse::Success => return Ok(AuthResult::Success),
             KeyboardInteractiveAuthResponse::Failure {
@@ -3289,13 +3340,12 @@ pub(crate) async fn keyboard_interactive_auth(
             })
             .collect();
 
-        let answers = auth_prompt::ask(host, username, &name, &instructions, &fields)
-            .await
-            .map_err(AppError::Auth)?;
-        let Some(answers) = answers else {
-            return Err(AppError::Auth(
-                "Autenticación interactiva cancelada".to_string(),
-            ));
+        let answers = match password.filter(|_| round == 0 && round_asks_for_password(&fields)) {
+            Some(secret) => vec![secret.to_string()],
+            None => auth_prompt::ask(host, username, &name, &instructions, &fields)
+                .await
+                .map_err(AppError::Auth)?
+                .ok_or_else(|| AppError::Auth("Autenticación interactiva cancelada".to_string()))?,
         };
 
         response = handle

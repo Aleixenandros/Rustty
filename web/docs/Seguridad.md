@@ -120,6 +120,8 @@ Este paso importa: el aviso de "host key cambiada" solo protege *después* de ha
 
 Si prefieres el comportamiento clásico —aceptar y recordar la primera clave automáticamente, sin preguntar (TOFU)—, desactiva **Confirmar la huella en la primera conexión** en Preferencias → Seguridad. Es más cómodo, pero renuncias a esa comprobación.
 
+La **CLI** aplica estas mismas preferencias (la interfaz las deja guardadas para ella al abrirse) y, además, tiene dos opciones para scripts que corren sin terminal: `--accept-host-key`, que aprende la clave de un servidor desconocido sin preguntar solo en esa ejecución, y `--host-key <huella>`, que acepta únicamente la huella SHA256 que tú declaras, sin consultar ni escribir `known_hosts`. La segunda es la recomendable para automatizar: comprobar la huella por un canal de confianza y fijarla en el script. Ambas se describen en la [guía de la CLI](?page=CLI).
+
 ### Cuando la clave cambia
 
 Si la huella de un servidor conocido cambia más adelante, la app **rechaza la conexión** y muestra un aviso explícito ("Host key cambiada") con el fingerprint anterior y el recibido, además de la línea de `~/.ssh/known_hosts` a limpiar. Un cambio inesperado puede indicar una reinstalación legítima del servidor o un ataque de intermediario.

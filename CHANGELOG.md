@@ -2,6 +2,23 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.18.0] - 2026-10-17
+
+### Añadido
+
+- CLI para tareas desatendidas: `--accept-host-key` aprende la clave de un servidor desconocido sin preguntar (una clave que haya cambiado se sigue rechazando) y `--host-key <huella>` acepta solo esa huella SHA256 sin consultar ni escribir `known_hosts`, como `plink -hostkey`. La huella se admite tal como la muestran Rustty, `ssh-keygen -lf` o plink. El aviso de «host key desconocida» sin terminal enumera ahora las salidas, con la huella recibida ya puesta en `--host-key` para copiarla tal cual.
+- La contraseña del perfil vale también en servidores que solo admiten `keyboard-interactive` (PAM con `PasswordAuthentication no`, lo habitual en entornos corporativos): Rustty la entrega a la primera pregunta del intercambio en vez de fallar con «métodos restantes: keyboard-interactive». Vale en la interfaz, en SFTP, en scripts y en la CLI; un segundo factor posterior se sigue preguntando, y una contraseña incorrecta sigue siendo un rechazo.
+- La CLI pregunta por la terminal las rondas de `keyboard-interactive` (códigos de verificación, MFA) cuando hay una consola real; sin terminal, el error dice a quién y por qué no se pudo contestar.
+
+### Corregido
+
+- La CLI respeta las preferencias de host keys de Preferencias → Seguridad (confirmar la huella en la primera conexión; preguntar si cambia): hasta ahora corría siempre con la política por defecto aunque el propio mensaje de error mandara allí. La interfaz las deja guardadas para la CLI al abrirse con esta versión.
+
+### Cambiado
+
+- Dependencias: tokio, suppaftp, libunftp, tauri-plugin-opener y rustls (cuatro avisos de seguridad) en Rust; `@tauri-apps/*`, eslint, vite y vitest en npm; actions de CI al día. Los avisos de `zip` que llegan por el plugin de actualización quedan como excepción documentada hasta que el plugin suba de versión: solo descomprime paquetes de nuestra release ya verificados por firma.
+- Pruebas: un servidor SSH en proceso que solo admite `keyboard-interactive` cubre el camino de PAM en todas las plataformas, y la huella fijada se prueba contra un `sshd` real.
+
 ## [2.17.1] - 2026-10-03
 
 ### Cambiado

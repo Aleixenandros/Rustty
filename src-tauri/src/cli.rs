@@ -107,6 +107,13 @@ struct RunOptions {
     no_stdin: bool,
     /// `-r`: `--get`/`--put` aceptan carpetas. Sin él, una carpeta es un error.
     recursive: bool,
+    /// `--accept-host-key`: la clave de un servidor desconocido se aprende sin
+    /// preguntar (TOFU), como `StrictHostKeyChecking=accept-new`. Una clave
+    /// **cambiada** se sigue rechazando.
+    accept_host_key: bool,
+    /// `--host-key <huella>`: la huella SHA256 que debe tener el servidor, ya
+    /// normalizada. Con ella known_hosts no interviene (ver `host_keys`).
+    host_key: Option<String>,
 }
 
 impl Default for RunOptions {
@@ -120,6 +127,8 @@ impl Default for RunOptions {
             sudo: false,
             no_stdin: false,
             recursive: false,
+            accept_host_key: false,
+            host_key: None,
         }
     }
 }
@@ -370,6 +379,23 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
             "-n" | "--no-stdin" => opts.no_stdin = true,
             "--all" => selector.all = true,
             "--dry-run" => dry_run = true,
+            "--accept-host-key" => opts.accept_host_key = true,
+            "--host-key" => {
+                i += 1;
+                let raw = match value(&args, i, "--host-key") {
+                    Ok(v) => v,
+                    Err(e) => return invalid(e),
+                };
+                match host_keys::normalize_fingerprint(raw) {
+                    Some(fp) => opts.host_key = Some(fp),
+                    None => {
+                        return invalid(
+                            "--host-key espera una huella SHA256 (SHA256:..., como la muestra \
+                             Rustty o ssh-keygen -lf).",
+                        )
+                    }
+                }
+            }
             "--import" => {
                 i += 1;
                 match value(&args, i, "--import") {
@@ -497,7 +523,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
         return CliCommand::Help;
     }
     if let Some(path) = import {
-        if list || query.is_some() || command.is_some() || script.is_some() || transfer.is_some() || selector.group.is_some() || selector.all || opts.ndjson || opts.recursive {
+        if list || query.is_some() || command.is_some() || script.is_some() || transfer.is_some() || selector.group.is_some() || selector.all || opts.ndjson || opts.recursive || opts.accept_host_key || opts.host_key.is_some() {
             return invalid("--import solo se combina con --workspace, --dry-run, --json y -q.");
         }
         return CliCommand::Import {
@@ -515,6 +541,12 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
     }
     if opts.recursive && transfer.is_none() {
         return invalid("--recursive solo vale con --get o --put.");
+    }
+    if list && (opts.accept_host_key || opts.host_key.is_some()) {
+        return invalid("-l no conecta a nada: --accept-host-key y --host-key no pintan aqui.");
+    }
+    if opts.host_key.is_some() && query.is_none() {
+        return invalid("--host-key solo vale con -c <perfil>: una huella es de un unico servidor.");
     }
     if let Some(cmd) = &command {
         if cmd.trim().is_empty() {
@@ -596,18 +628,27 @@ fn run_cli(command: CliCommand) -> Result<i32, String> {
             remote_command,
             selector,
             opts,
-        } => connect_single(&query, remote_command, &selector, opts),
+        } => {
+            apply_host_key_policy(&opts);
+            connect_single(&query, remote_command, &selector, opts)
+        }
         CliCommand::Run {
             selector,
             remote_command,
             opts,
-        } => run_many(&selector, remote_command, opts),
+        } => {
+            apply_host_key_policy(&opts);
+            run_many(&selector, remote_command, opts)
+        }
         CliCommand::Transfer {
             query,
             selector,
             op,
             opts,
-        } => run_transfer_command(&query, &selector, op, opts),
+        } => {
+            apply_host_key_policy(&opts);
+            run_transfer_command(&query, &selector, op, opts)
+        }
         CliCommand::Import {
             path,
             dry_run,
@@ -619,6 +660,19 @@ fn run_cli(command: CliCommand) -> Result<i32, String> {
             Ok(0)
         }
         CliCommand::Invalid(message) => Err(message),
+    }
+}
+
+/// Política de host keys de esta ejecución: la que la interfaz dejó guardada
+/// (Preferencias → Seguridad; hasta que se abra una vez con esta versión rige
+/// el default estricto) y, por encima, `--accept-host-key`. `--host-key` no
+/// toca la política: viaja con la conexión (`connect_handle`).
+fn apply_host_key_policy(opts: &RunOptions) {
+    if let Some(policy) = host_keys::load_policy(&crate::resolve_data_dir()) {
+        policy.apply();
+    }
+    if opts.accept_host_key {
+        host_keys::set_strict_first_connect(false);
     }
 }
 
@@ -652,11 +706,20 @@ Opciones:
   --parallel <n>  Conexiones simultaneas en multi-host (por defecto {DEFAULT_PARALLEL})
   --sudo          Ejecuta con sudo -n (sin --tty exige NOPASSWD)
   -n, --no-stdin  No reenvia stdin al comando remoto (como ssh -n)
+  --accept-host-key   Aprende la clave de un servidor desconocido sin preguntar (TOFU); una
+                      clave que haya CAMBIADO se sigue rechazando
+  --host-key <huella> Solo acepta esa huella SHA256 del servidor (con -c); no consulta ni
+                      escribe known_hosts, como plink -hostkey
 
 Codigos de salida: el del comando remoto; 255 si no conecta; 124 por --timeout; 2 por uso
 incorrecto. En multi-host, 0 si todos acabaron en 0 y 1 si alguno no; en una copia con -r,
 1 si algun fichero no se pudo copiar (el resto se copia igual). Sin --tty, un stdin que es un
-terminal se cierra al instante; una tuberia o un fichero se reenvian."#
+terminal se cierra al instante; una tuberia o un fichero se reenvian.
+
+Host keys: una huella nueva se pregunta por la terminal; sin terminal (script, cron, tuberia)
+se rechaza, salvo con --accept-host-key, --host-key, o la confirmacion desactivada en
+Preferencias > Seguridad. La contrasena del perfil vale tambien en servidores que solo admiten
+keyboard-interactive (PAM); un segundo factor se pregunta por la terminal."#
     );
 }
 
@@ -1075,9 +1138,13 @@ fn build_runtime() -> Result<tokio::runtime::Runtime, String> {
 
 // ─── Sesión interactiva ───────────────────────────────────────────────────────
 
-async fn run_ssh_session(profile: ConnectionProfile, secrets: CliSecrets) -> Result<(), String> {
+async fn run_ssh_session(
+    profile: ConnectionProfile,
+    secrets: CliSecrets,
+    host_key: Option<String>,
+) -> Result<(), String> {
     let config = client_config(&profile);
-    let mut handle = connect_handle(&profile, config, &secrets).await?;
+    let mut handle = connect_handle(&profile, config, &secrets, host_key.as_deref()).await?;
     authenticate_target(&mut handle, &profile, &secrets).await?;
 
     let mut channel = handle
@@ -1214,7 +1281,7 @@ async fn exec_remote(
     capture: bool,
 ) -> Result<ExecOutcome, ExecError> {
     let config = client_config(profile);
-    let mut handle = connect_handle(profile, config, secrets)
+    let mut handle = connect_handle(profile, config, secrets, opts.host_key.as_deref())
         .await
         .map_err(ExecError::Connect)?;
     authenticate_target(&mut handle, profile, secrets)
@@ -1520,7 +1587,7 @@ fn connect_single(
             }
             let secrets = resolve_secrets(&profile)?;
             announce(&profile, &opts);
-            match runtime.block_on(run_ssh_session(profile, secrets)) {
+            match runtime.block_on(run_ssh_session(profile, secrets, opts.host_key.clone())) {
                 Ok(()) => Ok(0),
                 Err(err) => {
                     eprintln!("{err}");
@@ -1806,7 +1873,7 @@ fn run_transfer_command(
         TransferOp::Get { remote, local } => ("get", local.clone(), remote.clone()),
         TransferOp::Put { local, remote } => ("put", local.clone(), remote.clone()),
     };
-    let fut = transfer(&profile, &secrets, &op, opts.recursive);
+    let fut = transfer(&profile, &secrets, &op, opts.recursive, opts.host_key.as_deref());
     let outcome = match opts.timeout {
         Some(limit) => match runtime.block_on(tokio::time::timeout(limit, fut)) {
             Ok(r) => r,
@@ -1897,10 +1964,13 @@ async fn transfer(
     secrets: &CliSecrets,
     op: &TransferOp,
     recursive: bool,
+    host_key: Option<&str>,
 ) -> Result<TransferStats, (i32, String)> {
     let connect = |e: String| (EXIT_CONNECT_FAILED, e);
     let config = client_config(profile);
-    let mut handle = connect_handle(profile, config, secrets).await.map_err(connect)?;
+    let mut handle = connect_handle(profile, config, secrets, host_key)
+        .await
+        .map_err(connect)?;
     authenticate_target(&mut handle, profile, secrets)
         .await
         .map_err(connect)?;
@@ -2231,10 +2301,14 @@ async fn ensure_remote_dir(
 
 // ─── Conexión ─────────────────────────────────────────────────────────────────
 
+/// Conecta (directo o a través del bastión del perfil). `host_key` es la
+/// huella de `--host-key`: se fija en el handler del **destino**; el bastión
+/// se verifica contra known_hosts como siempre, porque es otro servidor.
 async fn connect_handle(
     profile: &ConnectionProfile,
     config: Arc<client::Config>,
     secrets: &CliSecrets,
+    host_key: Option<&str>,
 ) -> Result<client::Handle<host_keys::KnownHostsClient>, String> {
     let addr = format!("{}:{}", profile.host, profile.port);
     let proxy_spec = profile
@@ -2292,12 +2366,13 @@ async fn connect_handle(
                 format!("No se pudo abrir direct-tcpip hacia {addr} a traves del bastion: {e}")
             })?;
         let stream = channel.into_stream();
-        let (target_handler, target_failure) = host_keys::client(
+        let (mut target_handler, target_failure) = host_keys::client(
             profile.host.clone(),
             profile.port,
             profile.agent_forwarding,
             false,
         );
+        target_handler.expect_fingerprint(host_key.map(str::to_string));
         client::connect_stream(config, stream, target_handler)
             .await
             .map_err(|err| {
@@ -2306,12 +2381,13 @@ async fn connect_handle(
                 })
             })
     } else {
-        let (client_handler, host_key_failure) = host_keys::client(
+        let (mut client_handler, host_key_failure) = host_keys::client(
             profile.host.clone(),
             profile.port,
             profile.agent_forwarding,
             false,
         );
+        client_handler.expect_fingerprint(host_key.map(str::to_string));
         crate::ssh_manager::russh_connect_addr(config, &addr, client_handler)
             .await
             .map_err(|err| {
@@ -2653,6 +2729,46 @@ mod tests {
     }
 
     #[test]
+    fn las_opciones_de_host_key_se_parsean_y_se_normalizan() {
+        const FP: &str = "SHA256:uQAtx5MA1iF9jq547yBEjEJYlWBFUsApAs9ILZLdZQU";
+        match parse_cli_command(&args(&["-c", "prod", "--accept-host-key", "--exec", "id"])) {
+            Some(CliCommand::Connect { opts, .. }) => {
+                assert!(opts.accept_host_key);
+                assert_eq!(opts.host_key, None);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+        // La huella llega normalizada venga como venga (aquí, sin prefijo y con
+        // relleno), también en --get/--put.
+        let raw = format!("{}=", FP.trim_start_matches("SHA256:"));
+        match parse_cli_command(&args(&["-c", "nas", "--host-key", &raw, "--get", "/a", "./b"])) {
+            Some(CliCommand::Transfer { opts, .. }) => {
+                assert_eq!(opts.host_key.as_deref(), Some(FP));
+                assert!(!opts.accept_host_key);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+        // Multi-host acepta --accept-host-key (vale para todos) pero no una
+        // huella, que es de un único servidor.
+        assert!(matches!(
+            parse_cli_command(&args(&["--all", "--accept-host-key", "--exec", "uptime"])),
+            Some(CliCommand::Run { opts, .. }) if opts.accept_host_key
+        ));
+        for bad in [
+            vec!["--all", "--host-key", FP, "--exec", "uptime"],
+            vec!["-c", "prod", "--host-key", "MD5:aa:bb", "--exec", "id"],
+            vec!["-c", "prod", "--host-key"],
+            vec!["-l", "--accept-host-key"],
+            vec!["--import", "f.json", "--host-key", FP],
+        ] {
+            assert!(
+                matches!(parse_cli_command(&args(&bad)), Some(CliCommand::Invalid(_))),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
     fn timeout_y_parallel_validan_el_numero() {
         assert!(matches!(
             parse_cli_command(&args(&["-c", "p", "--timeout", "0", "--exec", "ls"])),
@@ -2882,6 +2998,43 @@ mod tests {
             .await
             .expect("el exec no debe colgarse")
             .expect("exec")
+        }
+
+        /// `--host-key` contra el `sshd` real: con la huella del servidor se
+        /// conecta sin known_hosts (y sin escribirlo); con otra se rechaza
+        /// nombrando las dos huellas. No toca la política global.
+        #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+        #[tokio::test]
+        async fn la_huella_fijada_sustituye_a_known_hosts() {
+            let _guard = CLI_IT_LOCK.lock().await;
+            let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+                eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+                return;
+            };
+            let addr = format!("127.0.0.1:{}", server.port);
+            let good = server.host_key_fingerprint();
+            let wrong = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string();
+            for (pin, expect_ok) in [(good.clone(), true), (wrong, false)] {
+                let (mut handler, failure) = host_keys::client_with_known_hosts(
+                    "127.0.0.1".to_string(),
+                    server.port,
+                    server.known_hosts_path(),
+                );
+                handler.expect_fingerprint(Some(pin));
+                let config = Arc::new(client::Config::default());
+                let result = crate::ssh_manager::russh_connect_addr(config, &addr, handler).await;
+                if expect_ok {
+                    assert!(result.is_ok(), "{:?}", host_keys::take_failure(&failure));
+                } else {
+                    assert!(result.is_err(), "con otra huella no debe conectar");
+                    let err = host_keys::take_failure(&failure).expect("motivo del rechazo");
+                    assert!(err.contains("--host-key") && err.contains(&good), "{err}");
+                }
+                assert!(
+                    !server.known_hosts_path().exists(),
+                    "la huella fijada no escribe known_hosts"
+                );
+            }
         }
 
         #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]

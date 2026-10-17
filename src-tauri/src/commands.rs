@@ -3781,6 +3781,7 @@ pub fn profiles_recovery(profile_state: State<ProfileManager>) -> crate::atomic_
 #[tauri::command]
 pub fn set_host_key_policy(strict: bool) {
     crate::host_keys::set_strict_first_connect(strict);
+    persist_host_key_policy();
 }
 
 /// Fija la política ante una host key **cambiada**: `true` (default) pregunta
@@ -3790,6 +3791,16 @@ pub fn set_host_key_policy(strict: bool) {
 #[tauri::command]
 pub fn set_host_key_change_policy(prompt: bool) {
     crate::host_keys::set_prompt_on_key_change(prompt);
+    persist_host_key_policy();
+}
+
+/// Deja la política de host keys en el directorio de datos para la CLI, que
+/// no ve las preferencias de la interfaz (viven en su `localStorage`). Un
+/// fallo al escribirla no es grave: la CLI cae al default estricto.
+fn persist_host_key_policy() {
+    if let Err(e) = crate::host_keys::save_policy(&crate::resolve_data_dir()) {
+        log::warn!("no se pudo guardar la política de host keys para la CLI: {e}");
+    }
 }
 
 /// Respuesta del usuario a una confirmación de host key (`ssh-hostkey-prompt`).

@@ -108,9 +108,11 @@ rustty -c <perfil> --script parche.sh --sudo --timeout 60
 rustty --workspace Produccion --exec "uptime" --ndjson
 rustty -c <perfil> -r --get /var/www/sitio ./copias/
 rustty --import conexiones.json --workspace Clientes
+rustty -c <perfil> --host-key SHA256:… --exec "uptime"
+rustty --workspace Produccion --accept-host-key --exec "uptime"
 ```
 
-`-c` reutiliza los datos del perfil, el keyring del sistema, `known_hosts`, ProxyJump, keepalive, agent forwarding y la compatibilidad legacy configurada en la conexión. Si una contraseña o passphrase no está guardada en el keyring, la pedirá en la terminal sin mostrarla.
+`-c` reutiliza los datos del perfil, el keyring del sistema, `known_hosts`, ProxyJump, keepalive, agent forwarding y la compatibilidad legacy configurada en la conexión. Si una contraseña o passphrase no está guardada en el keyring, la pedirá en la terminal sin mostrarla. La contraseña del perfil vale también en servidores que solo admiten `keyboard-interactive` (PAM), y un segundo factor se pregunta por la terminal. Para scripts sin terminal, `--host-key <huella>` acepta solo esa huella SHA256 del servidor sin tocar `known_hosts` y `--accept-host-key` aprende la de un servidor desconocido sin preguntar.
 
 Cuando se añade un comando remoto, Rustty abre un canal SSH `exec`, escribe `stdout`/`stderr` en la terminal local y termina con el código de salida remoto. `--exec` es la forma recomendada para comandos con comillas o tuberías; `--` acepta una forma breve similar a `ssh`, y el texto extra después del perfil queda como alias cómodo. `--tty` solicita pseudo-terminal para comandos que lo necesiten, como algunos usos de `sudo`.
 

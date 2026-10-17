@@ -35,6 +35,24 @@ ignore = [
   { id = "RUSTSEC-2026-0194", reason = "Coste cuadrático de `quick-xml` al detectar atributos duplicados. Bloqueado upstream: llega por `wayland-scanner`, que pide `quick-xml ^0.39`, así que `cargo update --precise 0.41.0` es imposible sin parchear ese crate. Alcance en Rustty: `wayland-scanner` corre en **tiempo de compilación** y solo lee los XML de protocolo Wayland que vienen con el propio crate — no procesa nada que venga de un servidor ni del usuario. REVISAR ANTES DE 2027-02-06; retirar cuando `wayland-scanner` suba a quick-xml 0.41." },
 
   { id = "RUSTSEC-2026-0195", reason = "Agotamiento de memoria por declaraciones de espacio de nombres sin límite en `quick-xml` (`NsReader`). Mismo origen, mismo bloqueo y mismo alcance que RUSTSEC-2026-0194: se resuelven juntas al subir `wayland-scanner`. REVISAR ANTES DE 2027-02-06." },
+
+  # ── Excepciones añadidas el 2026-10-17 ─────────────────────────────────────
+  #
+  # Las tres son del crate `zip` 4.x y se arreglan en `zip` >= 9, pero llegan
+  # por `tauri-plugin-updater` (2.13.1, la última estable; la 3.x es alfa), que
+  # pide `zip 4`: no hay versión que forzar desde nuestro Cargo.toml. Alcance en
+  # Rustty: el updater solo descomprime el paquete de actualización que él mismo
+  # ha descargado de nuestra release y cuya firma minisign ha **verificado
+  # antes** contra la clave pública embebida; un archivo malicioso no llega a
+  # `extract()` sin una firma válida. Además el uso de `zip` es solo para los
+  # paquetes de Windows (`.nsis.zip`/`.msi.zip`), donde no existen los permisos
+  # Unix ni los bits SUID de los avisos.
+
+  { id = "RUSTSEC-2026-0367", reason = "`zip` conserva los bits SUID/SGID al extraer. Llega por `tauri-plugin-updater` → `zip 4`; sin versión del updater con `zip` 9. Solo extrae paquetes de nuestra release ya verificados por firma, y solo en Windows, donde no hay bits SUID. REVISAR ANTES DE 2027-04-17; retirar cuando `tauri-plugin-updater` suba a `zip` 9." },
+
+  { id = "RUSTSEC-2026-0368", reason = "`ZipArchive::extract` crea enlaces simbólicos con destino fuera de la carpeta. Mismo origen, mismo bloqueo y mismo alcance que RUSTSEC-2026-0367 (paquete verificado por firma antes de extraer). REVISAR ANTES DE 2027-04-17." },
+
+  { id = "RUSTSEC-2026-0369", reason = "`zip` aplica permisos Unix a través de enlaces simbólicos sin acotar el destino. Mismo origen, mismo bloqueo y mismo alcance que RUSTSEC-2026-0367. REVISAR ANTES DE 2027-04-17." },
 ]
 
 [licenses]

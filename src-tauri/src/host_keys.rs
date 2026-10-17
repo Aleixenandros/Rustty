@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Duration;
@@ -7,7 +8,7 @@ use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use russh::client;
 use russh::keys::{known_hosts, ssh_key::PublicKey, PublicKeyOrCertificate};
 use russh::{Channel, ChannelMsg};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -68,6 +69,92 @@ pub fn set_prompt_on_key_change(prompt: bool) {
 #[must_use]
 pub fn prompt_on_key_change() -> bool {
     PROMPT_ON_KEY_CHANGE.load(Ordering::Relaxed)
+}
+
+// ── La política, para quien no tiene la interfaz delante ─────────────────────
+//
+// Las preferencias viven en el `localStorage` del frontend, que la CLI no puede
+// leer: hasta v2.18.0 `rustty -c` corría siempre con la política por defecto
+// aunque el usuario hubiera desactivado la confirmación en Preferencias →
+// Seguridad (y el mensaje de error le mandaba justo ahí). La interfaz fija la
+// política por IPC al cargar y al guardar preferencias; en ese momento se
+// vuelca aquí, al directorio de datos, y la CLI la lee antes de conectar. Es
+// una caché derivada, como `workspaces.json`: si falta, rige el default.
+
+/// Fichero de la política en el directorio de datos.
+pub const POLICY_FILE_NAME: &str = "host-key-policy.json";
+
+/// Las dos políticas de host keys que la interfaz deja guardadas para la CLI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostKeyPolicy {
+    pub strict_first_connect: bool,
+    pub prompt_on_key_change: bool,
+}
+
+impl HostKeyPolicy {
+    /// La política en vigor en este proceso.
+    #[must_use]
+    pub fn current() -> Self {
+        Self {
+            strict_first_connect: strict_first_connect(),
+            prompt_on_key_change: prompt_on_key_change(),
+        }
+    }
+
+    /// Pone esta política en vigor en el proceso.
+    pub fn apply(&self) {
+        set_strict_first_connect(self.strict_first_connect);
+        set_prompt_on_key_change(self.prompt_on_key_change);
+    }
+}
+
+/// Vuelca la política en vigor al directorio de datos, solo si cambió (la
+/// interfaz la manda en cada guardado de preferencias). Escritura atómica.
+pub fn save_policy(data_dir: &Path) -> std::io::Result<bool> {
+    write_policy(data_dir, &HostKeyPolicy::current())
+}
+
+fn write_policy(data_dir: &Path, policy: &HostKeyPolicy) -> std::io::Result<bool> {
+    let path = data_dir.join(POLICY_FILE_NAME);
+    let payload = serde_json::to_vec_pretty(policy).map_err(std::io::Error::other)?;
+    if std::fs::read(&path).map(|cur| cur == payload).unwrap_or(false) {
+        return Ok(false);
+    }
+    crate::atomic_file::write(&path, &payload, false)?;
+    Ok(true)
+}
+
+/// Lee la política que dejó guardada la interfaz. `None` si no hay fichero o
+/// no se entiende: entonces rige el default (estricto), que es lo seguro.
+#[must_use]
+pub fn load_policy(data_dir: &Path) -> Option<HostKeyPolicy> {
+    let raw = std::fs::read(data_dir.join(POLICY_FILE_NAME)).ok()?;
+    serde_json::from_slice(&raw).ok()
+}
+
+/// Normaliza una huella SHA256 tal como la escribe la gente: `SHA256:xxx`
+/// (como la muestra Rustty o `ssh-keygen -lf`), sin el prefijo, con `=` de
+/// relleno, o dentro de la línea entera de `ssh-keygen -lf` o de
+/// `plink -hostkey` (`ssh-ed25519 255 SHA256:xxx`). Devuelve `SHA256:<43 chars
+/// base64>`, el mismo formato que [`fingerprint_sha256`], o `None` si nada
+/// parece una huella SHA256. Las MD5 (`aa:bb:…`) no se aceptan: Rustty solo
+/// enseña SHA256, así que una MD5 nunca podría compararse con lo que ve el
+/// usuario.
+#[must_use]
+pub fn normalize_fingerprint(input: &str) -> Option<String> {
+    input.split_whitespace().rev().find_map(|token| {
+        let raw = token
+            .strip_prefix("SHA256:")
+            .or_else(|| token.strip_prefix("sha256:"))
+            .unwrap_or(token)
+            .trim_end_matches('=');
+        let looks_like_sha256 = raw.len() == 43
+            && raw
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/');
+        looks_like_sha256.then(|| format!("SHA256:{raw}"))
+    })
 }
 
 /// Registra el `AppHandle` (en `setup`). Sin él —CLI— se pregunta por stdin.
@@ -181,18 +268,23 @@ fn confirm_on_stdin(
     let stdin = std::io::stdin();
     if !stdin.is_terminal() {
         // Sin terminal interactiva no hay a quién preguntar: rechazar es lo
-        // seguro (y el usuario puede activar el TOFU automático si lo quiere).
+        // seguro. El mensaje enumera las salidas, con la huella recibida ya
+        // puesta en `--host-key` para que un script pueda fijarla tal cual.
         if changed {
             return Err(format!(
                 "ALERTA: la host key de {host}:{port} ha cambiado ({key_type}, {fingerprint}). \
-                 Sin terminal interactiva no se puede confirmar el cambio: \
-                 conecta desde la app para revisarlo y decidir."
+                 Sin terminal interactiva no se puede confirmar el cambio: conecta desde la \
+                 app para revisarlo y decidir. Si el cambio es esperado, --host-key \
+                 {fingerprint} acepta solo esa huella sin tocar known_hosts."
             ));
         }
         return Err(format!(
             "host key desconocida de {host}:{port} ({key_type}, {fingerprint}). \
-             Sin terminal interactiva no se puede confirmar: conecta una vez desde la app \
-             o activa la confianza automática en Preferencias → Seguridad."
+             Sin terminal interactiva no se puede confirmar. Opciones: conecta una vez \
+             desde la app o desde una terminal; --host-key {fingerprint} acepta solo esa \
+             huella (sin tocar known_hosts); --accept-host-key la aprende sin preguntar; \
+             o desactiva «Confirmar la huella en la primera conexión» en Preferencias → \
+             Seguridad."
         ));
     }
     if changed {
@@ -238,9 +330,20 @@ pub struct KnownHostsClient {
     /// solo lo hacen los tests de integración: sin esto, un test que ejercitara
     /// el TOFU escribiría en el `known_hosts` real del usuario.
     known_hosts_path: Option<std::path::PathBuf>,
+    /// Huella SHA256 que se espera del servidor (`--host-key` de la CLI), ya
+    /// normalizada por [`normalize_fingerprint`]. Con ella, la clave recibida
+    /// se compara con la huella y **known_hosts no interviene**: ni se consulta
+    /// ni se escribe. Es la verificación sin estado de `plink -hostkey`, para
+    /// scripts que no quieren depender del `known_hosts` de quien los lanza.
+    expected_fingerprint: Option<String>,
 }
 
 impl KnownHostsClient {
+    /// Fija la huella esperada del servidor (ver `expected_fingerprint`).
+    pub fn expect_fingerprint(&mut self, fingerprint: Option<String>) {
+        self.expected_fingerprint = fingerprint;
+    }
+
     /// `check_known_hosts` de russh, contra el fichero de este cliente.
     fn check_known_hosts(&self, key: &PublicKey) -> Result<bool, russh::keys::Error> {
         match &self.known_hosts_path {
@@ -366,6 +469,7 @@ pub fn client_with_remote_forwards(
             x11_forwarding,
             remote_forwards,
             known_hosts_path: None,
+            expected_fingerprint: None,
         },
         failure,
     )
@@ -392,6 +496,7 @@ pub fn client_with_known_hosts(
             x11_forwarding: false,
             remote_forwards: remote_forward_map(),
             known_hosts_path: Some(known_hosts_path),
+            expected_fingerprint: None,
         },
         failure,
     )
@@ -501,6 +606,24 @@ impl client::Handler for KnownHostsClient {
                 return Ok(false);
             }
         };
+        // Huella fijada (`--host-key`): la verificación es contra ella y solo
+        // contra ella. known_hosts no se consulta ni se toca, de modo que el
+        // resultado no depende de lo que haya aprendido quien lanza el script.
+        if let Some(expected) = &self.expected_fingerprint {
+            let received = fingerprint_sha256(server_public_key);
+            if received == *expected {
+                return Ok(true);
+            }
+            self.set_failure(format!(
+                "La host key de {}:{} ({}) no coincide con la huella indicada en --host-key: \
+                 esperada {expected}, recibida {received}. Conexión rechazada; known_hosts \
+                 no se ha tocado.",
+                self.host,
+                self.port,
+                server_public_key.algorithm().as_str(),
+            ));
+            return Ok(false);
+        }
         match self.check_known_hosts(server_public_key) {
             // Coincide exactamente con una entrada existente (mismo algoritmo
             // y misma clave): aceptamos.
@@ -889,6 +1012,79 @@ mod tests {
         // en vez de romper: el frontend puede reintentar sin consecuencias.
         assert!(!resolve_prompt("no-existe", true));
         assert!(!resolve_prompt("no-existe", false));
+    }
+
+    #[test]
+    fn la_huella_se_normaliza_desde_cualquier_forma_habitual() {
+        // Como la enseña Rustty, sin prefijo, con `=` de relleno, línea entera
+        // de `ssh-keygen -lf` y formato de `plink -hostkey`: todas acaban en el
+        // formato de `fingerprint_sha256`.
+        let want = Some(FP_ED25519.to_string());
+        let raw = FP_ED25519.trim_start_matches("SHA256:");
+        assert_eq!(normalize_fingerprint(FP_ED25519), want);
+        assert_eq!(normalize_fingerprint(&format!("  {FP_ED25519}\n")), want);
+        assert_eq!(normalize_fingerprint(raw), want);
+        assert_eq!(normalize_fingerprint(&format!("{raw}=")), want);
+        assert_eq!(normalize_fingerprint(&format!("sha256:{raw}")), want);
+        assert_eq!(
+            normalize_fingerprint(&format!("256 {FP_ED25519} usuario@equipo (ED25519)")),
+            want
+        );
+        assert_eq!(normalize_fingerprint(&format!("ssh-ed25519 255 {FP_ED25519}")), want);
+        // Lo que no es una huella SHA256 se rechaza: MD5, vacío, truncada.
+        assert_eq!(normalize_fingerprint("MD5:aa:bb:cc:dd"), None);
+        assert_eq!(normalize_fingerprint(""), None);
+        assert_eq!(normalize_fingerprint(&raw[..20]), None);
+        assert_eq!(normalize_fingerprint("SHA256:no-es-base64-por-el-guion-ni-tiene-el-largo"), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn con_huella_fijada_se_acepta_sin_known_hosts_y_otra_se_rechaza() {
+        use russh::client::Handler as _;
+
+        // La huella fijada es la verificación entera: con la correcta el
+        // handler acepta aunque el known_hosts esté vacío (y sigue vacío
+        // después); con otra, rechaza con un mensaje que enseña las dos.
+        let key = PublicKey::from_openssh(PUB_ED25519).expect("clave pública válida");
+        let dir = std::env::temp_dir().join(format!("rustty-pin-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut handler, failure) =
+            client_with_known_hosts("pin.example".into(), 22, dir.join("known_hosts"));
+        handler.expect_fingerprint(Some(FP_ED25519.to_string()));
+        let server_key = PublicKeyOrCertificate::PublicKey {
+            key: key.clone(),
+            hash_alg: None,
+        };
+        assert_eq!(handler.check_server_key(&server_key).await.ok(), Some(true));
+        assert!(!dir.join("known_hosts").exists(), "la pin no escribe known_hosts");
+
+        handler.expect_fingerprint(Some(
+            "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_string(),
+        ));
+        assert_eq!(handler.check_server_key(&server_key).await.ok(), Some(false));
+        let err = take_failure(&failure).expect("motivo del rechazo");
+        assert!(err.contains("--host-key") && err.contains(FP_ED25519), "{err}");
+        assert!(!dir.join("known_hosts").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn la_politica_se_guarda_y_se_lee_sin_reescribir_si_no_cambia() {
+        let dir = std::env::temp_dir().join(format!("rustty-policy-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(load_policy(&dir), None, "sin fichero no hay política");
+        let policy = HostKeyPolicy {
+            strict_first_connect: false,
+            prompt_on_key_change: true,
+        };
+        assert!(write_policy(&dir, &policy).unwrap());
+        assert!(!write_policy(&dir, &policy).unwrap(), "sin cambios no se reescribe");
+        assert_eq!(load_policy(&dir), Some(policy));
+        // Un fichero roto no rompe nada: rige el default.
+        std::fs::write(dir.join(POLICY_FILE_NAME), b"{ esto no es json").unwrap();
+        assert_eq!(load_policy(&dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

@@ -55,6 +55,14 @@ impl FakeSshServer {
         format!("[127.0.0.1]:{} {}", self.port, other_pubkey)
     }
 
+    /// Huella SHA256 de la host key del servidor (`SHA256:…`), como la que un
+    /// usuario pasaría en `--host-key`.
+    pub fn host_key_fingerprint(&self) -> String {
+        let pubtext = std::fs::read_to_string(self.dir.join("hostkey.pub")).expect("hostkey.pub");
+        let key = russh::keys::ssh_key::PublicKey::from_openssh(&pubtext).expect("host key");
+        crate::host_keys::fingerprint_sha256(&key)
+    }
+
     /// Línea de `known_hosts` para este host con una clave pública **de otro
     /// algoritmo** (p. ej. `rsa` cuando el servidor usa ed25519), generada al
     /// vuelo. Es lo que distingue el caso «cambió el algoritmo de la host key»

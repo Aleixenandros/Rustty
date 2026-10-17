@@ -954,14 +954,20 @@ async fn connect_and_open_sftp(
                 emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
                 msg
             })?;
-            handle
-                .authenticate_password(profile.username.clone(), pass.to_string())
-                .await
-                .map_err(|e| {
-                    let msg = format!("Error de autenticación: {e}");
-                    emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
-                    msg
-                })?
+            // Con el camino de PAM (`PasswordAuthentication no`): la misma
+            // contraseña va a la primera pregunta de `keyboard-interactive`.
+            crate::ssh_manager::password_auth_with_fallback(
+                &mut handle,
+                &profile.username,
+                &profile.host,
+                pass.to_string(),
+            )
+            .await
+            .map_err(|e| {
+                let msg = format!("Error de autenticación: {e}");
+                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                msg
+            })?
         }
         AuthType::PublicKey => {
             let key_path = profile.key_path.as_ref().ok_or_else(|| {
@@ -1002,6 +1008,7 @@ async fn connect_and_open_sftp(
                 &mut handle,
                 &profile.username,
                 &profile.host,
+                None,
             )
             .await
             .map_err(|e| {
@@ -1032,6 +1039,7 @@ async fn connect_and_open_sftp(
                 &mut handle,
                 &profile.username,
                 &profile.host,
+                None,
             )
             .await
             .map_err(|e| {

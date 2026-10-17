@@ -124,9 +124,9 @@ pub async fn ask(
     }
 
     let Some(app) = APP.get() else {
-        return Err(
-            "la autenticación interactiva necesita la interfaz gráfica; no disponible aquí".into(),
-        );
+        // Sin interfaz (CLI): si hay una terminal, se pregunta por ella; si
+        // no (script, cron, tubería), no hay a quién preguntar.
+        return ask_on_terminal(host, username, name, instructions, prompts);
     };
 
     let prompt_id = uuid::Uuid::new_v4().to_string();
@@ -173,6 +173,52 @@ pub async fn ask(
     }
 }
 
+/// Las preguntas por la terminal, para la CLI (`rustty -c` desde una consola
+/// real). Van por stderr, como el resto de avisos de la CLI, para que stdout
+/// siga llevando solo la salida del comando; las de `echo: false` se leen sin
+/// eco, como una contraseña. Sin terminal no hay a quién preguntar, y la
+/// conexión falla con un motivo que lo dice.
+fn ask_on_terminal(
+    host: &str,
+    username: &str,
+    name: &str,
+    instructions: &str,
+    prompts: &[AuthPromptField],
+) -> Result<Option<Vec<String>>, String> {
+    use std::io::{BufRead, IsTerminal, Write};
+
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        return Err(format!(
+            "{username}@{host} pide autenticación interactiva por teclado (un código de \
+             verificación o una contraseña que el servidor pregunta) y no hay terminal ni \
+             interfaz gráfica donde contestar"
+        ));
+    }
+    for line in [name, instructions] {
+        if !line.trim().is_empty() {
+            eprintln!("{}", line.trim());
+        }
+    }
+    let mut answers = Vec::with_capacity(prompts.len());
+    for field in prompts {
+        eprint!("{}", field.prompt);
+        let _ = std::io::stderr().flush();
+        let answer = if field.echo {
+            let mut line = String::new();
+            stdin
+                .lock()
+                .read_line(&mut line)
+                .map_err(|e| format!("no se pudo leer la respuesta: {e}"))?;
+            line.trim_end_matches(['\r', '\n']).to_string()
+        } else {
+            rpassword::read_password().map_err(|e| format!("no se pudo leer la respuesta: {e}"))?
+        };
+        answers.push(answer);
+    }
+    Ok(Some(answers))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +237,21 @@ mod tests {
         // devuelva la lista vacía demuestra que ni lo intenta.
         let r = ask("host", "user", "", "Banner informativo", &[]).await;
         assert!(matches!(r, Ok(Some(ref v)) if v.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn sin_app_ni_terminal_una_pregunta_falla_diciendo_a_quien() {
+        // En la CLI dentro de un script (stdin no es un terminal, como aquí)
+        // no hay dónde contestar: el error nombra al usuario y al host.
+        let prompts = [AuthPromptField {
+            prompt: "Verification code: ".into(),
+            echo: false,
+        }];
+        let err = ask("srv.example", "ana", "", "", &prompts)
+            .await
+            .expect_err("sin terminal debe fallar");
+        assert!(err.contains("ana@srv.example"), "{err}");
+        assert!(err.contains("terminal"), "{err}");
     }
 
     #[tokio::test]

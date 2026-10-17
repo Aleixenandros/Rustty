@@ -36,6 +36,8 @@ mod profile_import;
 mod profiles;
 #[cfg(all(test, target_os = "linux"))]
 mod ftp_fixture;
+#[cfg(test)]
+mod kbd_fixture;
 #[cfg(all(test, target_os = "linux"))]
 mod rdp_fixture;
 mod rdp_certs;

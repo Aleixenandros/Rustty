@@ -117,7 +117,7 @@ Es intencional: cuando activas una pestaña asociada a un perfil, Rustty abre su
 
 ## ¿Por qué ahora me pide confirmar la huella al conectar a un servidor nuevo?
 
-Porque el aviso de "la clave del servidor ha cambiado" solo te protege *después* de haber aprendido la clave buena. Si alguien se interpone ya en esa primera conexión, su clave sería la que Rustty recordara como legítima y ninguna alarma saltaría nunca. Comprueba la huella con el administrador del servidor por un canal de confianza y acéptala una vez; a partir de ahí no se te vuelve a preguntar por ese servidor. Si prefieres el comportamiento anterior, desactiva **Confirmar la huella en la primera conexión** en Preferencias → Seguridad.
+Porque el aviso de "la clave del servidor ha cambiado" solo te protege *después* de haber aprendido la clave buena. Si alguien se interpone ya en esa primera conexión, su clave sería la que Rustty recordara como legítima y ninguna alarma saltaría nunca. Comprueba la huella con el administrador del servidor por un canal de confianza y acéptala una vez; a partir de ahí no se te vuelve a preguntar por ese servidor. Si prefieres el comportamiento anterior, desactiva **Confirmar la huella en la primera conexión** en Preferencias → Seguridad. En la CLI, que respeta esa misma preferencia, un script sin terminal puede además fijar la huella esperada con `--host-key <huella>` (sin tocar `known_hosts`) o aprender la de un servidor desconocido con `--accept-host-key`; ver la [guía de la CLI](?page=CLI).
 
 ## He abierto Rustty otra vez y me ha traído la ventana que ya tenía. ¿Es un fallo?
 

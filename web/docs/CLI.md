@@ -28,6 +28,8 @@ La conexión reutiliza los datos del perfil: host/IP, puerto, usuario, método d
 
 Si falta una contraseña o passphrase en el keyring, Rustty la pide en la terminal sin mostrarla. La pregunta va por la salida de errores, así que la salida normal queda limpia aunque haya que teclearla.
 
+La contraseña del perfil vale también en servidores que **solo admiten `keyboard-interactive`** (PAM con `PasswordAuthentication no`, lo habitual en entornos corporativos): Rustty la entrega a la primera pregunta del intercambio, igual que haría quien la teclea en `ssh`. Si después el servidor pide un **segundo factor** (un código de verificación, Duo, un token), la CLI lo pregunta por la terminal; sin terminal, la conexión falla con un error que dice a quién y por qué.
+
 ## Ejecutar comandos remotos
 
 ```bash
@@ -105,7 +107,7 @@ Con **`--ndjson`** el resultado es el mismo, pero cada servidor sale **en cuanto
 
 El código de salida es `0` si todos acabaron en `0` y `1` si alguno no. Una entrada de la tubería se lee entera una vez y se reparte a todos; `--script` funciona igual. `--tty` no está disponible en multi-host.
 
-Las contraseñas que falten en el keyring se piden **antes** de conectar, una por una. Las huellas de servidores nuevos también se preguntan por la terminal; en un script sin terminal se rechazan, así que conviene aprobarlas antes desde la interfaz o con una conexión interactiva.
+Las contraseñas que falten en el keyring se piden **antes** de conectar, una por una. Las huellas de servidores nuevos también se preguntan por la terminal; en un script sin terminal se rechazan, así que conviene aprobarlas antes desde la interfaz o con una conexión interactiva, o pasar `--accept-host-key` (vale para todos los servidores de la tirada; ver [Primera conexión a un servidor nuevo](#primera-conexión-a-un-servidor-nuevo)). `--host-key` no está disponible en multi-host: una huella es de un único servidor.
 
 ## Copiar ficheros por SFTP
 
@@ -201,7 +203,21 @@ Huella de la clave ssh-ed25519: SHA256:abc…
 
 Una vez aceptada, la clave se guarda y no se vuelve a preguntar por ese servidor.
 
-Si el comando corre **sin terminal interactiva** (dentro de un script, un cron o una tubería), no hay a quién preguntar: la conexión **se rechaza** con un aviso, en lugar de aprender la clave a ciegas. Para esos casos, conecta una vez desde la interfaz gráfica (o desde una terminal real) para aprobar la huella, o desactiva **Confirmar la huella en la primera conexión** en Preferencias → Seguridad si prefieres el comportamiento automático de siempre.
+Si el comando corre **sin terminal interactiva** (dentro de un script, un cron o una tubería), no hay a quién preguntar: la conexión **se rechaza** con un aviso, en lugar de aprender la clave a ciegas. El aviso trae la huella recibida y las salidas posibles:
+
+```bash
+# Aprender la clave de un servidor desconocido sin preguntar (TOFU), como
+# StrictHostKeyChecking=accept-new: una clave que haya CAMBIADO se sigue rechazando.
+rustty -c produccion --accept-host-key --exec "uptime"
+
+# Aceptar solo esa huella, sin consultar ni escribir known_hosts (como plink -hostkey):
+# la verificación no depende de lo que haya aprendido quien lanza el script.
+rustty -c produccion --host-key SHA256:uQAtx5MA1iF9jq547yBEjEJYlWBFUsApAs9ILZLdZQU --exec "uptime"
+```
+
+- **`--accept-host-key`** equivale a desactivar la confirmación solo para esa ejecución. Es cómodo en una tirada multi-host y renuncia a la comprobación de la primera conexión, igual que la preferencia; una clave **cambiada** respecto a `known_hosts` se sigue rechazando.
+- **`--host-key <huella>`** es la opción segura para automatizar: tú declaras qué huella esperas y Rustty acepta solo esa, sin estado. La huella se admite tal como la muestran Rustty, `ssh-keygen -lf` (`256 SHA256:… usuario@equipo (ED25519)`) o plink (`ssh-ed25519 255 SHA256:…`), con o sin el prefijo `SHA256:`. Solo con `-c`; con ProxyJump se aplica al servidor de destino y el bastión se verifica contra `known_hosts` como siempre. Si la huella no coincide, la conexión se rechaza mostrando las dos y `known_hosts` queda intacto.
+- Sin opciones, la CLI aplica lo que tengas en **Preferencias → Seguridad** (confirmar la huella en la primera conexión; preguntar si cambia): la interfaz lo deja guardado para la CLI cada vez que se abre o se guardan las preferencias, así que hasta que la abras una vez con esta versión rige el modo estricto.
 
 ## Limitaciones
 
