@@ -68,6 +68,31 @@ export async function openSession({ application, driver = "http://127.0.0.1:4444
         }
       }
     },
+    /**
+     * Espera a que la interfaz termine de arrancar, no solo a que exista.
+     * `#btn-welcome-local` está en el HTML estático desde el primer instante,
+     * pero sus manejadores —y los de Preferencias, la barra lateral y el resto—
+     * los engancha `init()` (`bindUIEvents`) después de cargar los temas
+     * incluidos y los perfiles. Un clic que llega antes se pierde sin error, y
+     * la espera siguiente vence a los 30 s con «no such element»: con pausas
+     * fijas, el smoke fallaba al azar según lo cargado que fuera el runner.
+     * `finishBoot()` corre al final de `init()` y oculta (o retira) la
+     * pantalla de carga; esa es la señal de que la interfaz ya responde.
+     */
+    async waitForApp(timeoutMs = 60000) {
+      await session.waitFor("#btn-welcome-local", timeoutMs);
+      const started = Date.now();
+      for (;;) {
+        const ready = await session.exec(
+          "const s = document.getElementById('boot-screen'); return !s || s.classList.contains('boot-screen-hide');",
+        );
+        if (ready) return;
+        if (Date.now() - started > timeoutMs) {
+          throw new Error(`la interfaz no terminó de arrancar en ${timeoutMs / 1000} s`);
+        }
+        await sleep(250);
+      }
+    },
     /** Id de la sesión de la última pestaña abierta. */
     lastSessionId: () =>
       session.exec(

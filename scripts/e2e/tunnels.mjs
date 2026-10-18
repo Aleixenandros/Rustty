@@ -31,7 +31,7 @@ export async function checkTunnels(app, check, artifactsDir) {
   try {
     await app.exec("setTimeout(() => location.reload(), 50); return true;");
     await sleep(2000);
-    await app.waitFor("#btn-welcome-local", 60000);
+    await app.waitForApp();
     for (const [theme, width, height] of [["light", 1280, 800], ["dark", 1280, 800], ["light", 800, 700]]) {
       await app.resize(width, height);
       await setTheme(theme);

@@ -428,7 +428,7 @@ async function main() {
 
   const app = await openSession({ application });
   try {
-    await app.waitFor("#btn-welcome-local", 60000);
+    await app.waitForApp();
     // El updater puede abrir un diálogo en mitad de otro caso y consumir su
     // confirmación. Preferencias solo del webview aislado; la recarga cancela
     // la comprobación inicial que ya pudiera estar en vuelo.
@@ -438,7 +438,7 @@ async function main() {
       return true;
     `);
     await sleep(2000);
-    await app.waitFor("#btn-welcome-local", 60000);
+    await app.waitForApp();
     await sleep(2500);
     check("la interfaz monta y enseña el dashboard", true);
 
@@ -451,7 +451,7 @@ async function main() {
     // Recarga con la consola viva: es un frontend nuevo y la consola, huérfana.
     await app.exec("setTimeout(() => location.reload(), 50); return true;");
     await sleep(5000);
-    await app.waitFor("#btn-welcome-local", 60000);
+    await app.waitForApp();
     await sleep(2000);
     check(
       "el backend barre la consola del frontend anterior",
