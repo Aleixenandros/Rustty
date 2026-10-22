@@ -23,6 +23,7 @@
 //   confirmThemed({ title: "…" }) diálogos (title/message/submitLabel)
 //   promptCredential({ … })       ídem
 //   .textContent = "…"            texto inyectado en el DOM
+//   .placeholder = "…"            ídem en un campo (así se colaba «(configurada)»)
 //   title="…" / aria-label="…" / placeholder="…"   atributos en plantillas HTML
 //
 // Qué NO es un hallazgo (heurística deliberadamente estrecha, para que un aviso
@@ -67,6 +68,7 @@ const CANONICAL = new Set([
 const PATTERNS = [
   { name: "toast", re: /\btoast\(\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g, group: 2 },
   { name: "textContent", re: /\.textContent\s*=\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g, group: 2 },
+  { name: "placeholder", re: /\.placeholder\s*=\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g, group: 2 },
   { name: "title", re: /\btitle:\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g, group: 2 },
   { name: "message", re: /\bmessage:\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g, group: 2 },
   { name: "submitLabel", re: /\bsubmitLabel:\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g, group: 2 },

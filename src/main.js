@@ -92,7 +92,13 @@ import { applyPrefsForm } from "./modules/prefs/sync.js";
 import { hasLocalSyncData } from "./modules/prefs/first-sync.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
-import { ipcErrorText, isHostKeyError } from "./modules/ipc/errors.js";
+import { ipcErrorText, isHostKeyError, isKeyringUnavailableError } from "./modules/ipc/errors.js";
+import {
+  OAUTH_ACCOUNT_STATE,
+  oauthDisconnectFeedback,
+  oauthStatusView,
+  syncFailureToast,
+} from "./modules/sync-feedback.js";
 // Los selectores de fichero son nativos y los abre el backend (`fs_pick`), que
 // devuelve con la ruta un permiso de un solo uso para leerla o escribirla; las
 // confirmaciones usan confirmThemed para respetar el tema de la app.
@@ -2085,7 +2091,7 @@ async function populateSyncTab() {
   const stored = await sync.getStoredPassphrase().catch(() => null);
   if (stored) {
     passEl.value = "";
-    passEl.placeholder = "•••••••• (configurada)";
+    passEl.placeholder = t("prefs_sync.placeholder_configured");
   } else {
     passEl.placeholder = "••••••••";
   }
@@ -2093,7 +2099,7 @@ async function populateSyncTab() {
   const wpEl = document.getElementById("sync-webdav-pass");
   const wpStored = await sync.getStoredWebDavPassword().catch(() => null);
   wpEl.value = "";
-  wpEl.placeholder = wpStored ? "•••••••• (configurada)" : "••••••••";
+  wpEl.placeholder = wpStored ? t("prefs_sync.placeholder_configured") : "••••••••";
 
   // Mostrar/ocultar bloques según backend
   syncUpdateBackendVisibility();
@@ -2272,22 +2278,29 @@ function currentOAuthProvider() {
   return value === "google_drive" ? value : null;
 }
 
-function setOAuthStatus(connected) {
+/**
+ * Pinta el estado de la cuenta OAuth. `state` es un `OAUTH_ACCOUNT_STATE`;
+ * `error`, el rechazo de la consulta si lo hubo (un keyring que no responde
+ * no es lo mismo que una cuenta desconectada).
+ */
+function setOAuthStatus(state, error) {
   const dot = document.getElementById("sync-oauth-dot");
   const txt = document.getElementById("sync-oauth-text");
   if (!dot || !txt) return;
+  const view = oauthStatusView(state, error);
   dot.classList.remove("idle", "busy", "success", "error");
-  dot.classList.add(connected ? "success" : "idle");
-  txt.textContent = connected
-    ? t("prefs_sync.oauth_connected")
-    : t("prefs_sync.oauth_disconnected");
+  dot.classList.add(view.dot);
+  txt.textContent = t(view.textKey);
 }
 
 async function refreshSyncOAuthStatus() {
   const provider = currentOAuthProvider();
   if (!provider) return;
-  const connected = await sync.oauthStatus(provider).catch(() => false);
-  setOAuthStatus(connected);
+  try {
+    setOAuthStatus(await sync.oauthStatus(provider));
+  } catch (err) {
+    setOAuthStatus(null, err);
+  }
 }
 
 async function persistSyncConfig() {
@@ -2368,10 +2381,20 @@ async function syncOAuthConnectNow() {
   dot?.classList.remove("idle", "success", "error");
   dot?.classList.add("busy");
   if (txt) txt.textContent = t("prefs_sync.oauth_waiting");
+  // Guardar el formulario no es parte de la autorización: si falla (el keyring
+  // rechaza la passphrase, por ejemplo), se cuenta eso y el navegador no llega
+  // a abrirse para nada.
   try {
     await persistSyncConfig();
+  } catch (err) {
+    refreshSyncOAuthStatus();
+    const { message, ms } = syncFailureToast(err, "Sync", t, 8000);
+    toast(message, "error", ms);
+    return;
+  }
+  try {
     await sync.oauthConnect(provider);
-    setOAuthStatus(true);
+    setOAuthStatus(OAUTH_ACCOUNT_STATE.connected);
     toast(t("prefs_sync.oauth_connected"), "success");
   } catch (err) {
     dot?.classList.remove("busy");
@@ -2381,15 +2404,27 @@ async function syncOAuthConnectNow() {
       toast(t("prefs_sync.oauth_missing_app_credentials"), "warning", 8000);
       return;
     }
-    toast(`OAuth: ${err}`, "error", 8000);
+    const { message, ms } = syncFailureToast(err, "OAuth", t, 8000);
+    toast(message, "error", ms);
   }
 }
 
 async function syncOAuthDisconnectNow() {
   const provider = currentOAuthProvider();
   if (!provider) return;
-  await sync.oauthDisconnect(provider).catch((err) => toast(`OAuth: ${err}`, "error", 6000));
-  setOAuthStatus(false);
+  let hadAccount;
+  try {
+    hadAccount = await sync.oauthDisconnect(provider);
+  } catch (err) {
+    const { message, ms } = syncFailureToast(err, "OAuth", t, 6000);
+    toast(message, "error", ms);
+    refreshSyncOAuthStatus();
+    return;
+  }
+  setOAuthStatus(OAUTH_ACCOUNT_STATE.disconnected);
+  // Sin aviso parecía que el botón no hacía nada cuando ya no quedaba token.
+  const feedback = oauthDisconnectFeedback(hadAccount);
+  toast(t(feedback.textKey), feedback.type);
 }
 
 async function syncRunNow() {
@@ -2575,7 +2610,8 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
       kind: "sync",
       status: "error",
       title: t("activity.sync_failed"),
-      detail: String(err),
+      // `sync_run` rechaza con un IpcError: `String(err)` sería «[object Object]».
+      detail: ipcErrorText(err),
       actionLabel: t("activity.retry"),
       action: () => runSyncWithCurrentState({ persistConfig: false, announce: true })
         .catch((e) => console.error("[sync] retry from activity", e)),
@@ -2583,7 +2619,8 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     if (String(err).includes("no_passphrase")) {
       toast(t("prefs_sync.no_passphrase"), "warning", 6000, { category: "sync" });
     } else if (announce) {
-      toast(`Sync: ${err}`, "error", 6000, { category: "sync" });
+      const { message, ms } = syncFailureToast(err, "Sync", t, 6000);
+      toast(message, "error", ms, { category: "sync" });
     }
     throw err;
   } finally {
@@ -2603,14 +2640,23 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
 
 async function syncTestNow() {
   setSyncStatus("busy", "prefs_sync.status_busy");
+  // Como al conectar: un fallo al guardar el formulario no es del backend.
   try {
     await persistSyncConfig();
+  } catch (err) {
+    setSyncStatus("error", "prefs_sync.status_error");
+    const { message, ms } = syncFailureToast(err, "Sync", t, 6000);
+    toast(message, "error", ms);
+    return;
+  }
+  try {
     const result = await sync.testBackend();
     setSyncStatus("success", "prefs_sync.status_success");
     toast(`Backend OK (${result})`, "success");
   } catch (err) {
     setSyncStatus("error", "prefs_sync.status_error");
-    toast(`Backend: ${err}`, "error", 6000);
+    const { message, ms } = syncFailureToast(err, "Backend", t, 6000);
+    toast(message, "error", ms);
   }
 }
 
@@ -2751,7 +2797,8 @@ async function syncWipeRemoteNow() {
     setSyncStatus("idle", "prefs_sync.status_idle");
     refreshSyncSnapshots().catch(() => {});
   } catch (err) {
-    toast(`Sync: ${err}`, "error", 6000, { category: "sync" });
+    const { message, ms } = syncFailureToast(err, "Sync", t, 6000);
+    toast(message, "error", ms, { category: "sync" });
   }
 }
 
@@ -2833,14 +2880,15 @@ async function syncRotatePassphraseFlow() {
     const passEl = document.getElementById("sync-passphrase");
     if (passEl) {
       passEl.value = "";
-      passEl.placeholder = "•••••••• (configurada)";
+      passEl.placeholder = t("prefs_sync.placeholder_configured");
     }
   } catch (err) {
     setSyncStatus("error", "prefs_sync.status_error");
     if (sync.isBadPassphraseError(err)) {
       toast(t("prefs_sync.rotate_bad_old"), "error", 8000, { category: "sync" });
     } else {
-      toast(`Sync: ${err}`, "error", 8000, { category: "sync" });
+      const { message, ms } = syncFailureToast(err, "Sync", t, 8000);
+      toast(message, "error", ms, { category: "sync" });
     }
   }
 }
@@ -3969,7 +4017,15 @@ function savePrefsFromModal() {
             .catch((e) => console.error("[sync] close preferences", e));
         }
       })
-      .catch((e) => console.error("[sync] saveConfig", e));
+      .catch((e) => {
+        console.error("[sync] saveConfig", e);
+        // Si el keyring rechazó la passphrase o la contraseña WebDAV recién
+        // escritas, se han perdido al guardar: no puede quedarse en la consola.
+        if (isKeyringUnavailableError(e)) {
+          const { message, ms } = syncFailureToast(e, "Sync", t, 6000);
+          toast(message, "error", ms);
+        }
+      });
   }
   // Si lang es null ("Sistema"), aplicamos el idioma detectado del SO sin
   // persistirlo en prefs.lang (sigue siendo null para que cada arranque
@@ -8080,7 +8136,7 @@ function addExtraCredRow(cred = null, { focus = true } = {}) {
   const keyInput = document.createElement("input");
   keyInput.type = "text";
   keyInput.className = "extra-cred-keypath";
-  keyInput.placeholder = "~/.ssh/id_rsa";
+  keyInput.placeholder = "~/.ssh/id_rsa"; // i18n-exempt: ruta de ejemplo, igual en todos los idiomas
   keyInput.value = cred?.key_path || "";
 
   credSlot.append(passWrap, masterSel, keyInput);

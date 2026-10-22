@@ -38,6 +38,7 @@ import { fileURLToPath } from "node:url";
 import { findSshd, startSshd } from "./sshd.mjs";
 import { openSession, sleep } from "./webdriver.mjs";
 import { checkPrefsSync } from "./prefs-sync.mjs";
+import { checkSyncFeedback } from "./sync-feedback.mjs";
 import { checkShortcuts } from "./shortcuts.mjs";
 import { checkTunnels } from "./tunnels.mjs";
 
@@ -475,6 +476,7 @@ async function main() {
     check("al terminar el shell la pestaña pasa a cerrada", /error/.test(String(closed)), String(closed));
 
     await checkPrefsSync(app, workDir, check);
+    await checkSyncFeedback(app, check);
     await checkShortcuts(app, check);
     await checkIpcLeastPrivilege(app, home);
     const sftpServer = await prepareSftpServer(home);

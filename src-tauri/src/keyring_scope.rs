@@ -71,11 +71,32 @@ pub fn check(service: &str, key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Marcador estable de «el keyring del SO no está disponible»: el servicio de
+/// secretos rechazó la operación o no se pudo llegar a él. Se conserva al
+/// clasificar el fallo (como los de sync): el frontend lo lee para culpar al
+/// keyring y no al paso que falló (OAuth, backend…). Espejado en
+/// `src/modules/ipc/errors.js`; un test de este módulo comprueba que el literal
+/// sigue allí.
+pub const STORAGE_UNAVAILABLE_MARKER: &str = "keyring-unavailable:";
+
+/// Texto de un fallo del keyring. Los del propio almacén del SO
+/// (`PlatformFailure`, `NoStorageAccess`: el servicio de secretos rechaza la
+/// operación, está bloqueado o no responde) llevan el marcador delante; los de
+/// los datos (entrada inexistente, codificación, ambigüedad) salen tal cual.
+pub fn error_text(err: &keyring::Error) -> String {
+    match err {
+        keyring::Error::PlatformFailure(_) | keyring::Error::NoStorageAccess(_) => {
+            format!("{STORAGE_UNAVAILABLE_MARKER} {err}")
+        }
+        _ => err.to_string(),
+    }
+}
+
 /// Abre la entrada del keyring de `key` en el servicio de Rustty, validando
 /// antes que la clave esté dentro de la allowlist.
 pub fn entry(service: &str, key: &str) -> Result<keyring::Entry, String> {
     check(service, key)?;
-    keyring::Entry::new(SERVICE, key).map_err(|e| e.to_string())
+    keyring::Entry::new(SERVICE, key).map_err(|e| error_text(&e))
 }
 
 #[cfg(test)]
@@ -127,5 +148,43 @@ mod tests {
         assert!(check(SERVICE, &format!("password:{}", "a".repeat(MAX_KEY_LEN))).is_err());
         assert!(check(SERVICE, "password:a\0b").is_err());
         assert!(check(SERVICE, "password:a\nb").is_err());
+    }
+
+    #[test]
+    fn los_fallos_del_almacen_llevan_el_marcador() {
+        // Lo que devolvía oo7 0.7.0~beta (Fedora 45) al crear cualquier entrada.
+        let platform = keyring::Error::PlatformFailure(
+            "Failed to create a new item Password too short: 2.".into(),
+        );
+        let text = error_text(&platform);
+        assert!(text.starts_with(STORAGE_UNAVAILABLE_MARKER), "{text}");
+        assert!(text.contains("Password too short: 2"), "conserva el detalle: {text}");
+
+        let access = keyring::Error::NoStorageAccess("collection is locked".into());
+        assert!(error_text(&access).starts_with(STORAGE_UNAVAILABLE_MARKER));
+    }
+
+    #[test]
+    fn los_fallos_de_los_datos_no_culpan_al_keyring() {
+        for err in [
+            keyring::Error::NoEntry,
+            keyring::Error::BadEncoding(vec![0xff]),
+            keyring::Error::TooLong("user".into(), 255),
+            keyring::Error::Invalid("user".into(), "vacío".into()),
+        ] {
+            assert!(!error_text(&err).contains(STORAGE_UNAVAILABLE_MARKER), "{err}");
+        }
+    }
+
+    #[test]
+    fn el_marcador_sigue_espejado_en_el_frontend() {
+        let mirror = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../src/modules/ipc/errors.js");
+        let js = std::fs::read_to_string(&mirror).expect("espejo del frontend");
+        assert!(
+            js.contains(&format!("\"{STORAGE_UNAVAILABLE_MARKER}\"")),
+            "{} debe declarar el mismo marcador",
+            mirror.display()
+        );
     }
 }

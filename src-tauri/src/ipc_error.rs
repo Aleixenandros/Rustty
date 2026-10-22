@@ -14,8 +14,10 @@
 //!    [`AppError`] y de los marcadores internos que ya usan `sync.rs` y
 //!    `host_keys.rs`. Ningún consumidor vuelve a inspeccionar el texto.
 //! 3. Los marcadores internos (`hostkey-changed:`…) se **retiran** del mensaje
-//!    al clasificar: son para el código, no para el usuario. Los de sync se
-//!    conservan porque `src/sync.js` los sigue leyendo (contrato espejado).
+//!    al clasificar: son para el código, no para el usuario. Los de sync y el
+//!    del keyring (`keyring-unavailable:`) se conservan porque el frontend los
+//!    sigue leyendo (contratos espejados en `src/sync.js` y
+//!    `src/modules/ipc/errors.js`).
 //! 4. La lista de `kind` está espejada en `src/modules/ipc/errors.js`, con un
 //!    test de paridad a cada lado: **añadir uno obliga a tocar los dos**.
 
@@ -92,6 +94,11 @@ impl IpcError {
         }
         if message.contains(crate::sync::OFFLINE_MARKER) {
             return IpcError::new(IpcErrorKind::Offline, message);
+        }
+        // El del keyring del SO también se conserva: el frontend lo lee para
+        // culpar al keyring y no al paso que falló.
+        if message.contains(crate::keyring_scope::STORAGE_UNAVAILABLE_MARKER) {
+            return IpcError::new(IpcErrorKind::PermissionDenied, message);
         }
         IpcError::new(IpcErrorKind::Internal, message)
     }
@@ -189,6 +196,22 @@ mod tests {
             assert_eq!(err.kind, kind, "marcador {marker}");
             assert!(err.message.contains(marker), "marcador {marker} conservado");
         }
+    }
+
+    #[test]
+    fn un_keyring_que_rechaza_la_operacion_es_un_permiso_denegado_con_su_marcador() {
+        use crate::keyring_scope::STORAGE_UNAVAILABLE_MARKER;
+        // Así llega desde `sync.rs`: dentro de un AppError::Sync, con el paso
+        // delante del marcador.
+        let err = IpcError::from(AppError::Sync(format!(
+            "keyring get: {STORAGE_UNAVAILABLE_MARKER} Platform secure storage failure: x"
+        )));
+        assert_eq!(err.kind, IpcErrorKind::PermissionDenied);
+        assert!(
+            err.message.contains(STORAGE_UNAVAILABLE_MARKER),
+            "el frontend lo lee: {}",
+            err.message
+        );
     }
 
     #[test]

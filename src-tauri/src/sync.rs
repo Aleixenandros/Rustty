@@ -582,6 +582,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn estado_de_la_cuenta_oauth() {
+        use OAuthAccountState::*;
+        assert_eq!(OAuthAccountState::from_parts(true, true), Connected);
+        // Conectada antes de que existiera la marca: el token manda.
+        assert_eq!(OAuthAccountState::from_parts(true, false), Connected);
+        // Lo que pasó al cambiar el servicio de secretos del sistema: la cuenta
+        // estaba conectada, nadie la desconectó y el token ya no está.
+        assert_eq!(OAuthAccountState::from_parts(false, true), TokenMissing);
+        assert_eq!(OAuthAccountState::from_parts(false, false), Disconnected);
+    }
+
+    #[test]
+    fn el_estado_de_la_cuenta_viaja_como_lo_lee_el_frontend() {
+        // Espejo de `OAUTH_ACCOUNT_STATE` en src/modules/sync-feedback.js.
+        for (state, wire) in [
+            (OAuthAccountState::Connected, "connected"),
+            (OAuthAccountState::Disconnected, "disconnected"),
+            (OAuthAccountState::TokenMissing, "token_missing"),
+        ] {
+            assert_eq!(serde_json::to_value(state).unwrap(), json!(wire));
+        }
+    }
+
+    #[test]
+    fn la_marca_de_cuenta_conectada_se_escribe_y_se_retira() {
+        let dir = std::env::temp_dir().join(format!("rustty-sync-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manager = SyncManager::new(dir.clone());
+        let provider = OAuthProvider::GoogleDrive;
+
+        assert!(!manager.remove_oauth_mark(provider).unwrap(), "sin marca no hay nada que retirar");
+        manager.write_oauth_mark(provider);
+        let mark = manager.oauth_mark_path(provider);
+        // No guarda nada secreto: solo la fecha en que se vio conectada.
+        let content = std::fs::read_to_string(&mark).unwrap();
+        assert!(DateTime::parse_from_rfc3339(content.trim()).is_ok(), "{content}");
+        assert!(manager.remove_oauth_mark(provider).unwrap());
+        assert!(!mark.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn sync_item(data: serde_json::Value, device_id: &str) -> SyncItem {
         SyncItem {
             data,
@@ -1170,7 +1212,7 @@ pub fn decrypt(passphrase: &str, ciphertext: &[u8]) -> Result<Vec<u8>, AppError>
 
 // ─── OAuth 2.0 + PKCE ────────────────────────────────────────────────
 
-use crate::keyring_scope::SERVICE as KEYRING_SERVICE;
+use crate::keyring_scope::{error_text as keyring_error_text, SERVICE as KEYRING_SERVICE};
 const OAUTH_CALLBACK_PATH: &str = "/oauth/callback";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -1207,6 +1249,33 @@ pub struct OAuthFinishResult {
     pub connected: bool,
 }
 
+/// Estado de la cuenta OAuth de un proveedor en este equipo, tal como lo
+/// muestra la pestaña de sincronización. Espejado en `OAUTH_ACCOUNT_STATE`
+/// (`src/modules/sync-feedback.js`).
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthAccountState {
+    /// El token de refresco está en el keyring.
+    Connected,
+    /// Nunca se conectó en este equipo, o se desconectó a propósito.
+    Disconnected,
+    /// Estuvo conectada aquí y nadie la desconectó, pero el token ya no está:
+    /// el keyring del SO lo perdió (un cambio de servicio de secretos, un
+    /// llavero recreado) o Google revocó la autorización y Rustty lo retiró.
+    TokenMissing,
+}
+
+impl OAuthAccountState {
+    /// Decisión pura: si hay token y si la cuenta llegó a estar conectada aquí.
+    fn from_parts(has_token: bool, was_connected: bool) -> Self {
+        match (has_token, was_connected) {
+            (true, _) => Self::Connected,
+            (false, true) => Self::TokenMissing,
+            (false, false) => Self::Disconnected,
+        }
+    }
+}
+
 struct OAuthPending {
     provider: OAuthProvider,
     verifier: String,
@@ -1219,17 +1288,24 @@ fn oauth_refresh_key(provider: OAuthProvider) -> String {
     format!("sync:oauth:{}:refresh_token", provider.key_part())
 }
 
+/// `AppError` de un fallo del keyring con el paso que lo produjo. El marcador
+/// de [`keyring_error_text`] permite a la interfaz culpar al keyring del SO y
+/// no al paso de sync que lo pedía.
+fn keyring_failure(step: &str, err: &keyring::Error) -> AppError {
+    AppError::Sync(format!("{step}: {}", keyring_error_text(err)))
+}
+
 fn keyring_set_secret(key: &str, value: &str) -> Result<(), AppError> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, key)
-        .map_err(|e| AppError::Sync(format!("keyring entry: {e}")))?;
+        .map_err(|e| keyring_failure("keyring entry", &e))?;
     entry
         .set_password(value)
-        .map_err(|e| AppError::Sync(format!("keyring set: {e}")))
+        .map_err(|e| keyring_failure("keyring set", &e))
 }
 
 fn keyring_get_secret(key: &str) -> Result<Option<String>, AppError> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, key)
-        .map_err(|e| AppError::Sync(format!("keyring entry: {e}")))?;
+        .map_err(|e| keyring_failure("keyring entry", &e))?;
     match entry.get_password() {
         Ok(value) => {
             #[cfg(target_os = "linux")]
@@ -1252,16 +1328,18 @@ fn keyring_get_secret(key: &str) -> Result<Option<String>, AppError> {
             Ok(Some(value))
         }
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(AppError::Sync(format!("keyring get: {e}"))),
+        Err(e) => Err(keyring_failure("keyring get", &e)),
     }
 }
 
-fn keyring_delete_secret(key: &str) -> Result<(), AppError> {
+/// Borra la entrada. Devuelve si existía.
+fn keyring_delete_secret(key: &str) -> Result<bool, AppError> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, key)
-        .map_err(|e| AppError::Sync(format!("keyring entry: {e}")))?;
+        .map_err(|e| keyring_failure("keyring entry", &e))?;
     match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(AppError::Sync(format!("keyring delete: {e}"))),
+        Ok(()) => Ok(true),
+        Err(keyring::Error::NoEntry) => Ok(false),
+        Err(e) => Err(keyring_failure("keyring delete", &e)),
     }
 }
 
@@ -2917,13 +2995,54 @@ impl SyncManager {
         Ok(())
     }
 
-    pub fn oauth_connected(&self, provider: OAuthProvider) -> Result<bool, AppError> {
-        Ok(keyring_get_secret(&oauth_refresh_key(provider))?.is_some())
+    /// Marca de «esta cuenta llegó a estar conectada en este equipo». No es un
+    /// secreto (solo guarda la fecha): distingue una cuenta que nunca se
+    /// conectó de una cuyo token ha desaparecido del keyring. Solo la retira la
+    /// desconexión explícita.
+    fn oauth_mark_path(&self, provider: OAuthProvider) -> PathBuf {
+        self.data_dir
+            .join(format!("sync_oauth_{}.connected", provider.key_part()))
     }
 
-    pub fn oauth_disconnect(&self, provider: OAuthProvider) -> Result<(), AppError> {
+    fn write_oauth_mark(&self, provider: OAuthProvider) {
+        // Sin la marca la cuenta funciona igual: si no se puede escribir, solo
+        // se pierde el aviso de «token desaparecido» para un fallo futuro.
+        let _ = crate::atomic_file::write(
+            &self.oauth_mark_path(provider),
+            Utc::now().to_rfc3339().as_bytes(),
+            false,
+        );
+    }
+
+    /// Retira la marca. Devuelve si existía.
+    fn remove_oauth_mark(&self, provider: OAuthProvider) -> Result<bool, AppError> {
+        match std::fs::remove_file(self.oauth_mark_path(provider)) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(AppError::Sync(format!("borrar marca OAuth: {e}"))),
+        }
+    }
+
+    pub fn oauth_status(&self, provider: OAuthProvider) -> Result<OAuthAccountState, AppError> {
+        let has_token = keyring_get_secret(&oauth_refresh_key(provider))?.is_some();
+        let was_connected = self.oauth_mark_path(provider).exists();
+        // Una cuenta conectada antes de que existiera la marca la recibe en
+        // cuanto se ve su token: así un token perdido más adelante también se
+        // reconoce en ella.
+        if has_token && !was_connected {
+            self.write_oauth_mark(provider);
+        }
+        Ok(OAuthAccountState::from_parts(has_token, was_connected))
+    }
+
+    /// Desconecta la cuenta de este equipo: borra el token y la marca.
+    /// Devuelve si había algo que desconectar, para que la interfaz no calle
+    /// cuando el botón no tenía efecto.
+    pub fn oauth_disconnect(&self, provider: OAuthProvider) -> Result<bool, AppError> {
         clear_google_caches();
-        keyring_delete_secret(&oauth_refresh_key(provider))
+        let had_token = keyring_delete_secret(&oauth_refresh_key(provider))?;
+        let had_mark = self.remove_oauth_mark(provider)?;
+        Ok(had_token || had_mark)
     }
 
     pub async fn oauth_begin(&self, provider: OAuthProvider) -> Result<OAuthStartResult, AppError> {
@@ -3035,6 +3154,7 @@ impl SyncManager {
         // Cuenta (re)conectada: invalida token/file_id de la sesión anterior.
         clear_google_caches();
         keyring_set_secret(&oauth_refresh_key(provider), &refresh_token)?;
+        self.write_oauth_mark(provider);
         Ok(OAuthFinishResult {
             provider: provider.key_part().to_string(),
             connected: true,

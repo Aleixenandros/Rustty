@@ -2,10 +2,13 @@
 import { describe, it, expect } from "vitest";
 import {
   IPC_ERROR_KIND,
+  KEYRING_UNAVAILABLE_MARKER,
   ipcErrorKind,
   ipcErrorText,
   isHostKeyError,
+  isKeyringUnavailableError,
   isRetryableIpcError,
+  keyringFailureDetail,
 } from "./errors.js";
 
 describe("contrato de kinds", () => {
@@ -73,5 +76,34 @@ describe("clasificación de conveniencia", () => {
     expect(isRetryableIpcError({ kind: "offline", message: "" })).toBe(true);
     expect(isRetryableIpcError({ kind: "authFailed", message: "" })).toBe(false);
     expect(isRetryableIpcError("cadena suelta")).toBe(false);
+  });
+});
+
+describe("fallos del keyring del SO", () => {
+  // Tal como los manda el backend hoy: `keyring_set` rechaza con cadena; los
+  // comandos de sync, dentro de «Error de sincronización: <paso>: …».
+  const fromCommand =
+    `${KEYRING_UNAVAILABLE_MARKER} Platform secure storage failure: Password too short: 2.`;
+  const fromSync =
+    `Error de sincronización: keyring set: ${KEYRING_UNAVAILABLE_MARKER} Platform secure storage failure: x`;
+
+  it("los reconoce por el marcador, en cadena o en un IpcError", () => {
+    expect(isKeyringUnavailableError(fromCommand)).toBe(true);
+    expect(isKeyringUnavailableError(fromSync)).toBe(true);
+    expect(isKeyringUnavailableError({ kind: "permissionDenied", message: fromSync })).toBe(true);
+  });
+
+  it("no culpa al keyring de lo que no es suyo", () => {
+    expect(isKeyringUnavailableError("Error de E/S: permission denied")).toBe(false);
+    // Un permiso denegado de fichero tiene el mismo kind, pero no el marcador.
+    expect(isKeyringUnavailableError({ kind: "permissionDenied", message: "Acceso denegado" }))
+      .toBe(false);
+    expect(isKeyringUnavailableError(null)).toBe(false);
+  });
+
+  it("el detalle es lo que dijo el servicio de secretos, sin marcador ni prefijos", () => {
+    expect(keyringFailureDetail(fromCommand)).toBe("Platform secure storage failure: Password too short: 2.");
+    expect(keyringFailureDetail(fromSync)).toBe("Platform secure storage failure: x");
+    expect(keyringFailureDetail("otro fallo")).toBe("otro fallo");
   });
 });

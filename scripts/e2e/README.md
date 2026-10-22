@@ -11,6 +11,12 @@ También crea una carpeta y mueve dos conexiones desde la interfaz: comprueba
 que llegan al backend cifrado, que el mensaje y el historial cuentan los
 cambios enviados y que repetir la sincronización indica que todo está al día.
 
+La pestaña de sincronización se prueba además ante un keyring del SO que
+rechaza las escrituras y una cuenta de Drive cuyo token ha desaparecido: el
+aviso nombra al keyring (no al backend) con el detalle técnico, el estado de la
+cuenta lo dice y «Desconectar» avisa aunque no quede nada que desconectar. Se
+simula en el renderer, sin tocar el keyring ni ninguna cuenta.
+
 La sección de atajos recorre Preferencias con eventos de teclado en el WebView,
 captura combinaciones ya asignadas sin ejecutarlas, cancela con Escape, cambia y
 restablece atajos, confirma/cancela presets y abre el formulario de conexión con

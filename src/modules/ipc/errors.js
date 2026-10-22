@@ -71,6 +71,38 @@ export function isHostKeyError(err) {
 }
 
 /**
+ * Marcador estable de «el keyring del SO no está disponible»: el servicio de
+ * secretos rechazó la operación o no se pudo llegar a él. Espejo de
+ * `keyring_scope::STORAGE_UNAVAILABLE_MARKER`; un test de Rust comprueba que
+ * este literal sigue aquí. Viaja dentro del mensaje, tanto en los comandos que
+ * rechazan con cadena como en un `IpcError` (`permissionDenied`).
+ */
+export const KEYRING_UNAVAILABLE_MARKER = "keyring-unavailable:";
+
+/**
+ * `true` si el fallo es del keyring del SO y no del paso que lo pedía (OAuth,
+ * backend, sincronización): la UI debe nombrar al keyring.
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isKeyringUnavailableError(err) {
+  return ipcErrorText(err).includes(KEYRING_UNAVAILABLE_MARKER);
+}
+
+/**
+ * Lo que dijo el servicio de secretos, sin el marcador ni los prefijos del
+ * camino («Error de sincronización: keyring set:»…). Si no hay marcador,
+ * el texto entero.
+ * @param {unknown} err
+ * @returns {string}
+ */
+export function keyringFailureDetail(err) {
+  const text = ipcErrorText(err);
+  const at = text.indexOf(KEYRING_UNAVAILABLE_MARKER);
+  return at < 0 ? text : text.slice(at + KEYRING_UNAVAILABLE_MARKER.length).trim();
+}
+
+/**
  * `true` si reintentar con las mismas credenciales tiene sentido (la causa es
  * la red, no el usuario ni el servidor).
  * @param {unknown} err

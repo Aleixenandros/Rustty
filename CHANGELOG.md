@@ -2,6 +2,25 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.19.0] - 2026-10-22
+
+### Añadido
+
+- El estado de la cuenta de Google Drive distingue una cuenta que nunca se conectó en este equipo, o que se desconectó a propósito, de una cuya autorización ha desaparecido del keyring del sistema: en ese caso lo dice en rojo y pide volver a conectarla. Pasa, por ejemplo, cuando una actualización cambia el servicio de contraseñas del sistema (en Fedora 45, `oo7` en lugar de gnome-keyring) y el llavero anterior deja de leerse.
+
+### Corregido
+
+- Si el keyring del sistema rechaza guardar o leer un secreto (como el `oo7` en beta de Fedora 45, que se niega a guardar si la contraseña del llavero tiene menos de cuatro caracteres), el aviso lo nombra a él y muestra el detalle técnico, en vez de presentarlo como un fallo de OAuth, del backend o de la sincronización. «Conectar cuenta» y «Probar conexión» separan ese fallo al guardar la passphrase de su propio paso, y Guardar en Preferencias avisa si la passphrase o la contraseña WebDAV no han podido guardarse, en vez de dejarlo solo en la consola.
+- «Desconectar» confirma que ha desconectado la cuenta o avisa de que no había ninguna conectada en este equipo; antes no mostraba nada y parecía no funcionar.
+- Un fallo de sincronización ya no aparece como «Sync: [object Object]» en el aviso ni en el registro de actividad.
+- Las carpetas FTP y FTPS de servidores que envían la fecha con milisegundos, como FileZilla Server, ya no aparecen vacías (suppaftp 12.2.1).
+- El indicador «(configurada)» de la passphrase y de la contraseña WebDAV se traduce a los cinco idiomas, y la comprobación de textos sin traducir vigila también los marcadores de posición que se asignan desde el código.
+
+### Cambiado
+
+- Dependencias: plugins de Tauri de portapapeles, notificaciones, actualizador y apertura de enlaces, tokio y suppaftp al día, y acciones del CI actualizadas. Las firmas de la última versión publicada se verificaron con el actualizador nuevo antes de subirlo. `rustls-webpki` y `webpki-root-certs` resuelven dos avisos de seguridad: las conexiones TLS (FTPS, WebDAV, Google Drive) ya no aceptan certificados que pasen por los intermedios de emSign retirados de la confianza.
+- Pruebas: la prueba de la interfaz espera a que termine de arrancar antes de pulsar nada y cubre los avisos de un keyring que rechaza escrituras y de una cuenta de Drive sin token; gitleaks deja de marcar como secretos las huellas SHA256 de host keys, que son públicas.
+
 ## [2.18.0] - 2026-10-17
 
 ### Añadido

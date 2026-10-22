@@ -27,9 +27,9 @@ use crate::scripts::{HostPreview, RunOptions, Script, ScriptManager};
 use crate::sftp_manager::{FileEntry, SftpManager, TransferConflictPolicy};
 use crate::ssh_manager::{legacy_catalog_info, SshManager, SshTunnelConfig, SshTunnelInfo};
 use crate::sync::{
-    pack_state, resolve_sync_folder, significant_clock_skew, unpack_state, OAuthFinishResult,
-    OAuthProvider, OAuthStartResult, SnapshotEntry, SyncBackendKind, SyncConfig, SyncManager,
-    SyncRunOutcome, SyncState, CONFLICT_MARKER,
+    pack_state, resolve_sync_folder, significant_clock_skew, unpack_state, OAuthAccountState,
+    OAuthFinishResult, OAuthProvider, OAuthStartResult, SnapshotEntry, SyncBackendKind, SyncConfig,
+    SyncManager, SyncRunOutcome, SyncState, CONFLICT_MARKER,
 };
 use crate::{app_log, AppLogDir, AppLogLevel, DataDir, LaunchMinimized};
 
@@ -1770,7 +1770,9 @@ pub fn local_path_join(base: String, name: String) -> Result<String, String> {
 #[tauri::command]
 pub fn keyring_set(service: String, key: String, secret: String) -> Result<(), String> {
     let entry = keyring_scope::entry(&service, &key)?;
-    entry.set_password(&secret).map_err(|e| e.to_string())
+    entry
+        .set_password(&secret)
+        .map_err(|e| keyring_scope::error_text(&e))
 }
 
 /// Recupera una contraseña del keyring. Devuelve None si no existe entrada.
@@ -1788,7 +1790,7 @@ pub fn keyring_get(service: String, key: String) -> Result<Option<String>, Strin
             Ok(Some(p))
         }
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(keyring_scope::error_text(&e)),
     }
 }
 
@@ -1796,7 +1798,9 @@ pub fn keyring_get(service: String, key: String) -> Result<Option<String>, Strin
 #[tauri::command]
 pub fn keyring_delete(service: String, key: String) -> Result<(), String> {
     let entry = keyring_scope::entry(&service, &key)?;
-    entry.delete_credential().map_err(|e| e.to_string())
+    entry
+        .delete_credential()
+        .map_err(|e| keyring_scope::error_text(&e))
 }
 
 // ─── Comandos de KeePass ─────────────────────────────────────────────────────
@@ -2512,13 +2516,17 @@ pub async fn sync_oauth_complete(
 }
 
 #[tauri::command]
-pub fn sync_oauth_status(state: State<SyncManager>, provider: String) -> Result<bool, String> {
+pub fn sync_oauth_status(
+    state: State<SyncManager>,
+    provider: String,
+) -> Result<OAuthAccountState, String> {
     let provider = OAuthProvider::parse(&provider).map_err(|e| e.to_string())?;
-    state.oauth_connected(provider).map_err(|e| e.to_string())
+    state.oauth_status(provider).map_err(|e| e.to_string())
 }
 
+/// Desconecta la cuenta de este equipo. Devuelve si había algo que desconectar.
 #[tauri::command]
-pub fn sync_oauth_disconnect(state: State<SyncManager>, provider: String) -> Result<(), String> {
+pub fn sync_oauth_disconnect(state: State<SyncManager>, provider: String) -> Result<bool, String> {
     let provider = OAuthProvider::parse(&provider).map_err(|e| e.to_string())?;
     state.oauth_disconnect(provider).map_err(|e| e.to_string())
 }
