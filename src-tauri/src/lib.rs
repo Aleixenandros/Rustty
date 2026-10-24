@@ -51,6 +51,7 @@ mod scripts;
 mod sftp_manager;
 mod shell_integration;
 mod ssh_manager;
+mod ssh_transport;
 mod store_file;
 mod subst;
 mod sync;

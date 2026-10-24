@@ -7,7 +7,7 @@ El panel de ficheros permite navegar, subir y descargar sin salir de Rustty. En 
 1. Conecta a un perfil SSH y pulsa el botón **SFTP** de la sesión, o abre directamente un perfil FTP/FTPS.
 2. Rustty muestra un panel con dos columnas: **remoto** (a la izquierda) y **local** (a la derecha).
 
-En SSH, el panel reutiliza los datos de conexión del perfil, pero crea su propio canal SFTP. En FTP/FTPS, la pestaña es el propio panel de ficheros.
+En SSH, el panel reutiliza los datos de conexión del perfil —incluidos el **Bastion / Jump host** y los cifrados antiguos si los tienes activados— pero abre su propia conexión SFTP. Si el perfil tiene bastión, el registro de actividad del panel muestra cada paso del salto en la etapa `bastion`. En FTP/FTPS, la pestaña es el propio panel de ficheros.
 
 ## Vista dividida local / remoto
 

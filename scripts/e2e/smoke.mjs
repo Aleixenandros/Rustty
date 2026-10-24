@@ -40,6 +40,7 @@ import { openSession, sleep } from "./webdriver.mjs";
 import { checkPrefsSync } from "./prefs-sync.mjs";
 import { checkSyncFeedback } from "./sync-feedback.mjs";
 import { checkShortcuts } from "./shortcuts.mjs";
+import { checkDialogs } from "./dialogs.mjs";
 import { checkTunnels } from "./tunnels.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -478,6 +479,7 @@ async function main() {
     await checkPrefsSync(app, workDir, check);
     await checkSyncFeedback(app, check);
     await checkShortcuts(app, check);
+    await checkDialogs(app, check);
     await checkIpcLeastPrivilege(app, home);
     const sftpServer = await prepareSftpServer(home);
     if (sftpServer) {

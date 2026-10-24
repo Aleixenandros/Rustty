@@ -72,6 +72,10 @@ export function quotePath(path, platform) {
  * en los marcadores de *bracketed paste* (`ESC [200~` … `ESC [201~`) para que el
  * shell trate el contenido como datos pegados y nunca lo autoejecute —defensa
  * ante nombres de fichero con saltos de línea, válidos en POSIX—.
+ *
+ * Las rutas con caracteres de control se **descartan** (ver `hasControlChars`):
+ * un nombre como `a<ESC>[201~<Ctrl+U>touch x<CR>` cerraría antes de tiempo el
+ * pegado entre corchetes, borraría la línea y ejecutaría lo que sigue.
  * @param {string[]} paths
  * @param {{ platform?: "windows"|"posix", bracketed?: boolean, trailingSpace?: boolean }} [opts]
  * @returns {string}
@@ -79,11 +83,49 @@ export function quotePath(path, platform) {
 export function buildDropInsertText(paths, opts = {}) {
   const { platform = "posix", bracketed = false, trailingSpace = true } = opts;
   const list = (Array.isArray(paths) ? paths : []).filter(
-    (p) => typeof p === "string" && p.length > 0
+    (p) => typeof p === "string" && p.length > 0 && !hasControlChars(p)
   );
   if (list.length === 0) return "";
   let text = list.map((p) => quotePath(p, platform)).join(" ");
   if (trailingSpace) text += " ";
   if (bracketed) text = "\x1b[200~" + text + "\x1b[201~";
   return text;
+}
+
+/** Controles C0 y DEL: en un nombre o una ruta no los teclearía nadie a mano. */
+const CONTROL_CHARS = /[\x00-\x1F\x7F]/;
+
+/**
+ * ¿Lleva la ruta caracteres de control (ESC, CR, LF, TAB, DEL…)? Son válidos
+ * en un nombre de fichero POSIX, pero escritos en un terminal se interpretan
+ * como teclas, no como texto.
+ * @param {string} path
+ * @returns {boolean}
+ */
+export function hasControlChars(path) {
+  return CONTROL_CHARS.test(path);
+}
+
+/**
+ * Línea que lleva un shell remoto recién abierto a la «carpeta inicial» de
+ * «Duplicar con cambios», o `null` si no debe enviarse. El espacio inicial la
+ * deja fuera del historial con `HISTCONTROL=ignorespace`; `~` y `~/…` quedan
+ * fuera de las comillas para que el shell los expanda.
+ *
+ * Solo va a un shell **nuevo**: nunca al canal del modo control de tmux (es un
+ * protocolo de líneas, no un terminal) ni a una sesión persistente, que se
+ * reengancha a una viva y el `cd` caería en lo que esté corriendo (un editor,
+ * `less`, un REPL…). Una carpeta con caracteres de control se descarta.
+ * @param {string | null | undefined} dir
+ * @param {{ tmuxControl?: boolean, persistSession?: boolean }} [ctx]
+ * @returns {string | null}
+ */
+export function initialDirCommand(dir, { tmuxControl = false, persistSession = false } = {}) {
+  const value = typeof dir === "string" ? dir.trim() : "";
+  if (!value || tmuxControl || persistSession || hasControlChars(value)) return null;
+  let target;
+  if (value === "~" || value === "~/") target = "~";
+  else if (value.startsWith("~/")) target = `~/${quotePosixPath(value.slice(2))}`;
+  else target = quotePosixPath(value);
+  return ` cd ${target}\r`;
 }

@@ -15,6 +15,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { INK_FILLS, INK_MIN_RATIO, RING_MIN_RATIO, inkTokens, ringColor } from "../src/modules/themes/ink.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cssPath = resolve(root, "src", "styles.css");
@@ -29,7 +30,25 @@ const CHECKS = [
   { fg: "--overlay0", bg: "--base", min: 3.0, label: "Apagado/bordes (UI)" },
 ];
 
-const BUNDLED_UI_CHECKS = CHECKS.map((check) => ({
+/**
+ * Texto sobre rellenos de acento (botón primario, avisos, ítem resaltado de
+ * un menú): la tinta `--on-<acento>` sobre `--<acento>`. En los temas del
+ * bundle la tinta no está en el JSON: se calcula como al registrarlos
+ * (`modules/themes/ink.js`) y se comprueba el resultado.
+ */
+const FILL_CHECKS = INK_FILLS.map((fill) => ({
+  fg: `--on-${fill}`, bg: `--${fill}`, min: INK_MIN_RATIO, label: `Texto sobre ${fill}`,
+}));
+CHECKS.push(...FILL_CHECKS);
+
+/** Anillo de foco contra el fondo de la ventana y el de paneles y modales. */
+const RING_CHECKS = [
+  { fg: "--focus-ring-color", bg: "--base", min: RING_MIN_RATIO, label: "Anillo de foco / ventana" },
+  { fg: "--focus-ring-color", bg: "--mantle", min: RING_MIN_RATIO, label: "Anillo de foco / paneles" },
+];
+CHECKS.push(...RING_CHECKS);
+
+const BUNDLED_UI_CHECKS = CHECKS.filter((check) => !FILL_CHECKS.includes(check) && !RING_CHECKS.includes(check)).map((check) => ({
   ...check,
   fg: check.fg.slice(2),
   bg: check.bg.slice(2),
@@ -94,6 +113,20 @@ function extractTokens(css, selector, requiredToken = "--base") {
   }
 }
 
+/**
+ * Valor final de un token: sigue las referencias `var(--x)` primero en el
+ * tema y luego en el base (las tintas valen `var(--crust)` por defecto).
+ */
+function resolveToken(name, tokens, base) {
+  let value = tokens[name] ?? base?.[name];
+  for (let i = 0; i < 8 && typeof value === "string"; i++) {
+    const ref = value.match(/^var\((--[a-z0-9-]+)\)$/i);
+    if (!ref) break;
+    value = tokens[ref[1]] ?? base?.[ref[1]];
+  }
+  return value;
+}
+
 function fmtRatio(n) {
   return n.toFixed(2).padStart(5, " ");
 }
@@ -127,8 +160,8 @@ async function main() {
     let themeFails = 0;
     for (const check of CHECKS) {
       // Los temas redefinen los tokens; si falta alguno, cae al del base.
-      const fg = tokens[check.fg] ?? base?.[check.fg];
-      const bg = tokens[check.bg] ?? base?.[check.bg];
+      const fg = resolveToken(check.fg, tokens, base);
+      const bg = resolveToken(check.bg, tokens, base);
       const ratio = contrastRatio(fg, bg);
       checked++;
       if (ratio == null) {
@@ -170,6 +203,31 @@ async function main() {
           label: `${check.label} (${check.fg}/${check.bg})`,
           ratio,
           min: check.min,
+        });
+      }
+    }
+
+    const ring = ringColor(theme.ui || {});
+    for (const back of ["base", "mantle"]) {
+      if (!theme.ui?.[back]) continue;
+      const ratio = contrastRatio(ring, theme.ui[back]);
+      bundledChecked++;
+      if (ratio == null || ratio < RING_MIN_RATIO) {
+        bundledFailures.push({ id: theme.id, label: `Anillo de foco (ring/${back})`, ratio, min: RING_MIN_RATIO });
+      }
+    }
+
+    const inks = inkTokens(theme.ui || {});
+    for (const fill of INK_FILLS) {
+      if (!theme.ui?.[fill]) continue;
+      const ratio = contrastRatio(inks[fill], theme.ui[fill]);
+      bundledChecked++;
+      if (ratio == null || ratio < INK_MIN_RATIO) {
+        bundledFailures.push({
+          id: theme.id,
+          label: `Texto sobre ${fill} (on-${fill}/${fill})`,
+          ratio,
+          min: INK_MIN_RATIO,
         });
       }
     }

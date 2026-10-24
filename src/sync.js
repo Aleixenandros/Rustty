@@ -73,6 +73,65 @@ function sameValue(a, b) {
   return JSON.stringify(normalizeForCompare(a)) === JSON.stringify(normalizeForCompare(b));
 }
 
+// Colección del espejo local de tombstones (`prefs.tombstones`) por prefijo de
+// clave del estado. Las claves sin entrada (prefs, cred, secret…) no se borran.
+const TOMBSTONE_KINDS = {
+  profile: "profiles", theme: "themes", shortcut: "shortcuts", snippet: "snippets", note: "notes",
+};
+
+function splitStateKey(key) {
+  const sep = key.indexOf(":");
+  return sep < 0 ? [key, ""] : [key.slice(0, sep), key.slice(sep + 1)];
+}
+
+function localTombstone(prefs, key) {
+  const [prefix, id] = splitStateKey(key);
+  const kind = TOMBSTONE_KINDS[prefix];
+  return kind ? prefs.tombstones?.[kind]?.[id] : undefined;
+}
+
+function setLocalTombstone(prefs, key, ts) {
+  const [prefix, id] = splitStateKey(key);
+  const kind = TOMBSTONE_KINDS[prefix];
+  if (!kind) return;
+  prefs.tombstones = prefs.tombstones || {};
+  prefs.tombstones[kind] = prefs.tombstones[kind] || {};
+  prefs.tombstones[kind][id] = ts;
+}
+
+function dropLocalTombstone(prefs, key) {
+  const [prefix, id] = splitStateKey(key);
+  const kind = TOMBSTONE_KINDS[prefix];
+  if (kind && prefs.tombstones?.[kind]) delete prefs.tombstones[kind][id];
+}
+
+/**
+ * Regla del LWW del backend (`SyncState::merge`): un item solo vence a un
+ * tombstone si es estrictamente posterior. Se compara por instante, no por
+ * texto: chrono y `toISOString` no escriben las fracciones igual.
+ */
+function itemBeatsTombstone(updatedAt, tombTs) {
+  const tomb = Date.parse(tombTs);
+  if (!Number.isFinite(tomb)) return true;
+  const item = Date.parse(updatedAt);
+  return Number.isFinite(item) && item > tomb;
+}
+
+/**
+ * Foto de las fechas de edición de perfiles y atajos al lanzar una sync. Al
+ * aplicar el merge, lo que haya cambiado desde entonces es una edición hecha
+ * con la sync en vuelo: el estado mezclado trae la versión anterior y
+ * aplicarlo la revertiría (misma guardia que `prefsSnapshotTs` para el bundle).
+ */
+export function captureLocalEditStamps(profiles, prefs) {
+  return {
+    profiles: Object.fromEntries((profiles || []).map((p) => [p.id, p.updated_at ?? null])),
+    profileTombstones: { ...(prefs?.tombstones?.profiles || {}) },
+    shortcuts: { ...(prefs?._shortcutsTs || {}) },
+    shortcutTombstones: { ...(prefs?.tombstones?.shortcuts || {}) },
+  };
+}
+
 /* ───────────────────────────── Construcción del estado ─────────────────── */
 
 /**
@@ -328,16 +387,24 @@ function credComparable(meta) {
  * Devuelve el desglose de cambios REALES (los items idénticos a lo local no
  * cuentan ni se re-escriben) para que el caller decida qué refrescar en la
  * UI — con un resultado a cero la sync debe ser invisible.
+ *
+ * `ctx.localEditStamps` (solo en una sync) protege lo editado mientras volaba;
+ * `ctx.restoreAt` (restaurar un snapshot o importar un backup) trata lo
+ * aplicado como una edición hecha en ese instante, para que la siguiente sync
+ * no lo deshaga con el remoto, que por definición es más nuevo.
  */
 export async function applyMergedState(merged, ctx) {
   const { profiles, prefs } = ctx;
   const allowSecrets = !!ctx.allowSecrets;
+  const restoreAt = typeof ctx.restoreAt === "string" ? ctx.restoreAt : "";
+  const stamps = ctx.localEditStamps || null;
   let addedProfiles = 0, deletedProfiles = 0, updatedProfiles = 0, prefsChanged = false;
   let themesChanged = 0, shortcutsChanged = 0, snippetsChanged = 0;
   let secretsChanged = 0;
   let credsChanged = 0;
   let notesChanged = 0;
   let prefsSkippedNewerLocal = false;
+  let skippedNewerLocal = false;
   // Dispositivos de origen de los cambios aplicados (para el journal:
   // «2 perfiles actualizados desde el portátil del trabajo»).
   const originDevices = new Set();
@@ -345,8 +412,29 @@ export async function applyMergedState(merged, ctx) {
     if (item?.device_id && item.device_id !== ctx.deviceId) originDevices.add(item.device_id);
   };
 
-  const localProfileIds = new Set(profiles.map((p) => p.id));
-  const localProfilesById = new Map(profiles.map((p) => [p.id, p]));
+  // La lista vigente, no la del arranque de la sync: varias rutas de la
+  // interfaz reasignan la matriz (duplicar, promover a maestra…) en vez de
+  // tocarla en sitio, y una edición así pasaría por «sin cambios».
+  const liveProfiles = typeof ctx.getProfiles === "function" ? ctx.getProfiles() || profiles : profiles;
+  const localProfileIds = new Set(liveProfiles.map((p) => p.id));
+  const localProfilesById = new Map(liveProfiles.map((p) => [p.id, p]));
+
+  // ¿Se tocó este perfil o atajo (editado, creado, borrado o restaurado)
+  // después de construir el estado que se envió? Entonces lo local es más
+  // nuevo que lo mezclado: se conserva y el caller programa otra sync.
+  const editedSinceSnapshot = (key) => {
+    if (!stamps) return false;
+    const [prefix, id] = splitStateKey(key);
+    if (prefix === "profile") {
+      return (localProfilesById.get(id)?.updated_at ?? null) !== (stamps.profiles[id] ?? null)
+        || (prefs.tombstones?.profiles?.[id] ?? null) !== (stamps.profileTombstones[id] ?? null);
+    }
+    if (prefix === "shortcut") {
+      return (prefs._shortcutsTs?.[id] ?? null) !== (stamps.shortcuts[id] ?? null)
+        || (prefs.tombstones?.shortcuts?.[id] ?? null) !== (stamps.shortcutTombstones[id] ?? null);
+    }
+    return false;
+  };
 
   // Estado local de notas y credenciales, cargado UNA vez y solo si el merge
   // trae items de ese tipo (permite saltar upserts idénticos sin re-escribir
@@ -375,6 +463,22 @@ export async function applyMergedState(merged, ctx) {
 
   // Items
   for (const [key, item] of Object.entries(merged.items || {})) {
+    // Un estado puede traer item y tombstone de la misma clave (los subía un
+    // equipo que restauraba sin retirar su tombstone, y un snapshot los
+    // conserva): manda el más nuevo, y si es el tombstone lo aplica abajo.
+    const mergedTombstone = merged.tombstones?.[key];
+    if (mergedTombstone !== undefined && !itemBeatsTombstone(item?.updated_at, mergedTombstone)) continue;
+    if (editedSinceSnapshot(key)) {
+      skippedNewerLocal = true;
+      continue;
+    }
+    // El item sigue vivo: un tombstone local anterior ya no vale, y si se
+    // quedara la siguiente sync lo volvería a enviar y a borrar el item. Al
+    // restaurar vuelve aunque el item sea más viejo: es lo que se pidió.
+    const ownTombstone = localTombstone(prefs, key);
+    if (ownTombstone !== undefined && (restoreAt || itemBeatsTombstone(item?.updated_at, ownTombstone))) {
+      dropLocalTombstone(prefs, key);
+    }
     if (key.startsWith("profile:")) {
       const id = key.slice(8);
       const profile = { ...(item.data || {}) };
@@ -384,6 +488,12 @@ export async function applyMergedState(merged, ctx) {
       profile.updated_at = item.updated_at;
       const existing = localProfilesById.get(id);
       if (existing && sameValue(existing, profile)) continue;
+      if (restoreAt) {
+        // Solo se fecha lo que cambia: un perfil que únicamente difiere en
+        // la fecha se queda como está, sin reescribirse ni ganar a nadie.
+        if (existing && sameValue({ ...existing, updated_at: "" }, { ...profile, updated_at: "" })) continue;
+        profile.updated_at = restoreAt;
+      }
       perfilesEntrantes.push({ profile, item, isNew: !localProfileIds.has(id) });
     } else if (key === "prefs:bundle") {
       // Guardia de carrera: si el usuario tocó las prefs MIENTRAS la sync
@@ -405,7 +515,9 @@ export async function applyMergedState(merged, ctx) {
         bundleChanged = true;
         bundleDataChanged = true;
       }
-      if (prefs._prefsUpdatedAt !== item.updated_at) {
+      if (restoreAt) {
+        if (bundleDataChanged) prefs._prefsUpdatedAt = restoreAt;
+      } else if (prefs._prefsUpdatedAt !== item.updated_at) {
         prefs._prefsUpdatedAt = item.updated_at;
         bundleChanged = true;
       }
@@ -418,6 +530,10 @@ export async function applyMergedState(merged, ctx) {
       const list = prefs.customThemes || (prefs.customThemes = []);
       const idx = list.findIndex((t) => t.id === id);
       if (idx >= 0 && sameValue(list[idx], theme)) continue;
+      if (restoreAt) {
+        if (idx >= 0 && sameValue({ ...list[idx], updatedAt: "" }, { ...theme, updatedAt: "" })) continue;
+        theme.updatedAt = restoreAt;
+      }
       if (idx >= 0) list[idx] = theme; else list.push(theme);
       themesChanged++;
       noteOrigin(item);
@@ -427,9 +543,9 @@ export async function applyMergedState(merged, ctx) {
       prefs._shortcutsTs = prefs._shortcutsTs || {};
       const valueChanged = !sameValue(prefs.shortcuts[id], item.data);
       const timestampChanged = prefs._shortcutsTs[id] !== item.updated_at;
-      if (!valueChanged && !timestampChanged) continue;
+      if (!valueChanged && (restoreAt || !timestampChanged)) continue;
       prefs.shortcuts[id] = item.data;
-      prefs._shortcutsTs[id] = item.updated_at;
+      prefs._shortcutsTs[id] = restoreAt || item.updated_at;
       if (valueChanged) {
         shortcutsChanged++;
         noteOrigin(item);
@@ -441,6 +557,10 @@ export async function applyMergedState(merged, ctx) {
       snippet.updated_at = item.updated_at;
       const existing = loadLocalSnippets().find((entry) => entry.id === id);
       if (existing && sameValue(existing, snippet)) continue;
+      if (restoreAt) {
+        if (existing && sameValue({ ...existing, updated_at: "" }, { ...snippet, updated_at: "" })) continue;
+        snippet.updated_at = restoreAt;
+      }
       upsertLocalSnippet(snippet);
       snippetsChanged++;
       noteOrigin(item);
@@ -456,6 +576,7 @@ export async function applyMergedState(merged, ctx) {
       const localNotes = await ensureNotes();
       const existing = localNotes.get(doc.profile_id);
       if (existing && sameValue(noteComparable(existing), noteComparable(doc))) continue;
+      if (restoreAt) doc.updated_at = restoreAt;
       try {
         await invoke("note_import", { doc });
         notesChanged++;
@@ -479,6 +600,7 @@ export async function applyMergedState(merged, ctx) {
       if (existingNormalized && sameValue(credComparable(existingNormalized), credComparable(meta))) {
         continue;
       }
+      if (restoreAt) meta.updated_at = restoreAt;
       try {
         await invoke("master_cred_import", { meta });
         credsChanged++;
@@ -498,7 +620,7 @@ export async function applyMergedState(merged, ctx) {
             secret,
           });
           prefs._secretsTs = prefs._secretsTs || {};
-          prefs._secretsTs[secretKey] = item.updated_at;
+          prefs._secretsTs[secretKey] = restoreAt || item.updated_at;
           secretsChanged++;
           noteOrigin(item);
         } catch (err) {
@@ -545,9 +667,21 @@ export async function applyMergedState(merged, ctx) {
     }
   }
 
-  // Tombstones
+  // Tombstones. Al restaurar, cada borrado aplicado deja su tombstone local
+  // con la fecha de la restauración: si no, el item remoto lo resucitaría.
+  const recordRestoredDeletion = (key) => {
+    if (restoreAt) setLocalTombstone(prefs, key, restoreAt);
+  };
   const perfilesABorrar = [];
-  for (const key of Object.keys(merged.tombstones || {})) {
+  for (const [key, tombTs] of Object.entries(merged.tombstones || {})) {
+    // Si el estado trae también el item y es más nuevo, el tombstone ya no
+    // vale: borrar aquí deshacía un Deshacer o una restauración en cada sync.
+    const shadowingItem = merged.items?.[key];
+    if (shadowingItem && itemBeatsTombstone(shadowingItem.updated_at, tombTs)) continue;
+    if (editedSinceSnapshot(key)) {
+      skippedNewerLocal = true;
+      continue;
+    }
     if (key.startsWith("profile:")) {
       const id = key.slice(8);
       if (localProfileIds.has(id)) perfilesABorrar.push(id);
@@ -558,19 +692,24 @@ export async function applyMergedState(merged, ctx) {
         prefs.customThemes = prefs.customThemes.filter((t) => t.id !== id);
         // Los tombstones se re-procesan en CADA ciclo: contar solo cuando el
         // tema aún existía localmente, o cada sync parecería traer cambios.
-        if (prefs.customThemes.length !== before) themesChanged++;
+        if (prefs.customThemes.length !== before) {
+          themesChanged++;
+          recordRestoredDeletion(key);
+        }
       }
     } else if (key.startsWith("shortcut:")) {
       const id = key.slice(9);
       if (prefs.shortcuts && id in prefs.shortcuts) {
         delete prefs.shortcuts[id];
         shortcutsChanged++;
+        recordRestoredDeletion(key);
       }
     } else if (key.startsWith("snippet:")) {
       const id = key.slice(8);
       if (loadLocalSnippets().some((snippet) => snippet.id === id)) {
         deleteLocalSnippet(id);
         snippetsChanged++;
+        recordRestoredDeletion(key);
       }
     } else if (key.startsWith("note:")) {
       const id = key.slice(5);
@@ -579,6 +718,7 @@ export async function applyMergedState(merged, ctx) {
       try {
         await invoke("note_delete", { profileId: id });
         notesChanged++;
+        recordRestoredDeletion(key);
       } catch (err) {
         console.error("[sync] note_delete", id, err);
       }
@@ -590,6 +730,7 @@ export async function applyMergedState(merged, ctx) {
     try {
       await invoke("delete_profiles", { ids: perfilesABorrar });
       deletedProfiles += perfilesABorrar.length;
+      perfilesABorrar.forEach((id) => recordRestoredDeletion(`profile:${id}`));
     } catch (err) {
       console.error("[sync] delete_profiles", err);
     }
@@ -598,7 +739,7 @@ export async function applyMergedState(merged, ctx) {
   return {
     addedProfiles, deletedProfiles, updatedProfiles, prefsChanged,
     themesChanged, shortcutsChanged, snippetsChanged,
-    secretsChanged, credsChanged, notesChanged, prefsSkippedNewerLocal,
+    secretsChanged, credsChanged, notesChanged, prefsSkippedNewerLocal, skippedNewerLocal,
     originDevices: [...originDevices],
   };
 }
@@ -796,6 +937,7 @@ export async function runSync(ctx) {
   // usuario tocó las prefs mientras la sync estaba en vuelo.
   const prefsSnapshotTs =
     typeof ctx.prefs?._prefsUpdatedAt === "string" ? ctx.prefs._prefsUpdatedAt : "";
+  const localEditStamps = captureLocalEditStamps(ctx.profiles, ctx.prefs);
   // Las notas se leen SIEMPRE (aunque el selectivo esté apagado): el merge
   // puede traer items `note:` de otros equipos y la aplicación necesita el
   // estado local para saltarse los idénticos.
@@ -833,6 +975,7 @@ export async function runSync(ctx) {
     ...ctx,
     allowSecrets: !!config.selective?.secrets,
     prefsSnapshotTs,
+    localEditStamps,
     notesDocs,
     credsCatalog,
   });
@@ -964,7 +1107,7 @@ export async function exportToFile(ctx) {
   const file = await files.pickFileToSave({
     title: t("prefs_sync.export_dialog_title"),
     defaultPath: `rustty-sync-${new Date().toISOString().slice(0, 10)}.bin`,
-    filters: [{ name: "Rustty sync", extensions: ["bin"] }],
+    filters: [{ name: t("prefs_sync.backup_title"), extensions: ["bin"] }],
   });
   if (!file) return null;
 
@@ -993,7 +1136,7 @@ export async function importFromFile(ctx) {
   const dialogs = requireDialogs(ctx);
   const file = await files.pickFileToOpen({
     title: t("prefs_sync.import_dialog_title"),
-    filters: [{ name: "Rustty sync", extensions: ["bin"] }],
+    filters: [{ name: t("prefs_sync.backup_title"), extensions: ["bin"] }],
   });
   if (!file) return null;
 
@@ -1018,7 +1161,7 @@ export async function importFromFile(ctx) {
         submitLabel: t("prefs_sync.save_keyring"),
       })
     : false;
-  const summary = await applyMergedState(state, { ...ctx, allowSecrets });
+  const summary = await applyMergedState(state, { ...ctx, allowSecrets, restoreAt: new Date().toISOString() });
   return summary;
 }
 
@@ -1033,7 +1176,7 @@ export async function listSnapshots() {
 export async function readSnapshotState(snapshotId) {
   const passphrase = await getStoredPassphrase();
   if (!passphrase) {
-    throw new Error("Configura la passphrase de sync antes de restaurar");
+    throw new Error(t("prefs_sync.restore_no_passphrase"));
   }
   const webdavPassword = await getStoredWebDavPassword();
   return await invoke("sync_read_snapshot", {
@@ -1053,7 +1196,7 @@ export async function applySnapshotState(state, ctx) {
         submitLabel: t("prefs_sync.save_keyring"),
       })
     : false;
-  return await applyMergedState(state, { ...ctx, allowSecrets });
+  return await applyMergedState(state, { ...ctx, allowSecrets, restoreAt: new Date().toISOString() });
 }
 
 export async function restoreSnapshot(snapshotId, ctx) {

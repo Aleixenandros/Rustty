@@ -261,8 +261,21 @@ const HEALTH_TCP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4
 /// lotes de `HEALTH_MAX_PARALLEL` hilos. **Nunca autentica**: un barrido no
 /// debe poder provocar bloqueos de cuenta. Con más de `HEALTH_MAX_TARGETS`
 /// objetivos se rechaza entero (no se poda en silencio).
+///
+/// Comando **async** que delega en `spawn_blocking`: en Tauri 2 un comando
+/// síncrono corre en el hilo principal, y cada lote espera al host más lento
+/// (DNS sin plazo + hasta `HEALTH_TCP_TIMEOUT`), así que el barrido de un
+/// workspace con hosts caídos congelaba la ventana entera. Tampoco vale
+/// `#[tauri::command(async)]`: ocuparía durante todo el barrido un hilo de
+/// tokio de los que comparten las sesiones SSH.
 #[tauri::command]
-pub fn hosts_health_check(targets: Vec<HealthTarget>) -> Result<Vec<HealthResult>, String> {
+pub async fn hosts_health_check(targets: Vec<HealthTarget>) -> Result<Vec<HealthResult>, String> {
+    tauri::async_runtime::spawn_blocking(move || hosts_health_check_blocking(&targets))
+        .await
+        .map_err(|e| format!("hosts_health_check: {e}"))?
+}
+
+fn hosts_health_check_blocking(targets: &[HealthTarget]) -> Result<Vec<HealthResult>, String> {
     if targets.len() > HEALTH_MAX_TARGETS {
         return Err(format!(
             "demasiados objetivos ({} > {HEALTH_MAX_TARGETS})",
@@ -1756,6 +1769,11 @@ fn set_local_mode(_path: &str, _mode: u32) -> Result<(), String> {
 
 #[tauri::command]
 pub fn local_path_join(base: String, name: String) -> Result<String, String> {
+    // `name` puede salir de un listado remoto (la descarga suelta del panel lo
+    // pasa tal cual): es entrada hostil. Tiene que ser un solo componente; si
+    // no, `join` sale de `base` con `..` o la reemplaza con una ruta absoluta.
+    crate::sftp_manager::safe_entry_name(&name)
+        .map_err(|_| local_fs_guard::invalid_error(&name))?;
     Ok(PathBuf::from(base)
         .join(name)
         .to_string_lossy()
@@ -2417,32 +2435,13 @@ pub fn list_known_hosts() -> Result<Vec<KnownHostEntry>, String> {
 /// TOFU, reabriendo una ventana de MITM en las siguientes conexiones.
 #[tauri::command]
 pub fn remove_known_host_line(line: usize) -> Result<(), String> {
-    let path = known_hosts_path()?;
-    let contents = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-
     if line == 0 {
         return Err("Número de línea no válido".to_string());
     }
-
-    // Conservamos el carácter de fin de línea final si existía.
-    let had_trailing_newline = contents.ends_with('\n');
-    let kept: Vec<&str> = contents
-        .lines()
-        .enumerate()
-        .filter(|(idx, _)| idx + 1 != line)
-        .map(|(_, l)| l)
-        .collect();
-
-    let mut output = kept.join("\n");
-    if !output.is_empty() && had_trailing_newline {
-        output.push('\n');
-    }
-
-    // `private = true` fija 0600 en Unix desde la creación del temporal, así que
-    // ya no hace falta el `set_permissions` posterior.
-    crate::atomic_file::write(&path, output.as_bytes(), true).map_err(|e| e.to_string())?;
-
-    Ok(())
+    let path = known_hosts_path()?;
+    // Bajo el candado de known_hosts y conservando cada fin de línea (`\r\n`
+    // incluido); `private` fija 0600 en Unix desde la creación del temporal.
+    crate::host_keys::remove_known_hosts_line(&path, line).map_err(|e| e.to_string())
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3852,6 +3851,77 @@ mod tests {
     // La ejecución de comandos locales (stdout, código de salida, timeout,
     // cancelación y truncado) se prueba en `local_command.rs`, que es quien la
     // implementa. Aquí quedan las cuotas de las lecturas locales.
+
+    /// La descarga suelta del panel arma la ruta local con el nombre que dio el
+    /// servidor: uno que no sea un solo componente no puede salir de la carpeta.
+    #[test]
+    fn local_path_join_rechaza_nombres_que_salen_de_la_carpeta() {
+        let base = std::env::temp_dir().to_string_lossy().into_owned();
+        for bad in [
+            "../.bashrc",
+            "/etc/passwd",
+            ".ssh/authorized_keys",
+            "..\\x.bat",
+            "a\\b",
+            "..",
+            ".",
+            "",
+        ] {
+            let err = local_path_join(base.clone(), bad.into()).expect_err(bad);
+            assert_eq!(err, format!("local-fs:invalid|{bad}"), "{bad}");
+        }
+        let ok = local_path_join(base.clone(), "informe.pdf".into()).unwrap();
+        assert_eq!(PathBuf::from(ok), PathBuf::from(&base).join("informe.pdf"));
+    }
+
+    fn health_target(id: &str, port: u16) -> HealthTarget {
+        HealthTarget {
+            id: id.to_string(),
+            host: "127.0.0.1".to_string(),
+            port,
+        }
+    }
+
+    #[test]
+    fn health_check_rechaza_entera_una_lista_demasiado_larga() {
+        let targets: Vec<_> = (0..=HEALTH_MAX_TARGETS)
+            .map(|i| health_target(&i.to_string(), 1))
+            .collect();
+        let err = tauri::async_runtime::block_on(hosts_health_check(targets)).unwrap_err();
+        assert!(err.contains("demasiados objetivos"), "{err}");
+    }
+
+    /// El comando es async (no congela el hilo principal) y devuelve lo mismo
+    /// que antes: un resultado por objetivo, en el orden pedido, también a
+    /// través de varios lotes.
+    #[test]
+    fn health_check_async_comprueba_tcp_y_conserva_el_orden() {
+        let abierto = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let puerto_abierto = abierto.local_addr().unwrap().port();
+        let puerto_cerrado = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        // 17 objetivos: tres lotes de `HEALTH_MAX_PARALLEL`.
+        let targets: Vec<_> = (0..17)
+            .map(|i| {
+                let port = if i % 2 == 0 { puerto_abierto } else { puerto_cerrado };
+                health_target(&format!("t{i}"), port)
+            })
+            .collect();
+        let out = tauri::async_runtime::block_on(hosts_health_check(targets)).unwrap();
+        let ids: Vec<_> = out.iter().map(|r| r.id.as_str()).collect();
+        let esperados: Vec<_> = (0..17).map(|i| format!("t{i}")).collect();
+        assert_eq!(ids, esperados);
+        for (i, r) in out.iter().enumerate() {
+            assert!(r.dns_ok, "{}", r.id);
+            if i % 2 == 0 {
+                assert!(r.tcp_ok && r.latency_ms.is_some() && r.error.is_none(), "{}", r.id);
+            } else {
+                assert!(!r.tcp_ok && r.latency_ms.is_none() && r.error.is_some(), "{}", r.id);
+            }
+        }
+    }
 
     #[test]
     fn read_text_capped_lee_texto_por_debajo_del_tope() {

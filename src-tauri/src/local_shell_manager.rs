@@ -286,24 +286,18 @@ fn build_command(
     cwd: Option<&std::path::Path>,
     integration_dir: Option<&std::path::Path>,
 ) -> portable_pty::CommandBuilder {
-    // Dentro de Flatpak el shell nace en el host (`flatpak-spawn --host`):
-    // el del contenedor no tiene los dotfiles ni las herramientas del
-    // usuario. Fuera del sandbox esto es un `CommandBuilder` normal.
-    let mut cmd = crate::sandbox::host_pty_command(shell, cwd);
     // Integración de shell (opt-in): marcas OSC 133 / OSC 7 sin tocar los
     // dotfiles del usuario. Si los ficheros de arranque no se pueden escribir,
     // la consola abre igual, sin marcas: un fallo de disco no puede dejar al
     // usuario sin consola.
+    let mut args = Vec::new();
+    let mut env: Vec<(String, String)> = Vec::new();
     if let Some(dir) = integration_dir {
         let kind = crate::shell_integration::ShellKind::detect(shell);
         match crate::shell_integration::prepare(dir, kind) {
             Ok(Some(launch)) => {
-                for arg in launch.args {
-                    cmd.arg(arg);
-                }
-                for (key, value) in launch.env {
-                    cmd.env(key, value);
-                }
+                args = launch.args;
+                env = launch.env;
             }
             Ok(None) => {}
             Err(err) => {
@@ -311,9 +305,9 @@ fn build_command(
             }
         }
     }
-    cmd.env("TERM", "xterm-256color");
+    env.push(("TERM".into(), "xterm-256color".into()));
     // Color verdadero en apps que lo detectan por COLORTERM (vim, bat, delta…).
-    cmd.env("COLORTERM", "truecolor");
+    env.push(("COLORTERM".into(), "truecolor".into()));
     // Locale UTF-8 cuando el entorno no define ninguno, para que readline y
     // las TUIs no caigan a ASCII/Latin-1. Solo Unix: en Windows ConPTY usa
     // UTF-16/UTF-8 y forzar un locale rompería más de lo que arregla.
@@ -322,8 +316,17 @@ fn build_command(
         && std::env::var_os("LC_CTYPE").is_none()
         && std::env::var_os("LANG").is_none()
     {
-        cmd.env("LANG", "C.UTF-8");
-        cmd.env("LC_CTYPE", "C.UTF-8");
+        env.push(("LANG".into(), "C.UTF-8".into()));
+        env.push(("LC_CTYPE".into(), "C.UTF-8".into()));
+    }
+    // Dentro de Flatpak el shell nace en el host (`flatpak-spawn --host`):
+    // el del contenedor no tiene los dotfiles ni las herramientas del
+    // usuario. Fuera del sandbox esto es un `CommandBuilder` normal. El
+    // entorno va en la llamada y no con `cmd.env`: bajo Flatpak no llegaría
+    // al host (ver `sandbox::HostSpawn::env`).
+    let mut cmd = crate::sandbox::host_pty_command(shell, cwd, &env);
+    for arg in args {
+        cmd.arg(arg);
     }
     cmd
 }

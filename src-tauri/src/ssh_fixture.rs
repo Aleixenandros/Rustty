@@ -109,6 +109,13 @@ fn keygen(path: &Path) -> std::io::Result<()> {
 /// Arranca el servidor. `None` si la máquina no tiene `sshd` o `ssh-keygen`
 /// (el test que lo use debe saltarse con gracia, no fallar).
 pub fn start() -> std::io::Result<Option<FakeSshServer>> {
+    start_with_config("")
+}
+
+/// Como [`start`], con líneas extra al final del `sshd_config`: p. ej.
+/// `Ciphers aes128-cbc` para un servidor que solo negocia un algoritmo
+/// heredado, como los antiguos que piden «Permitir cifrados antiguos».
+pub fn start_with_config(extra_config: &str) -> std::io::Result<Option<FakeSshServer>> {
     let Some(sshd) = find_sshd() else {
         return Ok(None);
     };
@@ -133,7 +140,7 @@ pub fn start() -> std::io::Result<Option<FakeSshServer>> {
 
     let port = free_port()?;
     let config = dir.join("sshd_config");
-    write_sshd_config(&config, &dir, &host_key, &authorized, port)?;
+    write_sshd_config(&config, &dir, &host_key, &authorized, port, extra_config)?;
 
     // `-D` mantiene sshd en primer plano (lo gobierna nuestro `Child`); `-e`
     // manda los logs a stderr, donde no molestan.
@@ -170,6 +177,7 @@ fn write_sshd_config(
     host_key: &Path,
     authorized: &Path,
     port: u16,
+    extra_config: &str,
 ) -> std::io::Result<()> {
     let mut f = std::fs::File::create(path)?;
     // `StrictModes no`: sin él sshd rechaza el home del usuario si no tiene
@@ -186,7 +194,8 @@ fn write_sshd_config(
          UsePAM no\n\
          PasswordAuthentication no\n\
          PubkeyAuthentication yes\n\
-         Subsystem sftp internal-sftp\n",
+         Subsystem sftp internal-sftp\n\
+         {extra_config}\n",
         hostkey = host_key.display(),
         pid = dir.join("sshd.pid").display(),
         authorized = authorized.display(),

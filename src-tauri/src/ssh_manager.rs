@@ -43,6 +43,7 @@ use crate::metrics;
 use crate::mux;
 use crate::profiles::{AuthType, ConnectionProfile, SshTunnelType};
 use crate::tmux::bridge::{BridgeOut, ControlBridge};
+use crate::tunnel_throttle::TunnelTraffic;
 
 /// Timeout TCP por defecto al abrir la conexión inicial. Sin techo russh
 /// puede colgarse minutos si el destino no responde (puerto filtrado, host
@@ -59,6 +60,9 @@ pub(crate) const DEFAULT_SSH_KEEPALIVE_MAX: usize = 4;
 /// Intentos del connect inicial. Con backoff 1s/2s/4s la latencia añadida en
 /// el peor caso es ~7 s.
 pub(crate) const TCP_CONNECT_MAX_ATTEMPTS: u32 = 3;
+/// Fallos seguidos de `accept()` tras los que un listener de túnel se rinde
+/// (con la espera creciente, unos 40 s de fallos sin una conexión buena).
+const TUNNEL_ACCEPT_MAX_FAILURES: u32 = 50;
 
 /// Umbral de coalescing del caudal SSH. `russh` entrega `ChannelMsg::Data` de
 /// tamaño variable (a menudo < 32 KiB); acumulamos bytes contiguos hasta este
@@ -115,8 +119,12 @@ where
 /// plataformas donde socket2 lo soporta. Cualquier fallo se ignora: el
 /// socket sigue funcionando, solo perdemos la detección temprana de cortes.
 fn apply_socket_keepalive(stream: &TcpStream) {
-    use socket2::{SockRef, TcpKeepalive};
-    let sock = SockRef::from(stream);
+    apply_tcp_keepalive(socket2::SockRef::from(stream));
+}
+
+/// Lo mismo sobre cualquier socket TCP: también los `std` síncronos de FTP.
+pub(crate) fn apply_tcp_keepalive(sock: socket2::SockRef<'_>) {
+    use socket2::TcpKeepalive;
     let _ = sock.set_tcp_nodelay(true);
     let mut ka = TcpKeepalive::new().with_time(Duration::from_secs(30));
     // `with_interval` y `with_retries` no están disponibles en todas las
@@ -703,7 +711,11 @@ enum SessionExit {
     /// El usuario pidió desconectar (Disconnect command o cmd_rx cerrado).
     UserDisconnect,
     /// El servidor cerró el canal o caída de red. Candidato a reconectar.
-    ServerClosed,
+    /// `stable`: la sesión llegó a `ssh-connected`, perdió el **transporte**
+    /// (no fue un cierre limpio del canal: `exit`, TMOUT, `nologin`…) y llevaba
+    /// al menos [`RECONNECT_STABLE_AFTER`] establecida. Esa caída abre una racha
+    /// nueva de reintentos; ver [`next_reconnect_attempt`].
+    ServerClosed { stable: bool },
     /// Error fatal (auth, conexión imposible…). No reintenta automáticamente.
     Fatal(AppError),
 }
@@ -711,11 +723,17 @@ enum SessionExit {
 struct ActiveTunnel {
     info: SshTunnelInfo,
     local_task: Option<JoinHandle<()>>,
+    /// Tráfico acumulado del túnel: lo suman todas sus conexiones.
+    traffic: Arc<TunnelTraffic>,
 }
 
 impl ActiveTunnel {
-    fn from_info(info: SshTunnelInfo, local_task: Option<JoinHandle<()>>) -> Self {
-        Self { info, local_task }
+    fn from_info(
+        info: SshTunnelInfo,
+        local_task: Option<JoinHandle<()>>,
+        traffic: Arc<TunnelTraffic>,
+    ) -> Self {
+        Self { info, local_task, traffic }
     }
 }
 
@@ -785,8 +803,8 @@ async fn run_session_with_reconnect(
                 let _ = app_handle.emit(&event_name(EventKind::SshError, &session_id), msg);
                 return;
             }
-            SessionExit::ServerClosed => {
-                if max_attempts == 0 || attempt >= max_attempts {
+            SessionExit::ServerClosed { stable } => {
+                let Some(next) = next_reconnect_attempt(attempt, max_attempts, stable) else {
                     emit_connection_log(
                         &app_handle,
                         &session_id,
@@ -795,8 +813,8 @@ async fn run_session_with_reconnect(
                         "La sesión SSH se ha cerrado",
                     );
                     return;
-                }
-                attempt += 1;
+                };
+                attempt = next;
                 let delay = backoff_delay(attempt);
                 emit_connection_log(
                     &app_handle,
@@ -839,6 +857,22 @@ fn backoff_delay(attempt: u32) -> Duration {
     // 2s, 4s, 8s, 16s, 32s, capado a 60s
     let secs = 2u64.saturating_pow(attempt.min(5)).min(60);
     Duration::from_secs(secs)
+}
+
+/// Una sesión que aguantó esto establecida cuenta como recuperada: si luego
+/// pierde el transporte, es una caída **nueva** (contador y backoff desde cero),
+/// que es lo que promete «reintentos al caer la conexión». Por debajo es la
+/// misma racha, para que una red que parpadea siga acotada.
+const RECONNECT_STABLE_AFTER: Duration = Duration::from_secs(60);
+
+/// Siguiente intento de reconexión, o `None` si ya no toca (desactivada o
+/// racha agotada). `attempt` son los intentos ya gastados en la racha actual;
+/// `stable` (ver [`SessionExit::ServerClosed`]) la reinicia. Un cierre limpio
+/// del canal nunca es estable: si lo fuera, un `exit` o una cuenta `nologin`
+/// reconectarían para siempre.
+fn next_reconnect_attempt(attempt: u32, max: u32, stable: bool) -> Option<u32> {
+    let used = if stable { 0 } else { attempt };
+    (max > 0 && used < max).then_some(used + 1)
 }
 
 fn resolve_log_path(profile: &ConnectionProfile, default_dir: &Path) -> PathBuf {
@@ -1401,23 +1435,15 @@ fn dispatch_bridge_outs(
             }
             BridgeOut::CommandDone { tag, success, output } => {
                 if state.boot_layout_tag == Some(tag) {
-                    // Respuesta del `list-windows` inicial: cada línea
-                    // `@id layout` se reinyecta como un `%layout-change`
-                    // sintético — así el modelo adopta las panes y el frontend
-                    // recibe los layouts aunque nada haya cambiado aún.
+                    // Respuesta del `list-windows` inicial: cada ventana se
+                    // reinyecta como `%window-renamed` + `%layout-change`
+                    // sintéticos — así el modelo adopta las panes y el
+                    // frontend recibe nombres y layouts aunque tmux no haya
+                    // anunciado nada (reenganche, o tmux 3.8 sin PTY).
                     state.boot_layout_tag = None;
                     if success {
-                        for line in output.lines() {
-                            let mut parts = line.split_whitespace();
-                            let (Some(id), Some(layout)) = (parts.next(), parts.next()) else {
-                                continue;
-                            };
-                            if !id.starts_with('@') {
-                                continue;
-                            }
-                            let synth = format!("%layout-change {id} {layout}\n");
-                            queue.extend(state.bridge.feed(synth.as_bytes()));
-                        }
+                        let synth = crate::tmux::bridge::boot_notifications(&output);
+                        queue.extend(state.bridge.feed(synth.as_bytes()));
                     }
                 } else if let Some(tx) = state.replies.remove(&tag) {
                     let _ = tx.send(if success { Ok(output) } else { Err(output) });
@@ -1674,7 +1700,7 @@ async fn run_session(
                         &event_name(EventKind::SshError, &session_id),
                         format!("No se puede conectar al bastion {bastion_addr}: {err}"),
                     );
-                    return SessionExit::ServerClosed;
+                    return SessionExit::ServerClosed { stable: false };
                 }
             };
         emit_connection_log(
@@ -1879,7 +1905,7 @@ async fn run_session(
                     &event_name(EventKind::SshError, &session_id),
                     format!("No se puede conectar a {addr}: {last_err}"),
                 );
-                return SessionExit::ServerClosed;
+                return SessionExit::ServerClosed { stable: false };
             }
         }
     };
@@ -2106,6 +2132,8 @@ async fn run_session(
         &event_name(EventKind::SshConnected, &session_id),
         &profile.name,
     );
+    // Desde aquí cuenta la estabilidad de la sesión para la reconexión.
+    let connected_at = Instant::now();
 
     // Arranque del modo control: declarar el tamaño real del cliente (tmux no
     // hará ventanas mayores) y pedir los layouts iniciales — tmux solo emite
@@ -2120,7 +2148,7 @@ async fn run_session(
         }
         if let Ok((tag, bytes)) = state
             .bridge
-            .command("list-windows -F \"#{window_id} #{window_layout}\"", now)
+            .command(&crate::tmux::bridge::cmd_boot_windows(), now)
         {
             if channel.data(&bytes[..]).await.is_ok() {
                 state.boot_layout_tag = Some(tag);
@@ -2129,7 +2157,7 @@ async fn run_session(
     }
 
     // 4. Bucle de E/S: multiplexa datos del servidor y comandos del frontend
-    let mut exit_kind = SessionExit::ServerClosed;
+    let mut exit_kind = SessionExit::ServerClosed { stable: false };
     let mut tunnels: HashMap<String, ActiveTunnel> = HashMap::new();
     // Shells hijas multiplexadas sobre este mismo handle (F0.3): cada una vive
     // en su propia tarea con su canal russh; aquí solo queda su buzón.
@@ -2151,6 +2179,9 @@ async fn run_session(
     // intervalo para no calcular una tasa con una muestra de otra cadencia.
     let mut metrics_timer = make_periodic_timer(metrics_secs.load(Ordering::Relaxed));
     let metrics_prev: Arc<Mutex<Option<metrics::RawSample>>> = Arc::new(Mutex::new(None));
+    // Con modo control, la entrada dirigida a la raíz se descarta (ver el brazo
+    // de `Input`); se anota una sola vez en el log de conexión.
+    let mut root_input_dropped = false;
     loop {
         tokio::select! {
             msg = channel.wait() => {
@@ -2202,7 +2233,15 @@ async fn run_session(
                     | Some(ChannelMsg::ExitStatus { .. })
                     | Some(ChannelMsg::ExitSignal { .. }) => break,
                     Some(_) => {}
-                    None => break,
+                    // Sin mensaje de cierre: se perdió el transporte (suspensión,
+                    // cambio de red, servidor reiniciado). Solo esta caída, tras
+                    // una sesión que aguantó, reinicia el presupuesto de reintentos.
+                    None => {
+                        exit_kind = SessionExit::ServerClosed {
+                            stable: connected_at.elapsed() >= RECONNECT_STABLE_AFTER,
+                        };
+                        break;
+                    }
                 }
             }
             // Vaciado por inactividad: si hay datos pendientes y el caudal se
@@ -2254,6 +2293,29 @@ async fn run_session(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(SessionCommand::Input { data, shell }) => match shell {
+                        // Modo control activo: el canal raíz transporta el
+                        // protocolo de líneas de tmux, no un terminal. Lo que
+                        // llegue para la raíz (su pestaña oculta, lo tecleado
+                        // mientras conectaba, un pegado) NUNCA se escribe
+                        // crudo: tmux lo ejecutaría como comandos, desfasaría
+                        // las respuestas y una línea vacía cerraría el modo
+                        // control (invariante de AGENTS.md). El teclado de las
+                        // panes viaja como `send-keys` por `TmuxCommand`. Si
+                        // tmux faltaba y se degradó a shell normal, `control`
+                        // es `None` y la raíz sigue aceptando teclado.
+                        None if control.is_some() => {
+                            if !root_input_dropped {
+                                root_input_dropped = true;
+                                emit_connection_log(
+                                    &app_handle,
+                                    &session_id,
+                                    "tmux_control",
+                                    "info",
+                                    "Entrada para la conexión raíz descartada: en el modo \
+                                     control de tmux se escribe en las ventanas",
+                                );
+                            }
+                        }
                         None => { let _ = channel.data(&data[..]).await; }
                         Some(id) => {
                             // Shell hija: reenvío a su tarea. Si ya no está
@@ -2265,6 +2327,10 @@ async fn run_session(
                         }
                     },
                     Some(SessionCommand::Resize { cols, rows, shell }) => match shell {
+                        // Modo control: los tamaños los dicta tmux
+                        // (`refresh-client -C` por `tmux_set_client_size`); un
+                        // window-change sobre su exec sin PTY no significa nada.
+                        None if control.is_some() => {}
                         None => { let _ = channel.window_change(cols, rows, 0, 0).await; }
                         Some(id) => {
                             if let Some(tx) = shells.get(&id) {
@@ -2461,6 +2527,7 @@ async fn run_session(
                                         peer_host,
                                         peer_port,
                                         &app_handle,
+                                        tunnel.traffic.clone(),
                                     )
                                     .await;
                                 }
@@ -2477,7 +2544,7 @@ async fn run_session(
                     }) => {
                         // El túnel puede haberse cerrado mientras se negociaba
                         // el handshake; en ese caso se descarta la conexión.
-                        if tunnels.contains_key(&tunnel_id) {
+                        if let Some(traffic) = tunnels.get(&tunnel_id).map(|t| t.traffic.clone()) {
                             open_tunnel_channel(
                                 &mut handle,
                                 &session_id,
@@ -2488,6 +2555,7 @@ async fn run_session(
                                 peer_host,
                                 peer_port,
                                 &app_handle,
+                                traffic,
                             )
                             .await;
                         }
@@ -2586,9 +2654,15 @@ async fn start_tunnel_runtime(
             let task_tx = cmd_tx.clone();
             let task_session_id = session_id.to_string();
             let local_task = tokio::spawn(async move {
+                // Fallos de `accept()` seguidos. Casi siempre son pasajeros
+                // (EMFILE con un navegador abriendo cientos de conexiones por
+                // un SOCKS, ECONNABORTED): se espera y se sigue escuchando; el
+                // túnel solo se da por roto tras una racha larga.
+                let mut accept_failures: u32 = 0;
                 loop {
                     match listener.accept().await {
                         Ok((stream, peer)) => {
+                            accept_failures = 0;
                             let msg = SessionCommand::TunnelAccepted {
                                 tunnel_id: tunnel_id.clone(),
                                 stream,
@@ -2600,11 +2674,34 @@ async fn start_tunnel_runtime(
                             }
                         }
                         Err(err) => {
-                            let _ = app_handle.emit(
-                                &event_name(EventKind::SshError, &task_session_id),
-                                format!("Listener de túnel cerrado: {err}"),
-                            );
-                            break;
+                            // Al log de conexión, NO como `ssh-error`: la sesión
+                            // sigue viva y la interfaz trata todo `ssh-error`
+                            // como fatal (la daba por muerta y, al reconectar,
+                            // dejaba huérfana esta conexión con sus puertos).
+                            accept_failures += 1;
+                            if accept_failures >= TUNNEL_ACCEPT_MAX_FAILURES {
+                                emit_connection_log(
+                                    &app_handle,
+                                    &task_session_id,
+                                    "tunnel",
+                                    "error",
+                                    format!("Listener de túnel cerrado: {err}"),
+                                );
+                                break;
+                            }
+                            if accept_failures == 1 {
+                                emit_connection_log(
+                                    &app_handle,
+                                    &task_session_id,
+                                    "tunnel",
+                                    "warning",
+                                    format!("El túnel no pudo aceptar una conexión: {err}"),
+                                );
+                            }
+                            tokio::time::sleep(Duration::from_millis(
+                                100 * u64::from(accept_failures.min(10)),
+                            ))
+                            .await;
                         }
                     }
                 }
@@ -2622,7 +2719,14 @@ async fn start_tunnel_runtime(
                 bytes_up: 0,
                 bytes_down: 0,
             };
-            tunnels.insert(id, ActiveTunnel::from_info(info.clone(), Some(local_task)));
+            tunnels.insert(
+                id,
+                ActiveTunnel::from_info(
+                    info.clone(),
+                    Some(local_task),
+                    Arc::new(TunnelTraffic::default()),
+                ),
+            );
             Ok(info)
         }
         SshTunnelType::Remote => {
@@ -2651,6 +2755,7 @@ async fn start_tunnel_runtime(
                 returned_port
             };
 
+            let traffic = Arc::new(TunnelTraffic::default());
             if let Ok(mut map) = remote_forwards.lock() {
                 map.insert(
                     (bind_host.clone(), returned_port),
@@ -2660,6 +2765,7 @@ async fn start_tunnel_runtime(
                         session_id: session_id.to_string(),
                         tunnel_id: id.clone(),
                         app_handle: app_handle.clone(),
+                        traffic: traffic.clone(),
                     },
                 );
             }
@@ -2676,7 +2782,7 @@ async fn start_tunnel_runtime(
                 bytes_up: 0,
                 bytes_down: 0,
             };
-            tunnels.insert(id, ActiveTunnel::from_info(info.clone(), None));
+            tunnels.insert(id, ActiveTunnel::from_info(info.clone(), None, traffic));
             Ok(info)
         }
     }
@@ -2721,7 +2827,11 @@ async fn open_tunnel_channel(
     peer_host: String,
     peer_port: u32,
     app_handle: &AppHandle,
+    traffic: Arc<TunnelTraffic>,
 ) {
+    // Sin el puerto efímero del cliente: así la deduplicación consecutiva del
+    // log de conexión absorbe las ráfagas (un navegador por SOCKS reintenta).
+    let target = format!("{target_host}:{target_port}");
     match tokio::time::timeout(
         TUNNEL_OPEN_TIMEOUT,
         handle.channel_open_direct_tcpip(target_host, target_port as u32, peer_host, peer_port),
@@ -2735,18 +2845,30 @@ async fn open_tunnel_channel(
                 session_id.to_string(),
                 tunnel_id.to_string(),
                 app_handle.clone(),
+                traffic,
             ));
         }
+        // Un open fallido (destino que el servidor no alcanza, puerto cerrado,
+        // `AllowTcpForwarding no`) afecta solo a ESA conexión: la sesión sigue
+        // viva. Va al log de conexión como aviso, nunca como `ssh-error`, que
+        // la interfaz trata como fatal (overlay de error, teclado bloqueado y
+        // una reconexión que dejaba huérfana la conexión viva).
         Ok(Err(err)) => {
-            let _ = app_handle.emit(
-                &event_name(EventKind::SshError, session_id),
-                format!("No se pudo abrir canal de túnel: {err}"),
+            emit_connection_log(
+                app_handle,
+                session_id,
+                "tunnel",
+                "warning",
+                format!("No se pudo abrir el canal del túnel hacia {target}: {err}"),
             );
         }
         Err(_) => {
-            let _ = app_handle.emit(
-                &event_name(EventKind::SshError, session_id),
-                "Timeout abriendo el canal de túnel".to_string(),
+            emit_connection_log(
+                app_handle,
+                session_id,
+                "tunnel",
+                "warning",
+                format!("Tiempo agotado abriendo el canal del túnel hacia {target}"),
             );
         }
     }
@@ -2820,6 +2942,7 @@ async fn pump_tunnel(
     session_id: String,
     tunnel_id: String,
     app_handle: AppHandle,
+    traffic: Arc<TunnelTraffic>,
 ) {
     let (mut local_rx, mut local_tx) = tokio::io::split(stream);
     let mut buf = vec![0u8; 16384];
@@ -2828,7 +2951,8 @@ async fn pump_tunnel(
     // Coalescing de los eventos de tráfico: en vez de emitir por cada chunk
     // (avalancha IPC en transferencias masivas), emitimos a lo sumo cada
     // TRAFFIC_MIN_INTERVAL o cada TRAFFIC_MIN_BYTES; al final se hace un flush
-    // con los totales exactos.
+    // con los totales exactos. El ritmo lo deciden los bytes de ESTA conexión
+    // (`bytes_up`/`bytes_down`); el evento lleva el acumulado del túnel.
     let event = event_name(EventKind::SshTunnelTraffic, &session_id);
     let mut last_emit = std::time::Instant::now();
     let mut last_emit_total = 0u64;
@@ -2838,6 +2962,7 @@ async fn pump_tunnel(
             last_emit.elapsed(),
             total.saturating_sub(last_emit_total),
         ) {
+            let (bytes_up, bytes_down) = traffic.totals();
             let _ = app_handle.emit(
                 &event,
                 SshTunnelTrafficEvent { id: tunnel_id.clone(), bytes_up, bytes_down },
@@ -2856,6 +2981,7 @@ async fn pump_tunnel(
                             break;
                         }
                         bytes_up = bytes_up.saturating_add(n as u64);
+                        traffic.add(n as u64, 0);
                         maybe_emit(bytes_up, bytes_down);
                     }
                 }
@@ -2867,6 +2993,7 @@ async fn pump_tunnel(
                             break;
                         }
                         bytes_down = bytes_down.saturating_add(data.len() as u64);
+                        traffic.add(0, data.len() as u64);
                         maybe_emit(bytes_up, bytes_down);
                     }
                     Some(ChannelMsg::Eof)
@@ -2882,6 +3009,7 @@ async fn pump_tunnel(
     // Flush final: asegura que la UI vea los totales exactos aunque el último
     // chunk no cruzara el umbral de emisión.
     if bytes_up.saturating_add(bytes_down) != last_emit_total {
+        let (bytes_up, bytes_down) = traffic.totals();
         let _ = app_handle.emit(
             &event,
             SshTunnelTrafficEvent { id: tunnel_id.clone(), bytes_up, bytes_down },
@@ -3371,6 +3499,28 @@ fn generate_x11_cookie() -> String {
 mod tests {
     use super::*;
 
+    /// El presupuesto de reconexión es por caída: tras una sesión que aguantó
+    /// establecida y perdió el transporte, vuelve a empezar (y a esperar 2 s,
+    /// «(1/N)»). Sin estabilidad sigue acotado, para que un `exit`, una cuenta
+    /// `nologin` o una red que parpadea no reconecten para siempre.
+    #[test]
+    fn reconexion_reinicia_el_presupuesto_tras_una_sesion_estable() {
+        // Desactivada: nunca, ni tras una sesión estable.
+        assert_eq!(next_reconnect_attempt(0, 0, true), None);
+        assert_eq!(next_reconnect_attempt(0, 0, false), None);
+        // Misma racha: 1, 2, 3 y se rinde.
+        assert_eq!(next_reconnect_attempt(0, 3, false), Some(1));
+        assert_eq!(next_reconnect_attempt(1, 3, false), Some(2));
+        assert_eq!(next_reconnect_attempt(2, 3, false), Some(3));
+        assert_eq!(next_reconnect_attempt(3, 3, false), None);
+        // Caída nueva tras una sesión estable: aunque la racha anterior se
+        // agotara, vuelve a ser el primer intento, con la espera corta.
+        for _ in 0..10 {
+            assert_eq!(next_reconnect_attempt(3, 3, true), Some(1));
+        }
+        assert_eq!(backoff_delay(1), Duration::from_secs(2));
+    }
+
     /// Config de cliente mínima para los tests de integración: los tiempos por
     /// defecto valen, no hace falta afinar algoritmos contra un OpenSSH moderno.
     #[cfg(target_os = "linux")]
@@ -3718,6 +3868,51 @@ mod tests {
             .expect("leer el eco por el tunel");
 
         assert_eq!(&recibido, enviado, "el eco a través del túnel no coincide");
+    }
+
+    /// **Integración**: el fallo de UNA conexión de un túnel (destino cerrado
+    /// en el servidor) es un error de ese canal, no de la sesión: sobre el
+    /// mismo handle se sigue abriendo y ejecutando todo. Es la premisa de que
+    /// `open_tunnel_channel` lo mande al log de conexión y no como `ssh-error`,
+    /// que la interfaz trata como fatal.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_tunel_fallo_de_un_canal_no_mata_la_sesion() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+        let handle = connect_and_auth(&server).await;
+
+        // Un puerto que estaba libre y ya no escucha: el servidor no conecta.
+        let closed_port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("puerto libre");
+            listener.local_addr().expect("puerto").port()
+        };
+        let failed = handle
+            .channel_open_direct_tcpip("127.0.0.1".to_string(), closed_port as u32, "127.0.0.1".to_string(), 0)
+            .await;
+        assert!(
+            matches!(failed, Err(russh::Error::ChannelOpenFailure(_))),
+            "un destino cerrado debe dar ChannelOpenFailure"
+        );
+
+        let mut channel = handle.channel_open_session().await.expect("la sesión sigue viva");
+        channel.exec(true, "echo sigue-viva").await.expect("exec tras el fallo");
+        let mut out = String::new();
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                ChannelMsg::Data { data } => out.push_str(&String::from_utf8_lossy(&data)),
+                ChannelMsg::Eof | ChannelMsg::Close => break,
+                _ => {}
+            }
+        }
+        assert!(out.contains("sigue-viva"), "{out:?}");
     }
 
     /// **Integración**: túnel **remoto** (R). Sobre una sesión viva negocia un
@@ -4321,7 +4516,10 @@ mod tests {
     async fn tmux_control_bridge_sobre_ssh_real() {
         let _guard = SSH_IT_LOCK.lock().await;
         use crate::ssh_fixture;
-        use crate::tmux::bridge::{cmd_capture_pane, cmd_send_keys, cmd_split_pane, BridgeOut, ControlBridge};
+        use crate::tmux::bridge::{
+            boot_notifications, cmd_boot_windows, cmd_capture_pane, cmd_send_keys, cmd_split_pane,
+            BridgeOut, ControlBridge,
+        };
         use crate::tmux::client::SendError;
 
         if std::process::Command::new("tmux").arg("-V").output().is_err() {
@@ -4375,27 +4573,35 @@ mod tests {
             }
         }
 
-        // Arranque: tmux anuncia la ventana pero NO su layout (solo lo emite
-        // ante un cambio) — la misma razón por la que el worker pide los
-        // layouts al enganchar. Aquí se fuerza el cambio declarando un tamaño
-        // de cliente distinto del 80x24 por defecto (la vía de producción de
-        // `cmd_set_client_size`).
-        let boot = pump_bridge(&mut channel, &mut bridge, |o| {
-            matches!(o, BridgeOut::WindowUpsert(_))
-        })
-        .await;
-        assert!(
-            !boot.iter().any(|o| matches!(o, BridgeOut::Layout(_))),
-            "premisa del arranque: sin layout hasta que algo cambie: {boot:?}"
-        );
+        // Arranque como el worker: tmux no garantiza anunciar la ventana (al
+        // reengancharse nunca lo hace y, desde la 3.8, tampoco en una sesión
+        // nueva sin PTY) ni emite su layout salvo ante un cambio. Se declara
+        // el tamaño del cliente y se piden ventanas, layouts y nombres, cuya
+        // respuesta se reinyecta en el puente.
         let (_tag, bytes) = bridge
             .command(&crate::tmux::bridge::cmd_set_client_size(120, 40), 0)
             .expect("client size");
         channel.data(&bytes[..]).await.expect("escribir client size");
-        let boot = pump_bridge(&mut channel, &mut bridge, |o| {
-            matches!(o, BridgeOut::Layout(_))
+        let (boot_tag, bytes) = bridge.command(&cmd_boot_windows(), 0).expect("list-windows");
+        channel.data(&bytes[..]).await.expect("escribir list-windows");
+        let mut boot = pump_bridge(&mut channel, &mut bridge, |o| {
+            matches!(o, BridgeOut::CommandDone { tag, .. } if *tag == boot_tag)
         })
         .await;
+        let windows = boot
+            .iter()
+            .find_map(|o| match o {
+                BridgeOut::CommandDone { tag, success: true, output } if *tag == boot_tag => {
+                    Some(output.clone())
+                }
+                _ => None,
+            })
+            .expect("respuesta del list-windows del arranque");
+        boot.extend(bridge.feed(boot_notifications(&windows).as_bytes()));
+        assert!(
+            boot.iter().any(|o| matches!(o, BridgeOut::WindowUpsert(w) if w.window == 0 && w.name.is_some())),
+            "la ventana llega con su nombre: {boot:?}"
+        );
         let first_pane = boot
             .iter()
             .find_map(|o| match o {
@@ -4459,6 +4665,72 @@ mod tests {
         pump_bridge(&mut channel, &mut bridge, |o| matches!(o, BridgeOut::Ended(_))).await;
         assert!(bridge.is_closed());
         assert_eq!(bridge.command("ls", 0), Err(SendError::Closed));
+    }
+
+    /// **Integración**: por qué el bucle de sesión descarta la entrada de la
+    /// raíz en modo control. Un byte crudo en el canal de `tmux -C` no es
+    /// teclado: una línea vacía (un Intro en blanco de un pegado, Ctrl+J) basta
+    /// para que tmux cierre el modo control, y la conexión entera se daría por
+    /// terminada.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd, ssh-keygen y tmux; se corre con --ignored"]
+    #[tokio::test]
+    async fn tmux_control_una_linea_cruda_en_la_raiz_cierra_el_modo_control() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+        use crate::tmux::bridge::{cmd_boot_windows, BridgeOut, ControlBridge};
+
+        if std::process::Command::new("tmux").arg("-V").output().is_err() {
+            eprintln!("tmux no disponible; test omitido");
+            return;
+        }
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+        let handle = connect_and_auth(&server).await;
+
+        let socket = format!("rustty-it-{}", uuid::Uuid::new_v4());
+        let _tmux_guard = TmuxServerGuard(socket.clone());
+        let mut channel = handle.channel_open_session().await.expect("abrir canal");
+        let cmd = crate::mux::control_command("rustty raiz")
+            .replace("tmux -C", &format!("tmux -C -f /dev/null -L {socket}"));
+        channel.exec(true, cmd.as_str()).await.expect("exec tmux -C");
+        let mut bridge = ControlBridge::new("ssh-it-raiz");
+
+        async fn wait_for(
+            channel: &mut russh::Channel<client::Msg>,
+            bridge: &mut ControlBridge,
+            pred: impl Fn(&BridgeOut) -> bool,
+        ) {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            loop {
+                let msg = tokio::time::timeout_at(deadline, channel.wait())
+                    .await
+                    .expect("plazo agotado esperando al puente");
+                let Some(ChannelMsg::Data { data }) = msg else {
+                    assert!(msg.is_some(), "canal cerrado antes de tiempo");
+                    continue;
+                };
+                if bridge.feed(&data).iter().any(&pred) {
+                    return;
+                }
+            }
+        }
+
+        // Modo control en marcha: un comando del puente obtiene su respuesta.
+        let (boot_tag, bytes) = bridge.command(&cmd_boot_windows(), 0).expect("list-windows");
+        channel.data(&bytes[..]).await.expect("escribir list-windows");
+        wait_for(&mut channel, &mut bridge, |o| {
+            matches!(o, BridgeOut::CommandDone { tag, .. } if *tag == boot_tag)
+        })
+        .await;
+
+        // Lo que haría `channel.data` con un Intro en blanco dirigido a la raíz.
+        channel.data(&b"\n"[..]).await.expect("escribir crudo");
+        wait_for(&mut channel, &mut bridge, |o| matches!(o, BridgeOut::Ended(_))).await;
+        assert!(bridge.is_closed());
     }
 
 }

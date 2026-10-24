@@ -85,7 +85,7 @@ pub fn parse_layout(input: &str) -> Result<LayoutCell, String> {
         bytes: body.as_bytes(),
         pos: 0,
     };
-    let cell = parse_cell(&mut cursor)?;
+    let cell = parse_cell(&mut cursor, 0)?;
     if cursor.pos != cursor.bytes.len() {
         return Err(format!(
             "contenido inesperado tras el layout en la posición {}",
@@ -94,6 +94,16 @@ pub fn parse_layout(input: &str) -> Result<LayoutCell, String> {
     }
     Ok(cell)
 }
+
+/// Tope de anidamiento de splits. `parse_cell`/`parse_children` se llaman
+/// entre sí una vez por nivel y el layout llega de la red (`%layout-change` y
+/// la respuesta del arranque, con líneas de hasta 16 MiB): sin tope, un
+/// servidor hostil tumbaba la app entera con unos miles de `{` (un
+/// desbordamiento de pila no es un pánico: aborta el proceso con todas sus
+/// sesiones). tmux real anida menos de 10 niveles —cada split alterno gasta al
+/// menos 2 celdas— y es el mismo valor que `MAX_DEPTH` en los parsers de
+/// import. Al superarlo el layout falla entero, no se poda.
+const MAX_LAYOUT_DEPTH: usize = 64;
 
 struct Cursor<'a> {
     bytes: &'a [u8],
@@ -141,7 +151,7 @@ impl Cursor<'_> {
     }
 }
 
-fn parse_cell(cursor: &mut Cursor) -> Result<LayoutCell, String> {
+fn parse_cell(cursor: &mut Cursor, depth: usize) -> Result<LayoutCell, String> {
     let width = cursor.number_u32()?;
     cursor.expect(b'x')?;
     let height = cursor.number_u32()?;
@@ -156,8 +166,8 @@ fn parse_cell(cursor: &mut Cursor) -> Result<LayoutCell, String> {
                 pane: cursor.number()?,
             }
         }
-        Some(b'{') => parse_children(cursor, b'{', b'}', SplitDir::LeftRight)?,
-        Some(b'[') => parse_children(cursor, b'[', b']', SplitDir::TopBottom)?,
+        Some(b'{') => parse_children(cursor, b'{', b'}', SplitDir::LeftRight, depth)?,
+        Some(b'[') => parse_children(cursor, b'[', b']', SplitDir::TopBottom, depth)?,
         other => {
             return Err(format!(
                 "celda sin pane ni hijos (byte {other:?}) en la posición {}",
@@ -179,12 +189,19 @@ fn parse_children(
     open: u8,
     close: u8,
     dir: SplitDir,
+    depth: usize,
 ) -> Result<LayoutKind, String> {
+    if depth >= MAX_LAYOUT_DEPTH {
+        return Err(format!(
+            "layout anidado en más de {MAX_LAYOUT_DEPTH} niveles (posición {})",
+            cursor.pos
+        ));
+    }
     cursor.expect(open)?;
-    let mut children = vec![parse_cell(cursor)?];
+    let mut children = vec![parse_cell(cursor, depth + 1)?];
     while cursor.peek() == Some(b',') {
         cursor.pos += 1;
-        children.push(parse_cell(cursor)?);
+        children.push(parse_cell(cursor, depth + 1)?);
     }
     cursor.expect(close)?;
     if children.len() < 2 {
@@ -305,5 +322,37 @@ mod tests {
         let input = format!("{:04x},{body}", layout_checksum(body));
         let err = parse_layout(&input).unwrap_err();
         assert!(err.contains("un solo hijo"), "{err}");
+    }
+
+    /// Un layout anidado sin fin es un error, no un desbordamiento de pila
+    /// (que abortaría el proceso con todas las sesiones). Sin el tope, este
+    /// test tumba el binario de tests con «stack overflow».
+    #[test]
+    fn layout_demasiado_anidado_es_error_no_desborda_la_pila() {
+        let n = 100_000; // ≈800 KB, muy por debajo de MAX_PENDING_LINE
+        let mut body = "1x1,0,0{".repeat(n);
+        body.push_str("1x1,0,0,0");
+        body.push_str(&"}".repeat(n));
+        let input = format!("{:04x},{body}", layout_checksum(&body));
+        let err = parse_layout(&input).unwrap_err();
+        assert!(err.contains("anidado"), "{err}");
+    }
+
+    /// La frontera del tope: `MAX_LAYOUT_DEPTH` splits anidados valen (con
+    /// todas sus panes); uno más falla entero.
+    #[test]
+    fn el_tope_de_anidamiento_admite_justo_max_layout_depth_niveles() {
+        fn nested(k: usize) -> String {
+            let mut body = String::new();
+            for i in 0..k {
+                body.push_str(&format!("1x1,0,0{{1x1,0,0,{i},"));
+            }
+            body.push_str("1x1,0,0,999");
+            body.push_str(&"}".repeat(k));
+            format!("{:04x},{body}", layout_checksum(&body))
+        }
+        let ok = parse_layout(&nested(MAX_LAYOUT_DEPTH)).expect("en el tope vale");
+        assert_eq!(ok.pane_ids().len(), MAX_LAYOUT_DEPTH + 1);
+        assert!(parse_layout(&nested(MAX_LAYOUT_DEPTH + 1)).is_err());
     }
 }

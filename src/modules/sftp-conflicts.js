@@ -66,3 +66,60 @@ export function nextAvailableTransferName(
   }
   return `${base} (${now})${ext}`;
 }
+
+/**
+ * Clave con la que se comparan los nombres de un destino. En un disco que no
+ * distingue mayúsculas (NTFS, APFS por defecto) `Informe.pdf` e `informe.PDF`
+ * son el mismo fichero: compararlos tal cual daba el nombre por libre y la
+ * descarga pisaba el existente sin preguntar. Mismo criterio que
+ * `transfer_batch::target_key` del backend: `toLowerCase` y no
+ * `toLocaleLowerCase`, que con un idioma turco convierte «I» en «ı» y dejaría
+ * escapar la colisión. NFC porque APFS tampoco distingue la normalización
+ * («café» compuesto o con tilde combinada).
+ *
+ * @param {unknown} name
+ * @param {{ foldCase?: boolean }} [options]
+ * @returns {string}
+ */
+export function transferNameKey(name, { foldCase = false } = {}) {
+  const value = String(name ?? "");
+  return foldCase ? value.normalize("NFC").toLowerCase() : value;
+}
+
+/**
+ * Conjunto de claves de los nombres de un listado, para preguntar por
+ * conflictos con `transferNameKey`.
+ *
+ * @param {ReadonlyArray<{ name?: unknown }|null|undefined>|null|undefined} entries
+ * @param {{ foldCase?: boolean }} [options]
+ * @returns {Set<string>}
+ */
+export function transferNameSet(entries, options = {}) {
+  if (!Array.isArray(entries)) return new Set();
+  return new Set(
+    entries
+      .map((entry) => entry?.name)
+      .filter(Boolean)
+      .map((name) => transferNameKey(name, options)),
+  );
+}
+
+/**
+ * Destino de un trabajo de la cola de transferencias. La carpeta se fija al
+ * encolar (`job.targetDir`): la cola es secuencial y el panel sigue navegable,
+ * así que leer la carpeta abierta cuando al trabajo le llega el turno mandaba
+ * las transferencias pendientes a donde el usuario hubiera navegado entretanto.
+ * Un trabajo sin carpeta fijada cae en la visible. `visible` dice si el panel
+ * sigue mostrando esa carpeta: si no, los nombres para los conflictos hay que
+ * pedirlos aparte y al terminar no se refresca el listado.
+ *
+ * @param {{ direction?: string, targetDir?: string|null }|null|undefined} job
+ * @param {{ cwd?: string|null, localCwd?: string|null }} [panel]
+ * @returns {{ side: "local"|"remote", dir: string, visible: boolean }}
+ */
+export function transferTarget(job, { cwd = "", localCwd = "" } = {}) {
+  const side = job?.direction === "upload" ? "remote" : "local";
+  const visibleDir = (side === "remote" ? cwd : localCwd) || "";
+  const dir = job?.targetDir || visibleDir;
+  return { side, dir, visible: dir === visibleDir };
+}

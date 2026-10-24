@@ -483,12 +483,15 @@ mod tests {
     async fn oauth_callback_sobrevive_preconexiones_y_state_ajeno() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        // El emisor vive hasta el final: soltarlo cortaría la espera.
+        let (_cancel_tx, cancel) = tokio::sync::oneshot::channel();
         let pending = OAuthPending {
             provider: OAuthProvider::GoogleDrive,
             verifier: "v".into(),
             state: "estado-bueno".into(),
             redirect_uri: format!("http://{addr}{OAUTH_CALLBACK_PATH}"),
             listener,
+            cancel,
         };
         let reader = tokio::spawn(read_oauth_code(pending));
 
@@ -557,9 +560,12 @@ mod tests {
     async fn oauth_begin_descarta_flujos_pendientes_previos() {
         let dir = std::env::temp_dir().join(format!("rustty-sync-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let manager = SyncManager::new(dir.clone());
+        let mut manager = SyncManager::new(dir.clone());
+        // Puerto libre cualquiera: el test no debe chocar con el 53682 real.
+        manager.oauth_port = 0;
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (_cancel_tx, cancel) = tokio::sync::oneshot::channel();
         manager.pending_oauth.lock_recover().insert(
             "flujo-abandonado".into(),
             OAuthPending {
@@ -568,6 +574,7 @@ mod tests {
                 state: "s".into(),
                 redirect_uri: "http://127.0.0.1:0/oauth/callback".into(),
                 listener,
+                cancel,
             },
         );
 
@@ -576,9 +583,61 @@ mod tests {
         let _ = manager.oauth_begin(OAuthProvider::GoogleDrive).await;
         assert!(!manager
             .pending_oauth
-            .lock()
-            .unwrap()
+            .lock_recover()
             .contains_key("flujo-abandonado"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// El caso real del intento abandonado: `oauth_complete` ya sacó el flujo
+    /// del mapa y espera el callback con el puerto tomado. Volver a pulsar
+    /// «Conectar» tiene que cortar esa espera (no a los 180 s) y abrir el
+    /// callback en el mismo puerto, en vez de fallar con «Address already in use».
+    #[tokio::test]
+    async fn oauth_begin_corta_el_intento_que_espera_el_callback() {
+        let dir = std::env::temp_dir().join(format!("rustty-sync-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut manager = SyncManager::new(dir.clone());
+        manager.oauth_port = port;
+        let mut config = SyncConfig::default();
+        config.google_drive.client_id = "test".into();
+        manager.save_config(&config).unwrap();
+        let manager = std::sync::Arc::new(manager);
+
+        let primero = manager.oauth_begin(OAuthProvider::GoogleDrive).await.unwrap();
+        let espera = {
+            let manager = std::sync::Arc::clone(&manager);
+            tokio::spawn(async move { manager.oauth_complete(&primero.flow_id).await })
+        };
+        // Hasta que `oauth_complete` lo saca del mapa y se pone a esperar.
+        for _ in 0..200 {
+            if manager.pending_oauth.lock_recover().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(manager.pending_oauth.lock_recover().is_empty());
+
+        let segundo = tokio::time::timeout(
+            Duration::from_secs(5),
+            manager.oauth_begin(OAuthProvider::GoogleDrive),
+        )
+        .await
+        .expect("el segundo intento no debe quedarse esperando");
+        assert!(segundo.is_ok(), "{:?}", segundo.err());
+
+        let primero = tokio::time::timeout(Duration::from_secs(5), espera)
+            .await
+            .expect("el intento sustituido termina enseguida, no a los 180 s")
+            .unwrap();
+        let Err(err) = primero else {
+            panic!("el intento sustituido tiene que fallar");
+        };
+        assert!(err.to_string().contains("sustituido"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1214,6 +1273,11 @@ pub fn decrypt(passphrase: &str, ciphertext: &[u8]) -> Result<Vec<u8>, AppError>
 
 use crate::keyring_scope::{error_text as keyring_error_text, SERVICE as KEYRING_SERVICE};
 const OAUTH_CALLBACK_PATH: &str = "/oauth/callback";
+/// Puerto fijo del callback OAuth en 127.0.0.1 (el que recibe la redirección).
+const OAUTH_CALLBACK_PORT: u16 = 53682;
+/// Cuánto se reintenta abrir el callback si el puerto aún lo retiene un intento
+/// recién sustituido (lo suelta en cuanto su tarea vuelve a ejecutarse).
+const OAUTH_BIND_RETRY: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum OAuthProvider {
@@ -1282,6 +1346,10 @@ struct OAuthPending {
     state: String,
     redirect_uri: String,
     listener: TcpListener,
+    /// Se resuelve cuando un intento nuevo sustituye a este (su emisor vive en
+    /// `SyncManager::oauth_cancel`): la espera del callback termina y suelta
+    /// el puerto en vez de retenerlo hasta agotar el plazo.
+    cancel: tokio::sync::oneshot::Receiver<()>,
 }
 
 fn oauth_refresh_key(provider: OAuthProvider) -> String {
@@ -1376,10 +1444,52 @@ fn query_param(query: &str, name: &str) -> Option<String> {
 /// `accept()` no basta: la preconexión especulativa del navegador (o la
 /// petición del favicon) consumía la conexión y el callback real nunca se
 /// atendía, con fallos intermitentes al conectar el backend.
-async fn read_oauth_code(pending: OAuthPending) -> Result<String, AppError> {
+///
+/// Un intento nuevo (`oauth_begin`) corta esta espera: si el usuario cerró la
+/// pestaña de Google y vuelve a pulsar «Conectar», el intento abandonado suelta
+/// el puerto fijo en vez de bloquear el nuevo durante todo el plazo.
+async fn read_oauth_code(mut pending: OAuthPending) -> Result<String, AppError> {
+    tokio::select! {
+        // `Ok` (lo dispara un intento nuevo) o `Err` (se soltó el emisor):
+        // en los dos casos este intento ya no es el vigente.
+        _ = &mut pending.cancel => {
+            Err(AppError::Sync("OAuth: intento sustituido por uno nuevo".into()))
+        }
+        r = wait_oauth_callback(&pending.listener, &pending.state) => r,
+    }
+}
+
+/// Abre el callback OAuth en `127.0.0.1:<port>`. El intento sustituido suelta
+/// el puerto en cuanto su tarea vuelve a ejecutarse, que es asíncrono: solo
+/// ante «en uso» se reintenta un momento. Si pasado ese margen sigue ocupado,
+/// es que lo tiene otro programa (rclone usa el mismo puerto) y se dice tal cual.
+async fn bind_oauth_callback(port: u16) -> Result<TcpListener, AppError> {
+    let deadline = tokio::time::Instant::now() + OAUTH_BIND_RETRY;
+    loop {
+        match TcpListener::bind(("127.0.0.1", port)).await {
+            Ok(listener) => return Ok(listener),
+            Err(e)
+                if e.kind() == std::io::ErrorKind::AddrInUse
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            Err(e) => {
+                return Err(AppError::Sync(format!(
+                    "No se pudo abrir el callback OAuth local: {e}"
+                )))
+            }
+        }
+    }
+}
+
+async fn wait_oauth_callback(
+    listener: &TcpListener,
+    expected_state: &str,
+) -> Result<String, AppError> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
     loop {
-        let accept = tokio::time::timeout_at(deadline, pending.listener.accept())
+        let accept = tokio::time::timeout_at(deadline, listener.accept())
             .await
             .map_err(|_| AppError::Sync("OAuth cancelado: tiempo de espera agotado".into()))?;
         let (mut stream, _) = accept.map_err(|e| AppError::Sync(format!("oauth accept: {e}")))?;
@@ -1412,7 +1522,7 @@ async fn read_oauth_code(pending: OAuthPending) -> Result<String, AppError> {
         let code = query_param(query, "code");
         let error = query_param(query, "error");
 
-        if state != pending.state {
+        if state != expected_state {
             // `state` ajeno o reutilizado: no es nuestro flujo. Se responde con
             // error y se sigue esperando el callback legítimo hasta el plazo.
             respond_oauth(&mut stream, false).await;
@@ -2901,6 +3011,11 @@ impl SyncBackend for GoogleDriveBackend {
 pub struct SyncManager {
     pub data_dir: PathBuf,
     pending_oauth: Mutex<HashMap<String, OAuthPending>>,
+    /// Emisor del intento OAuth vigente: sustituirlo (o soltarlo) corta la
+    /// espera del callback del intento anterior, aunque ya no esté en
+    /// `pending_oauth` (lo saca `oauth_complete` al empezar a esperar).
+    oauth_cancel: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    oauth_port: u16,
 }
 
 impl SyncManager {
@@ -2908,6 +3023,8 @@ impl SyncManager {
         Self {
             data_dir,
             pending_oauth: Mutex::new(HashMap::new()),
+            oauth_cancel: Mutex::new(None),
+            oauth_port: OAUTH_CALLBACK_PORT,
         }
     }
 
@@ -3046,24 +3163,25 @@ impl SyncManager {
     }
 
     pub async fn oauth_begin(&self, provider: OAuthProvider) -> Result<OAuthStartResult, AppError> {
-        // Descarta cualquier flujo anterior abandonado ANTES de hacer bind: cada
-        // `OAuthPending` retiene su `TcpListener` en el puerto fijo 53682, así
-        // que un flujo a medias (navegador cerrado sin autorizar) bloqueaba el
-        // siguiente intento con «No se pudo abrir el callback OAuth local»
-        // durante los 180 s del plazo.
-        if let Ok(mut pending) = self.pending_oauth.lock() {
-            pending.clear();
-        }
+        use crate::locks::MutexExt;
+        // Descarta cualquier intento anterior ANTES de hacer bind: cada
+        // `OAuthPending` retiene su `TcpListener` en el puerto fijo, así que un
+        // intento a medias (navegador cerrado sin autorizar) bloqueaba el
+        // siguiente con «No se pudo abrir el callback OAuth local» durante los
+        // 180 s del plazo. Los que aún no esperan el callback están en el mapa;
+        // el que ya lo espera (lo sacó `oauth_complete`) se corta al soltar su
+        // emisor, que es lo que hace este `replace`.
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        drop(self.oauth_cancel.lock_recover().replace(cancel_tx));
+        self.pending_oauth.lock_recover().clear();
         let config = self.load_config();
         let client_id = match provider {
             OAuthProvider::GoogleDrive => configured_google_client_id(&config),
         }
         .ok_or_else(|| AppError::Sync("Client ID OAuth no configurado".into()))?;
 
-        let listener = TcpListener::bind("127.0.0.1:53682").await.map_err(|e| {
-            AppError::Sync(format!("No se pudo abrir el callback OAuth local: {e}"))
-        })?;
-        let redirect_uri = format!("http://127.0.0.1:53682{OAUTH_CALLBACK_PATH}");
+        let listener = bind_oauth_callback(self.oauth_port).await?;
+        let redirect_uri = format!("http://127.0.0.1:{}{OAUTH_CALLBACK_PATH}", self.oauth_port);
         let flow_id = Uuid::new_v4().to_string();
         let state = Uuid::new_v4().to_string();
         let (verifier, challenge) = pkce_pair();
@@ -3097,6 +3215,7 @@ impl SyncManager {
             state,
             redirect_uri,
             listener,
+            cancel: cancel_rx,
         };
         self.pending_oauth
             .lock()

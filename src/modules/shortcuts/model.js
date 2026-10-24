@@ -73,17 +73,22 @@ export function replaceShortcuts(prefs, raw, now = new Date().toISOString()) {
 
 /**
  * Una acción puede rechazar la tecla (OSC 133 sin destino): la TUI la recibe.
+ * `allow` filtra las acciones que pueden actuar ahora (con un diálogo modal
+ * abierto solo pasan las de la lista blanca): una acción filtrada no se
+ * ejecuta ni consume la tecla, que sigue hacia el control enfocado.
  * @param {KeyboardEvent} event
  * @param {any} prefs
  * @param {Record<string, () => unknown>} actions
+ * @param {(id: string) => boolean} [allow]
  */
-export function dispatchShortcut(event, prefs, actions) {
+export function dispatchShortcut(event, prefs, actions, allow) {
   const combo = comboFromEvent(event);
   if (!combo) return false;
   const candidates = combo === "Ctrl+Shift+=" ? [combo, "Ctrl+="] : [combo];
   for (const candidate of candidates) {
     for (const id of SHORTCUT_IDS) {
       if (SHORTCUT_ACTIONS[id].scope || !actions[id] || getShortcut(prefs, id) !== candidate) continue;
+      if (allow && !allow(id)) return false;
       if (actions[id]() !== false) {
         event.preventDefault();
         event.stopPropagation();

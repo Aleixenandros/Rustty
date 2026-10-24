@@ -216,6 +216,10 @@ impl RdpManager {
             password,
             display,
         } = target;
+        // Antes de tocar el Gestor de credenciales o lanzar nada: el host va al
+        // `.rdp`, a una URL y, en los caminos de reserva de Windows, a `cmd`.
+        crate::external_client::check_launch_host(host)?;
+        check_rdp_identity(username, domain)?;
         // Windows: mstsc no acepta la contraseña ni por argv ni por el .rdp;
         // la vía (la de mRemoteNG / Royal TS) es dejarla en el Gestor de
         // credenciales como `TERMSRV/<host>` justo antes de lanzar y retirarla
@@ -340,6 +344,21 @@ impl RdpManager {
             }
         }
     }
+}
+
+/// El usuario y el dominio llevan legítimamente `\`, `@`, `.` o espacios, así
+/// que no se les aplica la lista cerrada del host; pero un carácter de control
+/// no tiene uso y un CR/LF añadiría líneas al `.rdp` de Windows (p. ej. una
+/// `drivestoredirect:s:*` que comparte todas las unidades locales con el
+/// servidor). Un import de mRemoteNG conserva un `&#13;&#10;` del atributo.
+fn check_rdp_identity(username: &str, domain: Option<&str>) -> Result<(), String> {
+    if username.chars().any(char::is_control) {
+        return Err("El usuario de la conexión RDP contiene caracteres de control.".to_string());
+    }
+    if domain.is_some_and(|d| d.chars().any(char::is_control)) {
+        return Err("El dominio de la conexión RDP contiene caracteres de control.".to_string());
+    }
+    Ok(())
 }
 
 // ─── Diagnóstico del cierre ──────────────────────────────────────────────────
@@ -686,11 +705,20 @@ fn spawn_rdp_client(
     } else {
         &[]
     };
+    // La orden auxiliar (no el secreto) va en `HostSpawn::env`: bajo Flatpak
+    // un `cmd.env` no llegaría al proceso del host y FreeRDP 3 caería a
+    // `/from-stdin`, que sobre una tubería cancela la conexión.
+    let env: Vec<(String, String)> = if askpass_secret.is_some() {
+        vec![("FREERDP_ASKPASS".into(), ASKPASS_COMMAND.into())]
+    } else {
+        Vec::new()
+    };
 
     let mut cmd = crate::sandbox::host_command(
         binary,
         crate::sandbox::HostSpawn {
             forward_fds,
+            env: &env,
             ..Default::default()
         },
     );
@@ -731,7 +759,6 @@ fn spawn_rdp_client(
 
     if let Some(file) = &askpass_secret {
         inherit_secret_fd(&mut cmd, file);
-        cmd.env("FREERDP_ASKPASS", ASKPASS_COMMAND);
     }
 
     // Capturamos stdout+stderr: si el cliente muere al arrancar (certificado
@@ -916,9 +943,13 @@ fn spawn_windows_mstsc(
 fn spawn_windows_rdp_file_via_shell(
     rdp_path: &std::path::Path,
 ) -> Result<std::process::Child, String> {
+    use std::os::windows::process::CommandExt;
     let mut child = std::process::Command::new("cmd")
-        .args(["/C", "start", "\"\"", "/WAIT"])
-        .arg(rdp_path)
+        .raw_arg(crate::external_client::cmd_start_line(
+            true,
+            &rdp_path.to_string_lossy(),
+            &[],
+        ))
         .spawn()
         .map_err(|e| format!("Error al abrir .rdp con cmd/start: {e}"))?;
 
@@ -933,10 +964,12 @@ fn spawn_windows_rdp_url(
     username: &str,
     domain: Option<&str>,
 ) -> Result<std::process::Child, String> {
+    use std::os::windows::process::CommandExt;
+    // Entre comillas: el `&` que separa los parámetros de la URL partiría la
+    // orden de `cmd` en dos (y ejecutaría `username=…` como otra orden).
     let url = build_windows_rdp_url(host, port, username, domain);
     let mut child = std::process::Command::new("cmd")
-        .args(["/C", "start", "\"\"", "/WAIT"])
-        .arg(&url)
+        .raw_arg(crate::external_client::cmd_start_line(true, &url, &[]))
         .spawn()
         .map_err(|e| format!("Error al abrir URL rdp://: {e}"))?;
 
@@ -1026,6 +1059,18 @@ mod tests {
 [14:16:32:589] [874587:000d585e] [ERROR][com.freerdp.core] - [get_next_addrinfo]: ERRCONNECT_CONNECT_FAILED [0x00020006]\n\
 [14:16:32:589] [874587:000d585e] [ERROR][com.freerdp.core] - [freerdp_tcp_default_connect]: Couldn't get socket ip address\n\
 [14:16:32:589] [874587:000d585e] [ERROR][com.freerdp.core.nego] - [nego_connect]: Failed to connect\n";
+
+    #[test]
+    fn usuario_o_dominio_con_saltos_de_linea_se_rechazan() {
+        assert!(check_rdp_identity("bob", None).is_ok());
+        assert!(check_rdp_identity("DOMINIO\\bob", Some("corp.local")).is_ok());
+        assert!(check_rdp_identity("bob@corp.local", Some("")).is_ok());
+        assert!(check_rdp_identity("Bob Smith", None).is_ok());
+        assert!(check_rdp_identity("bob\r\ndrivestoredirect:s:*", None).is_err());
+        assert!(check_rdp_identity("bob\n", None).is_err());
+        assert!(check_rdp_identity("bob", Some("corp\r\ndrivestoredirect:s:*")).is_err());
+        assert!(check_rdp_identity("bob\0", None).is_err());
+    }
 
     #[test]
     fn detail_extrae_solo_lineas_error_sin_prefijo_wlog() {

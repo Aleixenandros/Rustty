@@ -163,6 +163,6 @@ export function createShortcutController({ getPrefs, save, actions, toast, confi
   }
 
   return { get, render, bind, capture, cancelCapture,
-    handle: (/** @type {KeyboardEvent} */ event) => dispatchShortcut(event, getPrefs(), actions),
+    handle: (/** @type {KeyboardEvent} */ event, /** @type {{ allow?: (id: string) => boolean }} */ { allow } = {}) => dispatchShortcut(event, getPrefs(), actions, allow),
   };
 }

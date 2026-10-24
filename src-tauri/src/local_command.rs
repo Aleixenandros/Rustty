@@ -16,7 +16,10 @@
 //! 4. **Terminación del árbol de procesos**: el hijo se lanza en su propio grupo
 //!    (Unix) y al cancelar/expirar se señaliza al grupo entero, de modo que los
 //!    nietos que el shell haya dejado (pipelines, `&`) mueren con él. En Windows
-//!    se usa `taskkill /T /F`, que recorre el árbol.
+//!    se usa `taskkill /T /F`, que recorre el árbol. Eso vale mientras el shell
+//!    vive: si termina dejando un proceso en segundo plano que conserva las
+//!    tuberías (`programa &`), el resultado se entrega tras un margen corto
+//!    (`READER_GRACE`) y ese proceso sigue vivo, que es lo que pide el `&`.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -39,6 +42,14 @@ pub const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const GRACE_PERIOD: Duration = Duration::from_secs(2);
 /// Cadencia del bucle de espera (try_wait + comprobación de cancelación).
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Margen para recoger la salida cuando el shell ya ha salido: lo normal es
+/// que los lectores lleguen al EOF en milisegundos; si no, es que un proceso
+/// en segundo plano conserva las tuberías y no se le espera.
+const READER_GRACE: Duration = Duration::from_millis(500);
+/// Descriptor por el que `flatpak-spawn` lee los valores de los marcadores
+/// (`--env-fd`): el primero libre tras stdin/stdout/stderr.
+#[cfg(unix)]
+const ENV_FD: i32 = 3;
 
 /// Resultado de un comando local acotado.
 #[derive(serde::Serialize)]
@@ -127,17 +138,12 @@ impl LocalCommandRegistry {
 
         // Lectura incremental en dos hilos: acumulan hasta el tope y siguen
         // drenando (descartando) para que el hijo nunca se bloquee escribiendo
-        // en una tubería llena.
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let out_reader = std::thread::spawn(move || match stdout {
-            Some(r) => read_capped(r, max_output_bytes),
-            None => (Vec::new(), false),
-        });
-        let err_reader = std::thread::spawn(move || match stderr {
-            Some(r) => read_capped(r, max_output_bytes),
-            None => (Vec::new(), false),
-        });
+        // en una tubería llena. Escriben en un búfer compartido para poder
+        // entregar lo leído sin esperar a su EOF (ver más abajo).
+        let out_buf: Arc<Mutex<Captured>> = Arc::default();
+        let err_buf: Arc<Mutex<Captured>> = Arc::default();
+        let out_reader = spawn_reader(child.stdout.take(), max_output_bytes, Arc::clone(&out_buf));
+        let err_reader = spawn_reader(child.stderr.take(), max_output_bytes, Arc::clone(&err_buf));
 
         let deadline = (timeout_secs > 0).then(|| started + Duration::from_secs(timeout_secs));
         let mut timed_out = false;
@@ -162,9 +168,24 @@ impl LocalCommandRegistry {
             std::thread::sleep(POLL_INTERVAL);
         };
 
+        // El shell ya terminó, pero un proceso que dejó en segundo plano (`cmd &`,
+        // `nohup`, `setsid`, una aplicación gráfica que se desvincula) hereda las
+        // tuberías, y su EOF no llega hasta que ese proceso muere. Esperarlo
+        // dejaba la invocación colgada sin plazo ni cancelación posibles. Se
+        // espera solo un margen corto, todavía registrados (así «Cancelar» sigue
+        // alcanzando al grupo), y se entrega lo leído hasta entonces. Ese
+        // proceso sigue vivo, que es lo que pide el `&`; su lector sigue
+        // drenando la tubería hasta que la cierre, para que no muera de SIGPIPE.
+        let drain_until = Instant::now() + READER_GRACE;
+        while !(out_reader.is_finished() && err_reader.is_finished())
+            && Instant::now() < drain_until
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
         self.unregister(run_id);
-        let (stdout, out_trunc) = out_reader.join().unwrap_or((Vec::new(), false));
-        let (stderr, err_trunc) = err_reader.join().unwrap_or((Vec::new(), false));
+        let (stdout, out_trunc) = collect_reader(out_reader, &out_buf);
+        let (stderr, err_trunc) = collect_reader(err_reader, &err_buf);
 
         Ok(LocalCommandOutput {
             code: status.code().unwrap_or(-1),
@@ -200,33 +221,81 @@ pub fn effective_output_bytes(requested_kb: Option<usize>) -> usize {
     }
 }
 
-/// Lee `reader` hasta EOF acumulando como mucho `cap` bytes. Devuelve lo
-/// acumulado y si hubo que descartar algo. **Siempre** consume el resto del
-/// flujo: dejar de leer una tubería llena bloquearía al hijo para siempre.
-fn read_capped<R: Read>(mut reader: R, cap: usize) -> (Vec<u8>, bool) {
-    let mut out: Vec<u8> = Vec::new();
+/// Salida de un flujo, compartida entre su hilo lector y quien espera el
+/// resultado.
+#[derive(Default)]
+struct Captured {
+    data: Vec<u8>,
+    truncated: bool,
+    /// El resultado ya se entregó: el lector solo drena hasta el EOF, sin
+    /// acumular (no retiene memoria por un proceso que sigue en segundo plano).
+    taken: bool,
+}
+
+/// Lee `reader` hasta EOF acumulando en `sink` como mucho `cap` bytes y
+/// marcando si hubo que descartar algo. **Siempre** consume el resto del flujo:
+/// dejar de leer una tubería llena bloquearía al hijo para siempre, y cerrarla
+/// mataría de SIGPIPE a quien siguiera escribiendo en ella.
+fn read_capped_into<R: Read>(mut reader: R, cap: usize, sink: &Mutex<Captured>) {
     let mut buf = [0u8; 8192];
-    let mut truncated = false;
     loop {
         match reader.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
-                let room = cap.saturating_sub(out.len());
-                if room == 0 {
-                    truncated = true;
-                    continue; // seguimos drenando, pero ya no acumulamos
+                let mut captured = sink.lock_recover();
+                if captured.taken {
+                    continue; // seguimos drenando, pero ya nadie lo va a leer
                 }
-                let take = room.min(n);
-                out.extend_from_slice(&buf[..take]);
+                let take = cap.saturating_sub(captured.data.len()).min(n);
+                captured.data.extend_from_slice(&buf[..take]);
                 if take < n {
-                    truncated = true;
+                    captured.truncated = true;
                 }
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
     }
-    (out, truncated)
+}
+
+/// Retira lo acumulado (y si se truncó) y deja al lector solo drenando.
+fn take_captured(sink: &Mutex<Captured>) -> (Vec<u8>, bool) {
+    let mut captured = sink.lock_recover();
+    captured.taken = true;
+    (std::mem::take(&mut captured.data), captured.truncated)
+}
+
+fn spawn_reader<R: Read + Send + 'static>(
+    reader: Option<R>,
+    cap: usize,
+    sink: Arc<Mutex<Captured>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        if let Some(reader) = reader {
+            read_capped_into(reader, cap, &sink);
+        }
+    })
+}
+
+/// Recoge la salida de un lector. Si ya llegó a su EOF se espera al hilo (y lo
+/// leído está completo); si no, se suelta su `JoinHandle`: el hilo sigue
+/// drenando hasta que el proceso que conserva la tubería la cierre.
+fn collect_reader(
+    handle: std::thread::JoinHandle<()>,
+    sink: &Mutex<Captured>,
+) -> (Vec<u8>, bool) {
+    if handle.is_finished() {
+        let _ = handle.join();
+    }
+    take_captured(sink)
+}
+
+/// [`read_capped_into`] sobre un búfer propio, hasta el EOF.
+#[cfg(test)]
+fn read_capped<R: Read>(reader: R, cap: usize) -> (Vec<u8>, bool) {
+    let sink = Mutex::new(Captured::default());
+    read_capped_into(reader, cap, &sink);
+    take_captured(&sink)
 }
 
 /// Lanza el shell del SO con la orden del usuario, con las tuberías capturadas
@@ -244,14 +313,39 @@ fn spawn_shell(command: &str, env: &[(String, String)]) -> std::io::Result<std::
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         c.creation_flags(CREATE_NO_WINDOW);
+        c.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
         c
     };
+    // Bajo Flatpak, los valores de los marcadores (`RUSTTY_ARG_n`) llegan al
+    // host por `--env-fd`: un `cmd.env` se quedaría en `flatpak-spawn` (el
+    // comando correría con los valores vacíos) y `--env=` los dejaría a la
+    // vista en su línea de órdenes (`ps`) mientras dura el comando. El `memfd`
+    // vive hasta el final de la función, después del `spawn`.
+    #[cfg(target_os = "linux")]
+    let env_file = if crate::sandbox::in_flatpak() && !env.is_empty() {
+        Some(crate::sandbox::env_memfd(env)?)
+    } else {
+        None
+    };
+    #[cfg(all(unix, not(target_os = "linux")))]
+    let env_file: Option<std::fs::File> = None;
     #[cfg(not(windows))]
     let mut cmd = {
         // Bajo Flatpak el comando se ejecuta en el host: el catálogo es «su
         // shell», y las órdenes que el usuario guarda (`ping`, `scp`, abrir su
         // editor…) son herramientas de su sistema, no del runtime.
-        let mut c = crate::sandbox::host_command("sh", crate::sandbox::HostSpawn::default());
+        let mut c = crate::sandbox::host_command(
+            "sh",
+            crate::sandbox::HostSpawn {
+                env: if env_file.is_some() { &[] } else { env },
+                env_fd: env_file.as_ref().map(|_| ENV_FD),
+                ..Default::default()
+            },
+        );
+        #[cfg(target_os = "linux")]
+        if let Some(file) = &env_file {
+            crate::sandbox::inherit_fd(&mut c, file, ENV_FD);
+        }
         c.arg("-c").arg(command);
         // Grupo de procesos propio: así la señal de terminación alcanza también
         // a los nietos (pipelines, procesos en segundo plano del shell).
@@ -265,9 +359,6 @@ fn spawn_shell(command: &str, env: &[(String, String)]) -> std::io::Result<std::
         c.process_group(0);
         c
     };
-    // Bajo Flatpak llegan igual al proceso del host: `flatpak-spawn` reenvía su
-    // propio entorno (ver `sandbox::host_command`).
-    cmd.envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -427,6 +518,59 @@ mod tests {
         let out = reg.run_blocking("t-cancel", "sleep 30", &[], 0, 4096).unwrap();
         assert!(out.canceled, "debería marcar cancelado");
         assert!(!out.timed_out);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn un_proceso_en_segundo_plano_no_retiene_el_resultado() {
+        let reg = LocalCommandRegistry::new();
+        // El `sleep` hereda las tuberías: antes el resultado esperaba a que
+        // terminara (5 s), con el plazo y «Cancelar» ya fuera de juego.
+        let inicio = Instant::now();
+        let out = reg
+            .run_blocking("t-bg", "printf antes; sleep 5 &", &[], 30, 4096)
+            .unwrap();
+        assert!(inicio.elapsed() < Duration::from_secs(3), "no debe esperar al nieto");
+        assert_eq!(out.stdout, "antes");
+        assert_eq!(out.code, 0);
+        assert!(!out.timed_out && !out.canceled && !out.truncated);
+        // Ya no está registrado: cancelar no encuentra nada.
+        assert!(!reg.cancel("t-bg"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn un_nieto_con_setsid_no_cuelga_el_timeout() {
+        let reg = LocalCommandRegistry::new();
+        // El nieto sale del grupo con `setsid`: la señal del plazo no le llega
+        // y conserva las tuberías. El plazo tiene que cumplirse igual.
+        let inicio = Instant::now();
+        let out = reg
+            .run_blocking("t-setsid", "setsid sleep 5 & sleep 30", &[], 1, 4096)
+            .unwrap();
+        assert!(out.timed_out);
+        assert!(inicio.elapsed() < Duration::from_secs(4), "{:?}", inicio.elapsed());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn la_salida_completa_llega_entera() {
+        let reg = LocalCommandRegistry::new();
+        let out = reg
+            .run_blocking("t-grande", "head -c 300000 /dev/zero", &[], 10, 512 * 1024)
+            .unwrap();
+        assert_eq!(out.stdout.len(), 300_000);
+        assert!(!out.truncated);
+    }
+
+    #[test]
+    fn el_lector_deja_de_acumular_cuando_se_entrega_el_resultado() {
+        let sink = Mutex::new(Captured::default());
+        read_capped_into(&b"antes"[..], 1024, &sink);
+        assert_eq!(take_captured(&sink), (b"antes".to_vec(), false));
+        // Lo que llega después (un proceso que sigue vivo) se drena sin guardarse.
+        read_capped_into(&b"despues"[..], 1024, &sink);
+        assert!(sink.lock_recover().data.is_empty());
     }
 
     #[test]

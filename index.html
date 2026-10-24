@@ -49,14 +49,14 @@
       </div>
 
       <!-- ── Rail vertical de iconos ── -->
-      <aside id="rail" aria-label="Navegación">
+      <aside id="rail" aria-label="Navegación" data-i18n-aria-label="rail.nav_label">
         <div class="rail-section rail-top">
-          <button class="rail-btn" id="rail-btn-new" data-rail-action="new-connection" data-i18n-title="sidebar.new_conn_title" data-tooltip="Nueva conexión" data-tooltip-pos="right" aria-label="Nueva conexión">
+          <button class="rail-btn" id="rail-btn-new" data-rail-action="new-connection" data-i18n-title="sidebar.new_conn_title" data-tooltip="Nueva conexión" data-tooltip-pos="right" aria-label="Nueva conexión" data-i18n-aria-label="sidebar.new_conn_title">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <path d="M9 3.5v11M3.5 9h11"/>
             </svg>
           </button>
-          <button class="rail-btn" id="rail-btn-local" data-rail-action="local-shell" data-i18n-title="sidebar.local_shell_title" data-tooltip="Consola local" data-tooltip-pos="right" aria-label="Consola local">
+          <button class="rail-btn" id="rail-btn-local" data-rail-action="local-shell" data-i18n-title="sidebar.local_shell_title" data-tooltip="Consola local" data-tooltip-pos="right" aria-label="Consola local" data-i18n-aria-label="sidebar.local_shell_title">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 4.5h12v9h-12z"/>
               <path d="M5.5 8 7.5 10 5.5 12"/>
@@ -64,17 +64,17 @@
             </svg>
           </button>
           <div class="rail-sep" role="separator" aria-hidden="true"></div>
-          <button class="rail-btn" data-rail-view="profiles" data-i18n-title="rail.view_profiles" data-tooltip="Perfiles" data-tooltip-pos="right" aria-label="Perfiles">
+          <button class="rail-btn" data-rail-view="profiles" data-i18n-title="rail.view_profiles" data-tooltip="Perfiles" data-tooltip-pos="right" aria-label="Perfiles" data-i18n-aria-label="rail.view_profiles">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
               <path d="M2 5.5a1.5 1.5 0 0 1 1.5-1.5h3l1.5 1.8h6.5A1.5 1.5 0 0 1 16 7.3v6.2A1.5 1.5 0 0 1 14.5 15h-11A1.5 1.5 0 0 1 2 13.5z"/>
             </svg>
           </button>
-          <button class="rail-btn" data-rail-view="favorites" data-i18n-title="rail.view_favorites" data-tooltip="Favoritos" data-tooltip-pos="right" aria-label="Favoritos">
+          <button class="rail-btn" data-rail-view="favorites" data-i18n-title="rail.view_favorites" data-tooltip="Favoritos" data-tooltip-pos="right" aria-label="Favoritos" data-i18n-aria-label="rail.view_favorites">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
               <path d="M9 2.4 11.06 6.6l4.64.67-3.36 3.27.79 4.6L9 12.96 4.86 15.14l.79-4.6L2.3 7.27l4.64-.67z"/>
             </svg>
           </button>
-          <button class="rail-btn" id="rail-btn-tunnels" data-rail-action="tunnels" data-i18n-title="rail.tunnels" data-tooltip="Túneles SSH" data-tooltip-pos="right" aria-label="Túneles SSH">
+          <button class="rail-btn" id="rail-btn-tunnels" data-rail-action="tunnels" data-i18n-title="rail.tunnels" data-tooltip="Túneles SSH" data-tooltip-pos="right" aria-label="Túneles SSH" data-i18n-aria-label="rail.tunnels">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
               <path d="M2.5 6.5h11l-2 -2M15.5 11.5h-11l2 2"/>
             </svg>
@@ -83,28 +83,28 @@
                  corriendo sin ninguna señal en pantalla. -->
             <span class="rail-badge hidden" id="rail-tunnels-badge" aria-hidden="true"></span>
           </button>
-          <button class="rail-btn" data-rail-action="scripts" data-i18n-title="scripts.rail_title" data-tooltip="Scripts" data-tooltip-pos="right" aria-label="Scripts">
+          <button class="rail-btn" data-rail-action="scripts" data-i18n-title="scripts.rail_title" data-tooltip="Scripts" data-tooltip-pos="right" aria-label="Scripts" data-i18n-aria-label="scripts.rail_title">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
               <path d="M5 2.6h6.2l3 3v8.6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3.6a1 1 0 0 1 1-1z"/>
               <path d="M10.8 2.7v3.2h3.2"/>
               <path d="M7.3 9l3.4 2.2-3.4 2.2z"/>
             </svg>
           </button>
-          <button class="rail-btn rail-btn-logs" data-rail-action="activity" data-tooltip="Historial y logs" data-tooltip-pos="right" aria-label="Historial y logs">
+          <button class="rail-btn rail-btn-logs" data-rail-action="activity" data-i18n-title="rail.activity" data-tooltip="Historial y logs" data-tooltip-pos="right" aria-label="Historial y logs" data-i18n-aria-label="rail.activity">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
               <path d="M3 4.5h12M3 9h12M3 13.5h8"/>
             </svg>
           </button>
         </div>
         <div class="rail-section rail-bottom">
-          <button class="rail-btn rail-btn-danger" id="rail-btn-disconnect-all" data-rail-action="disconnect-all" data-i18n-title="rail.disconnect_all" data-tooltip="Desconectar todo" data-tooltip-pos="right" aria-label="Desconectar todo">
+          <button class="rail-btn rail-btn-danger" id="rail-btn-disconnect-all" data-rail-action="disconnect-all" data-i18n-title="rail.disconnect_all" data-tooltip="Desconectar todo" data-tooltip-pos="right" aria-label="Desconectar todo" data-i18n-aria-label="rail.disconnect_all">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 2.5v6"/>
               <path d="M5.2 5.2a5 5 0 1 0 7.6 0"/>
             </svg>
           </button>
           <div class="rail-sep" role="separator" aria-hidden="true"></div>
-          <button class="rail-btn rail-btn-primary" id="rail-btn-settings" data-rail-action="settings" data-i18n-title="sidebar.prefs_title" data-tooltip="Preferencias" data-tooltip-pos="right" aria-label="Preferencias">
+          <button class="rail-btn rail-btn-primary" id="rail-btn-settings" data-rail-action="settings" data-i18n-title="sidebar.prefs_title" data-tooltip="Preferencias" data-tooltip-pos="right" aria-label="Preferencias" data-i18n-aria-label="sidebar.prefs_title">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
               <circle cx="12" cy="12" r="3"/>
@@ -118,13 +118,13 @@
         <div id="sidebar-header" data-tauri-drag-region>
           <span class="app-logo" data-tauri-drag-region>Rustty</span>
           <div class="sidebar-header-actions">
-            <button id="btn-sidebar-search" data-i18n-title="sidebar.search_title" title="Buscar conexiones" aria-label="Buscar conexiones">
+            <button id="btn-sidebar-search" data-i18n-title="sidebar.search_title" title="Buscar conexiones" aria-label="Buscar conexiones" data-i18n-aria-label="sidebar.search_title">
               <svg viewBox="0 0 18 18" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="8" cy="8" r="5"></circle>
                 <line x1="12" y1="12" x2="15" y2="15"></line>
               </svg>
             </button>
-            <button id="btn-sidebar-tools" data-i18n-title="sidebar.tools_title" title="Filtrar y cambiar de perfil">≡</button>
+            <button id="btn-sidebar-tools" data-i18n-title="sidebar.tools_title" title="Filtrar y cambiar de perfil" aria-label="Filtrar y cambiar de perfil" data-i18n-aria-label="sidebar.tools_title">≡</button>
           </div>
         </div>
 
@@ -135,7 +135,7 @@
               <path d="M2.5 4.8A1.8 1.8 0 0 1 4.3 3h2.8l1.6 1.8h5A1.8 1.8 0 0 1 15.5 6.6v5.6a1.8 1.8 0 0 1-1.8 1.8H4.3a1.8 1.8 0 0 1-1.8-1.8z"/>
             </svg>
           </span>
-          <span id="sidebar-context-label" class="ctx-label">Default</span>
+          <span id="sidebar-context-label" class="ctx-label" translate="no">Default</span>
         </div>
 
         <!-- Popover compacto con switcher, buscador y modo de vista -->
@@ -198,29 +198,29 @@
       <!-- ── Área principal ── -->
       <main id="main-area">
         <div id="tab-bar">
-          <button id="btn-toggle-sidebar" data-i18n-title="sidebar.toggle_title" title="Ocultar / mostrar la barra lateral" aria-label="Toggle sidebar">
+          <button id="btn-toggle-sidebar" data-i18n-title="sidebar.toggle_title" title="Ocultar / mostrar la barra lateral" aria-label="Ocultar / mostrar la barra lateral" data-i18n-aria-label="sidebar.toggle_title">
             <span class="chevron" aria-hidden="true">‹</span>
           </button>
           <div id="tab-scroll">
-            <button id="home-tab" class="tab tab-home active" type="button" title="Inicio">
+            <button id="home-tab" class="tab tab-home active" type="button" title="Inicio" data-i18n-title="welcome.home_tab">
               <span class="tab-home-icon" aria-hidden="true"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></span>
-              <span class="tab-name">Inicio</span>
+              <span class="tab-name" data-i18n="welcome.home_tab">Inicio</span>
             </button>
-            <div id="tabs-container" role="tablist" aria-label="Sesiones abiertas"></div>
+            <div id="tabs-container" role="tablist" aria-label="Sesiones abiertas" data-i18n-aria-label="tabctx.tablist_label"></div>
           </div>
           <div id="tab-bar-drag" data-tauri-drag-region></div>
-          <button id="btn-tab-overflow" class="hidden" type="button" data-i18n-title="tab_overflow.button_title" title="Pestañas abiertas" aria-label="Pestañas abiertas" aria-haspopup="true" aria-expanded="false">
+          <button id="btn-tab-overflow" class="hidden" type="button" data-i18n-title="tab_overflow.button_title" title="Pestañas abiertas" aria-label="Pestañas abiertas" data-i18n-aria-label="tab_overflow.button_title" aria-haspopup="true" aria-expanded="false">
             <span class="tab-overflow-icon" aria-hidden="true">⋯</span>
           </button>
           <div id="window-controls" aria-hidden="false">
-            <button id="btn-win-min" class="win-ctrl" data-i18n-title="window.minimize" title="Minimizar" aria-label="Minimizar">
+            <button id="btn-win-min" class="win-ctrl" data-i18n-title="window.minimize" title="Minimizar" aria-label="Minimizar" data-i18n-aria-label="window.minimize">
               <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 5 H10" stroke="currentColor" stroke-width="1" fill="none"/></svg>
             </button>
-            <button id="btn-win-max" class="win-ctrl" data-i18n-title="window.maximize" title="Maximizar" aria-label="Maximizar">
+            <button id="btn-win-max" class="win-ctrl" data-i18n-title="window.maximize" title="Maximizar / restaurar" aria-label="Maximizar / restaurar" data-i18n-aria-label="window.maximize">
               <svg class="ico-max" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" stroke="currentColor" stroke-width="1" fill="none"/></svg>
               <svg class="ico-restore" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="0.5" y="2.5" width="7" height="7" stroke="currentColor" stroke-width="1" fill="none"/><path d="M2.5 2.5 V0.5 H9.5 V7.5 H7.5" stroke="currentColor" stroke-width="1" fill="none"/></svg>
             </button>
-            <button id="btn-win-close" class="win-ctrl win-ctrl-close" data-i18n-title="window.close" title="Cerrar" aria-label="Cerrar">
+            <button id="btn-win-close" class="win-ctrl win-ctrl-close" data-i18n-title="window.close" title="Cerrar" aria-label="Cerrar" data-i18n-aria-label="window.close">
               <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M0 0 L10 10 M10 0 L0 10" stroke="currentColor" stroke-width="1" fill="none"/></svg>
             </button>
           </div>
@@ -238,17 +238,17 @@
           </div>
           <div id="status-bar" class="hidden" aria-hidden="true">
             <span class="status-conn">
-              <span class="status-dot" id="status-dot" role="button" tabindex="0" title="Ver diagnóstico de conexión"></span>
+              <span class="status-dot" id="status-dot" role="button" tabindex="0" title="Diagnóstico de conexión" data-i18n-title="terminal.diagnostics_title"></span>
               <span id="status-user-host">—</span>
               <span id="status-env" class="env-badge hidden"></span>
             </span>
             <span class="status-sep"></span>
-            <span class="status-cwd hidden" id="status-cwd-wrap" title="Directorio remoto actual (OSC 7)">
+            <span class="status-cwd hidden" id="status-cwd-wrap" title="Directorio remoto actual (OSC 7)" data-i18n-title="status.cwd_title">
               <span class="status-cwd-icon" aria-hidden="true"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-folder"/></svg></span>
               <span id="status-cwd" class="mono">—</span>
             </span>
             <span class="status-sep status-cwd-sep hidden"></span>
-            <span class="status-dims" id="status-dims-wrap" title="Tamaño del terminal">
+            <span class="status-dims" id="status-dims-wrap" title="Tamaño del terminal" data-i18n-title="status.dims_title">
               <span id="status-dims" class="mono">—</span>
             </span>
             <span class="status-sep"></span>
@@ -281,9 +281,9 @@
                 <line x1="6" y1="6" x2="6" y2="14.5" stroke="currentColor"/>
               </svg>
             </button>
-            <span class="status-rec hidden" id="status-rec-wrap" title="Sesión grabada en disco (session_log)">
+            <span class="status-rec hidden" id="status-rec-wrap" title="Grabando en disco" data-i18n-title="status.rec_active">
               <span class="status-rec-dot"></span>
-              <span>REC</span>
+              <span translate="no">REC</span>
             </span>
             <button type="button" class="status-overflow-btn" id="status-overflow-btn"
                     data-i18n-title="status.overflow_more" title="Más detalles"
@@ -329,13 +329,19 @@
           <div id="welcome-screen">
             <div class="dashboard-shell">
               <section class="dashboard-command">
-                <div class="dashboard-brand" aria-hidden="true">🦀</div>
+                <div class="dashboard-brand" aria-hidden="true">
+                  <svg viewBox="0 0 18 18" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 4.5h12v9h-12z"/>
+                    <path d="M5.5 8 7.5 10 5.5 12"/>
+                    <path d="M9 12h3.5"/>
+                  </svg>
+                </div>
                 <div class="dashboard-title">Rustty</div>
                 <div id="dashboard-workspace-chip" class="dashboard-workspace-chip" aria-live="polite"></div>
                 <div class="dashboard-search-wrap">
                   <span class="dashboard-search-icon" aria-hidden="true"><svg viewBox="0 0 16 16" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><use href="#ci-search"/></svg></span>
-                  <input id="dashboard-search" type="search" autocomplete="off" spellcheck="false" placeholder="Buscar perfil, host o usuario…" />
-                  <span class="dashboard-search-kbd">Ctrl K</span>
+                  <input id="dashboard-search" type="search" autocomplete="off" spellcheck="false" placeholder="Buscar perfil, host o usuario…" data-i18n-placeholder="dashboard.search_ph" />
+                  <span class="dashboard-search-kbd" data-i18n="dashboard.search_kbd">Ctrl K</span>
                 </div>
               </section>
 
@@ -359,8 +365,8 @@
               <section id="dashboard-search-section" class="dashboard-section dashboard-search-section hidden">
                 <div class="dashboard-section-head">
                   <div>
-                    <p class="dashboard-kicker">Buscar</p>
-                    <h1>Coincidencias</h1>
+                    <p class="dashboard-kicker" data-i18n="sidebar.tools_search">Buscar</p>
+                    <h1 data-i18n="dashboard.search_results_title">Coincidencias</h1>
                   </div>
                 </div>
                 <div id="dashboard-search-results" class="dashboard-results-list"></div>
@@ -370,22 +376,22 @@
                 <div class="dashboard-card dashboard-quick">
                   <div class="dashboard-card-head">
                     <div>
-                      <p class="dashboard-kicker">Acceso rápido</p>
+                      <p class="dashboard-kicker" data-i18n="dashboard.quick_title">Acceso rápido</p>
                     </div>
                   </div>
                   <div class="dashboard-quick-grid">
                     <button id="btn-welcome-new" class="dashboard-tool" data-dashboard-action="new-connection">
                       <span class="dashboard-tool-icon new">＋</span>
                       <span>
-                        <strong>Nueva conexión</strong>
-                        <small>SSH o RDP</small>
+                        <strong data-i18n="welcome.new_conn">Nueva conexión</strong>
+                        <small data-i18n="dashboard.quick_new_hint">SSH o RDP</small>
                       </span>
                     </button>
                     <button id="btn-welcome-local" class="dashboard-tool" data-dashboard-action="local-shell">
                       <span class="dashboard-tool-icon local">$_</span>
                       <span>
-                        <strong>Local</strong>
-                        <small>Consola del sistema</small>
+                        <strong data-i18n="dashboard.quick_local">Local</strong>
+                        <small data-i18n="dashboard.quick_local_hint">Consola del sistema</small>
                       </span>
                     </button>
                   </div>
@@ -403,7 +409,7 @@
                 <div class="dashboard-card dashboard-favorites">
                   <div class="dashboard-card-head">
                     <div>
-                      <p class="dashboard-kicker">Favoritos</p>
+                      <p class="dashboard-kicker" data-i18n="rail.view_favorites">Favoritos</p>
                     </div>
                   </div>
                   <div id="dashboard-favorites-list" class="dashboard-favorites-list"></div>
@@ -412,7 +418,7 @@
                 <div class="dashboard-card dashboard-activity">
                   <div class="dashboard-card-head">
                     <div>
-                      <p class="dashboard-kicker">Historial</p>
+                      <p class="dashboard-kicker" data-i18n="dashboard.history_title">Historial</p>
                     </div>
                   </div>
                   <div id="dashboard-activity-list" class="dashboard-activity-list"></div>
@@ -437,6 +443,7 @@
         <symbol id="ci-export" viewBox="0 0 16 16"><path d="M8 10V3M5.2 5.8L8 3l2.8 2.8"/><path d="M3.5 10.5v1.4a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-1.4"/></symbol>
         <symbol id="ci-x" viewBox="0 0 16 16"><path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/></symbol>
         <symbol id="ci-play" viewBox="0 0 16 16"><path d="M5.5 3.6l6.2 4.4-6.2 4.4z"/></symbol>
+        <symbol id="ci-pause" viewBox="0 0 16 16"><path d="M6 4v8M10 4v8"/></symbol>
         <symbol id="ci-restore" viewBox="0 0 16 16"><path d="M3.4 8a4.6 4.6 0 1 0 1.3-3.2"/><path d="M2.6 2v3h3"/></symbol>
         <symbol id="ci-power" viewBox="0 0 16 16"><path d="M8 2.8v5.2"/><path d="M5.3 5.1a4.5 4.5 0 1 0 5.4 0"/></symbol>
         <symbol id="ci-tunnel" viewBox="0 0 16 16"><path d="M3.5 6h7.5M9 4l2 2-2 2"/><path d="M12.5 10H5M7 8l-2 2 2 2"/></symbol>
@@ -512,14 +519,14 @@
       <div class="ctx-colorable ctx-folder-color hidden">
         <span class="ctx-folder-color-label" data-i18n="ctx.folder_color">Color</span>
         <div class="ctx-folder-color-swatches">
-          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="red"    style="--folder-tint:var(--red)"    title="Rojo"></button>
-          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="peach"  style="--folder-tint:var(--peach)"  title="Melocotón"></button>
-          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="yellow" style="--folder-tint:var(--yellow)" title="Amarillo"></button>
-          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="green"  style="--folder-tint:var(--green)"  title="Verde"></button>
-          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="teal"   style="--folder-tint:var(--teal)"   title="Turquesa"></button>
-          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="blue"   style="--folder-tint:var(--blue)"   title="Azul"></button>
-          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="mauve"  style="--folder-tint:var(--mauve)"  title="Malva"></button>
-          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="pink"   style="--folder-tint:var(--pink)"   title="Rosa"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="red"    style="--folder-tint:var(--red)"    title="Rojo" data-i18n-title="ctx.folder_color_red"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="peach"  style="--folder-tint:var(--peach)"  title="Melocotón" data-i18n-title="ctx.folder_color_peach"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="yellow" style="--folder-tint:var(--yellow)" title="Amarillo" data-i18n-title="ctx.folder_color_yellow"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="green"  style="--folder-tint:var(--green)"  title="Verde" data-i18n-title="ctx.folder_color_green"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="teal"   style="--folder-tint:var(--teal)"   title="Turquesa" data-i18n-title="ctx.folder_color_teal"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="blue"   style="--folder-tint:var(--blue)"   title="Azul" data-i18n-title="ctx.folder_color_blue"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="mauve"  style="--folder-tint:var(--mauve)"  title="Malva" data-i18n-title="ctx.folder_color_mauve"></button>
+          <button class="ctx-swatch" data-ctx="set-folder-color" data-color-id="pink"   style="--folder-tint:var(--pink)"   title="Rosa" data-i18n-title="ctx.folder_color_pink"></button>
           <button class="ctx-swatch ctx-swatch-clear" data-ctx="set-folder-color" data-color-id="none" data-i18n-title="ctx.folder_color_clear" title="Quitar color"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
       </div>
@@ -651,33 +658,33 @@
     ══════════════════════════════════════════════════════ -->
     <div id="sftp-context-menu" class="ctx-menu hidden" role="menu" data-i18n-aria-label="ctx.menu_files_label">
       <button class="ctx-item" data-sftpctx="refresh">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg></span><span>Refrescar</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg></span><span data-i18n="sftp_nav.refresh">Refrescar</span>
       </button>
       <button class="ctx-item" data-sftpctx="mkdir">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-folder"/></svg></span><span>Nueva carpeta</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-folder"/></svg></span><span data-i18n="sftp_nav.mkdir">Nueva carpeta</span>
       </button>
       <button class="ctx-item" data-sftpctx="touch">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-file"/></svg></span><span>Nuevo archivo</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-file"/></svg></span><span data-i18n="sftp_nav.touch">Nuevo archivo</span>
       </button>
       <div class="ctx-sep"></div>
       <button class="ctx-item sftpctx-remote-only sftpctx-needs-selection" data-sftpctx="download">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-download"/></svg></span><span>Descargar selección</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-download"/></svg></span><span data-i18n="sftp.download_selection">Descargar selección al local</span>
       </button>
       <button class="ctx-item" data-sftpctx="upload-files">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-upload"/></svg></span><span>Subir archivos…</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-upload"/></svg></span><span data-i18n="sftp.upload_dialog_title">Subir archivos</span>
       </button>
       <button class="ctx-item sftpctx-local-only sftpctx-needs-selection hidden" data-sftpctx="upload-selected">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-upload"/></svg></span><span>Subir selección</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-upload"/></svg></span><span data-i18n="sftp.upload_selection">Subir selección al remoto</span>
       </button>
       <div class="ctx-sep"></div>
       <button class="ctx-item sftpctx-single-selection" data-sftpctx="rename">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span>Renombrar</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="sftp.rename_dialog_title">Renombrar</span>
       </button>
       <button class="ctx-item sftpctx-needs-selection" data-sftpctx="chmod">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-sliders"/></svg></span><span>Cambiar permisos…</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-sliders"/></svg></span><span data-i18n="sftp.chmod_title">Cambiar permisos</span>
       </button>
       <button class="ctx-item danger sftpctx-needs-selection" data-sftpctx="delete">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></span><span>Eliminar</span>
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></span><span data-i18n="sftp.delete_title">Eliminar</span>
       </button>
     </div>
 
@@ -778,13 +785,13 @@
          MODAL: Añadir / Editar conexión
     ══════════════════════════════════════════════════════ -->
     <div id="modal-overlay" class="hidden">
-      <div id="modal-connection" role="dialog" aria-modal="true">
+      <div id="modal-connection" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div class="modal-header">
           <h2 id="modal-title" data-i18n="modal_conn.title_new">Nueva conexión</h2>
           <button class="btn-icon modal-close" id="btn-modal-close" data-i18n-aria-label="modal_conn.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
 
-        <nav class="modal-tabs" role="tablist" aria-label="Secciones de la conexión">
+        <nav class="modal-tabs" role="tablist" aria-label="Secciones de la conexión" data-i18n-aria-label="modal_conn.tabs_label">
           <button type="button" class="modal-tab active" data-modal-tab="general" role="tab" aria-selected="true" data-i18n="modal_conn.tab_general">General</button>
           <button type="button" class="modal-tab ssh-only" data-modal-tab="advanced" role="tab" aria-selected="false" data-i18n="modal_conn.tab_advanced">Avanzado</button>
           <button type="button" class="modal-tab" data-modal-tab="notes" role="tab" aria-selected="false" data-i18n="modal_conn.tab_notes">Notas</button>
@@ -821,9 +828,9 @@
             <label for="f-environment" data-i18n="modal_conn.environment">Entorno</label>
             <select id="f-environment">
               <option value="" data-i18n="modal_conn.environment_none">Sin entorno</option>
-              <option value="prod">PROD</option>
-              <option value="stage">STAGE</option>
-              <option value="dev">DEV</option>
+              <option value="prod" translate="no">PROD</option>
+              <option value="stage" translate="no">STAGE</option>
+              <option value="dev" translate="no">DEV</option>
             </select>
             <p class="form-hint" data-i18n="modal_conn.environment_hint">
               Muestra un badge del entorno en la pestaña, la barra lateral, el dashboard y la barra de estado, para distinguir producción de un vistazo.
@@ -995,6 +1002,7 @@
                 class="keepass-picker-list hidden"
                 role="listbox"
                 aria-label="Entradas KeePass"
+                data-i18n-aria-label="modal_conn.keepass_list_label"
               ></div>
             </div>
             <p class="form-hint keepass-entry-status hidden" id="keepass-entry-status"></p>
@@ -1144,7 +1152,7 @@
 
             <div class="form-row">
               <label for="f-proxy-jump" data-i18n="modal_conn.proxy_jump">Bastion / Jump host</label>
-              <input id="f-proxy-jump" type="text" placeholder="[user@]host[:port]" />
+              <input id="f-proxy-jump" type="text" placeholder="[usuario@]host[:puerto]" data-i18n-placeholder="modal_conn.proxy_jump_ph" />
               <p class="form-hint" data-i18n="modal_conn.proxy_jump_hint">
                 Conecta primero a este host bastión y abre un canal SSH al destino real a través suyo (ProxyJump). Reutiliza las credenciales del perfil.
               </p>
@@ -1211,8 +1219,8 @@
 
           <div class="connection-test-panel hidden" id="connection-test-panel">
             <div class="connection-test-head">
-              <span id="connection-test-title">Prueba de conexión</span>
-              <span class="connection-test-status" id="connection-test-status">Listo</span>
+              <span id="connection-test-title" data-i18n="modal_conn.test_title">Prueba de conexión</span>
+              <span class="connection-test-status" id="connection-test-status" data-i18n="modal_conn.test_idle">Listo</span>
             </div>
             <div class="connection-test-list" id="connection-test-list"></div>
           </div>
@@ -1221,7 +1229,7 @@
 
           <div class="modal-actions">
             <button type="button" class="btn-secondary" id="btn-modal-cancel" data-i18n="modal_conn.cancel">Cancelar</button>
-            <button type="button" class="btn-secondary" id="btn-modal-test">Probar</button>
+            <button type="button" class="btn-secondary" id="btn-modal-test" data-i18n="modal_conn.test">Probar</button>
             <button type="submit" class="btn-secondary" id="btn-modal-save-only" data-i18n="modal_conn.save_only">Guardar</button>
             <button type="button" class="btn-primary" id="btn-modal-save-connect" data-i18n="modal_conn.save_connect">Guardar y conectar</button>
           </div>
@@ -1255,21 +1263,21 @@
     </div>
 
     <div id="activity-center-overlay" class="hidden">
-      <aside id="activity-center-panel" aria-label="Centro de actividad">
+      <aside id="activity-center-panel" aria-label="Centro de actividad" data-i18n-aria-label="activity.panel_label">
         <div class="activity-center-head">
           <div>
-            <h2>Actividad</h2>
-            <p>Transferencias, conexiones, sync y avisos guardados</p>
+            <h2 data-i18n="activity.title">Actividad</h2>
+            <p data-i18n="activity.subtitle">Transferencias, conexiones, sync y avisos guardados</p>
           </div>
-          <button type="button" class="btn-icon" id="btn-activity-close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+          <button type="button" class="btn-icon" id="btn-activity-close" aria-label="Cerrar" data-i18n-aria-label="toast.close"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <div class="activity-center-toolbar">
-          <button type="button" class="activity-filter active" data-activity-filter="all">Todo</button>
-          <button type="button" class="activity-filter" data-activity-filter="connection">Conexiones</button>
+          <button type="button" class="activity-filter active" data-activity-filter="all" data-i18n="activity.filter_all">Todo</button>
+          <button type="button" class="activity-filter" data-activity-filter="connection" data-i18n="activity.filter_connection">Conexiones</button>
           <button type="button" class="activity-filter" data-activity-filter="sftp">SFTP</button>
-          <button type="button" class="activity-filter" data-activity-filter="sync">Sync</button>
-          <button type="button" class="activity-filter" data-activity-filter="update">Avisos</button>
-          <button type="button" class="activity-clear" id="btn-activity-clear">Limpiar</button>
+          <button type="button" class="activity-filter" data-activity-filter="sync" data-i18n="rail.sync">Sync</button>
+          <button type="button" class="activity-filter" data-activity-filter="update" data-i18n="activity.filter_update">Avisos</button>
+          <button type="button" class="activity-clear" id="btn-activity-clear" data-i18n="sftp.clear">Limpiar</button>
         </div>
         <div id="activity-center-list" class="activity-center-list"></div>
       </aside>
@@ -1281,7 +1289,7 @@
     <div id="global-tunnels-overlay" class="hidden">
       <div id="global-tunnels-modal" role="dialog" aria-modal="true" aria-labelledby="global-tunnels-title">
         <div class="modal-header">
-          <h2 id="global-tunnels-title">Túneles SSH</h2>
+          <h2 id="global-tunnels-title" data-i18n="tunnels.panel">Túneles SSH</h2>
           <!-- Dos salidas distintas, a propósito. «Minimizar» esconde el panel y
                deja los túneles corriendo (lo que hacía el aspa, sin decirlo).
                El aspa, cuando hay túneles activos, pregunta: es el único sitio
@@ -1297,52 +1305,52 @@
         <div class="global-tunnels-body">
           <form id="global-tunnel-form" class="global-tunnel-form" autocomplete="off">
             <div class="form-row">
-              <label for="global-tunnel-profile">Conexión SSH</label>
+              <label for="global-tunnel-profile" data-i18n="tunnels.ssh_connection">Conexión SSH</label>
               <select id="global-tunnel-profile" name="profileId"></select>
             </div>
             <div class="global-tunnel-grid">
               <div class="form-row">
-                <label for="global-tunnel-type">Tipo</label>
+                <label for="global-tunnel-type" data-i18n="tunnels.type">Tipo de túnel</label>
                 <select id="global-tunnel-type" name="type">
-                  <option value="local">Local (-L)</option>
-                  <option value="remote">Remoto (-R)</option>
+                  <option value="local" data-i18n="tunnels.type_local">Local (-L)</option>
+                  <option value="remote" data-i18n="tunnels.type_remote">Remoto (-R)</option>
                   <option value="dynamic">SOCKS (-D)</option>
                 </select>
               </div>
               <div class="form-row">
-                <label for="global-tunnel-bind">Escucha</label>
+                <label for="global-tunnel-bind" data-i18n="tunnels.bind_host">Host de escucha</label>
                 <input id="global-tunnel-bind" name="bindHost" type="text" value="127.0.0.1" />
               </div>
               <div class="form-row">
-                <label for="global-tunnel-local-port">Puerto local</label>
+                <label for="global-tunnel-local-port" data-i18n="tunnels.local_port">Puerto local</label>
                 <input id="global-tunnel-local-port" name="localPort" type="number" min="1" max="65535" required />
               </div>
               <div class="form-row">
-                <label for="global-tunnel-remote-host">Destino</label>
+                <label for="global-tunnel-remote-host" data-i18n="tunnels.remote_host">Host destino</label>
                 <input id="global-tunnel-remote-host" name="remoteHost" type="text" placeholder="127.0.0.1" />
               </div>
               <div class="form-row">
-                <label for="global-tunnel-remote-port">Puerto destino</label>
+                <label for="global-tunnel-remote-port" data-i18n="tunnels.remote_port">Puerto destino</label>
                 <input id="global-tunnel-remote-port" name="remotePort" type="number" min="1" max="65535" />
               </div>
               <div class="form-row">
-                <label for="global-tunnel-name">Nombre</label>
-                <input id="global-tunnel-name" name="name" type="text" placeholder="Opcional" />
+                <label for="global-tunnel-name" data-i18n="modal_conn.name">Nombre</label>
+                <input id="global-tunnel-name" name="name" type="text" placeholder="Nombre opcional" data-i18n-placeholder="tunnels.optional_name" />
               </div>
             </div>
             <div class="global-tunnel-actions">
-              <label class="checkbox-label"><input name="save" type="checkbox" /> Guardar en la conexión</label>
-              <label class="checkbox-label"><input name="autoStart" type="checkbox" /> Autoarrancar</label>
-              <button type="submit" class="btn-primary">Abrir túnel</button>
+              <label class="checkbox-label"><input name="save" type="checkbox" /> <span data-i18n="tunnels.save_in_profile">Guardar en la conexión</span></label>
+              <label class="checkbox-label"><input name="autoStart" type="checkbox" /> <span data-i18n="tunnels.autostart">Autoarrancar</span></label>
+              <button type="submit" class="btn-primary" data-i18n="tunnels.open_tunnel">Abrir túnel</button>
             </div>
           </form>
 
           <div class="global-tunnels-section">
-            <div class="global-tunnels-section-title">Activos</div>
+            <div class="global-tunnels-section-title" data-i18n="tunnels.section_active">Activos</div>
             <div id="global-active-tunnels" class="global-tunnel-list"></div>
           </div>
           <div class="global-tunnels-section">
-            <div class="global-tunnels-section-title">Guardados</div>
+            <div class="global-tunnels-section-title" data-i18n="tunnels.section_saved">Guardados</div>
             <div id="global-saved-tunnels" class="global-tunnel-list"></div>
           </div>
           <p class="global-tunnels-note" id="global-tunnels-note"></p>
@@ -1360,7 +1368,7 @@
           <button class="btn-icon" id="btn-known-hosts-close" data-i18n-aria-label="modal_known_hosts.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <div class="global-tunnels-body">
-          <p class="prefs-panel-hint" data-i18n="modal_known_hosts.hint">
+          <p class="prefs-panel-hint" data-i18n-html="modal_known_hosts.hint">
             Entradas de <code>~/.ssh/known_hosts</code>. Elimina una clave conflictiva para volver a aceptarla la próxima vez que conectes.
           </p>
           <div class="global-tunnels-section">
@@ -1545,7 +1553,7 @@
             <div class="script-run-footer">
               <span id="script-run-summary-line"></span>
               <span class="script-run-footer-actions">
-                <button type="button" class="btn-secondary btn-compact hidden" id="btn-script-run-retry-failed">Reintentar fallidos</button>
+                <button type="button" class="btn-secondary btn-compact hidden" id="btn-script-run-retry-failed">Reintentar fallidos</button><!-- i18n-exempt: main.js lo rellena con t() y el número de fallidos antes de mostrarlo -->
                 <button type="button" class="btn-secondary btn-compact hidden" id="btn-script-run-retry-all" data-i18n="scripts.retry_all">Reintentar todo</button>
                 <button type="button" class="btn-secondary btn-compact" id="btn-script-run-export" data-i18n="scripts.export_log">Exportar .log</button>
                 <button type="button" class="btn-secondary btn-compact danger" id="btn-script-abort-all" data-i18n="scripts.abort_all">Abortar todo</button>
@@ -1798,11 +1806,29 @@
       </div>
     </div>
 
+    <!-- Chuleta de atajos: los vigentes por contexto, con filtro. -->
+    <div id="shortcuts-help-overlay" class="hidden">
+      <div id="shortcuts-help-modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-help-title">
+        <div class="modal-header">
+          <h2 id="shortcuts-help-title" data-i18n="prefs_shortcuts.title">Atajos de teclado</h2>
+          <button type="button" class="btn-icon" id="btn-shortcuts-help-close" data-i18n-aria-label="toast.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+        </div>
+        <div class="shortcuts-help-toolbar">
+          <input id="shortcuts-help-filter" type="search" autocomplete="off" spellcheck="false"
+                 aria-controls="shortcuts-help-list"
+                 data-i18n-placeholder="prefs_shortcuts.help_filter_ph" placeholder="Filtrar por acción o tecla…"
+                 data-i18n-aria-label="prefs_shortcuts.help_filter_ph" aria-label="Filtrar por acción o tecla…" />
+          <button type="button" class="btn-secondary" id="btn-shortcuts-help-edit" data-i18n="prefs_shortcuts.help_edit">Editar atajos…</button>
+        </div>
+        <div id="shortcuts-help-list" class="shortcuts-help-list"></div>
+      </div>
+    </div>
+
     <!-- ══════════════════════════════════════════════════════
          MODAL: Credenciales bajo demanda
     ══════════════════════════════════════════════════════ -->
     <div id="credential-modal-overlay" class="hidden">
-      <div id="credential-modal" role="dialog" aria-modal="true" aria-labelledby="credential-modal-title">
+      <div id="credential-modal" role="dialog" aria-modal="true" aria-labelledby="credential-modal-title" aria-describedby="credential-modal-message">
         <div class="modal-header">
           <h2 id="credential-modal-title" data-i18n="modal_credential.password_title">Contraseña requerida</h2>
           <button class="btn-icon" id="btn-credential-close" data-i18n-aria-label="modal_credential.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
@@ -1873,7 +1899,7 @@
           </div>
           <div class="form-row">
             <label for="dup-ov-bastion" data-i18n="modal_dup.bastion">Bastion / Jump host (opcional)</label>
-            <input id="dup-ov-bastion" type="text" placeholder="usuario@bastion:22" autocomplete="off" spellcheck="false" />
+            <input id="dup-ov-bastion" type="text" placeholder="usuario@bastion:22" data-i18n-placeholder="templates.bastion_proxy_example" autocomplete="off" spellcheck="false" />
           </div>
           <div class="form-row">
             <label for="dup-ov-auth" data-i18n="modal_dup.auth">Autenticación</label>
@@ -1919,7 +1945,7 @@
               <label for="iw-source" data-i18n="import_wizard.source">Herramienta de origen</label>
               <select id="iw-source">
                 <option value="mremoteng">mRemoteNG (.xml)</option>
-                <option value="asbru">Ásbrú Connection Manager (.yml)</option>
+                <option value="asbru" translate="no">Ásbrú Connection Manager (.yml)</option>
               </select>
             </div>
             <div class="form-group">
@@ -1986,17 +2012,17 @@
          MODAL: Preferencias
     ══════════════════════════════════════════════════════ -->
     <div id="modal-prefs-overlay" class="hidden">
-      <div id="modal-prefs" role="dialog" aria-modal="true">
+      <div id="modal-prefs" role="dialog" aria-modal="true" aria-labelledby="modal-prefs-title">
         <div class="modal-header">
-          <h2 data-i18n="modal_prefs.title">Preferencias</h2>
+          <h2 id="modal-prefs-title" data-i18n="modal_prefs.title">Preferencias</h2>
           <button class="btn-icon" id="btn-prefs-close" data-i18n-aria-label="modal_prefs.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
 
         <div class="prefs-layout">
 
-          <nav class="prefs-nav" role="tablist" aria-label="Secciones de preferencias">
+          <nav class="prefs-nav" role="tablist" aria-label="Secciones de preferencias" data-i18n-aria-label="modal_prefs.tabs_label">
             <button type="button" class="prefs-nav-item active" role="tab" data-prefs-tab="terminal">
-              <span class="prefs-nav-icon">⌨</span>
+              <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_terminal">Terminal</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="appearance">
@@ -2008,7 +2034,7 @@
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_transfer">FTP/SFTP</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="language">
-              <span class="prefs-nav-icon">A文</span>
+              <span class="prefs-nav-icon" translate="no">A文</span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_language">Idioma</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="credentials">
@@ -2257,7 +2283,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Dracula</span>
+                    <span class="theme-label" translate="no">Dracula</span>
                   </label>
                   <label class="theme-option" data-theme="nord">
                     <input type="radio" name="pref-theme" value="nord" />
@@ -2265,7 +2291,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Nord</span>
+                    <span class="theme-label" translate="no">Nord</span>
                   </label>
                   <label class="theme-option" data-theme="xterm">
                     <input type="radio" name="pref-theme" value="xterm" />
@@ -2273,7 +2299,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">xterm</span>
+                    <span class="theme-label" translate="no">xterm</span>
                   </label>
                   <label class="theme-option" data-theme="vscode-dark">
                     <input type="radio" name="pref-theme" value="vscode-dark" />
@@ -2281,7 +2307,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">VS Code Dark+</span>
+                    <span class="theme-label" translate="no">VS Code Dark+</span>
                   </label>
                   <label class="theme-option" data-theme="tango">
                     <input type="radio" name="pref-theme" value="tango" />
@@ -2289,7 +2315,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Tango</span>
+                    <span class="theme-label" translate="no">Tango</span>
                   </label>
                   <label class="theme-option" data-theme="solarized-dark">
                     <input type="radio" name="pref-theme" value="solarized-dark" />
@@ -2297,7 +2323,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Solarized Dark</span>
+                    <span class="theme-label" translate="no">Solarized Dark</span>
                   </label>
                   <label class="theme-option" data-theme="solarized-light">
                     <input type="radio" name="pref-theme" value="solarized-light" />
@@ -2305,7 +2331,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Solarized Light</span>
+                    <span class="theme-label" translate="no">Solarized Light</span>
                   </label>
                   <label class="theme-option" data-theme="gruvbox-dark">
                     <input type="radio" name="pref-theme" value="gruvbox-dark" />
@@ -2313,7 +2339,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Gruvbox Dark</span>
+                    <span class="theme-label" translate="no">Gruvbox Dark</span>
                   </label>
                   <label class="theme-option" data-theme="tokyo-night">
                     <input type="radio" name="pref-theme" value="tokyo-night" />
@@ -2321,7 +2347,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Tokyo Night</span>
+                    <span class="theme-label" translate="no">Tokyo Night</span>
                   </label>
                   <label class="theme-option" data-theme="monokai">
                     <input type="radio" name="pref-theme" value="monokai" />
@@ -2329,7 +2355,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Monokai</span>
+                    <span class="theme-label" translate="no">Monokai</span>
                   </label>
                 </div>
               </div>
@@ -2368,7 +2394,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Dracula</span>
+                    <span class="theme-label" translate="no">Dracula</span>
                   </label>
                   <label class="theme-option" data-theme="nord">
                     <input type="radio" name="pref-terminal-theme" value="nord" />
@@ -2376,7 +2402,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Nord</span>
+                    <span class="theme-label" translate="no">Nord</span>
                   </label>
                   <label class="theme-option" data-theme="xterm">
                     <input type="radio" name="pref-terminal-theme" value="xterm" />
@@ -2384,7 +2410,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">xterm</span>
+                    <span class="theme-label" translate="no">xterm</span>
                   </label>
                   <label class="theme-option" data-theme="vscode-dark">
                     <input type="radio" name="pref-terminal-theme" value="vscode-dark" />
@@ -2392,7 +2418,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">VS Code Dark+</span>
+                    <span class="theme-label" translate="no">VS Code Dark+</span>
                   </label>
                   <label class="theme-option" data-theme="tango">
                     <input type="radio" name="pref-terminal-theme" value="tango" />
@@ -2400,7 +2426,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Tango</span>
+                    <span class="theme-label" translate="no">Tango</span>
                   </label>
                   <label class="theme-option" data-theme="solarized-dark">
                     <input type="radio" name="pref-terminal-theme" value="solarized-dark" />
@@ -2408,7 +2434,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Solarized Dark</span>
+                    <span class="theme-label" translate="no">Solarized Dark</span>
                   </label>
                   <label class="theme-option" data-theme="solarized-light">
                     <input type="radio" name="pref-terminal-theme" value="solarized-light" />
@@ -2416,7 +2442,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Solarized Light</span>
+                    <span class="theme-label" translate="no">Solarized Light</span>
                   </label>
                   <label class="theme-option" data-theme="gruvbox-dark">
                     <input type="radio" name="pref-terminal-theme" value="gruvbox-dark" />
@@ -2424,7 +2450,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Gruvbox Dark</span>
+                    <span class="theme-label" translate="no">Gruvbox Dark</span>
                   </label>
                   <label class="theme-option" data-theme="tokyo-night">
                     <input type="radio" name="pref-terminal-theme" value="tokyo-night" />
@@ -2432,7 +2458,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Tokyo Night</span>
+                    <span class="theme-label" translate="no">Tokyo Night</span>
                   </label>
                   <label class="theme-option" data-theme="monokai">
                     <input type="radio" name="pref-terminal-theme" value="monokai" />
@@ -2440,7 +2466,7 @@
                       <div class="theme-preview-sidebar"></div>
                       <div class="theme-preview-main"></div>
                     </div>
-                    <span class="theme-label">Monokai</span>
+                    <span class="theme-label" translate="no">Monokai</span>
                   </label>
                 </div>
               </div>
@@ -2541,6 +2567,16 @@
                   <span data-i18n="prefs_appearance.strong_focus">Foco visible reforzado</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_appearance.strong_focus_hint">Aumenta el grosor y el contraste del anillo de foco en la navegación por teclado.</p>
+              </div>
+
+              <div class="settings-row">
+                <label for="pref-toast-duration" data-i18n="prefs_appearance.toast_duration">Duración de los avisos</label>
+                <select id="pref-toast-duration">
+                  <option value="normal" data-i18n="prefs_appearance.toast_duration_normal">Normal</option>
+                  <option value="long" data-i18n="prefs_appearance.toast_duration_long">Larga</option>
+                  <option value="sticky" data-i18n="prefs_appearance.toast_duration_sticky">Hasta cerrarlos</option>
+                </select>
+                <p class="settings-hint" data-i18n="prefs_appearance.toast_duration_hint">Cuánto tiempo siguen en pantalla los avisos. Con el ratón encima o el foco dentro, ninguno desaparece.</p>
               </div>
 
               <div class="settings-row">
@@ -2985,7 +3021,7 @@
               </div>
 
               <h3 class="prefs-panel-title" style="margin-top: 1.5rem;" data-i18n="prefs_known_hosts.title">Claves de host conocidas</h3>
-              <p class="prefs-panel-hint" data-i18n="prefs_known_hosts.hint">
+              <p class="prefs-panel-hint" data-i18n-html="prefs_known_hosts.hint">
                 Revisa las huellas registradas en <code>~/.ssh/known_hosts</code> y elimina entradas conflictivas sin editar el fichero a mano.
               </p>
               <div class="data-actions">
@@ -3088,7 +3124,7 @@
               <div class="settings-row settings-row-inline sync-webdav-only hidden">
                 <label for="sync-webdav-url" data-i18n="prefs_sync.webdav_url">URL WebDAV</label>
                 <div class="settings-control settings-control-wide">
-                  <input type="text" id="sync-webdav-url" placeholder="https://nube.example.com/remote.php/dav/files/usuario/Rustty/" />
+                  <input type="text" id="sync-webdav-url" placeholder="https://nube.example.com/remote.php/dav/files/usuario/Rustty/" data-i18n-placeholder="prefs_sync.webdav_url_ph" />
                 </div>
               </div>
               <div class="settings-row settings-row-inline sync-webdav-only hidden">
@@ -3101,7 +3137,7 @@
                 <label for="sync-webdav-pass" data-i18n="prefs_sync.webdav_pass">Contraseña</label>
                 <div class="settings-control settings-control-wide">
                   <input type="password" id="sync-webdav-pass" placeholder="••••••••" />
-                  <p class="form-hint" data-i18n="prefs_sync.webdav_pass_hint">Se guarda en el keyring del SO con servicio <code>rustty</code>, clave <code>sync:webdav_password</code>.</p>
+                  <p class="form-hint" data-i18n-html="prefs_sync.webdav_pass_hint">Se guarda en el keyring del SO con servicio <code>rustty</code>, clave <code>sync:webdav_password</code>.</p>
                 </div>
               </div>
 
@@ -3270,7 +3306,7 @@
 
               <!-- Backup cifrado -->
               <h3 class="prefs-panel-title" style="margin-top: 1.5rem;" data-i18n="prefs_sync.backup_title">Backup cifrado</h3>
-              <p class="prefs-panel-hint" data-i18n="prefs_sync.backup_hint">
+              <p class="prefs-panel-hint" data-i18n-html="prefs_sync.backup_hint">
                 Exporta el estado completo a un fichero <code>.rustty-sync.bin</code> cifrado con tu passphrase. Útil como copia de seguridad o para mover Rustty entre equipos sin servidor.
               </p>
               <div class="data-actions">
@@ -3509,11 +3545,11 @@
 
                 <dl class="about-meta">
                   <dt data-i18n="prefs_about.license">Licencia</dt>
-                  <dd>Apache-2.0</dd>
+                  <dd translate="no">Apache-2.0</dd>
                   <dt data-i18n="prefs_about.copyright">Copyright</dt>
-                  <dd>© 2026 Alejandro Soriano</dd>
+                  <dd translate="no">© 2026 Alejandro Soriano</dd>
                   <dt data-i18n="prefs_about.stack">Stack</dt>
-                  <dd>Rust · Tauri 2 · xterm.js · russh · russh-sftp</dd>
+                  <dd translate="no">Rust · Tauri 2 · xterm.js · russh · russh-sftp</dd>
                 </dl>
 
                 <div class="about-links">
@@ -3561,7 +3597,7 @@
       <div id="cmd-editor-modal" role="dialog" aria-modal="true" aria-labelledby="cmd-editor-title">
         <div class="modal-header">
           <h2 id="cmd-editor-title" data-i18n="cmd_editor.title">Editor de comandos</h2>
-          <button class="btn-icon" id="cmd-editor-history-btn" data-i18n-title="cmd_editor.history" title="Historial de comandos" aria-label="Historial de comandos">
+          <button class="btn-icon" id="cmd-editor-history-btn" data-i18n-title="cmd_editor.history" title="Historial de comandos" aria-label="Historial de comandos" data-i18n-aria-label="cmd_editor.history">
             <svg viewBox="0 0 18 18" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 4.5v4.5l3 1.8"/>
               <path d="M2.7 9a6.3 6.3 0 1 0 1.4-3.9M2.7 4.2v2.6h2.6"/>
@@ -3597,7 +3633,7 @@
       <div id="note-editor-modal" role="dialog" aria-modal="true" aria-labelledby="note-editor-title">
         <div class="modal-header">
           <h2 id="note-editor-title" data-i18n="notes.editor_title">Nota de conexión</h2>
-          <button class="btn-icon" id="note-editor-open-folder" data-i18n-title="notes.open_folder" title="Abrir carpeta de notas" aria-label="Abrir carpeta de notas">
+          <button class="btn-icon" id="note-editor-open-folder" data-i18n-title="notes.open_folder" title="Abrir carpeta de notas" aria-label="Abrir carpeta de notas" data-i18n-aria-label="notes.open_folder">
             <svg viewBox="0 0 18 18" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M2.5 5A1.5 1.5 0 0 1 4 3.5h3l1.5 1.6h5A1.5 1.5 0 0 1 15 6.6"/>
               <path d="M2.6 7.4h12.2l-1.2 6.3a1.2 1.2 0 0 1-1.2 1H5a1.2 1.2 0 0 1-1.2-1z"/>
@@ -3616,37 +3652,37 @@
                  data-i18n-placeholder="notes.tags_ph" placeholder="Tags separadas por comas" autocomplete="off" />
         </div>
         <div class="note-editor-toolbar" id="note-editor-toolbar">
-          <button type="button" class="note-tool" data-md="h"      data-i18n-title="notes.tool_heading" title="Encabezado" aria-label="Encabezado">
+          <button type="button" class="note-tool" data-md="h"      data-i18n-title="notes.tool_heading" title="Encabezado" aria-label="Encabezado" data-i18n-aria-label="notes.tool_heading">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
               <path d="M4 3.5v9M11 3.5v9M4 8h7"/>
             </svg>
           </button>
-          <button type="button" class="note-tool" data-md="bold"   data-i18n-title="notes.tool_bold"    title="Negrita" aria-label="Negrita">
+          <button type="button" class="note-tool" data-md="bold"   data-i18n-title="notes.tool_bold"    title="Negrita" aria-label="Negrita" data-i18n-aria-label="notes.tool_bold">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
               <path d="M5.5 3.5h3.1a2.2 2.2 0 0 1 0 4.4H5.5zM5.5 7.9h3.6a2.2 2.2 0 0 1 0 4.4H5.5z"/>
             </svg>
           </button>
-          <button type="button" class="note-tool" data-md="italic" data-i18n-title="notes.tool_italic"  title="Cursiva" aria-label="Cursiva">
+          <button type="button" class="note-tool" data-md="italic" data-i18n-title="notes.tool_italic"  title="Cursiva" aria-label="Cursiva" data-i18n-aria-label="notes.tool_italic">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6.8 3.5h4M5 12.5h4M9.8 3.5L6.2 12.5"/>
             </svg>
           </button>
-          <button type="button" class="note-tool" data-md="code"   data-i18n-title="notes.tool_code"    title="Código" aria-label="Código">
+          <button type="button" class="note-tool" data-md="code"   data-i18n-title="notes.tool_code"    title="Código" aria-label="Código" data-i18n-aria-label="notes.tool_code">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6 5l-3 3 3 3M10 5l3 3-3 3"/>
             </svg>
           </button>
-          <button type="button" class="note-tool" data-md="ul"     data-i18n-title="notes.tool_list"    title="Lista" aria-label="Lista">
+          <button type="button" class="note-tool" data-md="ul"     data-i18n-title="notes.tool_list"    title="Lista" aria-label="Lista" data-i18n-aria-label="notes.tool_list">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6.5 4.5h6.5M6.5 8h6.5M6.5 11.5h6.5"/><path d="M3.4 4.5h.01M3.4 8h.01M3.4 11.5h.01"/>
             </svg>
           </button>
-          <button type="button" class="note-tool" data-md="task"   data-i18n-title="notes.tool_task"    title="Casilla" aria-label="Casilla">
+          <button type="button" class="note-tool" data-md="task"   data-i18n-title="notes.tool_task"    title="Casilla" aria-label="Casilla" data-i18n-aria-label="notes.tool_task">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M5.4 8.2l1.8 1.8 3.3-3.7"/>
             </svg>
           </button>
-          <button type="button" class="note-tool" data-md="link"   data-i18n-title="notes.tool_link"    title="Enlace" aria-label="Enlace">
+          <button type="button" class="note-tool" data-md="link"   data-i18n-title="notes.tool_link"    title="Enlace" aria-label="Enlace" data-i18n-aria-label="notes.tool_link">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6.6 9.4a2.4 2.4 0 0 0 3.4 0l2-2a2.4 2.4 0 0 0-3.4-3.4l-1 1"/>
               <path d="M9.4 6.6a2.4 2.4 0 0 0-3.4 0l-2 2a2.4 2.4 0 0 0 3.4 3.4l1-1"/>
@@ -3672,9 +3708,9 @@
          MODAL: Desbloquear KeePass
     ══════════════════════════════════════════════════════ -->
     <div id="modal-keepass-overlay" class="hidden">
-      <div id="modal-keepass" role="dialog" aria-modal="true">
+      <div id="modal-keepass" role="dialog" aria-modal="true" aria-labelledby="modal-keepass-title">
         <div class="modal-header">
-          <h2 data-i18n="modal_kp.title">Desbloquear KeePass</h2>
+          <h2 id="modal-keepass-title" data-i18n="modal_kp.title">Desbloquear KeePass</h2>
           <button class="btn-icon" id="btn-keepass-close" data-i18n-aria-label="modal_kp.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
         <form id="form-keepass-unlock" autocomplete="off">
@@ -3709,7 +3745,7 @@
     </div>
 
     <!-- ── Botón flotante para salir del modo zen ── -->
-    <button id="zen-exit-btn" type="button" aria-label="Salir del modo zen" data-tooltip="Salir del modo sin distracciones (F11)" data-tooltip-pos="bottom">
+    <button id="zen-exit-btn" type="button" aria-label="Salir del modo zen" data-i18n-aria-label="window.zen_exit" data-tooltip-pos="bottom">
       <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
         <path d="M2 2h4M2 2v4M14 2h-4M14 2v4M2 14h4M2 14v-4M14 14h-4M14 14v-4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
       </svg>

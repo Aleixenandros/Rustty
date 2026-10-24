@@ -10,9 +10,10 @@ describe("formatAccelerator", () => {
     expect(formatAccelerator(null, true)).toBe("");
   });
 
-  it("en macOS reemplaza Ctrl por Cmd", () => {
-    expect(formatAccelerator("Ctrl+K", true)).toBe("Cmd+K");
-    expect(formatAccelerator("Ctrl+Shift+P", true)).toBe("Cmd+Shift+P");
+  it("en macOS llama Cmd a Meta y deja Ctrl, que es la tecla Control que lee el despachador", () => {
+    expect(formatAccelerator("Meta+K", true)).toBe("Cmd+K");
+    expect(formatAccelerator("Ctrl+K", true)).toBe("Ctrl+K");
+    expect(formatAccelerator("Ctrl+Shift+P", true)).toBe("Ctrl+Shift+P");
   });
 
   it("fuera de macOS deja el atajo intacto", () => {
@@ -20,8 +21,8 @@ describe("formatAccelerator", () => {
     expect(formatAccelerator("Alt+Shift+P", false)).toBe("Alt+Shift+P");
   });
 
-  it("solo toca la palabra completa «Ctrl», no subcadenas", () => {
-    // \b evita tocar, p. ej., un hipotético «Ctrlx».
-    expect(formatAccelerator("Control+K", true)).toBe("Control+K");
+  it("solo toca la palabra completa «Meta», no subcadenas", () => {
+    // \b evita tocar, p. ej., un hipotético «Metax».
+    expect(formatAccelerator("Metax+K", true)).toBe("Metax+K");
   });
 });

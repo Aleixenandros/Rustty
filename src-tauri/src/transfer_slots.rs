@@ -105,10 +105,20 @@ impl Drop for TransferSlot {
     }
 }
 
+/// Cada cuánto mira una transferencia en cola si la han cancelado. Es el mismo
+/// pulso que usan las pausas.
+const CANCEL_POLL: std::time::Duration = std::time::Duration::from_millis(150);
+
 /// Espera turno y devuelve el hueco ocupado. Sin techo configurado no espera
-/// nunca.
-pub async fn acquire() -> TransferSlot {
+/// nunca. Devuelve `None`, **sin ocupar hueco**, en cuanto `canceled()` dice
+/// que sí: una transferencia cancelada mientras esperaba sale de la cola al
+/// momento, en vez de quedarse en «Cancelando…» hasta que acabe la copia que
+/// tiene delante (y de llegar a tocar el destino cuando le toque).
+pub async fn acquire_until(canceled: impl Fn() -> bool) -> Option<TransferSlot> {
     loop {
+        if canceled() {
+            return None;
+        }
         // El interés se registra **antes** de mirar el estado (`enable`): si se
         // liberara un hueco justo entre la comprobación y la espera, el aviso
         // ya estaría apuntado y no se perdería. Sin esto, una transferencia
@@ -118,16 +128,25 @@ pub async fn acquire() -> TransferSlot {
         notified.as_mut().enable();
 
         if STATE.lock_recover().try_take() {
-            return TransferSlot { _private: () };
+            return Some(TransferSlot { _private: () });
         }
-        notified.await;
+        // Abandonar la espera es seguro: el hueco solo se ocupa en `try_take`.
+        tokio::select! {
+            () = notified.as_mut() => {}
+            () = tokio::time::sleep(CANCEL_POLL) => {}
+        }
     }
 }
 
 /// Pide turno avisando antes al panel si toca esperar. Sin ese aviso, una
 /// transferencia en cola sería indistinguible de una colgada: barra a cero y
-/// ninguna explicación.
-pub async fn take_with_notice(app: &tauri::AppHandle, transfer_id: &str) -> TransferSlot {
+/// ninguna explicación. `None` = la cancelaron mientras esperaba (ver
+/// [`acquire_until`]).
+pub async fn take_with_notice(
+    app: &tauri::AppHandle,
+    transfer_id: &str,
+    canceled: impl Fn() -> bool,
+) -> Option<TransferSlot> {
     use tauri::Emitter;
     if would_wait() {
         let _ = app.emit(
@@ -137,7 +156,7 @@ pub async fn take_with_notice(app: &tauri::AppHandle, transfer_id: &str) -> Tran
             }),
         );
     }
-    acquire().await
+    acquire_until(canceled).await
 }
 
 #[cfg(test)]
@@ -197,9 +216,16 @@ mod tests {
         assert!(st.try_take());
     }
 
-    /// Los dos tests de abajo mueven el techo **global**: si corrieran a la
-    /// vez, uno le cambiaría el suelo al otro.
+    /// Los tests de abajo mueven el techo **global**: si corrieran a la vez,
+    /// uno le cambiaría el suelo al otro.
     static SERIE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Turno sin cancelación posible: siempre acaba entrando.
+    async fn acquire() -> TransferSlot {
+        acquire_until(|| false)
+            .await
+            .expect("sin cancelación siempre se entra")
+    }
 
     #[tokio::test]
     async fn el_hueco_se_devuelve_al_soltarlo() {
@@ -248,5 +274,36 @@ mod tests {
             .expect("subir el techo debería desbloquear la cola")
             .expect("la tarea en cola no debería entrar en pánico");
         assert!(entro);
+    }
+
+    #[tokio::test]
+    async fn cancelar_en_cola_sale_sin_ocupar_hueco() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let _guard = SERIE.lock().await;
+        set_max_concurrent(1);
+        let ocupado = acquire().await;
+
+        let cancelada = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancelada);
+        let espera =
+            tokio::spawn(async move { acquire_until(move || flag.load(Ordering::Relaxed)).await });
+        tokio::task::yield_now().await;
+        assert!(!espera.is_finished(), "con el hueco ocupado tiene que esperar");
+
+        // Nadie libera el hueco: es la cancelación la que la saca de la cola.
+        cancelada.store(true, Ordering::Relaxed);
+        let slot = tokio::time::timeout(std::time::Duration::from_secs(5), espera)
+            .await
+            .expect("cancelar debería sacarla de la cola sin esperar al hueco")
+            .expect("la tarea en cola no debería entrar en pánico");
+        assert!(slot.is_none(), "una transferencia cancelada no se lleva el hueco");
+        assert!(would_wait(), "el único hueco sigue siendo del primero");
+
+        // Y no se ha quedado con nada: al soltar el primero, el techo queda libre.
+        drop(ocupado);
+        assert!(!would_wait());
+        set_max_concurrent(0);
     }
 }

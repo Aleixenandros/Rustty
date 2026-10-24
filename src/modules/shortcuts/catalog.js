@@ -40,6 +40,12 @@ export const SHORTCUT_ACTIONS = {
   open_command_editor: { default: "Ctrl+Shift+E" },
   open_note_editor: { default: "Ctrl+Shift+M" },
   command_palette: { default: "Ctrl+Shift+P" },
+  // Chuleta de atajos. Ni F1 (ayuda de htop y mc) ni Ctrl+/ (deshacer de
+  // readline, y en un teclado español esa tecla física es el «-»): los combos
+  // se leen por tecla física (`combo.js`) y un símbolo cambia de sitio según
+  // la distribución. La H está en el mismo sitio en QWERTY, QWERTZ y AZERTY, y
+  // Ctrl+Shift+letra es el espacio que ya usan los demás atajos de la app.
+  show_shortcuts: { default: "Ctrl+Shift+H" },
   clear_prompt_line: { default: "" },
 };
 

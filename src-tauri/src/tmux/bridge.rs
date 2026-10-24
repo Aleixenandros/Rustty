@@ -322,6 +322,38 @@ pub fn cmd_capture_pane(pane: u64, lines: u32) -> String {
     format!("capture-pane -p -e -J -t %{pane} -S -{lines}")
 }
 
+/// Ventanas de la sesión para el arranque: id, layout y nombre de cada una.
+/// tmux solo emite `%layout-change` ante un cambio y, al engancharse a una
+/// sesión que ya existía, no anuncia sus ventanas (desde la 3.8 tampoco las
+/// de una sesión nueva sin PTY): sin esta consulta, sus pestañas nacerían sin
+/// layout y sin nombre.
+pub fn cmd_boot_windows() -> String {
+    "list-windows -F \"#{window_id} #{window_layout} #{window_name}\"".to_string()
+}
+
+/// Respuesta de [`cmd_boot_windows`] → las notificaciones que tmux no mandó:
+/// un `%window-renamed` por ventana con nombre, seguido de su
+/// `%layout-change`. El worker las reinyecta en el puente con `feed`, como si
+/// las hubiera emitido tmux. Una línea que no empiece por `@id layout` se
+/// ignora; el nombre es el resto de la línea y puede llevar espacios.
+pub fn boot_notifications(output: &str) -> String {
+    let mut synth = String::new();
+    for line in output.lines() {
+        let mut parts = line.splitn(3, ' ');
+        let (Some(id), Some(layout)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        if !id.starts_with('@') || layout.is_empty() {
+            continue;
+        }
+        if let Some(name) = parts.next().filter(|n| !n.trim().is_empty()) {
+            synth.push_str(&format!("%window-renamed {id} {name}\n"));
+        }
+        synth.push_str(&format!("%layout-change {id} {layout}\n"));
+    }
+    synth
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,6 +379,39 @@ mod tests {
         assert_eq!(layout.layout.pane, Some(0));
         assert_eq!(layout.added, vec![PaneRef { pane: 0, logical_id: "ssh-abc-p0".into() }]);
         assert!(!bridge.is_closed());
+    }
+
+    #[test]
+    fn la_respuesta_del_arranque_se_convierte_en_nombre_y_layout() {
+        let output = "@0 b25d,80x24,0,0,0 bash\n@3 c3a1,80x24,0,0,1 mi ventana\nbasura\n@4 ab12,80x24,0,0,2 \n";
+        assert_eq!(
+            boot_notifications(output),
+            "%window-renamed @0 bash\n%layout-change @0 b25d,80x24,0,0,0\n\
+             %window-renamed @3 mi ventana\n%layout-change @3 c3a1,80x24,0,0,1\n\
+             %layout-change @4 ab12,80x24,0,0,2\n"
+        );
+        assert_eq!(boot_notifications(""), "");
+    }
+
+    #[test]
+    fn reengancharse_sin_anuncios_recupera_la_ventana_con_su_nombre() {
+        // Sesión que ya existía: tmux solo saluda y anuncia la sesión.
+        let mut bridge = ControlBridge::new("s");
+        bridge.feed(b"%begin 1 0 0\n%end 1 0 0\n%session-changed $0 rustty\n");
+        let out = bridge.feed(boot_notifications("@2 b262,80x24,0,0,5 htop\n").as_bytes());
+        assert_eq!(
+            out[0],
+            BridgeOut::WindowUpsert(TmuxWindowPayload { window: 2, name: Some("htop".into()) })
+        );
+        let layout = out
+            .iter()
+            .find_map(|o| match o {
+                BridgeOut::Layout(l) => Some(l),
+                _ => None,
+            })
+            .expect("layout");
+        assert_eq!(layout.window, 2);
+        assert_eq!(layout.added, vec![PaneRef { pane: 5, logical_id: "s-p5".into() }]);
     }
 
     #[test]

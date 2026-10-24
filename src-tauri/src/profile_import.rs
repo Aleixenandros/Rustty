@@ -20,6 +20,8 @@
 //! - **port**: si falta, el del protocolo. **auth_type**: si falta, `password`;
 //!   **username**: si falta, vacío.
 //!   **created_at**: si falta, ahora; al actualizar se conserva el original.
+//!   **updated_at**: siempre el instante del import (es la marca con la que
+//!   la sincronización decide qué versión gana), salvo en lo que se omite.
 //! - Una entrada idéntica al perfil existente se cuenta como omitida («sin
 //!   cambios»); dos entradas del mismo fichero que apunten al mismo perfil,
 //!   la segunda se omite («duplicado en el fichero»).
@@ -248,6 +250,12 @@ pub fn prepare(entry: Value, opts: &Options) -> Result<Prepared, String> {
     if string_field(&obj, "created_at").is_empty() {
         obj.insert("created_at".into(), Value::String(opts.now.clone()));
     }
+    // La marca LWW de la sincronización es `updated_at`: el import es la
+    // escritura más reciente, venga lo que venga en el fichero. Sin ella (o con
+    // la de un export antiguo) la siguiente sync daba por más nueva la copia de
+    // la nube y deshacía lo importado sin avisar. La interfaz hace lo mismo al
+    // guardar un perfil.
+    obj.insert("updated_at".into(), Value::String(opts.now.clone()));
     // Un perfil RDP/VNC de otro cliente puede venir sin usuario (lo pide el
     // servidor): el struct lo exige, así que se deja vacío.
     if !obj.get("username").is_some_and(|v| v.is_string()) {
@@ -307,6 +315,11 @@ pub fn plan(existing: &[ConnectionProfile], entries: Vec<Prepared>) -> Plan {
             Some(current) => {
                 entry.profile.id = current.id.clone();
                 entry.profile.created_at = current.created_at.clone();
+                // Se compara sin la marca del import: una reimportación idéntica
+                // sigue siendo «sin cambios» (no escribe, no fecha y no provoca
+                // una subida de la sync). Solo una actualización real la lleva.
+                let stamp =
+                    std::mem::replace(&mut entry.profile.updated_at, current.updated_at.clone());
                 if !touched.insert(current.id.clone()) {
                     plan.skipped.push(Skipped {
                         name: entry.profile.name.clone(),
@@ -321,6 +334,7 @@ pub fn plan(existing: &[ConnectionProfile], entries: Vec<Prepared>) -> Plan {
                     });
                     continue;
                 }
+                entry.profile.updated_at = stamp;
                 plan.update.push(entry);
             }
             None => {
@@ -500,6 +514,31 @@ mod tests {
         let plan = plan(&current, vec![entry]);
         assert_eq!(plan.update.len(), 1);
         assert_eq!(plan.update[0].secrets()[0].key, "password:id-db");
+    }
+
+    #[test]
+    fn actualizar_fecha_updated_at_y_reimportar_sigue_sin_cambios() {
+        // Perfiles editados en la interfaz (con su marca) y ya sincronizados.
+        let mut web = existing("Web", "id-web");
+        web.updated_at = Some("2026-07-01T00:00:00Z".into());
+        let mut db = existing("Db", "id-db");
+        db.updated_at = Some("2026-07-01T00:00:00Z".into());
+        let p = plan(
+            &[web, db],
+            vec![
+                // Cambia el host; trae una marca antigua que no debe respetarse.
+                prepare(json!({"name": "web", "host": "nuevo", "username": "u", "updated_at": "2020-01-01T00:00:00Z"}), &opts()).unwrap(),
+                // Idéntico al existente, sin marca: sigue siendo «sin cambios».
+                prepare(json!({"id": "id-db", "name": "Db", "host": "h", "port": 22, "username": "u"}), &opts()).unwrap(),
+                prepare(json!({"name": "cache", "host": "c", "username": "u"}), &opts()).unwrap(),
+            ],
+        );
+        assert_eq!(p.update.len(), 1);
+        assert_eq!(p.update[0].profile.updated_at.as_deref(), Some("2026-09-16T10:00:00Z"));
+        assert_eq!(p.create.len(), 1);
+        assert_eq!(p.create[0].profile.updated_at.as_deref(), Some("2026-09-16T10:00:00Z"));
+        let reasons: Vec<&str> = p.skipped.iter().map(|s| s.reason.as_str()).collect();
+        assert_eq!(reasons, vec!["sin cambios"]);
     }
 
     #[test]

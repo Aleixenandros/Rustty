@@ -65,6 +65,9 @@ pub enum UploadConcern {
     /// La carpeta contiene un fichero que parece una clave privada; va su ruta
     /// relativa, para enseñarla.
     TreeKey(String),
+    /// La carpeta pasa de los topes del recorrido y no se ha podido revisar
+    /// entera: podría contener una clave privada.
+    TreeUnchecked,
 }
 
 /// Guardián de las rutas locales, gestionado por Tauri como estado global.
@@ -218,35 +221,52 @@ impl LocalFsGuard {
                 return Ok(Some(UploadConcern::TreeSensitive));
             }
         }
-        let mut stack = vec![(root.clone(), 0usize)];
-        let mut seen = 0usize;
-        while let Some((dir, depth)) = stack.pop() {
-            let Ok(read) = std::fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in read.flatten() {
-                let Ok(ft) = entry.file_type() else { continue };
-                let path = entry.path();
-                if ft.is_dir() && depth < TREE_SCAN_MAX_DEPTH {
+        Ok(tree_concern(&root, TREE_SCAN_MAX_FILES, TREE_SCAN_MAX_DEPTH))
+    }
+}
+
+/// Busca en el árbol `root` un fichero que parezca una clave privada, con el
+/// recorrido acotado a `max_files` ficheros y `max_depth` niveles (sin topes,
+/// el escaneo previo a la subida podría eternizarse sin progreso). Al llegar a
+/// un tope **falla en cerrado** (como los imports de Asbru): la subida sí
+/// recorre el árbol entero, así que antes una clave que quedara detrás de un
+/// `node_modules` se subía sin que nadie preguntara.
+fn tree_concern(root: &Path, max_files: usize, max_depth: usize) -> Option<UploadConcern> {
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+    let mut seen = 0usize;
+    // Hubo carpetas por debajo del tope de niveles: si no aparece una clave
+    // antes, se pregunta igual.
+    let mut truncated = false;
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in read.flatten() {
+            let Ok(ft) = entry.file_type() else { continue };
+            let path = entry.path();
+            if ft.is_dir() {
+                if depth < max_depth {
                     stack.push((path, depth + 1));
-                } else if ft.is_file() {
-                    seen += 1;
-                    if seen > TREE_SCAN_MAX_FILES {
-                        return Ok(None);
-                    }
-                    if file_looks_like_key(&path) {
-                        let rel = path
-                            .strip_prefix(&root)
-                            .unwrap_or(&path)
-                            .to_string_lossy()
-                            .replace('\\', "/");
-                        return Ok(Some(UploadConcern::TreeKey(rel)));
-                    }
+                } else {
+                    truncated = true;
+                }
+            } else if ft.is_file() {
+                seen += 1;
+                if seen > max_files {
+                    return Some(UploadConcern::TreeUnchecked);
+                }
+                if file_looks_like_key(&path) {
+                    let rel = path
+                        .strip_prefix(root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    return Some(UploadConcern::TreeKey(rel));
                 }
             }
         }
-        Ok(None)
     }
+    truncated.then_some(UploadConcern::TreeUnchecked)
 }
 
 /// ¿El fichero (pequeño) parece una clave privada? Los grandes no se leen.
@@ -282,6 +302,7 @@ pub struct UploadTexts {
     pub tree_sensitive: &'static str,
     /// Con `{example}`.
     pub tree_key: &'static str,
+    pub tree_unchecked: &'static str,
     pub question: &'static str,
     pub accept: &'static str,
     pub cancel: &'static str,
@@ -298,6 +319,7 @@ pub fn upload_texts(lang: &str) -> UploadTexts {
             data: "It is in Rustty's data folder, with your connections and session logs.",
             tree_sensitive: "The folder holds your SSH keys or Rustty's data folder.",
             tree_key: "The folder contains at least one file that looks like a private key: “{example}”.",
+            tree_unchecked: "The folder is too large or too deep to check in full, so it could not be confirmed that it holds no private keys.",
             question: "Upload it anyway?",
             accept: "Upload anyway",
             cancel: "Cancel",
@@ -311,6 +333,7 @@ pub fn upload_texts(lang: &str) -> UploadTexts {
             data: "Il se trouve dans le dossier de données de Rustty, avec vos connexions et les journaux de session.",
             tree_sensitive: "Le dossier contient vos clés SSH ou le dossier de données de Rustty.",
             tree_key: "Le dossier contient au moins un fichier qui ressemble à une clé privée : « {example} ».",
+            tree_unchecked: "Le dossier est trop volumineux ou trop profond pour être vérifié en entier : impossible de confirmer qu'il ne contient aucune clé privée.",
             question: "L'envoyer quand même ?",
             accept: "Envoyer quand même",
             cancel: "Annuler",
@@ -324,6 +347,7 @@ pub fn upload_texts(lang: &str) -> UploadTexts {
             data: "Está na pasta de dados do Rustty, com as suas ligações e os registos de sessão.",
             tree_sensitive: "A pasta contém as suas chaves SSH ou a pasta de dados do Rustty.",
             tree_key: "A pasta contém pelo menos um ficheiro que parece uma chave privada: «{example}».",
+            tree_unchecked: "A pasta é demasiado grande ou profunda para ser verificada por inteiro: não foi possível confirmar que não contém chaves privadas.",
             question: "Enviar mesmo assim?",
             accept: "Enviar mesmo assim",
             cancel: "Cancelar",
@@ -337,6 +361,7 @@ pub fn upload_texts(lang: &str) -> UploadTexts {
             data: "Sie liegt im Datenordner von Rustty, bei deinen Verbindungen und Sitzungsprotokollen.",
             tree_sensitive: "Der Ordner enthält deine SSH-Schlüssel oder den Datenordner von Rustty.",
             tree_key: "Der Ordner enthält mindestens eine Datei, die wie ein privater Schlüssel aussieht: „{example}“.",
+            tree_unchecked: "Der Ordner ist zu groß oder zu tief verschachtelt, um ihn ganz zu prüfen: Es ließ sich nicht bestätigen, dass er keine privaten Schlüssel enthält.",
             question: "Trotzdem hochladen?",
             accept: "Trotzdem hochladen",
             cancel: "Abbrechen",
@@ -350,6 +375,7 @@ pub fn upload_texts(lang: &str) -> UploadTexts {
             data: "Está en la carpeta de datos de Rustty, con tus conexiones y los registros de sesión.",
             tree_sensitive: "La carpeta contiene tus claves SSH o la carpeta de datos de Rustty.",
             tree_key: "La carpeta contiene al menos un fichero que parece una clave privada: «{example}».",
+            tree_unchecked: "La carpeta es demasiado grande o profunda para revisarla entera: no se ha podido comprobar que no contenga claves privadas.",
             question: "¿Subirlo igualmente?",
             accept: "Subir igualmente",
             cancel: "Cancelar",
@@ -378,6 +404,7 @@ pub fn upload_message(
         UploadConcern::DataDir => t.data.to_string(),
         UploadConcern::TreeSensitive => t.tree_sensitive.to_string(),
         UploadConcern::TreeKey(example) => t.tree_key.replacen("{example}", example, 1),
+        UploadConcern::TreeUnchecked => t.tree_unchecked.to_string(),
     };
     format!("{intro}\n\n{reason}\n\n{}", t.question)
 }
@@ -385,6 +412,11 @@ pub fn upload_message(
 /// Error de subida rechazada por el usuario.
 pub fn rejected_error(name: &str) -> String {
     error("rejected", name)
+}
+
+/// Error de ruta no válida (el frontend lo enseña como «Ruta no válida»).
+pub fn invalid_error(detail: &str) -> String {
+    error("invalid", detail)
 }
 
 #[cfg(test)]
@@ -548,6 +580,47 @@ mod tests {
             f.guard.upload_dir_concern(&web).unwrap(),
             Some(UploadConcern::TreeKey("certs/tls.key".into()))
         );
+    }
+
+    #[test]
+    fn una_carpeta_que_no_se_puede_revisar_entera_tambien_pregunta() {
+        let f = fixture("tope");
+        // (a) Más ficheros que el tope antes de llegar a la clave. No depende
+        // del orden de `read_dir`: los de la raíz se cuentan antes de bajar.
+        let big = f.home.join("big");
+        std::fs::create_dir_all(big.join("deploy")).unwrap();
+        for i in 0..4 {
+            std::fs::write(big.join(format!("f{i}.txt")), "x").unwrap();
+        }
+        std::fs::write(big.join("deploy/id_ed25519"), fake_key()).unwrap();
+        assert_eq!(tree_concern(&big, 3, 2), Some(UploadConcern::TreeUnchecked));
+
+        // (b) La clave por debajo del tope de niveles.
+        let deep = f.home.join("deep");
+        std::fs::create_dir_all(deep.join("d0/d1/d2")).unwrap();
+        std::fs::write(deep.join("d0/d1/d2/id"), fake_key()).unwrap();
+        assert_eq!(tree_concern(&deep, 3, 2), Some(UploadConcern::TreeUnchecked));
+
+        // (c) Justo en el último nivel que se mira, se encuentra y se nombra.
+        let edge = f.home.join("edge");
+        std::fs::create_dir_all(edge.join("d0/d1")).unwrap();
+        std::fs::write(edge.join("d0/d1/id"), fake_key()).unwrap();
+        assert_eq!(
+            tree_concern(&edge, 3, 2),
+            Some(UploadConcern::TreeKey("d0/d1/id".into()))
+        );
+
+        // (d) En el borde exacto de los dos topes y sin claves no pregunta de más.
+        let ok = f.home.join("ok");
+        std::fs::create_dir_all(ok.join("d0/d1")).unwrap();
+        for name in ["a", "d0/b", "d0/d1/c"] {
+            std::fs::write(ok.join(name), "x").unwrap();
+        }
+        assert_eq!(tree_concern(&ok, 3, 2), None);
+
+        // Y el diálogo lo cuenta con su propio motivo.
+        let msg = upload_message("es", &UploadConcern::TreeUnchecked, "big", "/srv", true);
+        assert!(msg.contains("revisarla entera"), "{msg}");
     }
 
     #[test]

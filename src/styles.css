@@ -34,6 +34,19 @@
   --teal:    #94e2d5;
   --sky:     #89dceb;
   --mauve:   #cba6f7;
+  /* Rosa derivado (no es un token de paleta): sigue a cualquier tema, también
+     a los del bundle y los personalizados, que no lo definen. */
+  --pink:    color-mix(in srgb, var(--red) 55%, var(--mauve));
+
+  /* Tinta sobre rellenos de acento (botón primario, avisos, ítem resaltado de
+     un menú). Por defecto `--crust`; los temas en que no llega a AA (4,5:1)
+     la redefinen, y los del bundle/personalizados la calculan al registrarse
+     (`modules/themes/ink.js`). La comprueba `check:contrast`. */
+  --on-blue:   var(--crust);
+  --on-green:  var(--crust);
+  --on-yellow: var(--crust);
+  --on-red:    var(--crust);
+  --on-peach:  var(--crust);
 
   /* Layout */
   --sidebar-width: 240px;
@@ -118,17 +131,39 @@
   --motion-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* z-index */
+  /* z-index: escala real de capas, de abajo arriba. Los valores pequeños
+     (≤ 60) dentro de un componente apilan solo en su contexto y no van aquí.
+     Los avisos van por encima de cualquier modal (un error tras un velo
+     parece un botón que no hace nada) y los desplegables por encima de los
+     avisos (su lista nace dentro de un modal). */
   --z-base: 1;
-  --z-dropdown: 100;
-  --z-popover: 200;
   --z-tooltip: 300;
-  --z-toast: 400;
-  --z-modal: 500;
+  --z-zen-exit: 400;
   --z-drag-overlay: 600;
+  --z-boot-indicator: 900;
+  --z-modal: 1000;            /* conexión, Preferencias, papelera */
+  --z-script-bar: 1200;
+  --z-drawer: 1600;           /* centro de actividad */
+  --z-popover: 9000;          /* selector de carpeta, lista de KeePass */
+  --z-menu: 9999;             /* menús contextuales */
+  --z-submenu: 10000;
+  --z-window-resize: 10000;   /* tiradores de la ventana: por encima de los modales base */
+  --z-modal-keepass: 10000;
+  --z-modal-editor: 10500;    /* editor de comandos */
+  --z-modal-note: 10600;      /* editor de notas */
+  --z-modal-nested: 11000;    /* credencial, confirmaciones y modales secundarios */
+  --z-modal-top: 11400;       /* cima de una pila de diálogos (la pone el controlador) */
+  --z-toast: 11500;
+  --z-dropdown: 12000;        /* lista de los desplegables */
+  --z-hud: 12500;             /* indicador de zoom */
+  --z-flash: 20000;           /* destello de la campana visual */
+  --z-boot: 30000;            /* pantalla de arranque */
 
   /* Anillo de foco accesible (keyboard-only) */
-  --focus-ring-color: color-mix(in srgb, var(--blue) 70%, transparent);
+  /* Sólido: al 70 % no llegaba a 3:1 con el fondo en Claro, los Solarized y
+     xterm. Los temas del bundle/personalizados lo calculan al registrarse
+     (`modules/themes/ink.js`); lo comprueba `check:contrast`. */
+  --focus-ring-color: var(--blue);
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 
@@ -167,6 +202,7 @@
   --font-weight-regular: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
+  --font-weight-bold: 700;
 }
 
 /* Temas claros: sombras más sutiles para no oscurecer la UI */
@@ -225,7 +261,7 @@ html.booting #app {
 #boot-screen {
   position: fixed;
   inset: 0;
-  z-index: 30000;
+  z-index: var(--z-boot);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -456,14 +492,14 @@ a:focus-visible,
 
 .rail-btn-primary {
   background: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
   font-size: 18px;
   font-weight: 700;
 }
 
 .rail-btn-primary:hover {
   background: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
   filter: brightness(1.08);
 }
 
@@ -476,7 +512,7 @@ a:focus-visible,
 
 .window-resize-handle {
   position: fixed;
-  z-index: 10000;
+  z-index: var(--z-window-resize);
   pointer-events: auto;
 }
 
@@ -663,7 +699,7 @@ body.sidebar-collapsed #sidebar-resize-handle {
 
 #btn-new-connection:hover {
   background: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
 }
 
 #btn-settings:hover {
@@ -1786,9 +1822,16 @@ body.has-session-tabs .tab-home .tab-name {
 
 .tab-name {
   flex: 1;
+  /* Unos siete caracteres siempre visibles: con punto, badge de entorno y
+     cuatro botones, el flex dejaba el nombre en 2 px (o en nada con STAGE). */
+  min-width: 7ch;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Con badge de entorno la pestaña crece lo que ocupa el badge en vez de
+   comérselo del nombre. */
+.tab:has(.env-badge) { max-width: 248px; }
 
 /* Alias temporal de sesión: cursiva sutil para distinguir las pestañas
    renombradas en runtime de las que muestran el nombre del perfil. */
@@ -2167,7 +2210,7 @@ body.terminal-bell-visual::after {
 body.terminal-bell-visual::after {
   position: fixed;
   border-radius: 0;
-  z-index: 20000;
+  z-index: var(--z-flash);
 }
 
 @keyframes terminal-bell-flash {
@@ -2652,7 +2695,7 @@ body.reduce-motion.terminal-bell-visual::after {
   font-weight: var(--font-weight-semibold);
   letter-spacing: 0.08em;
   padding: 2px 7px 2px 6px;
-  color: var(--crust);
+  color: var(--on-peach);
   background: var(--peach);
   border-bottom-right-radius: var(--radius-sm);
   pointer-events: none;
@@ -2835,7 +2878,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
-  z-index: 12500;
+  z-index: var(--z-hud);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.18s ease, transform 0.18s ease;
@@ -2944,6 +2987,12 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   height: 52px;
   font-size: 48px;
   line-height: 1;
+  color: var(--blue);
+}
+
+.dashboard-brand svg {
+  width: 44px;
+  height: 44px;
 }
 
 .dashboard-title {
@@ -3045,7 +3094,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   border: 1px solid var(--blue);
   border-radius: var(--radius-sm);
   background: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
   font-weight: 700;
 }
 
@@ -3157,7 +3206,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   padding: 0 10px;
   border-radius: var(--radius-sm);
   background: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
   font-size: 12px;
   font-weight: 700;
 }
@@ -3346,6 +3395,11 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
     font-size: 38px;
   }
 
+  .dashboard-brand svg {
+    width: 36px;
+    height: 36px;
+  }
+
   .dashboard-search-wrap {
     grid-template-columns: 26px 1fr;
     height: 40px;
@@ -3375,7 +3429,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 /* ─── Botones globales ───────────────────────────────────────── */
 .btn-primary {
   background: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
   font-weight: 600;
   padding: var(--control-py) var(--control-px-btn);
   border: 1px solid var(--blue);
@@ -3419,8 +3473,11 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 }
 
 .btn-secondary:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 25%, transparent);
+  /* El mismo anillo que el resto (respeta «Foco visible reforzado» y el
+     contraste alto): «Cancelar» es el foco inicial de las confirmaciones
+     destructivas y una sombra al 25 % apenas se veía. */
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .btn-compact {
@@ -3467,7 +3524,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 .btn-secondary.danger:hover {
   background: var(--red);
   border-color: var(--red);
-  color: var(--crust);
+  color: var(--on-red);
 }
 
 .btn-icon.danger:hover {
@@ -3499,7 +3556,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: var(--z-modal);
   backdrop-filter: blur(4px);
 }
 
@@ -3542,7 +3599,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 11000;
+  z-index: var(--z-modal-nested);
   backdrop-filter: blur(4px);
 }
 
@@ -3585,7 +3642,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 11000;
+  z-index: var(--z-modal-nested);
   backdrop-filter: blur(4px);
 }
 
@@ -3868,6 +3925,96 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
   border-radius: var(--radius-xs);
   padding: 2px 6px;
 }
+/* Atajo vigente de la acción: discreto, que no compita con el título. */
+.palette-item-kbd {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--subtext0);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+/* ── Chuleta de atajos ─────────────────────────────────────────── */
+#shortcuts-help-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.58);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal-nested);
+  backdrop-filter: blur(4px);
+}
+#shortcuts-help-modal {
+  width: 620px;
+  max-width: calc(100vw - 40px);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+}
+.shortcuts-help-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.shortcuts-help-toolbar input { flex: 1 1 auto; min-width: 0; }
+.shortcuts-help-toolbar .btn-secondary { flex: 0 0 auto; }
+.shortcuts-help-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 6px 20px 16px;
+}
+.shortcuts-help-group h3 {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--subtext0);
+}
+.shortcuts-help-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.shortcuts-help-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-sm);
+}
+.shortcuts-help-row:last-child { border-bottom: none; }
+.shortcuts-help-label { color: var(--text); min-width: 0; }
+.shortcuts-help-combo {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  font-family: var(--font-mono);
+}
+.shortcuts-help-combo kbd {
+  padding: 1px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--base);
+  border: 1px solid var(--border-subtle);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-xs);
+  white-space: nowrap;
+}
 
 #import-wizard-modal {
   width: 580px;
@@ -3890,7 +4037,7 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10500;
+  z-index: var(--z-modal-editor);
   backdrop-filter: blur(4px);
 }
 
@@ -4063,12 +4210,12 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
 
 .iw-step.is-active .iw-step-num {
   background: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
 }
 
 .iw-step.is-done .iw-step-num {
   background: var(--green);
-  color: var(--crust);
+  color: var(--on-green);
 }
 
 .iw-body {
@@ -4224,7 +4371,7 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
 #btn-credential-submit.danger {
   background: var(--red);
   border-color: var(--red);
-  color: var(--crust);
+  color: var(--on-red);
 }
 
 .credential-message {
@@ -4503,7 +4650,7 @@ input[type="number"] {
 .number-stepper-btn:active {
   background: var(--blue);
   border-color: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
 }
 
 /* Reset obligatorio para que WebKit/WebKitGTK respete nuestro background.
@@ -4580,7 +4727,7 @@ select {
   overflow-y: auto;
   /* Por encima de cualquier overlay (el del asistente de importación usa
      z-index 11000), si no la lista queda oculta tras el modal. */
-  z-index: 12000;
+  z-index: var(--z-dropdown);
   box-shadow: var(--shadow-2);
   scrollbar-width: thin;
   scrollbar-color: var(--surface1) transparent;
@@ -4599,14 +4746,14 @@ select {
 }
 .custom-select-item:hover {
   background: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
 }
 .custom-select-item.active {
   background: var(--surface0);
 }
 .custom-select-item.active:hover {
   background: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
 }
 
 input[type="text"]:focus,
@@ -4689,7 +4836,7 @@ input[type="checkbox"] {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  z-index: 2000;
+  z-index: var(--z-toast);
   pointer-events: none;
 }
 
@@ -4706,10 +4853,10 @@ input[type="checkbox"] {
   gap: 10px;
 }
 
-.toast.success { background: var(--green);  color: var(--crust); }
-.toast.error   { background: var(--red);    color: var(--crust); }
-.toast.info    { background: var(--blue);   color: var(--crust); }
-.toast.warning { background: var(--yellow); color: var(--crust); }
+.toast.success { background: var(--green);  color: var(--on-green); }
+.toast.error   { background: var(--red);    color: var(--on-red); }
+.toast.info    { background: var(--blue);   color: var(--on-blue); }
+.toast.warning { background: var(--yellow); color: var(--on-yellow); }
 
 .toast-message {
   flex: 1;
@@ -4731,6 +4878,26 @@ input[type="checkbox"] {
 
 .toast-action:hover {
   background: rgba(0, 0, 0, 0.12);
+}
+
+.toast-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-inline-end: -6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.toast-close:hover {
+  background: color-mix(in srgb, currentColor 16%, transparent);
 }
 
 /* Badge "+N más": eventos extra agrupados en un mismo toast por categoría
@@ -4755,6 +4922,8 @@ input[type="checkbox"] {
   background: var(--surface1);
   color: var(--text);
   cursor: pointer;
+  font-family: inherit;
+  text-align: start;
   font-weight: 600;
   border: 1px dashed var(--overlay0);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
@@ -4768,13 +4937,20 @@ input[type="checkbox"] {
 #activity-center-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1600;
+  z-index: var(--z-drawer);
   display: flex;
   justify-content: flex-start;
   background: rgba(0, 0, 0, 0.28);
 }
 
 #activity-center-overlay.hidden { display: none; }
+
+/* Cima de una pila de diálogos: la pone el controlador de diálogos cuando hay
+   dos o más abiertos, para que el que recibe el teclado sea también el que se
+   ve encima (cada overlay tiene su capa fija por id, de ahí el !important). */
+.dialog-layer-top {
+  z-index: var(--z-modal-top) !important;
+}
 
 #activity-center-panel {
   width: min(520px, calc(100vw - 44px));
@@ -5217,7 +5393,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  z-index: 9000;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   max-height: 320px;
@@ -5337,7 +5513,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  z-index: 9000;
+  z-index: var(--z-popover);
   max-height: 320px;
   overflow: auto;
   background: var(--surface-panel);
@@ -5410,7 +5586,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 #tab-context-menu,
 #sftp-context-menu {
   position: fixed;
-  z-index: 9999;
+  z-index: var(--z-menu);
   background: var(--surface-popover);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
@@ -5459,9 +5635,9 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 
 .ctx-item:hover {
   background: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
 }
-.ctx-item:hover .ctx-icon { color: var(--crust); }
+.ctx-item:hover .ctx-icon { color: var(--on-blue); }
 
 .ctx-item:disabled {
   opacity: 0.45;
@@ -5477,8 +5653,9 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 .ctx-item.danger .ctx-icon { color: var(--red); }
 .ctx-item.danger:hover {
   background: var(--red);
-  color: var(--crust);
+  color: var(--on-red);
 }
+.ctx-item.danger:hover .ctx-icon { color: var(--on-red); }
 
 /* Submenú del menú contextual (p. ej. «Conectar con otro usuario») */
 .ctx-has-submenu {
@@ -5503,7 +5680,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   max-height: min(320px, calc(100vh - 12px));
   overflow-y: auto;
   display: none;
-  z-index: 10000;
+  z-index: var(--z-submenu);
 }
 .ctx-has-submenu:hover > .ctx-submenu {
   display: block;
@@ -5527,7 +5704,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   font-weight: 600;
 }
 .ctx-item.active .ctx-icon { color: var(--blue); }
-.ctx-item.active:hover .ctx-icon { color: var(--crust); }
+.ctx-item.active:hover .ctx-icon { color: var(--on-blue); }
 
 .ctx-icon {
   width: 16px;
@@ -5647,7 +5824,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: var(--z-modal);
   backdrop-filter: blur(4px);
 }
 
@@ -6158,7 +6335,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   position: fixed;
   right: 14px;
   bottom: 14px;
-  z-index: 900;
+  z-index: var(--z-boot-indicator);
   display: flex;
   align-items: center;
   gap: 7px;
@@ -6351,7 +6528,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10000;
+  z-index: var(--z-modal-keepass);
 }
 
 #modal-keepass {
@@ -7011,6 +7188,12 @@ html.theme-light {
   --teal:     #179299;
   --sky:      #04a5e5;
   --mauve:    #8839ef;
+  /* Tinta sobre rellenos: --crust no llega a 4,5:1 en este tema. */
+  --on-blue: #ffffff;
+  --on-green: #000000;
+  --on-yellow: #000000;
+  --on-red: var(--base);
+  --on-peach: #000000;
 }
 
 /* ── Dracula ────────────────────────────────────────────────── */
@@ -7059,6 +7242,8 @@ html.theme-nord {
   --teal:     #8fbcbb;
   --sky:      #88c0d0;
   --mauve:    #b48ead;
+  /* Tinta sobre rellenos: --crust no llega a 4,5:1 en este tema. */
+  --on-red: #000000;
 }
 
 /* ── xterm clásico ──────────────────────────────────────────── */
@@ -7083,6 +7268,8 @@ html.theme-xterm {
   --teal:     #00cdcd;
   --sky:      #00ffff;
   --mauve:    #ff00ff;
+  /* Tinta sobre rellenos: --crust no llega a 4,5:1 en este tema. */
+  --on-blue: #ffffff;
 }
 
 /* ── VS Code Dark+ ──────────────────────────────────────────── */
@@ -7131,6 +7318,8 @@ html.theme-tango {
   --teal:     #34e2e2;
   --sky:      #06989a;
   --mauve:    #ad7fa8;
+  /* Tinta sobre rellenos: --crust no llega a 4,5:1 en este tema. */
+  --on-red: #000000;
 }
 
 /* ── Solarized Dark ─────────────────────────────────────────── */
@@ -7155,6 +7344,10 @@ html.theme-solarized-dark {
   --teal:     #2aa198;
   --sky:      #2aa198;
   --mauve:    #d33682;
+  /* Tinta sobre rellenos: --crust no llega a 4,5:1 en este tema. */
+  --on-blue: #000000;
+  --on-red: #000000;
+  --on-peach: #000000;
 }
 
 /* ── Solarized Light ────────────────────────────────────────── */
@@ -7179,6 +7372,12 @@ html.theme-solarized-light {
   --teal:     #2aa198;
   --sky:      #2aa198;
   --mauve:    #d33682;
+  /* Tinta sobre rellenos: --crust no llega a 4,5:1 en este tema. */
+  --on-blue: #000000;
+  --on-green: #000000;
+  --on-yellow: #000000;
+  --on-red: #000000;
+  --on-peach: #000000;
 }
 
 /* ── Gruvbox Dark ───────────────────────────────────────────── */
@@ -7251,6 +7450,8 @@ html.theme-monokai {
   --teal:     #a1efe4;
   --sky:      #66d9ef;
   --mauve:    #ae81ff;
+  /* Tinta sobre rellenos: --crust no llega a 4,5:1 en este tema. */
+  --on-red: #000000;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -7878,7 +8079,7 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
 
 .sftp-row-btn.danger:hover {
   background: var(--red);
-  color: white;
+  color: var(--on-red);
 }
 
 .sftp-transfers-wrap {
@@ -8033,6 +8234,26 @@ body.sftp-log-resizing {
   white-space: nowrap;
 }
 
+/* Sentido de la transferencia: los iconos de subida/bajada del sprite, como
+   máscara para que tomen el color del texto (antes, flechas emoji). */
+.sftp-transfer[data-direction="upload"] {
+  --transfer-dir-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 9.8V3.6M5.4 6.2 8 3.6l2.6 2.6'/%3E%3Cpath d='M4 12.5h8'/%3E%3C/svg%3E");
+}
+.sftp-transfer[data-direction="download"] {
+  --transfer-dir-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 3v6.2M5.4 7.2 8 9.8l2.6-2.6'/%3E%3Cpath d='M4 12.5h8'/%3E%3C/svg%3E");
+}
+.sftp-transfer[data-direction] .sftp-transfer-label::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  background-color: currentColor;
+  -webkit-mask: var(--transfer-dir-icon) center / contain no-repeat;
+  mask: var(--transfer-dir-icon) center / contain no-repeat;
+}
+
 .sftp-transfer-text {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -8095,13 +8316,21 @@ body.sftp-log-resizing {
 .sftp-transfer-retry:hover,
 .sftp-transfer-pause:hover,
 .sftp-transfer-resume:hover { background: var(--surface0); color: var(--text); }
+.sftp-transfer-retry,
+.sftp-transfer-pause,
+.sftp-transfer-resume {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 
 .sftp-transfer.paused .sftp-transfer-fill {
   background: var(--yellow);
   opacity: 0.7;
 }
 .sftp-transfer.paused .sftp-transfer-text::after {
-  content: " · en pausa";
+  /* El texto llega traducido en `data-paused-label` (main.js, addTransfer). */
+  content: " · " attr(data-paused-label);
   color: var(--yellow);
 }
 
@@ -8217,6 +8446,7 @@ body.sftp-log-resizing {
   align-items: center;
   justify-content: center;
   margin-right: 2px;
+  flex-shrink: 0;
   transition: all 120ms;
 }
 
@@ -8252,7 +8482,7 @@ body.sftp-log-resizing {
 #global-tunnels-overlay {
   position: fixed;
   inset: 0;
-  z-index: 11000;
+  z-index: var(--z-modal-nested);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -8508,7 +8738,7 @@ body.sftp-log-resizing {
 
 .segmented-btn.active {
   background: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
 }
 
 /* Etiqueta del tipo de credencial en cada fila de la lista. */
@@ -8700,11 +8930,10 @@ body.reduce-motion *::after {
 }
 
 /* ─── Foco visible reforzado (toggle explícito) ─────────────────
-   Engrosa el anillo de foco y lo lleva a un color sólido de alto
-   contraste. Reutiliza los tokens `--focus-ring-*` que ya consume
+   Engrosa el anillo de foco (su color ya es sólido y comprobado por
+   tema). Reutiliza los tokens `--focus-ring-*` que ya consume
    `:focus-visible`. El contraste alto/máximo también lo refuerza. */
 body.strong-focus {
-  --focus-ring-color: var(--blue);
   --focus-ring-width: 3px;
   --focus-ring-offset: 3px;
 }
@@ -8931,11 +9160,19 @@ body.view-fade #terminals-container.view-fade-run {
   font-style: normal;
 }
 
-.tab.is-pinned::before {
-  content: "📌";
-  margin-right: 4px;
-  font-size: 11px;
-  opacity: 0.85;
+.tab.is-pinned:has(.env-badge) { max-width: 178px; }
+
+.tab-pin {
+  display: none;
+  flex-shrink: 0;
+  color: var(--overlay1);
+}
+.tab.is-pinned .tab-pin { display: inline-flex; }
+
+/* Anclada: punto + alfiler + nombre; SFTP, túneles y notas aparecen en la
+   activa, al pasar el ratón o con el foco dentro. */
+.tab.is-pinned:not(.active, :hover, :focus-within) :is(.tab-sftp, .tab-tunnels, .tab-notes) {
+  display: none;
 }
 
 .tab.is-pinned .tab-close { display: none; }
@@ -9057,7 +9294,7 @@ body.density-spacious .theme-option { min-height: 104px; padding: 12px 12px 14px
    habilita sólo cuando el usuario teclea el nombre exacto. */
 .btn-destructive {
   background: var(--red);
-  color: var(--crust);
+  color: var(--on-red);
   border: 1px solid var(--red);
   padding: 7px 14px;
   border-radius: var(--radius-md);
@@ -9097,7 +9334,7 @@ body.density-spacious .theme-option { min-height: 104px; padding: 12px 12px 14px
    y posición existentes de .sftp-icon. */
 .sftp-row.ftype-image   .sftp-icon { color: var(--mauve); }
 .sftp-row.ftype-video   .sftp-icon { color: var(--lavender); }
-.sftp-row.ftype-audio   .sftp-icon { color: var(--pink, var(--mauve)); }
+.sftp-row.ftype-audio   .sftp-icon { color: var(--pink); }
 .sftp-row.ftype-archive .sftp-icon { color: var(--peach); }
 .sftp-row.ftype-doc     .sftp-icon { color: var(--red); }
 .sftp-row.ftype-text    .sftp-icon { color: var(--subtext1); }
@@ -9179,14 +9416,25 @@ body.sidebar-mode-rail .folder-icon {
 }
 
 /* ─── Modo zen / distraction-free — slice estético #12 ──────────
-   Oculta rail + sidebar + tab-bar y deja solo el área del
-   terminal a pantalla completa. Se sale con F11 (configurable) o
-   con el botón flotante en la esquina superior derecha. */
+   Oculta rail + sidebar + tab-bar + barra de estado y deja solo el
+   área del terminal a pantalla completa. Se sale con F11
+   (configurable) o con el botón flotante en la esquina superior
+   derecha. Todo es CSS colgado de la clase del body: al salir, cada
+   pieza vuelve al estado que tenía (la barra de estado conserva su
+   `.hidden` y su `status-bar-visible`, que el modo zen no toca). */
 body.zen-mode #rail,
 body.zen-mode #sidebar,
 body.zen-mode #sidebar-resize-handle,
-body.zen-mode #tab-bar {
+body.zen-mode #tab-bar,
+body.zen-mode #status-bar {
   display: none !important;
+}
+
+/* Sin barra de estado, el hueco que le reservan los paneles se devuelve
+   al terminal; `applyZenMode` reajusta los xterm tras el cambio. */
+body.zen-mode #terminals-container.status-bar-visible .view-split,
+body.zen-mode #terminals-container.status-bar-visible > .terminal-pane {
+  bottom: 0;
 }
 
 #zen-exit-btn {
@@ -9203,7 +9451,7 @@ body.zen-mode #tab-bar {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  z-index: var(--z-toast);
+  z-index: var(--z-zen-exit);
   backdrop-filter: blur(6px);
   transition: background var(--motion-fast) var(--motion-ease),
               color var(--motion-fast) var(--motion-ease),
@@ -9538,7 +9786,9 @@ body.zen-mode #zen-exit-btn {
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-panel);
   position: sticky;
-  top: 0;
+  /* Justo debajo de la cabecera, también sticky: su altura cambia con la
+     densidad y el tamaño de texto, así que la mide main.js. */
+  top: var(--modal-header-h, 0px);
   z-index: var(--z-base);
 }
 
@@ -9727,7 +9977,7 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10600;
+  z-index: var(--z-modal-note);
   backdrop-filter: blur(4px);
 }
 
@@ -9954,7 +10204,7 @@ body.color-blind-safe .modal-summary-badge.warn::before {
 #script-pick-overlay {
   position: fixed;
   inset: 0;
-  z-index: 11000;
+  z-index: var(--z-modal-nested);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -9994,7 +10244,7 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 1200;
+  z-index: var(--z-script-bar);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -10022,14 +10272,14 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   height: 11px;
   border-radius: 50%;
   background: var(--red);
-  box-shadow: 0 0 0 0 rgba(243, 139, 168, 0.6);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--red) 60%, transparent);
   animation: script-rec-pulse 1.4s ease-out infinite;
   flex: 0 0 auto;
 }
 @keyframes script-rec-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(243, 139, 168, 0.55); }
-  70% { box-shadow: 0 0 0 8px rgba(243, 139, 168, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(243, 139, 168, 0); }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--red) 55%, transparent); }
+  70% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--red) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--red) 0%, transparent); }
 }
 @media (prefers-reduced-motion: reduce) {
   .script-rec-dot { animation: none; }
@@ -10615,7 +10865,7 @@ html.uitext-xlarge {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: var(--z-modal);
   backdrop-filter: blur(4px);
 }
 
@@ -10782,7 +11032,7 @@ html.uitext-xlarge {
 .sync-backend-card-cta.primary {
   background: var(--blue);
   border-color: var(--blue);
-  color: var(--crust);
+  color: var(--on-blue);
 }
 
 .sync-backend-card:hover .sync-backend-card-cta:not(.primary) {

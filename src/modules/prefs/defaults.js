@@ -228,6 +228,10 @@ export const DEFAULT_PREFS = {
   reduceMotion:    false,
   // Refuerza el anillo de foco (grosor y contraste) en la navegación por teclado.
   strongFocus:     false,
+  // Duración de los avisos: "normal" (la de cada aviso, como siempre), "long"
+  // (el doble, mínimo 10 s) o "sticky" (hasta cerrarlos). Con el ratón encima
+  // o el foco dentro no caduca ninguno (`modules/toast-timer.js`).
+  toastDuration:   "normal",
   // Fundido corto al pasar del panel de inicio al terminal (y a la inversa).
   // «Reducir movimiento» (arriba) también lo anula.
   viewFade:        true,

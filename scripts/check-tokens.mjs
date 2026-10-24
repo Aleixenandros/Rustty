@@ -2,6 +2,13 @@
 // `src/styles.css` que NO son una definición de paleta ni una excepción
 // declarada, y falla si crecen por encima del baseline.
 //
+// Dos reglas más, también con baseline 0:
+// - Capas: un `z-index` de capa (≥ 100) va por la escala `var(--z-*)` de
+//   `:root`. Con números sueltos, los avisos acabaron por debajo de los modales.
+// - Tokens inexistentes: un `var(--x)` sin definición en la hoja (ni entre las
+//   variables que pone el código en runtime) cae en silencio a su valor
+//   inicial: así la muestra «Rosa» salía gris y el contador del rail a 400.
+//
 // El problema que resuelve: un color de chrome escrito a mano se ve bien en el
 // tema en el que se escribió y se rompe —o se queda congelado— en los otros
 // doce, en el modo de alto contraste y en los 221 temas precargados. Los tokens
@@ -36,6 +43,21 @@ const BASELINE = 0;
  */
 const EXEMPT_SELECTOR = /^\.theme-preview\b/;
 
+/**
+ * Variables que no se definen en la hoja porque las pone el código en
+ * runtime (`style.setProperty`, atributos `style` de las plantillas).
+ */
+const RUNTIME_VARS = new Set([
+  "--connection-modal-height", "--connection-modal-width", // tamaño recordado del modal de conexión
+  "--folder-tint", "--pin-tint", "--workspace-tint",       // colores de carpeta/workspace por elemento
+  "--term-bg-blur", "--term-bg-image", "--term-bg-opacity", // imagen de fondo del terminal
+  "--terminal-font", "--ui-zoom",
+  "--modal-header-h",                                       // altura medida de la cabecera del modal de conexión
+]);
+
+/** `z-index` a partir del cual es una capa de la app (los menores apilan dentro de un componente). */
+const Z_LAYER_MIN = 100;
+
 const strict = process.argv.includes("--strict");
 const css = await readFile(cssPath, "utf8");
 const lines = css.split("\n");
@@ -62,17 +84,38 @@ for (const [index, rawLine] of lines.entries()) {
   }
 }
 
+// Capas fuera de la escala `--z-*`.
+for (const [index, rawLine] of lines.entries()) {
+  if (rawLine.trim().startsWith("/*") || rawLine.trim().startsWith("*")) continue;
+  for (const m of rawLine.matchAll(/(?:^|[\s;{])z-index:\s*(-?\d+)/g)) {
+    if (Math.abs(Number(m[1])) < Z_LAYER_MIN) continue;
+    findings.push({ line: index + 1, hex: `z-index ${m[1]}`, text: "usa la escala var(--z-*) de :root" });
+  }
+}
+
+// `var(--x)` sin definición.
+const defined = new Set([...css.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((m) => m[1]));
+for (const [index, rawLine] of lines.entries()) {
+  if (rawLine.trim().startsWith("/*") || rawLine.trim().startsWith("*")) continue;
+  for (const m of rawLine.matchAll(/var\((--[a-zA-Z0-9-]+)/g)) {
+    if (defined.has(m[1]) || RUNTIME_VARS.has(m[1])) continue;
+    findings.push({ line: index + 1, hex: m[1], text: "variable sin definir" });
+  }
+}
+
 const total = findings.length;
-console.log(`Colores hex fuera del sistema de tokens: ${total} (baseline ${BASELINE})`);
+console.log(`Hallazgos fuera del sistema de tokens: ${total} (baseline ${BASELINE})`);
 for (const f of findings) {
   console.log(`  styles.css:${f.line}  ${f.hex}  ${f.text}`);
 }
 
 if (total > BASELINE) {
   console.error(
-    `\n✗ tokens — ${total - BASELINE} literal(es) de color nuevo(s) fuera del sistema de tokens.\n`
-      + "  Enrútalos por una variable CSS (`var(--…)`) o, si describen un tema\n"
-      + "  ajeno al activo, decláralos exentos en scripts/check-tokens.mjs.",
+    `\n✗ tokens — ${total - BASELINE} hallazgo(s) nuevo(s) fuera del sistema de tokens.\n`
+      + "  Colores: enrútalos por una variable CSS (`var(--…)`) o, si describen un\n"
+      + "  tema ajeno al activo, decláralos exentos en scripts/check-tokens.mjs.\n"
+      + "  Capas: usa un token `--z-*` (o añade uno a la escala de :root).\n"
+      + "  Variables: defínela en la hoja o, si la pone el código, en RUNTIME_VARS.",
   );
   if (strict) process.exit(1);
 } else if (total < BASELINE) {

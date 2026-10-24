@@ -23,6 +23,16 @@ restablece atajos, confirma/cancela presets y abre el formulario de conexión co
 una combinación personalizada. Comprueba el foco y los datos persistidos; no
 simula la distribución física del teclado ni los atajos reservados por el SO.
 
+La sección de diálogos (`dialogs.mjs`) comprueba el controlador común: el foco
+entra al abrir Nueva conexión y vuelve a quien la abrió al cerrar, el fondo
+queda inerte (salvo los tiradores de la ventana), Escape en el selector de
+carpeta no cierra el formulario ni borra lo escrito, Tab y Shift+Tab dan la
+vuelta en los extremos, Ctrl+W y Ctrl+, no actúan detrás de un modal (el zoom
+de la interfaz sí), Escape en known_hosts no cierra Preferencias y una
+confirmación destructiva es `alertdialog` con el foco en «Cancelar». Como
+WebKitWebDriver no mueve el foco con eventos sintéticos, solo prueba lo que el
+controlador hace de forma explícita.
+
 El panel de túneles se comprueba en claro, oscuro y una ventana de 800 px:
 controles de cabecera juntos, contenido sin desbordar, minimizar/reabrir,
 cerrar y confirmar/cancelar el borrado de un túnel guardado. Las capturas se

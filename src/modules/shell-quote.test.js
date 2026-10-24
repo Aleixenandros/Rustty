@@ -4,6 +4,8 @@ import {
   quoteWindowsPath,
   quotePath,
   buildDropInsertText,
+  hasControlChars,
+  initialDirCommand,
 } from "./shell-quote.js";
 
 describe("quotePosixPath", () => {
@@ -124,5 +126,43 @@ describe("buildDropInsertText", () => {
         platform: "windows",
       })
     ).toBe("'C:\\Program Files\\x' C:\\tmp\\y ");
+  });
+
+  it("descarta las rutas con caracteres de control (no pueden salir del pegado ni ejecutar nada)", () => {
+    const evil = "/tmp/a\x1b[201~\x15touch pwned\r";
+    expect(buildDropInsertText([evil], { bracketed: true })).toBe("");
+    expect(buildDropInsertText([evil, "/tmp/a b"], { platform: "posix" })).toBe("'/tmp/a b' ");
+    expect(buildDropInsertText(["/tmp/x\ny"], { platform: "posix" })).toBe("");
+    expect(buildDropInsertText(["/tmp/a b"])).toBe("'/tmp/a b' ");
+  });
+});
+
+describe("hasControlChars", () => {
+  it("detecta C0 y DEL, no los caracteres imprimibles ni los Unicode", () => {
+    expect(hasControlChars("/tmp/a\tb")).toBe(true);
+    expect(hasControlChars("/tmp/a\x7fb")).toBe(true);
+    expect(hasControlChars("/tmp/año 'x' $y")).toBe(false);
+  });
+});
+
+describe("initialDirCommand", () => {
+  it("entra en la carpeta con un cd entrecomillado y fuera del historial", () => {
+    expect(initialDirCommand("/var/log")).toBe(" cd /var/log\r");
+    expect(initialDirCommand("/tmp/it's dir")).toBe(" cd '/tmp/it'\\''s dir'\r");
+    expect(initialDirCommand("  /srv  ")).toBe(" cd /srv\r");
+  });
+
+  it("deja que el shell expanda ~", () => {
+    expect(initialDirCommand("~")).toBe(" cd ~\r");
+    expect(initialDirCommand("~/")).toBe(" cd ~\r");
+    expect(initialDirCommand("~/my docs")).toBe(" cd ~/'my docs'\r");
+  });
+
+  it("no se envía al modo control de tmux, a una sesión persistente ni sin carpeta", () => {
+    expect(initialDirCommand("/var/log", { tmuxControl: true })).toBe(null);
+    expect(initialDirCommand("/var/log", { persistSession: true })).toBe(null);
+    expect(initialDirCommand("")).toBe(null);
+    expect(initialDirCommand(null)).toBe(null);
+    expect(initialDirCommand("/tmp/x\rrm -rf ~")).toBe(null);
   });
 });

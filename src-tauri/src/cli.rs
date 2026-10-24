@@ -1136,6 +1136,26 @@ fn build_runtime() -> Result<tokio::runtime::Runtime, String> {
         .map_err(|e| format!("No se pudo crear runtime tokio: {e}"))
 }
 
+/// Plazo que se concede a los hilos bloqueantes del runtime al terminar una
+/// sesión de la CLI (ver [`block_on_cli`]).
+const CLI_RUNTIME_SHUTDOWN: Duration = Duration::from_millis(100);
+
+/// Ejecuta `fut` en un runtime propio y lo apaga **sin esperar** a los hilos
+/// bloqueantes más que [`CLI_RUNTIME_SHUTDOWN`]. La lectura de
+/// `tokio::io::stdin()` corre en el pool bloqueante y no se puede cancelar: al
+/// salir el shell remoto siempre queda una en vuelo, y el `Drop` del runtime la
+/// esperaba sin plazo, con el terminal ya en modo canónico, así que
+/// `rustty -c perfil` + `exit` (o salir de un `--tty`) se quedaba parado hasta
+/// pulsar Intro y se comía esa línea. Las escrituras a stdout se vacían con
+/// `flush().await` antes de volver, y el plazo deja acabar alguna en curso; el
+/// hilo que quede suelto muere con el `process::exit` de `main`.
+fn block_on_cli<F: std::future::Future>(fut: F) -> Result<F::Output, String> {
+    let runtime = build_runtime()?;
+    let out = runtime.block_on(fut);
+    runtime.shutdown_timeout(CLI_RUNTIME_SHUTDOWN);
+    Ok(out)
+}
+
 // ─── Sesión interactiva ───────────────────────────────────────────────────────
 
 async fn run_ssh_session(
@@ -1560,6 +1580,26 @@ fn print_grouped(result: &HostResult, quiet: bool) {
     }
 }
 
+/// Catálogo de credenciales del directorio de datos (el mismo que la app).
+fn cli_credential_store() -> CredentialStore {
+    CredentialStore::new(crate::resolve_data_dir())
+}
+
+/// Copia del perfil lista para conectar, con `${var:}`/`${env:}` resueltos en
+/// el host, el usuario y el bastión, como hace la app en cada conexión
+/// (`ssh_connect` y compañía). Sin esto, un perfil con host
+/// `web01.${var:dominio}` conectaba desde la app y desde la CLI intentaba
+/// resolver el texto literal. Va antes de `resolve_secrets` y `announce`: la
+/// pregunta de contraseña enseña el `usuario@host` real y los marcadores de la
+/// contraseña ven el host y el usuario ya resueltos. Nunca resuelve
+/// `secret`/`master`, así que nada secreto llega al aviso ni al `--json`. El
+/// listado (`-l`) y la búsqueda siguen casando con lo guardado, como en la app.
+fn prepare_profile(profile: &ConnectionProfile, store: &CredentialStore) -> ConnectionProfile {
+    let mut profile = profile.clone();
+    credentials::substitute_connection_fields(&mut profile, store);
+    profile
+}
+
 fn connect_single(
     query: &str,
     remote_command: Option<RemoteCommand>,
@@ -1568,7 +1608,7 @@ fn connect_single(
 ) -> Result<i32, String> {
     let catalog = load_catalog()?;
     let candidates = select_profiles(&catalog, selector)?;
-    let profile = find_profile(&candidates, query)?.clone();
+    let profile = prepare_profile(find_profile(&candidates, query)?, &cli_credential_store());
     if remote_command.is_some() && !is_ssh_profile(&profile) {
         return Err(format!(
             "'{}' es un perfil SFTP sin shell: usa --get/--put.",
@@ -1576,7 +1616,6 @@ fn connect_single(
         ));
     }
     let workspace = catalog.workspace_ref(&profile);
-    let runtime = build_runtime()?;
     match remote_command {
         None => {
             if !is_ssh_profile(&profile) {
@@ -1587,7 +1626,7 @@ fn connect_single(
             }
             let secrets = resolve_secrets(&profile)?;
             announce(&profile, &opts);
-            match runtime.block_on(run_ssh_session(profile, secrets, opts.host_key.clone())) {
+            match block_on_cli(run_ssh_session(profile, secrets, opts.host_key.clone()))? {
                 Ok(()) => Ok(0),
                 Err(err) => {
                     eprintln!("{err}");
@@ -1600,9 +1639,9 @@ fn connect_single(
             let stdin = stdin_mode(&remote, &opts, false)?;
             announce(&profile, &opts);
             let capture = opts.machine();
-            let result = runtime.block_on(run_host(
+            let result = block_on_cli(run_host(
                 profile, secrets, remote, stdin, opts.clone(), capture, workspace,
-            ));
+            ))?;
             if opts.ndjson {
                 print_json_line(&result)?;
             } else if opts.json {
@@ -1632,10 +1671,12 @@ fn run_many(
     let stdin = stdin_mode(&remote, &opts, true)?;
     // Los secretos se resuelven en serie ANTES de conectar: pueden preguntar por
     // el terminal, y varias preguntas a la vez serían ilegibles.
+    let store = cli_credential_store();
     let jobs: Vec<(ConnectionProfile, Result<CliSecrets, String>, WorkspaceRef)> = profiles
         .into_iter()
         .map(|p| {
             let ws = catalog.workspace_ref(&p);
+            let p = prepare_profile(&p, &store);
             let secrets = resolve_secrets(&p);
             (p, secrets, ws)
         })
@@ -1864,7 +1905,7 @@ fn run_transfer_command(
 ) -> Result<i32, String> {
     let catalog = load_catalog()?;
     let candidates = select_profiles(&catalog, selector)?;
-    let profile = find_profile(&candidates, query)?.clone();
+    let profile = prepare_profile(find_profile(&candidates, query)?, &cli_credential_store());
     let secrets = resolve_secrets(&profile)?;
     announce(&profile, &opts);
     let runtime = build_runtime()?;
@@ -2450,6 +2491,70 @@ mod tests {
             "created_at": "2026-05-08T12:00:00Z"
         });
         serde_json::from_value(json).expect("perfil de prueba valido")
+    }
+
+    /// Al terminar una sesión, la CLI no espera a una lectura bloqueante que
+    /// no se puede cancelar (la de `tokio::io::stdin()` tras el `exit` del
+    /// shell remoto). Con el `Drop` normal del runtime este test se quedaría
+    /// colgado hasta soltar el canal.
+    #[test]
+    fn el_runtime_de_la_cli_no_espera_lecturas_bloqueantes() {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let started = Instant::now();
+        block_on_cli(async move {
+            // Hace de la lectura de stdin en vuelo: bloquea hasta soltar `tx`.
+            drop(tokio::task::spawn_blocking(move || {
+                let _ = rx.recv();
+            }));
+            tokio::task::yield_now().await;
+        })
+        .expect("runtime");
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        drop(tx);
+    }
+
+    /// La CLI resuelve `${var:}`/`${env:}` en host, usuario y bastión igual que
+    /// la app al conectar; `secret`/`master` y variables inexistentes quedan
+    /// literales (nada secreto acaba en el aviso ni en el `--json`).
+    #[test]
+    fn el_perfil_de_la_cli_resuelve_variables_en_host_usuario_y_bastion() {
+        let dir = std::env::temp_dir().join(format!("rustty-cli-vars-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = CredentialStore::new(dir.clone());
+        for (name, value) in [("dominio", "corp.example"), ("usuario", "deploy")] {
+            credentials::cred_import(
+                &store,
+                credentials::CredentialMeta {
+                    id: format!("id-{name}"),
+                    name: name.to_string(),
+                    kind: CredentialKind::Var,
+                    description: None,
+                    value: Some(value.to_string()),
+                    created_at: "2026-10-24T10:00:00Z".to_string(),
+                    updated_at: None,
+                },
+            )
+            .unwrap();
+        }
+
+        let mut p = profile("web01", "default", None, "ssh");
+        p.host = "web01.${var:dominio}".into();
+        p.username = "${var:usuario}".into();
+        p.proxy_jump = Some("admin@bastion.${var:dominio}:2222".into());
+        let ready = prepare_profile(&p, &store);
+        assert_eq!(ready.host, "web01.corp.example");
+        assert_eq!(ready.username, "deploy");
+        let jump = ready.proxy_jump.as_deref().unwrap();
+        assert_eq!(
+            parse_jump_spec(jump, &ready.username),
+            ("admin".to_string(), "bastion.corp.example".to_string(), 2222)
+        );
+        // El original no cambia: el listado y la búsqueda casan con lo guardado.
+        assert_eq!(p.host, "web01.${var:dominio}");
+
+        p.host = "${var:noexiste}.${secret:clave}".into();
+        assert_eq!(prepare_profile(&p, &store).host, "${var:noexiste}.${secret:clave}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn catalog() -> Catalog {

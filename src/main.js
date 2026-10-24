@@ -48,6 +48,7 @@ import {
   VIRTUAL_THRESHOLD as SFTP_VIRTUAL_THRESHOLD,
   FALLBACK_ROW_HEIGHT as SFTP_FALLBACK_ROW_HEIGHT,
 } from "./modules/sftp/list-view.js";
+import { sftpRowOpenAction } from "./modules/sftp/row-open.js";
 import { foldSearchText, groupConnectionSearch, matchSegments } from "./modules/connection-search.js";
 import { clampUiZoom } from "./modules/num.js";
 import { baseSlugifyThemeId } from "./modules/text.js";
@@ -63,15 +64,27 @@ import {
   nextAvailableTransferName,
   normalizeSftpConflictPolicy,
   recursiveConflictPolicyForTransfer as recursiveConflictPolicy,
+  transferNameKey,
+  transferNameSet,
+  transferTarget,
 } from "./modules/sftp-conflicts.js";
+import { passwordPlan } from "./modules/credential-plan.js";
+import { localParentPath, splitLocalPathPrefix } from "./modules/local-path.js";
 import { clampMenuPosition, menuNeedsScroll } from "./modules/menu-position.js";
 import { compilePromptRegex, segmentByPrompt, DEFAULT_PROMPT_PATTERN } from "./modules/terminal/prompt-fallback.js";
 import { layoutToTree, paneDims, layoutSize } from "./modules/tmux/layout-view.js";
+import { isActiveTmuxControlRoot, isTmuxPaneSession, tmuxRootRedirect } from "./modules/tmux/sessions.js";
+import { normalizeTmuxBatchClose } from "./modules/tmux/batch-close.js";
 import { leafIds } from "./modules/panes/tree.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
 import { createShortcutController } from "./modules/shortcuts/controller.js";
+import { createDialogController } from "./modules/dialogs/controller.js";
 import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
+import { buildCheatsheet, filterCheatsheet } from "./modules/shortcuts/cheatsheet.js";
+import { formatAccelerator } from "./modules/platform.js";
+import { buildQuickProfile, findQuickTargetProfile, formatQuickTarget, paletteQuickTarget, parseQuickTarget } from "./modules/quick-connect.js";
 import { tabIndexForKey } from "./modules/tab-navigation.js";
+import { TOAST_DURATIONS, createPausableTimer, toastDurationMs } from "./modules/toast-timer.js";
 import {
   blockAt,
   createBlockTracker,
@@ -83,13 +96,19 @@ import { extractBlockText, blockToMarkdown, blockFileName } from "./modules/term
 import { diffLines, pairDiffRows, diffToUnifiedText } from "./modules/terminal/diff.js";
 import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
+import { inkTokens, ringColor } from "./modules/themes/ink.js";
 import { compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
 import { createChunkDecoder } from "./modules/terminal/chunk-decoder.js";
 import { createShellCloseGate } from "./modules/terminal/shell-close.js";
+import { createPromptQueue } from "./modules/dialogs/prompt-queue.js";
+import { reconnectRoute, runReconnectOnce } from "./modules/sessions/reconnect.js";
+import { commandDraftKey, isLocalShellReady, isLocalShellSession } from "./modules/sessions/local-shell.js";
+import { connectionTunnelOwners } from "./modules/tunnels/lifecycle.js";
 import { DEFAULT_PREFS, createDefaultPrefs } from "./modules/prefs/defaults.js";
 import { loadPrefs as readSavedPrefs, savePrefs as writeSavedPrefs } from "./modules/prefs/storage.js";
 import { applyPrefsForm } from "./modules/prefs/sync.js";
 import { hasLocalSyncData } from "./modules/prefs/first-sync.js";
+import { resolveActiveWorkspaceId, workspaceNameMap, workspacesForExport } from "./modules/workspaces.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
 import { ipcErrorText, isHostKeyError, isKeyringUnavailableError } from "./modules/ipc/errors.js";
@@ -103,7 +122,7 @@ import {
 // devuelve con la ruta un permiso de un solo uso para leerla o escribirla; las
 // confirmaciones usan confirmThemed para respetar el tema de la app.
 import { createFileApi, isFileGrantError, localCommandError, localFsError } from "./modules/ipc/files.js";
-import { buildDropInsertText } from "./modules/shell-quote.js";
+import { buildDropInsertText, hasControlChars, initialDirCommand } from "./modules/shell-quote.js";
 import { generatePassphrase, passphraseStrength } from "./modules/passphrase.js";
 import { rankCommandSuggestions } from "./modules/command-suggest.js";
 import { detectedWake, staggerDelays } from "./modules/wake.js";
@@ -558,6 +577,7 @@ function loadPrefs() {
   setLanguage(prefs.lang).then(() => {
     applyTranslations();
     refreshTunnelIndicators();
+    updateZenExitTooltip();
   });
   applyTranslations();
   registerAllCustomThemes();
@@ -576,6 +596,17 @@ function loadPrefs() {
 
 function getActiveWorkspaceId() {
   return prefs.activeWorkspaceId || "default";
+}
+
+/**
+ * Tras recibir otra lista de workspaces (copia restaurada o importada), el
+ * activo tiene que seguir existiendo. Es navegación local: no fecha el bundle.
+ */
+function revalidateActiveWorkspace() {
+  const id = resolveActiveWorkspaceId(prefs.workspaces, prefs.activeWorkspaceId);
+  if (id === prefs.activeWorkspaceId) return;
+  prefs.activeWorkspaceId = id;
+  userFolders = new Set(getWorkspaceFolders(id));
 }
 
 function profileBelongsToActiveWorkspace(p) {
@@ -601,15 +632,17 @@ function profileWorkspaceId(p) {
  *   (`workspaces.json`): un workspace creado por `rustty --import` solo existe
  *   ahí y en los perfiles, y este es el momento en que entra en las prefs.
  */
-function ensureWorkspacesForProfiles(indexNames = null) {
+function ensureWorkspacesForProfiles(indexNames = null, extraIds = []) {
   if (!Array.isArray(prefs.workspaces) || prefs.workspaces.length === 0) {
     prefs.workspaces = [{ id: "default", name: "Default" }];
   }
   const known = new Set(prefs.workspaces.map((w) => w.id));
   let added = false;
-  for (const p of profiles) {
-    const wsId = p?.workspace_id || "default";
-    if (known.has(wsId)) continue;
+  // `extraIds`: workspaces que no tienen perfiles pero sí algo propio (las
+  // carpetas de un export), que sin entrada en la lista quedarían invisibles.
+  const wanted = [...profiles.map((p) => p?.workspace_id || "default"), ...extraIds];
+  for (const wsId of wanted) {
+    if (!wsId || known.has(wsId)) continue;
     known.add(wsId);
     // Nombre del índice si lo hay (import por CLI); si no, uno de respaldo
     // legible aunque el real (del bundle remoto) aún no haya llegado. El usuario
@@ -914,9 +947,14 @@ function getRuntimeThemeStyleElement(source) {
 }
 
 function appendRuntimeThemeCss(theme, source) {
+  // Tinta sobre los rellenos de acento, calculada para que llegue a AA (el
+  // JSON del tema no la trae; `check:contrast` comprueba el mismo cálculo).
+  const inks = Object.entries(inkTokens(theme.ui)).map(([fill, ink]) => `--on-${fill}: ${ink};`);
+  const ring = ringColor(theme.ui);
+  if (ring) inks.push(`--focus-ring-color: ${ring};`);
   const decl = UI_THEME_TOKENS
     .map((token) => theme.ui[token] ? `--${token}: ${theme.ui[token]};` : "")
-    .filter(Boolean).join(" ");
+    .filter(Boolean).concat(inks).join(" ");
   getRuntimeThemeStyleElement(source).appendChild(
     document.createTextNode(`\nhtml.theme-${theme.id} { ${decl} }\n`)
   );
@@ -1173,6 +1211,8 @@ function enhanceThemePickers() {
     });
     panel.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
+        // Consumido: el diálogo de debajo (Preferencias) no debe cerrarse.
+        e.preventDefault();
         setThemePickerOpen(root, false);
         toggle.focus();
       }
@@ -1304,7 +1344,7 @@ async function exportCurrentTheme() {
 async function exportThemeTemplate() {
   const template = buildThemeDocument({
     id: "mi-tema",
-    name: "Mi tema",
+    name: t("toast.theme_template_name"),
     ui: gatherActiveUiTokens(),
     terminal: getTerminalTheme(),
   });
@@ -1370,7 +1410,7 @@ async function importTheme() {
   scheduleProfileAutoSync();
   const importedName = importedThemes.length === 1
     ? theme.name
-    : `${data?.name || "pack"} (${importedThemes.length})`;
+    : `${data?.name || t("toast.theme_pack_name")} (${importedThemes.length})`;
   toast(t("toast.theme_imported").replace("{name}", importedName), "success");
 }
 
@@ -1508,7 +1548,7 @@ async function chooseTerminalBackground() {
   let file;
   try {
     file = await files.pickFileToOpen({
-      filters: [{ name: "Imagen", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+      filters: [{ name: t("prefs_appearance.bg_filter"), extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
     });
   } catch (err) { toast(fileErrorText(err), "error"); return; }
   if (!file) return;
@@ -1779,6 +1819,8 @@ function openSettingsModal() {
   if (_reduceMotion) _reduceMotion.checked = !!prefs.reduceMotion;
   const _strongFocus = document.getElementById("pref-strong-focus");
   if (_strongFocus) _strongFocus.checked = !!prefs.strongFocus;
+  const _toastDuration = document.getElementById("pref-toast-duration");
+  if (_toastDuration) _toastDuration.value = TOAST_DURATIONS.includes(prefs.toastDuration) ? prefs.toastDuration : "normal";
   const _viewFade = document.getElementById("pref-view-fade");
   if (_viewFade) _viewFade.checked = prefs.viewFade !== false;
   const _bootScreen = document.getElementById("pref-boot-screen");
@@ -2373,9 +2415,15 @@ async function persistSyncConfig() {
   return config;
 }
 
+// Volver a pulsar «Conectar cuenta» sustituye al intento anterior (el backend
+// corta su espera del callback); el sustituido no debe pintar su error encima
+// del «Esperando autorización…» del nuevo.
+let syncOAuthAttempt = 0;
+
 async function syncOAuthConnectNow() {
   const provider = currentOAuthProvider();
   if (!provider) return;
+  const attempt = ++syncOAuthAttempt;
   const dot = document.getElementById("sync-oauth-dot");
   const txt = document.getElementById("sync-oauth-text");
   dot?.classList.remove("idle", "success", "error");
@@ -2388,7 +2436,7 @@ async function syncOAuthConnectNow() {
     await persistSyncConfig();
   } catch (err) {
     refreshSyncOAuthStatus();
-    const { message, ms } = syncFailureToast(err, "Sync", t, 8000);
+    const { message, ms } = syncFailureToast(err, t("rail.sync"), t, 8000);
     toast(message, "error", ms);
     return;
   }
@@ -2397,6 +2445,7 @@ async function syncOAuthConnectNow() {
     setOAuthStatus(OAUTH_ACCOUNT_STATE.connected);
     toast(t("prefs_sync.oauth_connected"), "success");
   } catch (err) {
+    if (attempt !== syncOAuthAttempt) return;
     dot?.classList.remove("busy");
     dot?.classList.add("error");
     if (txt) txt.textContent = t("prefs_sync.status_error");
@@ -2482,7 +2531,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
       if (!firstSyncMode) return null;
     }
     const summary = await sync.runSync({
-      profiles, prefs, deviceId: _syncDeviceIdCache,
+      profiles, getProfiles: () => profiles, prefs, deviceId: _syncDeviceIdCache,
       deviceName: prefs.syncDeviceName || "",
       devicePlatform: syncDevicePlatform(),
       firstSyncMode,
@@ -2571,10 +2620,10 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
       });
       refreshSyncSnapshots().catch(() => {});
     }
-    // Si el usuario tocó las prefs mientras la sync volaba, el bundle mezclado
-    // no se aplicó (se conservó lo local): programar un push de seguimiento
-    // para que esa edición viaje al remoto en breve.
-    if (summary.prefsSkippedNewerLocal) scheduleProfileAutoSync();
+    // Si el usuario tocó las prefs, un perfil o un atajo mientras la sync
+    // volaba, lo mezclado no se aplicó (se conservó lo local): programar un
+    // push de seguimiento para que esa edición viaje al remoto en breve.
+    if (summary.prefsSkippedNewerLocal || summary.skippedNewerLocal) scheduleProfileAutoSync();
     return summary;
   } catch (err) {
     // Sin conexión (DNS/connect/timeout): estado «offline» con reintento
@@ -2619,7 +2668,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
     if (String(err).includes("no_passphrase")) {
       toast(t("prefs_sync.no_passphrase"), "warning", 6000, { category: "sync" });
     } else if (announce) {
-      const { message, ms } = syncFailureToast(err, "Sync", t, 6000);
+      const { message, ms } = syncFailureToast(err, t("rail.sync"), t, 6000);
       toast(message, "error", ms, { category: "sync" });
     }
     throw err;
@@ -2645,17 +2694,17 @@ async function syncTestNow() {
     await persistSyncConfig();
   } catch (err) {
     setSyncStatus("error", "prefs_sync.status_error");
-    const { message, ms } = syncFailureToast(err, "Sync", t, 6000);
+    const { message, ms } = syncFailureToast(err, t("rail.sync"), t, 6000);
     toast(message, "error", ms);
     return;
   }
   try {
     const result = await sync.testBackend();
     setSyncStatus("success", "prefs_sync.status_success");
-    toast(`Backend OK (${result})`, "success");
+    toast(t(result === "ok-empty" ? "prefs_sync.test_ok_empty" : "prefs_sync.test_ok_existing"), "success");
   } catch (err) {
     setSyncStatus("error", "prefs_sync.status_error");
-    const { message, ms } = syncFailureToast(err, "Backend", t, 6000);
+    const { message, ms } = syncFailureToast(err, t("prefs_sync.backend"), t, 6000);
     toast(message, "error", ms);
   }
 }
@@ -2797,7 +2846,7 @@ async function syncWipeRemoteNow() {
     setSyncStatus("idle", "prefs_sync.status_idle");
     refreshSyncSnapshots().catch(() => {});
   } catch (err) {
-    const { message, ms } = syncFailureToast(err, "Sync", t, 6000);
+    const { message, ms } = syncFailureToast(err, t("rail.sync"), t, 6000);
     toast(message, "error", ms, { category: "sync" });
   }
 }
@@ -2842,21 +2891,23 @@ function updateSyncPassMeter(value) {
 async function syncRotatePassphraseFlow() {
   const stored = await sync.getStoredPassphrase().catch(() => null);
   let oldPass = stored;
+  // `promptCredential` resuelve `{ value, … }`: comparar esos objetos daba
+  // siempre «no coinciden» y la rotación nunca llegaba a hacerse.
   if (!oldPass) {
-    oldPass = await promptCredential({
+    oldPass = await syncDialogs.promptSecret({
       title: t("prefs_sync.rotate_title"),
       message: t("prefs_sync.rotate_current_msg"),
       label: t("prefs_sync.rotate_current"),
     });
     if (!oldPass) return;
   }
-  const newPass = await promptCredential({
+  const newPass = await syncDialogs.promptSecret({
     title: t("prefs_sync.rotate_title"),
     message: t("prefs_sync.rotate_new_msg"),
     label: t("prefs_sync.rotate_new"),
   });
   if (!newPass) return;
-  const repeat = await promptCredential({
+  const repeat = await syncDialogs.promptSecret({
     title: t("prefs_sync.rotate_title"),
     message: "",
     label: t("prefs_sync.rotate_repeat"),
@@ -2887,7 +2938,7 @@ async function syncRotatePassphraseFlow() {
     if (sync.isBadPassphraseError(err)) {
       toast(t("prefs_sync.rotate_bad_old"), "error", 8000, { category: "sync" });
     } else {
-      const { message, ms } = syncFailureToast(err, "Sync", t, 8000);
+      const { message, ms } = syncFailureToast(err, t("rail.sync"), t, 8000);
       toast(message, "error", ms, { category: "sync" });
     }
   }
@@ -2900,22 +2951,22 @@ async function syncBrowseLocalFolder() {
   if (path) document.getElementById("sync-local-folder").value = path;
 }
 
-async function openPathInFileManager(path, label = "carpeta") {
+async function openPathInFileManager(path, label) {
   if (!path) {
-    toast(`No hay ${label} configurada`, "warning");
+    toast(t("toast.open_path_missing", { label }), "warning");
     return;
   }
   try {
     await invoke("plugin:opener|open_path", { path });
   } catch (err) {
-    toast(`No se pudo abrir la ${label}: ${err}. Ruta: ${path}`, "error", 8000);
+    toast(t("toast.open_path_failed", { label, err, path }), "error", 8000);
   }
 }
 
 async function syncOpenLocalFolder() {
   await persistSyncConfig().catch((err) => console.error("[sync] save before open local", err));
   const path = document.getElementById("sync-local-folder")?.value?.trim();
-  await openPathInFileManager(path, "carpeta local de sync");
+  await openPathInFileManager(path, t("prefs_sync.local_folder_label"));
 }
 
 // ─── Log técnico de la aplicación ────────────────────────────────────────────
@@ -3130,19 +3181,19 @@ async function sessionLogsPruneNow() {
 async function sessionLogsOpenFolder() {
   try {
     const path = await invoke("session_logs_dir");
-    await openPathInFileManager(path, "carpeta de logs de sesión");
+    await openPathInFileManager(path, t("prefs_session_logs.folder_label"));
   } catch (err) {
-    toast(`No se pudo abrir la carpeta de logs: ${err}`, "error", 6000);
+    toast(`${t("prefs_session_logs.stats_error")}: ${err}`, "error", 6000);
   }
 }
 
 async function syncOpenBackendFolder() {
   await persistSyncConfig().catch((err) => console.error("[sync] save before open backend", err));
   const path = await invoke("sync_get_backend_folder").catch((err) => {
-    toast(`Sync: ${err}`, "error", 6000, { category: "sync" });
+    toast(`${t("rail.sync")}: ${err}`, "error", 6000, { category: "sync" });
     return null;
   });
-  await openPathInFileManager(path, "carpeta de sync");
+  await openPathInFileManager(path, t("prefs_sync.backend_folder_label"));
 }
 
 // Diálogos que sync.js usa en export/import/restore: wry no implementa
@@ -3168,11 +3219,16 @@ async function syncExportFile() {
     });
     if (path) toast(t("prefs_sync.done_export").replace("{path}", path), "success");
   } catch (err) {
-    toast(`Export: ${fileErrorText(err)}`, "error", 6000);
+    toast(t("prefs_sync.export_failed", { err: fileErrorText(err) }), "error", 6000);
   }
 }
 
 async function syncImportFile() {
+  // Los nombres de los workspaces de este equipo, antes de que la copia
+  // sustituya la lista: uno creado después de la copia, con conexiones, vuelve
+  // con su nombre y no como «Workspace N» (la restauración fecha el bundle y
+  // ese nombre genérico ganaría en todos los equipos).
+  const prevWorkspaceNames = workspaceNameMap(prefs.workspaces);
   try {
     const summary = await sync.importFromFile({
       profiles, prefs, deviceId: _syncDeviceIdCache, dialogs: syncDialogs,
@@ -3184,10 +3240,15 @@ async function syncImportFile() {
     applySyncedUserFolders();
     registerAllCustomThemes();
     profiles = await invoke("get_profiles");
+    ensureWorkspacesForProfiles(prevWorkspaceNames);
+    revalidateActiveWorkspace();
     renderConnectionList();
     applyTheme(prefs.theme);
     applyPrefsToAllTerminals();
     savePrefs();
+    // La copia importada cuenta como una edición: que suba ya, antes de que
+    // otra sync la compare con un remoto más nuevo.
+    scheduleProfileAutoSync();
     if (summary.credsChanged) renderCredList().catch(() => {});
     const total = summary.addedProfiles + summary.deletedProfiles
       + summary.themesChanged + summary.shortcutsChanged
@@ -3196,7 +3257,7 @@ async function syncImportFile() {
       + (summary.prefsChanged ? 1 : 0);
     toast(t("prefs_sync.done_import").replace("{n}", total), "success");
   } catch (err) {
-    toast(`Import: ${fileErrorText(err)}`, "error", 6000);
+    toast(t("toast.import_failed", { err: fileErrorText(err) }), "error", 6000);
   }
 }
 
@@ -3266,6 +3327,7 @@ async function syncRestoreSnapshot() {
     danger: true,
   });
   if (!okRestore) return;
+  const prevWorkspaceNames = workspaceNameMap(prefs.workspaces);
   try {
     setSyncStatus("busy", "prefs_sync.status_busy");
     const summary = state
@@ -3281,10 +3343,13 @@ async function syncRestoreSnapshot() {
     applySyncedUserFolders();
     registerAllCustomThemes();
     profiles = await invoke("get_profiles");
+    ensureWorkspacesForProfiles(prevWorkspaceNames);
+    revalidateActiveWorkspace();
     renderConnectionList();
     applyTheme(prefs.theme);
     applyPrefsToAllTerminals();
     savePrefs();
+    scheduleProfileAutoSync();
     setSyncStatus("success", "prefs_sync.status_success");
     if (summary?.credsChanged) renderCredList().catch(() => {});
     const total = (summary?.addedProfiles ?? 0) + (summary?.deletedProfiles ?? 0)
@@ -3295,7 +3360,7 @@ async function syncRestoreSnapshot() {
     toast(`${t("prefs_sync.snapshots_restored")} (${total})`, "success");
   } catch (err) {
     setSyncStatus("error", "prefs_sync.status_error");
-    toast(`Restore: ${err}`, "error", 6000);
+    toast(t("prefs_sync.snapshots_restore_failed", { err }), "error", 6000);
   }
 }
 
@@ -3624,7 +3689,7 @@ async function checkForUpdatesViaGithub({ interactive = true } = {}) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const release = await res.json();
     const latest = normalizeVersion(release.tag_name || release.name);
-    if (!latest) throw new Error("missing release version");
+    if (!latest) throw new Error(t("prefs_about.update_no_version"));
 
     if (compareVersions(latest, current) > 0) {
       recordActivity({
@@ -3644,7 +3709,7 @@ async function checkForUpdatesViaGithub({ interactive = true } = {}) {
       });
       if (openRelease) {
         invoke("plugin:opener|open_url", { url: release.html_url || RELEASES_PAGE_URL })
-          .catch((err) => toast(`No se pudo abrir ${RELEASES_PAGE_URL}: ${err}`, "error", 6000));
+          .catch((err) => toast(t("toast.link_open_error_url", { url: RELEASES_PAGE_URL, err }), "error", 6000));
       }
     } else {
       if (interactive) {
@@ -3677,12 +3742,12 @@ async function checkForUpdatesViaGithub({ interactive = true } = {}) {
 
 function activityKindLabel(kind) {
   return {
-    connection: "Conexión",
+    connection: t("activity.kind_connection"),
     sftp: "SFTP",
-    sync: "Sync",
-    update: "Aviso",
-    toast: "Sistema",
-  }[kind] || "Actividad";
+    sync: t("rail.sync"),
+    update: t("activity.kind_update"),
+    toast: t("activity.kind_system"),
+  }[kind] || t("activity.kind_other");
 }
 
 function activityTime(value) {
@@ -3962,6 +4027,10 @@ function readPrefsFromModal() {
     })(),
     reduceMotion:    !!document.getElementById("pref-reduce-motion")?.checked,
     strongFocus:     !!document.getElementById("pref-strong-focus")?.checked,
+    toastDuration:   (() => {
+      const v = document.getElementById("pref-toast-duration")?.value;
+      return TOAST_DURATIONS.includes(v) ? v : "normal";
+    })(),
     viewFade:        document.getElementById("pref-view-fade")?.checked ?? true,
     bootScreen:      document.getElementById("pref-boot-screen")?.checked ?? true,
     overlayScrollbars: !!document.getElementById("pref-overlay-scrollbars")?.checked,
@@ -4022,7 +4091,7 @@ function savePrefsFromModal() {
         // Si el keyring rechazó la passphrase o la contraseña WebDAV recién
         // escritas, se han perdido al guardar: no puede quedarse en la consola.
         if (isKeyringUnavailableError(e)) {
-          const { message, ms } = syncFailureToast(e, "Sync", t, 6000);
+          const { message, ms } = syncFailureToast(e, t("rail.sync"), t, 6000);
           toast(message, "error", ms);
         }
       });
@@ -4034,6 +4103,7 @@ function savePrefsFromModal() {
   if (effectiveLang !== getLanguage()) {
     setLanguage(effectiveLang).then(() => {
       applyTranslations();
+      updateZenExitTooltip();
       // `applyTranslations` reescribe el tooltip del botón de túneles desde su
       // clave, y con él se va la lista de túneles activos: se vuelve a pintar.
       refreshTunnelIndicators();
@@ -4952,10 +5022,10 @@ function captureSidebarTreeState() {
 
 function restoreSidebarTreeState(state) {
   if (!state) return;
-  const workspaces = Array.isArray(prefs.workspaces) ? prefs.workspaces : [];
-  if (workspaces.some((w) => w.id === state.activeWorkspaceId)) {
-    prefs.activeWorkspaceId = state.activeWorkspaceId;
-  }
+  // Si otro equipo borró el workspace activo, la lista recibida ya no lo
+  // tiene: se pasa al primero (navegación local, sin fechar el bundle) en vez
+  // de quedarse en un workspace fantasma con el árbol vacío.
+  prefs.activeWorkspaceId = resolveActiveWorkspaceId(prefs.workspaces, state.activeWorkspaceId);
   if (["current", "all", "favorites"].includes(state.sidebarViewMode)) {
     prefs.sidebarViewMode = state.sidebarViewMode;
   }
@@ -5025,7 +5095,7 @@ function renderWorkspaceSwitcher() {
     } else if (prefs.sidebarViewMode === "favorites") {
       ctxLabel.textContent = t("sidebar.view_favorites");
     } else {
-      ctxLabel.textContent = activeWorkspace ? activeWorkspace.name : "Default";
+      ctxLabel.textContent = activeWorkspace ? activeWorkspace.name : "Default"; // i18n-exempt: nombre guardado del workspace por defecto (dato sincronizado, no texto de la interfaz)
     }
   }
   if (ctxIcon) {
@@ -5243,46 +5313,11 @@ async function handleWorkspaceMenuClick(action, wsId) {
     return;
   }
   if (action === "delete") {
-    if (prefs.workspaces.length <= 1) return;
-    const cur = prefs.workspaces.find((w) => w.id === getActiveWorkspaceId());
-    if (!cur) return;
-    const inUse = profiles.some((p) => (p.workspace_id || "default") === cur.id);
-    const msg = inUse
-      ? t("sidebar.workspace_confirm_delete_full")
-      : t("sidebar.workspace_confirm_delete");
-    if (!confirm(msg)) return;
-    const finalize = () => {
-      prefs.workspaces = prefs.workspaces.filter((w) => w.id !== cur.id);
-      if (prefs.userFoldersByWorkspace) delete prefs.userFoldersByWorkspace[cur.id];
-      deleteWorkspaceColors(cur.id);
-      prefs.activeWorkspaceId = prefs.workspaces[0].id;
-      userFolders = new Set(getWorkspaceFolders(prefs.activeWorkspaceId));
-      prefs._prefsUpdatedAt = new Date().toISOString();
-      savePrefs();
-      renderConnectionList();
-      scheduleProfileAutoSync();
-    };
-    if (inUse) {
-      // La misma vía común que deleteWorkspaceById: transacción única con
-      // tombstones, limpieza de credenciales y papelera.
-      const ids = profiles.filter((p) => (p.workspace_id || "default") === cur.id).map((p) => p.id);
-      const wsTrashPayload = {
-        workspace: { ...cur },
-        folders: getWorkspaceFolders(cur.id),
-        profileTrashIds: [],
-      };
-      deleteProfilesData(ids)
-        .then(() => {
-          wsTrashPayload.profileTrashIds = lastDeletionTrashIds;
-          finalize();
-          const wsTrashId = trashAdd("workspace", cur.name, wsTrashPayload);
-          showUndoDeleteToast(t("trash.workspace_deleted", { name: cur.name }), [wsTrashId]);
-        })
-        .catch((err) => console.error("[workspace] delete_profiles", err));
-    } else {
-      finalize();
-    }
     toggleWorkspaceMenu(false);
+    // La vía común: diálogos tematizados (wry no implementa `window.confirm`:
+    // en Linux y macOS no mostraba nada), confirmación tecleada si tiene
+    // conexiones y papelera con Deshacer también para un workspace vacío.
+    await deleteWorkspaceById(getActiveWorkspaceId());
     return;
   }
 }
@@ -5435,7 +5470,9 @@ async function handleWake(cause) {
   if (action === "nothing") return;
 
   const live = liveSessions();
-  const dead = [...sessions.values()].filter((s) => ["closed", "error"].includes(s.status));
+  // Solo pestañas de terminal: despertar no relanza clientes externos (RDP/VNC/Telnet).
+  const dead = [...sessions.values()].filter((s) =>
+    s.terminal && !isExternalLauncherType(s.type) && ["closed", "error"].includes(s.status));
   if (!live.length && !dead.length) return;
 
   toast(
@@ -5580,13 +5617,18 @@ async function initFtpsCertPrompt() {
         ].join("\n"),
         submitLabel: t("modal_ftpscert.accept"),
         danger: true,
+        armSubmit: true,
+        expiresAt: Date.now() + BACKEND_TRUST_PROMPT_MS,
       });
+      let delivered = true;
       try {
-        await invoke("ftps_cert_response", { promptId: p.promptId, accept });
+        delivered = await invoke("ftps_cert_response", { promptId: p.promptId, accept });
       } catch (e) {
         console.error("[ftpscert] response", e);
       }
-      if (!accept) toast(t("toast.ftpscert_rejected", { host: p.host }), "warning");
+      // `false` = la pregunta caducó mientras esperaba (en la cola o a la vista).
+      if (accept && delivered === false) toast(t("toast.prompt_expired", { host: p.host }), "warning");
+      else if (!accept) toast(t("toast.ftpscert_rejected", { host: p.host }), "warning");
     }
   );
 }
@@ -5626,6 +5668,8 @@ async function initHostKeyPrompt() {
           ].join("\n"),
           submitLabel: t("modal_hostkey_changed.accept"),
           danger: true,
+          armSubmit: true,
+          expiresAt: Date.now() + BACKEND_TRUST_PROMPT_MS,
         });
       } else {
         accept = await confirmThemed({
@@ -5639,14 +5683,19 @@ async function initHostKeyPrompt() {
           ].join("\n"),
           submitLabel: t("modal_hostkey.accept"),
           danger: true,
+          armSubmit: true,
+          expiresAt: Date.now() + BACKEND_TRUST_PROMPT_MS,
         });
       }
+      let delivered = true;
       try {
-        await invoke("ssh_hostkey_response", { promptId: p.promptId, accept });
+        delivered = await invoke("ssh_hostkey_response", { promptId: p.promptId, accept });
       } catch (e) {
         console.error("[hostkey] response", e);
       }
-      if (!accept) toast(t("toast.hostkey_rejected", { host: p.host }), "warning");
+      // `false` = la pregunta caducó mientras esperaba (en la cola o a la vista).
+      if (accept && delivered === false) toast(t("toast.prompt_expired", { host: p.host }), "warning");
+      else if (!accept) toast(t("toast.hostkey_rejected", { host: p.host }), "warning");
     }
   );
 }
@@ -5696,6 +5745,7 @@ async function initAuthPrompt() {
           // `echo: false` = contraseña o código de un solo uso: no se enseña.
           inputType: field.echo ? "text" : "password",
           submitLabel: t("modal_auth_prompt.submit"),
+          expiresAt: Date.now() + BACKEND_AUTH_PROMPT_MS,
         });
         if (!result) {
           responses = null;
@@ -5704,12 +5754,15 @@ async function initAuthPrompt() {
         responses.push(String(result.value ?? ""));
       }
 
+      let delivered = true;
       try {
-        await invoke("ssh_auth_prompt_response", { promptId: p.promptId, responses });
+        delivered = await invoke("ssh_auth_prompt_response", { promptId: p.promptId, responses });
       } catch (e) {
         console.error("[auth-prompt] response", e);
       }
-      if (responses === null) toast(t("toast.auth_prompt_canceled"), "warning");
+      // `false` = la ronda caducó mientras esperaba (en la cola o a la vista).
+      if (responses !== null && delivered === false) toast(t("toast.prompt_expired", { host: p.host || "" }), "warning");
+      else if (responses === null) toast(t("toast.auth_prompt_canceled"), "warning");
     }
   );
 }
@@ -5823,10 +5876,10 @@ function renderDashboard() {
     const emptyMsg = rows.length
       ? null
       : (mode === "current"
-          ? "Sin actividad en este workspace"
+          ? t("dashboard.activity_empty_workspace")
           : mode === "favorites"
-            ? "Sin actividad en favoritos"
-            : "La actividad aparecerá aquí al conectar perfiles");
+            ? t("dashboard.activity_empty_favorites")
+            : t("dashboard.activity_empty_all"));
     activity.innerHTML = rows.length
       ? rows.map(({ profile, lastConnectedAt }) => renderDashboardActivityRow(profile, lastConnectedAt)).join("")
       : `<div class="dashboard-empty-line">${escHtml(emptyMsg)}</div>`;
@@ -5940,10 +5993,10 @@ function renderDashboardWorkspaceChip() {
   const totalInWs = profiles.filter(profileBelongsToActiveWorkspace).length;
   let label = "";
   if (mode === "all") {
-    label = `Todos los perfiles · ${profiles.length}`;
+    label = `${t("sidebar.view_all")} · ${profiles.length}`;
   } else if (mode === "favorites") {
     const favCount = (prefs.favorites || []).length;
-    label = `Favoritos · ${favCount}`;
+    label = `${t("sidebar.view_favorites")} · ${favCount}`;
   } else if (ws) {
     label = `${ws.name || "Default"} · ${totalInWs}`;
   }
@@ -6683,7 +6736,10 @@ function bindTreeEvents(container) {
   container.querySelectorAll(".folder-header").forEach((header) => {
     header.addEventListener("click", () => {
       const item = header.closest(".folder-item");
-      const path = item.dataset.folderPath;
+      // La raíz de un workspace (vista «Todos») lleva la ruta `__ws__/<id>` en
+      // la cabecera, no en el item: leyendo solo el item todas compartían la
+      // clave `undefined` y el render las reabría.
+      const path = header.dataset.folderPath || item.dataset.folderPath;
       const children = item.querySelector(".folder-children");
       const arrow = header.querySelector(".folder-arrow");
       if (openFolders.has(path)) {
@@ -6708,6 +6764,8 @@ function bindTreeEvents(container) {
 // ═══════════════════════════════════════════════════════════════
 
 let _dragState = null;
+// Contenedores con los manejadores de la raíz ya puestos (ver más abajo).
+const _rootDropBound = new WeakSet();
 
 function workspaceForElement(el) {
   const wsRootEl = el?.closest?.("[data-ws-root]");
@@ -6830,11 +6888,21 @@ function bindSidebarDragAndDrop(container) {
   });
 
   // ── Destino: zona vacía del contenedor (raíz del workspace activo) ──
+  // El contenedor sobrevive a cada render (solo cambia su contenido): estos
+  // manejadores se ponen una vez, o se acumulaba una copia por repintado.
+  if (_rootDropBound.has(container)) return;
+  _rootDropBound.add(container);
+  // Con una búsqueda la lista no es el árbol del workspace activo: soltar un
+  // resultado en un hueco lo movía a su raíz, viniera del workspace que fuera.
+  const rootDropDisabled = () =>
+    prefs.sidebarViewMode === "all" // raíz ambigua entre workspaces
+    || prefs.sidebarViewMode === "favorites"
+    || !!_sidebarSearchQuery.trim();
   container.addEventListener("dragover", (e) => {
     if (!_dragState) return;
     if (e.target.closest(".folder-header")) return; // ya gestionado
     if (e.target.closest(".conn-item")) return;
-    if (prefs.sidebarViewMode === "all") return; // raíz ambigua entre workspaces
+    if (rootDropDisabled()) return;
     if (!isValidDropTarget(_dragState, "", getActiveWorkspaceId())) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
@@ -6847,7 +6915,7 @@ function bindSidebarDragAndDrop(container) {
   container.addEventListener("drop", async (e) => {
     if (!_dragState) return;
     if (e.target.closest(".folder-header")) return;
-    if (prefs.sidebarViewMode === "all") return;
+    if (rootDropDisabled()) return;
     e.preventDefault();
     container.classList.remove("drag-over-root");
     const drag = _dragState;
@@ -6897,7 +6965,7 @@ async function applyDrop(drag, targetFolder, targetWs) {
       await moveFolderTo(drag.path, drag.sourceWs, targetFolder, targetWs);
     }
   } catch (err) {
-    toast(`Error al mover: ${err}`, "error");
+    toast(t("toast.move_failed", { err }), "error");
   }
 }
 
@@ -7176,6 +7244,7 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
 }
 
 function hideContextMenu() {
+  noteFloatingMenuHidden("context-menu");
   document.getElementById("context-menu").classList.add("hidden");
   ctxTarget = { type: null, id: null, folderPath: null, workspaceId: null };
 }
@@ -7189,6 +7258,20 @@ function hideContextMenu() {
 // Tab o Escape cierran devolviendo el foco al elemento que abrió el menú.
 const FLOATING_MENU_IDS = ["context-menu", "tab-context-menu", "sftp-context-menu"];
 let menuReturnFocus = null;
+/**
+ * Cuándo se cerró por última vez un menú visible. Un diálogo que se abre con
+ * el foco en `body` justo después viene de ese menú; pasado el margen, el foco
+ * en `body` es otra cosa (en macOS un clic no enfoca los botones) y volver al
+ * disparador de un menú antiguo movería la barra lateral hasta él.
+ */
+let menuHiddenAt = -Infinity;
+const MENU_OPENER_WINDOW_MS = 3000;
+
+/** @param {string} id */
+function noteFloatingMenuHidden(id) {
+  const el = document.getElementById(id);
+  if (el && !el.classList.contains("hidden")) menuHiddenAt = performance.now();
+}
 
 function openFloatingMenuEl() {
   for (const id of FLOATING_MENU_IDS) {
@@ -7492,7 +7575,7 @@ function startInlineFolderCreation(parentPath = null, workspaceId = getActiveWor
       openFolders.add(fullPath);
       renderConnectionList();
       scheduleProfileAutoSync();
-      toast(`Carpeta "${name}" creada`, "success");
+      toast(t("toast.folder_created", { name }), "success");
     } else if (e.key === "Escape") {
       wrapper.remove();
     }
@@ -7552,7 +7635,7 @@ async function renameFolder(folderPath, workspaceId = getActiveWorkspaceId()) {
 
   renderConnectionList();
   scheduleProfileAutoSync();
-  toast(`Carpeta renombrada a "${newName.trim()}"`, "success");
+  toast(t("toast.folder_renamed", { name: newName.trim() }), "success");
 }
 
 // Renombrado rápido de una conexión (atajo F2 en la sidebar). Solo cambia el
@@ -7575,7 +7658,7 @@ async function renameProfileById(profileId) {
   try {
     await invoke("save_profile", { profile: updated });
   } catch (err) {
-    toast(`No se pudo renombrar: ${err}`, "error");
+    toast(t("toast.conn_rename_failed", { err }), "error");
     return;
   }
   const idx = profiles.findIndex((p) => p.id === profileId);
@@ -7597,7 +7680,7 @@ async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiv
   if (count > 0) {
     const ok = await confirmDestructiveTyped({
       title: t("ctx.delete_folder"),
-      message: `¿Eliminar la carpeta "${folderPath}"?\n${count} conexión(es) se moverán a la raíz.`,
+      message: t("ctx.delete_folder_confirm", { path: folderPath, count }),
       expectedText: folderName,
       danger: true,
     });
@@ -7605,7 +7688,7 @@ async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiv
   } else {
     const ok = await confirmThemed({
       title: t("ctx.delete_folder"),
-      message: `¿Eliminar la carpeta vacía "${folderPath}"?`,
+      message: t("ctx.delete_folder_empty_confirm", { path: folderPath }),
       submitLabel: t("modal_destructive.submit"),
       danger: true,
     });
@@ -7649,7 +7732,6 @@ async function deleteFolderAndMoveConnections(folderPath, workspaceId = getActiv
 
   renderConnectionList();
   scheduleProfileAutoSync();
-  toast(`Carpeta "${folderPath}" eliminada`, "info");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -8338,14 +8420,14 @@ function populateKeepassEntrySelect(selectedUuid) {
 
 function formatKeepassEntryLine(entry) {
   if (!entry) return "";
-  const title = entry.title || "(sin título)";
+  const title = entry.title || t("modal_conn.keepass_untitled");
   const userPart = entry.username ? ` — ${entry.username}` : "";
   return entry.group ? `${entry.group} / ${title}${userPart}` : `${title}${userPart}`;
 }
 
 function keepassEntryLabel(entry) {
   if (!entry) return "";
-  const title = entry.title || "(sin título)";
+  const title = entry.title || t("modal_conn.keepass_untitled");
   return entry.group ? `${entry.group} / ${title}` : title;
 }
 
@@ -8395,7 +8477,7 @@ function renderKeepassPickerList(query) {
   const renderItem = (e) => `
     <div class="keepass-picker-item" role="option" data-uuid="${escHtml(e.uuid)}" title="${escHtml(formatKeepassEntryLine(e))}">
       <span class="kp-col kp-col-group">${escHtml(e.group || "")}</span>
-      <span class="kp-col kp-col-title">${escHtml(e.title || "(sin título)")}</span>
+      <span class="kp-col kp-col-title">${escHtml(e.title || t("modal_conn.keepass_untitled"))}</span>
       <span class="kp-col kp-col-user">${escHtml(e.username || "")}</span>
       <span class="kp-col kp-col-url">${escHtml(e.url || "")}</span>
     </div>`;
@@ -8790,7 +8872,7 @@ function openFolderPopover() {
 
   folderPopoverDismiss = (e) => {
     if (e.type === "keydown") {
-      if (e.key === "Escape") { closeFolderPopover(); trigger?.focus(); }
+      if (e.key === "Escape") { e.preventDefault(); closeFolderPopover(); trigger?.focus(); }
       return;
     }
     if (!picker.contains(e.target)) closeFolderPopover();
@@ -9039,7 +9121,7 @@ async function getStoredSecret(key) {
   });
 }
 
-async function saveStoredSecret(key, secret, label = "credencial") {
+async function saveStoredSecret(key, secret, label = t("toast.secret_credential")) {
   if (!secret) return false;
   try {
     await invoke("keyring_set", {
@@ -9054,12 +9136,23 @@ async function saveStoredSecret(key, secret, label = "credencial") {
     return true;
   } catch (err) {
     console.warn("[keyring] set failed", key, err);
-    toast(`No se pudo guardar la ${label} en el keyring: ${err}`, "warning", 8000);
+    // Si el keyring del SO rechaza la operación, se nombra igual que en la
+    // pestaña de sync (`prefs_sync.keyring_unavailable`), no como un fallo suelto.
+    const { message, ms } = syncFailureToast(err, t("toast.keyring_save_failed", { what: label }), t, 8000);
+    toast(message, "warning", ms);
     return false;
   }
 }
 
-let credentialPromptResolve = null;
+// Un único modal sirve a todos los diálogos temáticos (contraseña, MFA, host
+// key, certificado FTPS, confirmaciones). La cola los muestra de uno en uno:
+// abrir uno nuevo ya no cancela el visible (modules/dialogs/prompt-queue.js).
+const credentialPromptQueue = createPromptQueue();
+/** Tras mostrar una confirmación de confianza, el envío se ignora durante estos ms. */
+const CREDENTIAL_SUBMIT_ARM_MS = 400;
+/** Plazos con que el backend espera una respuesta (host_keys/ftps_certs y auth_prompt). */
+const BACKEND_TRUST_PROMPT_MS = 120_000;
+const BACKEND_AUTH_PROMPT_MS = 180_000;
 let credentialExtraActionButtons = [];
 
 function credentialTarget(profile) {
@@ -9077,6 +9170,8 @@ function initCredentialModalEvents() {
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
+    // Un Intro que ya venía tecleado no acepta una host key recién mostrada.
+    if (!credentialPromptQueue.canSubmit()) return;
     const input = document.getElementById("credential-modal-input");
     const remember = document.getElementById("credential-modal-remember");
     closeCredentialPrompt({
@@ -9104,12 +9199,27 @@ function closeCredentialPrompt(result = null) {
   if (remember) remember.checked = false;
   if (submitBtn) submitBtn.classList.remove("danger");
 
-  const resolve = credentialPromptResolve;
-  credentialPromptResolve = null;
-  if (resolve) resolve(result);
+  // Ejecuta la limpieza del diálogo (la que devolvió su `onShow`), lo resuelve
+  // y da paso al siguiente de la cola.
+  credentialPromptQueue.close(result);
 }
 
-function promptCredential({
+/**
+ * Pide un dato (o una confirmación) con el modal de credenciales. Si ya hay un
+ * diálogo a la vista, este espera su turno en la cola. Lo que el llamador
+ * quiera ajustar en el modal va en `onShow` —se ejecuta al mostrarse, no al
+ * pedirse— y su limpieza es la función que devuelva.
+ */
+function promptCredential(opts) {
+  // `armSubmit`: confirmar una host key o un certificado. Un Intro que ya venía
+  // tecleado (en otro diálogo o en un terminal) no la acepta al aparecer.
+  const armMs = opts?.armSubmit ? CREDENTIAL_SUBMIT_ARM_MS : 0;
+  // `expiresAt`: las preguntas del backend caducan (huella y certificado a los
+  // 120 s, MFA a los 180 s); si caducan esperando turno, no se muestran.
+  return credentialPromptQueue.request(() => paintCredentialPrompt(opts), { armMs, expiresAt: opts?.expiresAt || 0 });
+}
+
+function paintCredentialPrompt({
   title,
   message,
   label,
@@ -9121,6 +9231,7 @@ function promptCredential({
   danger = false,
   rememberDefault = false,
   extraActions = [],
+  onShow = null,
 }) {
   const overlay = document.getElementById("credential-modal-overlay");
   const titleEl = document.getElementById("credential-modal-title");
@@ -9134,11 +9245,9 @@ function promptCredential({
   const actionsRow = submitBtn?.closest(".modal-actions");
 
   if (!overlay || !titleEl || !messageEl || !labelEl || !inputRow || !input || !rememberRow || !submitBtn) {
-    console.warn("[credentials] modal is not available");
-    return Promise.resolve(null);
+    // La cola lo da por cancelado (null) y sigue con el siguiente.
+    throw new Error("[credentials] modal is not available");
   }
-
-  if (credentialPromptResolve) closeCredentialPrompt(null);
 
   titleEl.textContent = title || t("modal_credential.password_title");
   messageEl.textContent = message || "";
@@ -9179,63 +9288,77 @@ function promptCredential({
     rememberRow.classList.add("hidden");
   }
 
+  // Sin campo es una confirmación: `alertdialog` (el lector lee el mensaje,
+  // enlazado con aria-describedby) y, si es destructiva, el foco empieza en
+  // «Cancelar»: un Enter por reflejo no debe borrar nada.
+  document.getElementById("credential-modal")?.setAttribute("role", hideInput ? "alertdialog" : "dialog");
   overlay.classList.remove("hidden");
   setTimeout(() => {
-    if (hideInput) submitBtn.focus();
+    if (hideInput) (danger ? document.getElementById("btn-credential-cancel") ?? submitBtn : submitBtn).focus();
     else {
       input.focus();
       if (inputType === "text") input.select();
     }
   }, 0);
 
-  return new Promise((resolve) => {
-    credentialPromptResolve = resolve;
-  });
+  return typeof onShow === "function" ? onShow() : undefined;
 }
 
-async function promptTextValue({ title, message, label, initialValue = "", submitLabel = "Aceptar", validate = null }) {
-  const promise = promptCredential({
-    title,
-    message,
-    label,
-    submitLabel,
-    inputType: "text",
-    initialValue,
-  });
-
+async function promptTextValue({ title, message, label, initialValue = "", submitLabel = t("modal_credential.accept"), validate = null }) {
   // Validación en vivo opcional: mientras el valor sea inválido deshabilitamos el
   // botón y mostramos el motivo en el propio diálogo, en lugar de dejar que el
   // usuario confirme y avisarle a posteriori. `validate(value)` devuelve el
-  // mensaje de error o `null` si el valor es aceptable.
-  let inputHandler = null;
-  const input = document.getElementById("credential-modal-input");
-  const submitBtn = document.getElementById("btn-credential-submit");
-  const messageEl = document.getElementById("credential-modal-message");
-  if (validate && input && submitBtn && messageEl) {
+  // mensaje de error o `null` si el valor es aceptable. Se engancha al
+  // mostrarse (`onShow`): si el diálogo espera turno en la cola, tocar ya el
+  // modal estropearía el que está a la vista.
+  const onShow = () => {
+    const input = document.getElementById("credential-modal-input");
+    const submitBtn = document.getElementById("btn-credential-submit");
+    const messageEl = document.getElementById("credential-modal-message");
+    if (!validate || !input || !submitBtn || !messageEl) return undefined;
     const baseMessage = message || "";
-    inputHandler = () => {
+    const inputHandler = () => {
       const value = input.value.trim();
       if (!value) {
         // Vacío: estado neutro (botón inhabilitado, sin texto de error).
         submitBtn.disabled = true;
         messageEl.textContent = baseMessage;
         messageEl.style.color = "";
+        input.removeAttribute("aria-invalid");
         return;
       }
       const reason = validate(value);
       submitBtn.disabled = !!reason;
       messageEl.textContent = reason || baseMessage;
-      messageEl.style.color = reason ? "var(--danger, #e06c75)" : "";
+      messageEl.style.color = reason ? "var(--red)" : "";
+      // El motivo se anuncia (región de estado) y marca el campo: con el
+      // botón desactivado, el lector debe poder decir por qué.
+      if (reason) input.setAttribute("aria-invalid", "true");
+      else input.removeAttribute("aria-invalid");
     };
+    messageEl.setAttribute("role", "status");
+    input.setAttribute("aria-describedby", "credential-modal-message");
     input.addEventListener("input", inputHandler);
     inputHandler();
-  }
+    return () => {
+      input.removeEventListener("input", inputHandler);
+      input.removeAttribute("aria-invalid");
+      input.removeAttribute("aria-describedby");
+      messageEl.removeAttribute("role");
+      submitBtn.disabled = false;
+      messageEl.style.color = "";
+    };
+  };
 
-  const result = await promise;
-
-  if (inputHandler && input) input.removeEventListener("input", inputHandler);
-  if (submitBtn) submitBtn.disabled = false;
-  if (messageEl) messageEl.style.color = "";
+  const result = await promptCredential({
+    title,
+    message,
+    label,
+    submitLabel,
+    inputType: "text",
+    initialValue,
+    onShow,
+  });
 
   if (!result) return null;
   const value = result.value.trim();
@@ -9252,12 +9375,12 @@ async function promptTextValue({ title, message, label, initialValue = "", submi
  */
 function invalidEntryNameReason(name, { isLocal = false } = {}) {
   const value = String(name ?? "").trim();
-  if (!value) return "El nombre no puede estar vacío.";
-  if (value === "." || value === "..") return "Ese nombre está reservado.";
-  if (value.includes("/")) return "El nombre no puede contener «/».";
+  if (!value) return t("sftp.name_empty");
+  if (value === "." || value === "..") return t("sftp.name_reserved");
+  if (value.includes("/")) return t("sftp.name_forbidden_char", { char: "/" });
   // En remoto (Unix) «\» es un carácter válido en un nombre; solo lo vetamos
   // en local, donde puede actuar como separador de rutas (Windows).
-  if (isLocal && value.includes("\\")) return "El nombre no puede contener «\\».";
+  if (isLocal && value.includes("\\")) return t("sftp.name_forbidden_char", { char: "\\" });
   return null;
 }
 
@@ -9283,13 +9406,15 @@ async function promptEntryName({ title, message, label, submitLabel, initialValu
   }
 }
 
-async function confirmThemed({ title, message, submitLabel = "Aceptar", danger = false }) {
+async function confirmThemed({ title, message, submitLabel = t("modal_credential.accept"), danger = false, armSubmit = false, expiresAt = 0 }) {
   const result = await promptCredential({
     title,
     message,
     submitLabel,
     hideInput: true,
     danger,
+    armSubmit,
+    expiresAt,
   });
   return !!result;
 }
@@ -9305,38 +9430,36 @@ async function confirmDestructiveTyped({ title, message, expectedText, submitLab
   if (!expected) {
     return confirmThemed({ title, message, submitLabel, danger });
   }
-  const input = document.getElementById("credential-modal-input");
-  const submitBtn = document.getElementById("btn-credential-submit");
-  const labelEl = document.getElementById("credential-modal-label");
-
-  let inputHandler = null;
-  const cleanup = () => {
-    if (inputHandler && input) input.removeEventListener("input", inputHandler);
-    if (submitBtn) submitBtn.disabled = false;
-    if (input) input.placeholder = "";
+  // La guarda del texto se pone al mostrarse el diálogo (`onShow`), no al
+  // pedirlo: si espera turno en la cola, desactivaría el «Aceptar» del visible.
+  const onShow = () => {
+    const input = document.getElementById("credential-modal-input");
+    const submitBtn = document.getElementById("btn-credential-submit");
+    const labelEl = document.getElementById("credential-modal-label");
+    if (!input || !submitBtn) return undefined;
+    submitBtn.disabled = true;
+    input.placeholder = t("modal_destructive.type_to_confirm_placeholder", { name: expected });
+    if (labelEl) labelEl.textContent = t("modal_destructive.type_to_confirm", { name: expected });
+    const inputHandler = () => {
+      submitBtn.disabled = input.value.trim() !== expected;
+    };
+    input.addEventListener("input", inputHandler);
+    return () => {
+      input.removeEventListener("input", inputHandler);
+      submitBtn.disabled = false;
+      input.placeholder = "";
+    };
   };
 
-  const promise = promptCredential({
+  const result = await promptCredential({
     title,
     message,
     label: t("modal_destructive.type_to_confirm", { name: expected }),
     submitLabel: submitLabel || t("modal_destructive.submit"),
     danger,
     inputType: "text",
+    onShow,
   });
-
-  if (input && submitBtn) {
-    submitBtn.disabled = true;
-    input.placeholder = t("modal_destructive.type_to_confirm_placeholder", { name: expected });
-    if (labelEl) labelEl.textContent = t("modal_destructive.type_to_confirm", { name: expected });
-    inputHandler = () => {
-      submitBtn.disabled = input.value.trim() !== expected;
-    };
-    input.addEventListener("input", inputHandler);
-  }
-
-  const result = await promise;
-  cleanup();
   if (!result) return false;
   return String(result.value || "").trim() === expected;
 }
@@ -9344,7 +9467,7 @@ async function confirmDestructiveTyped({ title, message, expectedText, submitLab
 async function chooseThemed({
   title,
   message,
-  submitLabel = "Aceptar",
+  submitLabel = t("modal_credential.accept"),
   rememberLabel,
   danger = false,
   actions = [],
@@ -9452,7 +9575,7 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
 
   return {
     id: persistIdentity ? (editingProfileId || crypto.randomUUID()) : (editingProfileId || `test-${crypto.randomUUID()}`),
-    name: document.getElementById("f-name").value.trim() || document.getElementById("f-host").value.trim() || "Prueba",
+    name: document.getElementById("f-name").value.trim() || document.getElementById("f-host").value.trim() || t("modal_conn.test_profile_name"),
     host: document.getElementById("f-host").value.trim(),
     port: parseInt(document.getElementById("f-port").value, 10),
     username: document.getElementById("f-user").value.trim(),
@@ -9727,14 +9850,14 @@ async function saveAndClose(shouldConnect) {
     await invoke("save_profile", { profile });
 
     if (authType === "password" && passwordSource === "own" && password && savePassword) {
-      await saveStoredSecret(passwordKey(profile.id), password, "contraseña");
+      await saveStoredSecret(passwordKey(profile.id), password, t("toast.secret_password"));
     }
     if (authType === "public_key" && passphrase && savePassphrase) {
-      await saveStoredSecret(passphraseKey(profile.id), passphrase, "passphrase");
+      await saveStoredSecret(passphraseKey(profile.id), passphrase, t("toast.secret_passphrase"));
     }
     // Identidades adicionales: guardar contraseñas nuevas y limpiar las borradas.
     for (const { key, secret } of extraPwWrites) {
-      await saveStoredSecret(key, secret, "contraseña");
+      await saveStoredSecret(key, secret, t("toast.secret_password"));
     }
     for (const key of extraPwDeletes) {
       await deleteStoredSecret(key);
@@ -9767,7 +9890,7 @@ async function saveAndClose(shouldConnect) {
       toast(t("toast.profile_saved"), "success");
     }
   } catch (err) {
-    toast(`Error: ${err}`, "error");
+    toast(t("sftp.op_failed", { err }), "error");
   }
 }
 
@@ -9909,7 +10032,7 @@ async function resolveSshCredentials(profile, cred = null) {
           labelKey: "modal_credential.password_label",
           rememberKey: "modal_credential.remember_password",
           secretKey: view.pwKey,
-          secretLabel: "contraseña",
+          secretLabel: t("toast.secret_password"),
         });
         if (password === null) return null;
       }
@@ -9923,7 +10046,7 @@ async function resolveSshCredentials(profile, cred = null) {
         labelKey: "modal_credential.passphrase_label",
         rememberKey: "modal_credential.remember_passphrase",
         secretKey: view.ppKey,
-        secretLabel: "passphrase",
+        secretLabel: t("toast.secret_passphrase"),
         submitKey: "modal_credential.accept",
       });
       if (passphrase === null) return null;
@@ -9932,6 +10055,13 @@ async function resolveSshCredentials(profile, cred = null) {
   return { password, passphrase };
 }
 
+/**
+ * Contraseña de una conexión que solo autentica por contraseña (FTP/FTPS).
+ * Mismo contrato que `resolveSshCredentials`: `{ password }`, con `password`
+ * nulo cuando la resuelve el backend (KeePass, credencial maestra), o `null`
+ * si hay que abortar (KeePass bloqueada, diálogo cancelado). Antes devolvía
+ * `null` también en el primer caso y el llamador lo tomaba por cancelación.
+ */
 async function resolvePasswordOnlyCredentials(profile, {
   passwordOverride = null,
   titleKey = "modal_credential.sftp_password_title",
@@ -9940,19 +10070,16 @@ async function resolvePasswordOnlyCredentials(profile, {
 } = {}) {
   const view = identityView(profile, cred);
   const promptProfile = { ...profile, username: view.username };
-  if (view.keepassEntryUuid) {
-    if (!keepassUnlocked) {
-      toast(t("toast.keepass_locked"), "warning");
-      return null;
-    }
-    return passwordOverride || null;
+  const plan = passwordPlan(view, { keepassUnlocked, passwordOverride });
+  if (plan === "locked") {
+    toast(t("toast.keepass_locked"), "warning");
+    return null;
   }
-  if (view.passwordSource === "master") {
-    // El backend resuelve la credencial maestra; no pedimos contraseña.
-    return passwordOverride || null;
-  }
+  // KeePass o credencial maestra: el backend resuelve la contraseña; no pedimos nada.
+  if (plan === "backend") return { password: null };
+  if (plan === "override") return { password: passwordOverride };
 
-  let password = passwordOverride || await getStoredSecret(view.pwKey);
+  let password = await getStoredSecret(view.pwKey);
   if (!password) {
     password = await promptProfileSecret(promptProfile, {
       titleKey,
@@ -9960,11 +10087,11 @@ async function resolvePasswordOnlyCredentials(profile, {
       labelKey: "modal_credential.password_label",
       rememberKey: "modal_credential.remember_password",
       secretKey: view.pwKey,
-      secretLabel: "contraseña",
+      secretLabel: t("toast.secret_password"),
     });
     if (password === null) return null;
   }
-  return password;
+  return { password };
 }
 
 async function connectProfile(profileId, { force = false, credId = null, restore = false } = {}) {
@@ -10371,7 +10498,7 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
     // `ssh_connect` rechaza con `IpcError` estructurado: un fallo de host key
     // no es «credenciales incorrectas» y no debe empujar a reescribir la
     // contraseña, así que se avisa aparte y con más peso.
-    toast(`No se pudo conectar: ${ipcErrorText(err)}`, "error",
+    toast(t("toast.cannot_connect", { err: ipcErrorText(err) }), "error",
       isHostKeyError(err) ? 12000 : undefined);
   }
 }
@@ -10483,6 +10610,7 @@ async function handleRdpCertChanged(sessionId, profile, info) {
     message: message.join("\n"),
     submitLabel: t("modal_rdp_cert_changed.accept"),
     danger: true,
+    armSubmit: true,
   });
   if (!accept) {
     toast(t("toast.rdp_cert_rejected", { host }), "warning");
@@ -10544,7 +10672,7 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null, r
         labelKey: "modal_credential.password_label",
         rememberKey: "modal_credential.remember_password",
         secretKey: view.pwKey,
-        secretLabel: "contraseña",
+        secretLabel: t("toast.secret_password"),
       });
       if (password === null) return; // usuario canceló
     }
@@ -10641,7 +10769,7 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null, r
       sessions.delete(sessionId);
       removeTab(sessionId);
     }
-    toast(`Error RDP: ${err}`, "error");
+    toast(t("external.toast_error", { proto: "RDP", err }), "error");
   }
 }
 
@@ -10784,13 +10912,14 @@ async function connectFileTransferProfile(profileId, { passwordOverride = null, 
   }
 
   const cred = getProfileCredential(profile, credId);
-  const password = await resolvePasswordOnlyCredentials(profile, {
+  const creds = await resolvePasswordOnlyCredentials(profile, {
     passwordOverride,
     titleKey: "modal_credential.sftp_password_title",
     messageKey: "modal_credential.sftp_message",
     cred,
   });
-  if (password === null) return;
+  if (creds === null) return;
+  const { password } = creds;
 
   const sessionId = `${profile.connection_type}-${crypto.randomUUID()}`;
   const sessionObj = {
@@ -10811,12 +10940,19 @@ async function connectFileTransferProfile(profileId, { passwordOverride = null, 
 
   try {
     await openSftpPanel(sessionId, { passwordOverride: password, passphraseOverride: null });
+    // El panel puede volver sin conectar y sin error (KeePass bloqueada, diálogo
+    // cancelado): no dejar una pestaña «conectada» vacía.
+    if (!sessionObj.sftp) {
+      sessions.delete(sessionId);
+      removeTab(sessionId);
+      return;
+    }
     sessionObj.status = "connected";
     updateTabStatus(sessionId, "connected");
     if (!sessionObj.private) recordRecentConnection(profileId);
     renderConnectionList();
     setActiveTab(sessionId);
-    toast(`${profile.connection_type.toUpperCase()} conectado: ${profile.name}`, "success");
+    toast(t("toast.proto_connected", { proto: profile.connection_type.toUpperCase(), name: profile.name }), "success");
     // FTP plano: credenciales y datos viajan sin cifrar. Aviso no bloqueante
     // (FTPS no lo dispara). Sugiere FTPS, que ya acepta certificados por huella.
     if (profile.connection_type === "ftp") {
@@ -10951,6 +11087,11 @@ async function reconnectExternalSession(sessionId) {
   const opts = { credId: s.credentialId || null, reuse: sessionId };
   if (kind === "rdp") await connectRdp(s.profileId, opts);
   else await connectExternalNoAuth(s.profileId, kind, opts);
+  // Salió sin lanzar nada (diálogo cancelado, KeePass bloqueada): el panel
+  // vuelve a «cerrada» con su botón Reconectar en vez de quedarse en «Conectando…».
+  if (sessions.get(sessionId) === s && s.status === "closed") {
+    setExternalPaneState(sessionId, "closed", connectionProtocolMeta(kind).label);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -11042,7 +11183,9 @@ function upsertTmuxWindow(root, payload) {
     const container = document.createElement("div");
     container.className = "terminal-pane tmux-window";
     container.dataset.session = tabId;
-    document.getElementById("terminals-container").appendChild(container);
+    // No se cuelga aquí del contenedor de terminales: lo coloca renderView al
+    // seleccionarla. Colgado sin mostrarse, tapaba a la pestaña visible
+    // (`.terminal-pane` va a pantalla completa) hasta el siguiente repintado.
     sessions.set(tabId, {
       id: tabId,
       type: "tmux-window",
@@ -11430,6 +11573,7 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
   </span>` : "";
   tab.innerHTML = `
     <span class="tab-dot ${initialStatus}"></span>
+    <span class="tab-pin" aria-hidden="true"><svg class="icon-x-svg"><use href="#ci-pin"/></svg></span>
     <span class="tab-name">${escHtml(tabLabel)}</span>
     ${envBadgeHtml(profile)}
     ${privateBadge}
@@ -11658,12 +11802,17 @@ function clearTabActivity(sessionId) {
  * Se usa tanto para la pane origen como para replicar en broadcast.
  */
 function sendTerminalInput(sessionObj, data) {
+  if (!sessionObj) return;
   // Pane tmux: nunca bytes crudos — send-keys hex coalescido por frame (F3.1).
   if (sessionObj._tmux) {
     queueTmuxInput(sessionObj, data);
     return;
   }
-  if (!sessionObj || sessionObj.status === "closed" || !sessionObj.terminal || sessionObj.type === "rdp") return;
+  // Raíz en modo control con ventanas: su canal es el protocolo de tmux, no un
+  // terminal; lo tecleado ahí se ejecutaría como comandos tmux. (Mientras
+  // conecta aún no hay ventanas: esa ventana la cubre el backend.)
+  if (isActiveTmuxControlRoot(sessionObj)) return;
+  if (sessionObj.status === "closed" || !sessionObj.terminal || sessionObj.type === "rdp") return;
   const cmd = sessionObj._closeOverride ? "local_shell_send_input" : "ssh_send_input";
   invoke(cmd, {
     sessionId: sessionObj.id,
@@ -11924,7 +12073,7 @@ function takeTerminalOutputChunk(sessionObj) {
   let out = "";
   if (sessionObj._outputDroppedChars) {
     const droppedKb = Math.ceil(sessionObj._outputDroppedChars / 1024);
-    out += `\r\n\x1b[33m... salida omitida para mantener la terminal fluida (${droppedKb} KiB) ...\x1b[0m\r\n`;
+    out += `\r\n\x1b[33m${t("terminal.output_dropped", { kb: droppedKb })}\x1b[0m\r\n`;
     sessionObj._outputDroppedChars = 0;
   }
 
@@ -12123,22 +12272,40 @@ function setSftpFollow(sessionId, enabled, button = null) {
  * Reabre una sesión cerrada reutilizando la pestaña y el xterm existentes.
  * Para shell local: reusa el mismo sessionId.
  * Para SSH: reusa el sessionId para registrar diagnóstico antes del invoke.
- * RDP no entra aquí (tiene su propio botón de reconexión).
+ * RDP/VNC/Telnet delegan en su propio camino (el del botón de su panel).
+ * Un solo intento a la vez: la reconexión SSH espera al keyring antes de pasar
+ * a «conectando», y un segundo Intro o Ctrl+Shift+R en esa espera abría otra
+ * conexión con el mismo id, huérfana (modules/sessions/reconnect.js).
  */
 async function reconnectSession(sessionId) {
   const s = sessions.get(sessionId);
-  if (!s || !["closed", "error"].includes(s.status)) return;
-  // Mostramos el overlay en modo "Reconectando…" inmediatamente para que el
-  // usuario vea feedback al pulsar Intro/Reconectar. El handler de
-  // `ssh-connected-*` (o el de éxito de local_shell_open) lo ocultará; si
-  // falla, las catch blocks de reconnect*InPlace lo vuelven a mostrar como
-  // error con botón activo.
-  showReconnectingOverlay(sessionId);
-  if (s._closeOverride) {
-    await reconnectLocalInPlace(s);
-  } else if (s.profileId) {
-    await reconnectSshInPlace(s);
-  }
+  const route = reconnectRoute(s);
+  if (!route) return;
+  await runReconnectOnce(s, async () => {
+    if (route === "external") {
+      await reconnectExternalSession(sessionId);
+      return;
+    }
+    // Mostramos el overlay en modo "Reconectando…" inmediatamente para que el
+    // usuario vea feedback al pulsar Intro/Reconectar. El handler de
+    // `ssh-connected-*` (o el de éxito de local_shell_open) lo ocultará; si
+    // falla, las catch blocks de reconnect*InPlace lo vuelven a mostrar como
+    // error con botón activo.
+    showReconnectingOverlay(sessionId);
+    try {
+      if (route === "local") await reconnectLocalInPlace(s);
+      else await reconnectSshInPlace(s);
+    } finally {
+      // Salió sin intentarlo (diálogo cancelado, KeePass bloqueada, pestaña
+      // cerrada): el aviso no se queda en «Reconectando…» con el botón inactivo.
+      // Solo si sigue en ese modo, para no pisar el «Error al reconectar».
+      const overlay = document.querySelector(
+        `.terminal-pane[data-session="${CSS.escape(sessionId)}"] .terminal-reconnect-overlay.reconnecting`);
+      if (overlay && sessions.get(sessionId) === s && ["closed", "error"].includes(s.status)) {
+        showReconnectOverlay(sessionId);
+      }
+    }
+  });
 }
 
 /**
@@ -12217,7 +12384,7 @@ async function reconnectLocalInPlace(s) {
     s.status = "error";
     updateTabStatus(sessionId, "error");
     showReconnectOverlay(sessionId, t("terminal.reopen_error"));
-    toast(`Error al reabrir la consola: ${err}`, "error");
+    toast(t("toast.reopen_console_err", { err }), "error");
   }
 }
 
@@ -12235,6 +12402,10 @@ async function reconnectSshInPlace(s) {
     ? await resolveOverrideAuthCredentials(profile, s._overrides)
     : await resolveSshCredentials(profile);
   if (!creds) return;
+  // Mientras se pedían las credenciales pudo cerrarse la pestaña (Ctrl+W) o
+  // cambiar su estado: no se abre una conexión sin pestaña. De aquí a
+  // «conectando» todo es síncrono.
+  if (s._closing || sessions.get(oldSessionId) !== s || !["closed", "error"].includes(s.status)) return;
 
   for (const ul of s.unlisteners) { try { ul(); } catch {} }
   s.unlisteners = [];
@@ -12254,6 +12425,15 @@ async function reconnectSshInPlace(s) {
   try {
     const dataChannel = new Channel();
     s.unlisteners = await registerSshListeners(oldSessionId, s.terminal, dataChannel);
+    // Modo control de tmux: sus listeners se soltaron arriba con el resto y el
+    // worker nuevo anuncia ventanas y layouts nada más enganchar, así que van
+    // antes del invoke. Se decide con el perfil vigente, el mismo que relee
+    // `ssh_connect`.
+    s._tmuxControl = !!profile.tmux_control;
+    if (s._tmuxControl) {
+      s._tmuxClientSize = null; // el cliente tmux nuevo aún no conoce el tamaño
+      s.unlisteners.push(...(await registerTmuxListeners(oldSessionId)));
+    }
     await invoke("ssh_connect", {
       sessionId: oldSessionId,
       onData: dataChannel,
@@ -12274,7 +12454,7 @@ async function reconnectSshInPlace(s) {
     s.status = "error";
     updateTabStatus(oldSessionId, "error");
     showReconnectOverlay(oldSessionId, t("terminal.reconnect_error"));
-    toast(`No se pudo reconectar: ${ipcErrorText(err)}`, "error",
+    toast(t("toast.cannot_reconnect", { err: ipcErrorText(err) }), "error",
       isHostKeyError(err) ? 12000 : undefined);
   }
 }
@@ -12298,6 +12478,10 @@ function handleTerminalInput(sessionObj, data) {
  * - additive=true:  toggle de sid dentro de la selección (mínimo 1)
  */
 function selectSession(sid, additive = false) {
+  // La raíz de una conexión tmux en modo control está oculta y su canal es un
+  // protocolo, no un terminal: quien llegue a ella (reabrir el perfil, su
+  // SFTP, la lista de pestañas) ve su primera ventana.
+  sid = tmuxRootRedirect(sessions.get(sid)) || sid;
   if (!sessions.has(sid)) return;
   if (additive) {
     const idx = viewSelection.indexOf(sid);
@@ -12704,7 +12888,7 @@ function renderMetricsPanel(s) {
     // Nunca dejar el panel en blanco en silencio: si algo del payload no encaja,
     // se muestra el error aquí (y en consola) para poder diagnosticarlo.
     console.error("[metrics] error al pintar el panel", err);
-    body.innerHTML = `<div class="metrics-empty">Error al pintar: ${escHtml(String(err))}</div>`;
+    body.innerHTML = `<div class="metrics-empty">${escHtml(t("metrics.render_error", { err: String(err) }))}</div>`;
   }
 }
 
@@ -12887,7 +13071,7 @@ function renderStatusConnectionLog() {
   if (!latest) return;
   trigger.classList.remove("info", "ok", "warning", "error");
   trigger.classList.add(latest.status || "info");
-  text.textContent = latest.message || "Diagnóstico de conexión";
+  text.textContent = latest.message || t("terminal.diagnostics_title");
 }
 
 function toggleActiveConnectionLogPanel() {
@@ -13181,6 +13365,10 @@ function renderView() {
 
   // Desatar todas las panes (se conservan en memoria para no destruir xterm)
   sessions.forEach((s) => {
+    // Las panes tmux viven en una celda del contenedor de su ventana y viajan
+    // con él: solo las coloca renderTmuxWindow. Desatarlas aquí dejaba la
+    // ventana en blanco hasta el próximo %layout-change.
+    if (isTmuxPaneSession(s)) return;
     if (s.pane && s.pane.parentElement) s.pane.parentElement.removeChild(s.pane);
   });
   // Eliminar cualquier wrapper de split previo
@@ -13222,7 +13410,7 @@ function renderView() {
         if (i > 0) {
           const resizer = document.createElement("div");
           resizer.className = `view-resizer resizer-${axis}`;
-          resizer.title = t("tabs.resizer_reset_hint");
+          resizer.title = t("view_layout.resizer_reset_hint");
           resizer.addEventListener("mousedown", (e) => startViewResize(e, split, i - 1, axis));
           resizer.addEventListener("dblclick", () => resetViewRatios(split));
           // Foco y restablecimiento por teclado (Inicio); el ajuste fino se
@@ -13347,7 +13535,7 @@ function renderTabOverflowList(query = "") {
   const list = document.getElementById("tab-overflow-list");
   if (!list) return;
   const q = query.trim().toLowerCase();
-  const tabs = [...document.querySelectorAll("#tabs-container .tab")];
+  const tabs = [...document.querySelectorAll("#tabs-container .tab:not(.hidden)")];
   const rows = tabs
     .map((tab) => {
       const sid = tab.dataset.session;
@@ -13918,6 +14106,9 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
   // la composición; `isComposing` lo confirma en navegadores modernos.
   terminal.attachCustomKeyEventHandler((e) => {
     if (e.isComposing || e.keyCode === 229) return false;
+    // Con un diálogo modal abierto, ninguna tecla llega a un terminal oculto
+    // tras el velo (defensa por si el foco se colara sin soporte de `inert`).
+    if (dialogs.hasModal()) return false;
     return true;
   });
 
@@ -14194,12 +14385,16 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     // usuario redimensionó durante el connect: reenviar siempre.
     notifyResize(sessionId, terminal, { force: true });
     // Carpeta inicial puntual («Duplicar con cambios»): entrar al directorio
-    // nada más abrir el shell. El espacio inicial esquiva el historial en
-    // shells con HISTCONTROL=ignorespace.
-    if (s?._initialDir) {
-      const dir = s._initialDir.replace(/'/g, `'\\''`);
-      invoke("ssh_send_input", { sessionId, data: ` cd '${dir}'\r` }).catch(() => {});
-    }
+    // nada más abrir el shell. Solo a un shell nuevo: ni al modo control de
+    // tmux ni a una sesión persistente que se reengancha (initialDirCommand).
+    // En un shell normal cada (re)conexión abre uno nuevo, así que se repite.
+    // Va en bytes, como toda entrada: el comando espera `Vec<u8>` y una cadena
+    // se rechazaba en silencio.
+    const cdLine = s ? initialDirCommand(s._initialDir, {
+      tmuxControl: !!s._tmuxControl,
+      persistSession: !!profiles.find((p) => p.id === s.profileId)?.persist_session,
+    }) : null;
+    if (cdLine) sendTerminalInput(s, cdLine);
     // Una shell hija comparte la conexión de su raíz: los túneles automáticos
     // y el monitor son de la CONEXIÓN (ya los gestiona la pestaña raíz);
     // relanzarlos aquí los duplicaría o pisaría su cadencia.
@@ -14216,7 +14411,7 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
   ul.push(await listen(eventName("sshError", sessionId), (e) => {
     const s = sessions.get(sessionId);
     if (s) s.status = "error";
-    const message = String(e.payload || "Error SSH");
+    const message = String(e.payload || t("toast.ssh_error"));
     // Avisos de cambio de host key: mensaje destacado, toast más largo y
     // overlay con título explícito para que el usuario decida si reconectar.
     const isHostKeyAlert = message.includes("host key") && message.includes("cambiado");
@@ -14232,8 +14427,8 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
       enqueueTerminalOutput(s, `\r\n\x1b[1;41;97m  ⚠ ${t("terminal.hostkey_banner")}  \x1b[0m\r\n\x1b[31m${message}\x1b[0m\r\n`);
       toast(message, "error", 12000);
     } else {
-      enqueueTerminalOutput(s, `\r\n\x1b[31m✗ Error: ${message}\x1b[0m\r\n`);
-      toast(`Error SSH: ${message}`, "error");
+      enqueueTerminalOutput(s, `\r\n\x1b[31m✗ ${t("sftp.op_failed", { err: message })}\x1b[0m\r\n`);
+      toast(t("external.toast_error", { proto: "SSH", err: message }), "error");
     }
     markTabActivity(sessionId, { kind: "disconnect" });
   }));
@@ -14241,6 +14436,9 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
   ul.push(await listen(eventName("sshReconnecting", sessionId), (/** @type {{ payload: SshReconnectingEvent }} */ e) => {
     const s = sessions.get(sessionId);
     if (s) s.status = "reconnecting";
+    // Los túneles de la conexión ya no escuchan: en la reconexión solo vuelven
+    // los automáticos (ssh-connected).
+    forgetConnectionTunnels(sessionId);
     updateTabStatus(sessionId, "error");
     const { attempt, max, delay_ms } = e.payload || {};
     const secs = Math.round((delay_ms || 0) / 1000);
@@ -14258,6 +14456,8 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     const s = sessions.get(sessionId);
     if (s) s.status = "closed";
     if (s._tmuxControl) teardownTmuxControl(sessionId);
+    // Con la conexión mueren sus túneles (los de una hija siguen en su raíz).
+    forgetConnectionTunnels(sessionId);
     persistScreenSnapshot(s);
     appendConnectionLog(sessionId, {
       stage: "closed",
@@ -14269,8 +14469,10 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     showReconnectOverlay(sessionId, t("terminal.session_closed"));
     enqueueTerminalOutput(s, `\r\n\x1b[33m• ${t("terminal.closed")}\x1b[0m \x1b[90m${t("terminal.closed_hint")}\x1b[0m\r\n`);
     markTabActivity(sessionId, { kind: "disconnect" });
-    // El subsistema SFTP muere con el canal SSH; cerrar el panel para no dejarlo huérfano.
-    if (s?.sftp?.panel) closeSftpPanel(sessionId).catch(() => {});
+    // El panel tiene su propia conexión y no cae con el terminal: se cierra
+    // para no dejarlo huérfano, salvo con transferencias vivas, que cerrarlo
+    // cancelaría sin avisar (se cierra a mano cuando terminen).
+    if (s?.sftp?.panel && !sessionHasActiveTransfers(s)) closeSftpPanel(sessionId).catch(() => {});
     renderConnectionList();
   }));
 
@@ -14403,6 +14605,21 @@ function sessionHasActiveTransfers(s) {
   return false;
 }
 
+/**
+ * Cerrar la sesión de ficheros cancela lo que esté en curso (el backend lo
+ * corta al desconectar): con transferencias vivas, se pregunta antes.
+ */
+async function confirmCloseSftpPanel(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!sessionHasActiveTransfers(s)) return true;
+  return confirmThemed({
+    title: t("sftp.close_panel_title"),
+    message: t("tabctx.close_tab_transfers"),
+    submitLabel: t("sftp.close_panel_submit"),
+    danger: true,
+  });
+}
+
 async function confirmCloseSession(sessionId) {
   const s = sessions.get(sessionId);
   if (!s) return true;
@@ -14412,7 +14629,7 @@ async function confirmCloseSession(sessionId) {
   if (s._closeOverride) return true;
   if (!isSessionLive(s) && !sessionHasActiveTransfers(s)) return true;
   const profile = profiles.find((p) => p.id === s.profileId);
-  const name = profile?.name || (s.type ? s.type.toUpperCase() : "sesión");
+  const name = profile?.name || (s.type ? s.type.toUpperCase() : t("tabctx.session_fallback"));
   const transfers = sessionHasActiveTransfers(s)
     ? `\n\n${t("tabctx.close_tab_transfers")}`
     : "";
@@ -14433,6 +14650,14 @@ async function closeSession(sessionId, opts = {}) {
   const { skipConfirm = false } = opts;
   const s = sessions.get(sessionId);
   if (!s) return;
+
+  // Pane tmux (Ctrl+W con una pane enfocada): se cierra su ventana, con su
+  // confirmación. Destruirla solo en local dejaba un hueco y la pane viva en
+  // tmux; un lote nunca la cierra suelta (cae con su ventana o su raíz).
+  if (isTmuxPaneSession(s)) {
+    if (skipConfirm) return;
+    return closeSession(tmuxWindowTabId(s._tmux.conn, s._tmux.window));
+  }
 
   // Pestaña-ventana tmux: cerrar = kill-window en el SERVIDOR (mata procesos
   // vivos). El desmontaje real llega por el evento tmux-window-closed.
@@ -14506,7 +14731,16 @@ async function closeSession(sessionId, opts = {}) {
   // SSH
   await persistScreenSnapshot(s);
   for (const ul of s.unlisteners) { try { ul(); } catch {} }
+  // Modo control de tmux: sus ventanas y panes se desmontan en local (sin
+  // kill-window: la sesión tmux sigue viva en el servidor). Va tras soltar los
+  // listeners, para que un tmux-layout en vuelo no vuelva a crear la pestaña,
+  // y antes de desconectar: sin la conexión, cerrarlas fallaría y quedarían
+  // zombi.
+  for (const windowId of [...(s._tmuxWindows?.keys() || [])]) removeTmuxWindow(s, windowId);
   await invoke("ssh_disconnect", { sessionId }).catch(() => {});
+  // Cerrar una raíz cierra su conexión y sus túneles: fuera también de las
+  // listas (contador del rail incluido), los suyos y los de sus hijas.
+  if (!s._parentSessionId) forgetConnectionTunnels(sessionId);
   clearTerminalOutputQueue(s);
   s.terminal.dispose();
   sessions.delete(sessionId);
@@ -14522,8 +14756,10 @@ async function closeSession(sessionId, opts = {}) {
  * consolas locales) vía `closeSession(..., { skipConfirm: true })`.
  */
 async function disconnectAll() {
-  // Snapshot de los ids: el Map `sessions` muta al ir cerrando sesiones.
-  const ids = [...sessions.keys()];
+  // Snapshot de los ids: el Map `sessions` muta al ir cerrando sesiones. Las
+  // ventanas y panes de tmux no cuentan ni se cierran sueltas: caen con su
+  // conexión raíz (y cerrar una ventana sería un kill-window en el servidor).
+  const ids = [...sessions.keys()].filter((sid) => !sessions.get(sid)?._tmux);
   const liveIds = ids.filter((sid) => isSessionLive(sessions.get(sid)));
 
   // Contar transferencias SFTP en curso (en cola o ejecutándose).
@@ -14603,7 +14839,7 @@ function removeTab(sessionId) {
     activeSessionId = viewSelection[0] ?? null;
     if (!activeSessionId) {
       // Ninguna pane visible: coger la última pestaña restante
-      const lastTab = document.querySelector("#tabs-container .tab:last-child");
+      const lastTab = [...document.querySelectorAll("#tabs-container .tab:not(.hidden)")].pop();
       if (lastTab) {
         activeSessionId = lastTab.dataset.session;
         viewSelection = [activeSessionId];
@@ -14719,6 +14955,7 @@ async function restoreTrashEntries(entryIds) {
   if (!targets.length) return 0;
   let restored = 0;
   let passwordProfiles = 0;
+  let prefsDirty = false;
   const updatedAt = new Date().toISOString();
 
   const profilesToSave = [];
@@ -14727,6 +14964,12 @@ async function restoreTrashEntries(entryIds) {
       const p = entry.payload;
       if (!p?.id || profiles.some((x) => x.id === p.id)) { restored++; continue; }
       profilesToSave.push({ ...p, updated_at: updatedAt });
+      // Su tombstone de sync se retira (como `clearNoteTombstone`): si viajara
+      // junto al perfil restaurado, la siguiente sync lo volvería a borrar.
+      if (prefs.tombstones?.profiles?.[p.id]) {
+        delete prefs.tombstones.profiles[p.id];
+        prefsDirty = true;
+      }
       if ((p.auth_type || "password") === "password") passwordProfiles++;
       restored++;
     } else if (entry.kind === "folder") {
@@ -14761,8 +15004,18 @@ async function restoreTrashEntries(entryIds) {
       if (idx >= 0) profiles[idx] = p;
       else profiles.push(p);
     }
+    // Una conexión de un workspace ya borrado vuelve con él (con su nombre si
+    // la papelera aún lo guarda); si no, no saldría en ninguna vista.
+    const trashedWorkspaces = trashLoad()
+      .filter((e) => e.kind === "workspace")
+      .map((e) => e.payload?.workspace);
+    if (ensureWorkspacesForProfiles(workspaceNameMap(trashedWorkspaces))) {
+      prefs._prefsUpdatedAt = updatedAt;
+      prefsDirty = true;
+    }
   }
 
+  if (prefsDirty) savePrefs();
   trashSave(trashLoad().filter((e) => !wanted.has(e.id)));
   renderConnectionList();
   scheduleProfileAutoSync();
@@ -14855,16 +15108,34 @@ function openTrashModal() {
 }
 
 /**
- * Parsea un destino rápido `[usuario@]host[:puerto]`. Devuelve null si no es
- * interpretable como destino SSH.
- * @param {string} raw
+ * Conexión rápida a `[usuario@]host[:puerto]`, común al primer inicio y a la
+ * paleta: si ya hay un perfil SSH con ese mismo destino conecta a él (repetir
+ * la conexión rápida no llena el catálogo de duplicados); si no, guarda un
+ * perfil mínimo en el workspace activo y conecta. La parte pura vive en
+ * `modules/quick-connect.js`.
+ * @param {import("./modules/quick-connect.js").QuickTarget} target
  */
-function parseQuickTarget(raw) {
-  const m = /^(?:([^@\s]+)@)?([A-Za-z0-9._-]+|\[[0-9A-Fa-f:]+\])(?::(\d{1,5}))?$/.exec(String(raw || "").trim());
-  if (!m) return null;
-  const port = m[3] ? Number(m[3]) : 22;
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
-  return { username: m[1] || "root", host: m[2].replace(/^\[|\]$/g, ""), port };
+async function quickConnectToTarget(target) {
+  const existing = findQuickTargetProfile(profiles, target);
+  if (existing) {
+    connectProfile(existing.id);
+    return;
+  }
+  const profile = buildQuickProfile(target, {
+    id: crypto.randomUUID(),
+    now: new Date().toISOString(),
+    workspaceId: getActiveWorkspaceId(),
+  });
+  try {
+    await invoke("save_profiles", { profiles: [profile] });
+    profiles.push(profile);
+    renderConnectionList();
+    renderDashboard();
+    scheduleProfileAutoSync();
+    connectProfile(profile.id);
+  } catch (err) {
+    toast(`${err}`, "error");
+  }
 }
 
 /** Conexión rápida del primer inicio: guarda un perfil mínimo y conecta. */
@@ -14876,27 +15147,7 @@ async function quickConnectFromFirstRun() {
     input?.focus();
     return;
   }
-  const profile = {
-    id: crypto.randomUUID(),
-    name: target.host,
-    host: target.host,
-    port: target.port,
-    username: target.username,
-    connection_type: "ssh",
-    auth_type: "password",
-    follow_cwd: true,
-    updated_at: new Date().toISOString(),
-  };
-  try {
-    await invoke("save_profiles", { profiles: [profile] });
-    profiles.push(profile);
-    renderConnectionList();
-    renderDashboard();
-    scheduleProfileAutoSync();
-    connectProfile(profile.id);
-  } catch (err) {
-    toast(`${err}`, "error");
-  }
+  await quickConnectToTarget(target);
 }
 
 /**
@@ -15081,7 +15332,7 @@ async function duplicateProfile(profileId) {
   const copy = {
     ...original,
     id: crypto.randomUUID(),
-    name: `${original.name} (copia)`,
+    name: t("ctx.duplicate_name", { name: original.name }),
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -15091,20 +15342,20 @@ async function duplicateProfile(profileId) {
       getStoredSecret(passwordKey(original.id)),
       getStoredSecret(passphraseKey(original.id)),
     ]);
-    if (pw) await saveStoredSecret(passwordKey(copy.id), pw, "contraseña");
-    if (pp) await saveStoredSecret(passphraseKey(copy.id), pp, "passphrase");
+    if (pw) await saveStoredSecret(passwordKey(copy.id), pw, t("toast.secret_password"));
+    if (pp) await saveStoredSecret(passphraseKey(copy.id), pp, t("toast.secret_passphrase"));
     // Replicar las contraseñas de las identidades adicionales bajo el id nuevo.
     for (const c of original.extra_credentials || []) {
       const ePw = await getStoredSecret(credPasswordKey(original.id, c.id));
-      if (ePw) await saveStoredSecret(credPasswordKey(copy.id, c.id), ePw, "contraseña");
+      if (ePw) await saveStoredSecret(credPasswordKey(copy.id, c.id), ePw, t("toast.secret_password"));
     }
     profiles = await invoke("get_profiles");
     renderConnectionList();
     scheduleProfileAutoSync();
     openEditConnectionModal(copy.id);
-    toast(`Duplicado como "${copy.name}"`, "success");
+    toast(t("toast.conn_duplicated", { name: copy.name }), "success");
   } catch (err) {
-    toast(`Error al duplicar: ${err}`, "error");
+    toast(t("toast.conn_duplicate_error", { err }), "error");
   }
 }
 
@@ -15231,7 +15482,7 @@ async function openDataDirectory() {
   try {
     await invoke("plugin:opener|open_path", { path: dataDir });
   } catch (err) {
-    toast(`No se pudo abrir el directorio: ${err}. Ruta: ${dataDir}`, "error", 8000);
+    toast(t("toast.cannot_open_dir", { err, path: dataDir }), "error", 8000);
   }
 }
 
@@ -17444,8 +17695,8 @@ function updateGlobalTunnelFields() {
   const remoteHost = form.elements.remoteHost;
   const remotePort = form.elements.remotePort;
   if (!remoteHost || !remotePort) return;
-  remoteHost.placeholder = type === "remote" ? "Host local destino" : "Host remoto destino";
-  remotePort.placeholder = type === "remote" ? "Puerto remoto" : "Puerto destino";
+  remoteHost.placeholder = type === "remote" ? t("tunnels.local_target_host") : t("tunnels.remote_host");
+  remotePort.placeholder = type === "remote" ? t("tunnels.remote_side_port") : t("tunnels.remote_port");
   remoteHost.disabled = type === "dynamic";
   remotePort.disabled = type === "dynamic";
   remotePort.required = type !== "dynamic";
@@ -17748,8 +17999,8 @@ function buildTunnelPanel(sessionId) {
     const type = typeSel.value;
     const remoteHost = panel.querySelector('[name="remoteHost"]');
     const remotePort = panel.querySelector('[name="remotePort"]');
-    remoteHost.placeholder = type === "remote" ? "Host local destino" : "Host remoto destino";
-    remotePort.placeholder = type === "remote" ? "Puerto remoto" : "Puerto destino";
+    remoteHost.placeholder = type === "remote" ? t("tunnels.local_target_host") : t("tunnels.remote_host");
+    remotePort.placeholder = type === "remote" ? t("tunnels.remote_side_port") : t("tunnels.remote_port");
     remoteHost.disabled = type === "dynamic";
     remotePort.disabled = type === "dynamic";
     if (type === "dynamic") {
@@ -17799,7 +18050,7 @@ async function startTunnelFromPanel(sessionId, panel) {
 
 async function startSshTunnel(sessionId, cfg, opts = {}) {
   const s = sessions.get(sessionId);
-  if (!s) throw new Error("Sesión no encontrada");
+  if (!s) throw new Error(t("toast.session_not_found"));
   const tunnel = normalizeTunnelConfig(cfg);
   const info = await invoke("ssh_start_tunnel", {
     sessionId,
@@ -17824,6 +18075,26 @@ async function startSshTunnel(sessionId, cfg, opts = {}) {
   renderGlobalTunnelLists();
   toast(t("toast.tunnel_opened", { desc: describeTunnel(tunnel) }), "success");
   return tunnel;
+}
+
+/**
+ * Da por cerrados los túneles que mueren con `closedId` (su conexión cayó o se
+ * cerró): el backend los aborta al salir y la interfaz no debe seguir
+ * listándolos como activos (modules/tunnels/lifecycle.js).
+ * @param {string} closedId
+ */
+function forgetConnectionTunnels(closedId) {
+  let changed = false;
+  for (const sid of connectionTunnelOwners(sessions, closedId, isSessionLive)) {
+    const owner = sessions.get(sid);
+    if (!owner?.tunnels?.size) continue;
+    for (const tunnel of owner.tunnels.values()) tunnel.status = "closed";
+    owner.tunnels.clear();
+    renderTunnelList(sid);
+    changed = true;
+  }
+  // También refresca el contador del rail y los distintivos de la barra lateral.
+  if (changed) renderGlobalTunnelLists();
 }
 
 async function stopSshTunnel(sessionId, tunnelId) {
@@ -17954,7 +18225,7 @@ async function openLocalShell() {
     for (const ul of s.unlisteners) { try { ul(); } catch {} }
     sessions.delete(sessionId);
     removeTab(sessionId);
-    toast(`Error al abrir la consola: ${err}`, "error");
+    toast(t("toast.open_console_err", { err }), "error");
   }
 }
 
@@ -17974,7 +18245,7 @@ async function toggleSftpPanel(sessionId) {
   // conectada — así un panel huérfano se cierra con el mismo botón que lo abrió.
   if (s.sftp?.panel) {
     if (s.status !== "connected" && s.status !== "reconnecting") {
-      await closeSftpPanel(sessionId);
+      if (await confirmCloseSftpPanel(sessionId)) await closeSftpPanel(sessionId);
       return;
     }
     const panel = s.sftp.panel;
@@ -18001,30 +18272,34 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
   if (!profile) return;
   const isFileTransfer = isFileTransferConnectionType(profile.connection_type);
 
-  // Resolver credenciales: KeePass > keyring > prompt
+  // Resolver credenciales con la identidad con la que se abrió la sesión (la
+  // principal o la de «Conectar como…»), que es la que aplica el backend con
+  // `credentialId`: KeePass > maestra > keyring > prompt.
+  const view = identityView(profile, getProfileCredential(profile, s.credentialId));
+  const promptProfile = { ...profile, username: view.username };
   let password = passwordOverride, passphrase = passphraseOverride;
-  if (profile.auth_type === "password" && !password) {
-    if (profile.keepass_entry_uuid) {
-      if (!keepassUnlocked) {
-        toast(t("toast.keepass_locked"), "warning");
-        return;
-      }
-    } else {
-      password = await getStoredSecret(passwordKey(profile.id));
+  if (view.authType === "password") {
+    const plan = passwordPlan(view, { keepassUnlocked, passwordOverride: password });
+    if (plan === "locked") {
+      toast(t("toast.keepass_locked"), "warning");
+      return;
+    }
+    if (plan === "ask") {
+      password = await getStoredSecret(view.pwKey);
       if (!password) {
-        password = await promptProfileSecret(profile, {
+        password = await promptProfileSecret(promptProfile, {
           titleKey: "modal_credential.sftp_password_title",
           messageKey: "modal_credential.sftp_message",
           labelKey: "modal_credential.password_label",
           rememberKey: "modal_credential.remember_password",
-          secretKey: passwordKey(profile.id),
-          secretLabel: "contraseña",
+          secretKey: view.pwKey,
+          secretLabel: t("toast.secret_password"),
         });
         if (password === null) return;
       }
     }
-  } else if (profile.auth_type === "public_key" && !passphrase) {
-    passphrase = await getStoredSecret(passphraseKey(profile.id));
+  } else if (view.authType === "public_key" && !passphrase) {
+    passphrase = await getStoredSecret(view.ppKey);
   }
 
   // Construir panel primero con estado "conectando"
@@ -18065,12 +18340,12 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
     elevated: false,
   };
 
-  setSftpStatus(panel, `Conectando ${isFileTransfer ? profile.connection_type.toUpperCase() : "SFTP"}…`);
+  setSftpStatus(panel, t("external.session_connecting", { proto: isFileTransfer ? profile.connection_type.toUpperCase() : "SFTP" }));
   const protoLabel = isFileTransfer ? profile.connection_type.toUpperCase() : "SFTP";
   appendSftpActivity(panel, {
     status: "running",
-    label: `Conectando ${protoLabel}`,
-    detail: `${profile.username || ""}@${profile.host}:${profile.port || (isFileTransfer ? 21 : 22)}`,
+    label: t("external.session_connecting", { proto: protoLabel }),
+    detail: `${view.username || ""}@${profile.host}:${profile.port || (isFileTransfer ? 21 : 22)}`,
   });
 
   // Preasignar sessionId y registrar listener antes de invocar el connect
@@ -18083,7 +18358,7 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
     appendSftpActivity(panel, {
       status,
       label: payload.message,
-      detail: payload.stage ? `etapa: ${payload.stage}` : "",
+      detail: payload.stage ? t("sftp.activity_stage", { stage: payload.stage }) : "",
     });
   });
   s.sftp.unlisteners.push(ulSftpLog);
@@ -18101,8 +18376,8 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
     s.sftp.sftpSessionId = sftpSessionId;
     appendSftpActivity(panel, {
       status: "ok",
-      label: `${protoLabel} conectado`,
-      detail: s.sftp.elevated ? "Sesión con privilegios elevados (sudo)" : "Sesión establecida",
+      label: t("sftp.activity_connected", { proto: protoLabel }),
+      detail: s.sftp.elevated ? t("sftp.sudo_badge") : t("sftp.session_established"),
     });
 
     // Si el terminal ya tiene un cwd conocido (por OSC 7) lo usamos,
@@ -18119,7 +18394,7 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
     toast(t("toast.proto_failed", { proto: protoLabel, err: ipcErrorText(err) }), "error");
     appendSftpActivity(panel, {
       status: "error",
-      label: `${protoLabel} falló`,
+      label: t("sftp.activity_failed", { proto: protoLabel }),
       detail: ipcErrorText(err),
     });
     // Liberar los listeners ya registrados (sftp-log) antes de descartar el
@@ -18142,6 +18417,14 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
 async function toggleSftpElevated(sessionId) {
   const s = sessions.get(sessionId);
   if (!s?.sftp) return;
+  // Cambiar el modo reabre la sesión de archivos, y cerrarla cancela lo que
+  // esté en curso: con transferencias vivas se avisa en vez de cortarlas.
+  const busy = [...(s.sftp.transfers?.values?.() || [])]
+    .some((job) => job.status === "running" || job.status === "queued" || job.status === "paused");
+  if (busy) {
+    toast(t("sftp.sudo_busy"), "warning", 6000);
+    return;
+  }
   const profile = profiles.find((p) => p.id === s.profileId);
   if (!profile) return;
   if (isFileTransferConnectionType(profile.connection_type)) return;
@@ -18164,7 +18447,7 @@ async function toggleSftpElevated(sessionId) {
           labelKey: "modal_credential.password_label",
           rememberKey: "modal_credential.remember_password",
           secretKey: view.pwKey,
-          secretLabel: "contraseña",
+          secretLabel: t("toast.secret_password"),
         });
         if (password === null) return;
       }
@@ -18177,7 +18460,7 @@ async function toggleSftpElevated(sessionId) {
   const targetElevated = !wasElevated;
   const prevCwd = s.sftp.cwd;
 
-  setSftpStatus(panel, targetElevated ? "Reconectando con sudo…" : "Reconectando SFTP…");
+  setSftpStatus(panel, targetElevated ? t("sftp.reconnecting_sudo") : t("sftp.reconnecting"));
   if (btn) btn.disabled = true;
 
   if (s.sftp.sftpSessionId) {
@@ -18194,7 +18477,7 @@ async function toggleSftpElevated(sessionId) {
     appendSftpActivity(panel, {
       status,
       label: payload.message,
-      detail: payload.stage ? `etapa: ${payload.stage}` : "",
+      detail: payload.stage ? t("sftp.activity_stage", { stage: payload.stage }) : "",
     });
   });
   s.sftp.unlisteners.push(ulSftpLog);
@@ -18216,10 +18499,10 @@ async function toggleSftpElevated(sessionId) {
       .querySelector("[data-sftp-sudo-badge]")
       ?.classList.toggle("hidden", !targetElevated);
     await navigateSftp(sessionId, prevCwd || "/");
-    toast(targetElevated ? "SFTP elevado activo" : "SFTP sin privilegios extra",
+    toast(targetElevated ? t("sftp.elevated_on") : t("sftp.elevated_off"),
           targetElevated ? "success" : "info");
   } catch (err) {
-    toast(`No se pudo reconectar: ${ipcErrorText(err)}`, "error");
+    toast(t("toast.cannot_reconnect", { err: ipcErrorText(err) }), "error");
     // Intentar volver al modo previo para no dejar el panel sin sesión
     try {
       const fallbackSftpSessionId = crypto.randomUUID();
@@ -18230,7 +18513,7 @@ async function toggleSftpElevated(sessionId) {
         appendSftpActivity(panel, {
           status,
           label: payload.message,
-          detail: payload.stage ? `etapa: ${payload.stage}` : "",
+          detail: payload.stage ? t("sftp.activity_stage", { stage: payload.stage }) : "",
         });
       });
       s.sftp.unlisteners.push(ulFallback);
@@ -18298,14 +18581,7 @@ function toggleActiveSftpElevated() {
 // permiten escoger sin navegar todavía.
 
 function splitPathPrefix(side, fullPath) {
-  if (side === "local") {
-    const sep = fullPath.lastIndexOf("\\") > fullPath.lastIndexOf("/") ? "\\" : "/";
-    const idx = Math.max(fullPath.lastIndexOf("/"), fullPath.lastIndexOf("\\"));
-    if (idx < 0) return { parent: fullPath, prefix: "", sep };
-    const parent = idx === 0 ? (fullPath.startsWith("/") ? "/" : fullPath.slice(0, 1) + sep)
-                             : fullPath.slice(0, idx) || sep;
-    return { parent, prefix: fullPath.slice(idx + 1), sep };
-  }
+  if (side === "local") return splitLocalPathPrefix(fullPath);
   const idx = fullPath.lastIndexOf("/");
   if (idx < 0) return { parent: ".", prefix: fullPath, sep: "/" };
   const parent = idx === 0 ? "/" : fullPath.slice(0, idx);
@@ -18866,7 +19142,7 @@ function buildSftpPanel(sessionId) {
         } else if (nav === "home") {
           invoke("local_home_dir")
             .then((home) => navigateSftpLocal(sessionId, home))
-            .catch((e) => toast(`Error: ${e}`, "error"));
+            .catch((e) => toast(t("sftp.op_failed", { err: e }), "error"));
         } else if (nav === "refresh") {
           navigateSftpLocal(sessionId, s.sftp.localCwd);
         }
@@ -18877,7 +19153,7 @@ function buildSftpPanel(sessionId) {
         } else if (nav === "home") {
           invoke("sftp_home_dir", { sessionId: s.sftp.sftpSessionId })
             .then((home) => navigateSftpRemote(sessionId, home))
-            .catch((e) => toast(`Error: ${e}`, "error"));
+            .catch((e) => toast(t("sftp.op_failed", { err: e }), "error"));
         } else if (nav === "refresh") {
           navigateSftpRemote(sessionId, s.sftp.cwd);
         }
@@ -18920,7 +19196,7 @@ function buildSftpPanel(sessionId) {
       } else if (act === "search-toggle") {
         toggleSftpSearchBar(sessionId, side || "remote");
       } else if (act === "close") {
-        closeSftpPanel(sessionId);
+        confirmCloseSftpPanel(sessionId).then((ok) => { if (ok) closeSftpPanel(sessionId); });
       }
     });
   });
@@ -18983,18 +19259,6 @@ function buildSftpPanel(sessionId) {
   return panel;
 }
 
-function localParentPath(p) {
-  if (!p) return null;
-  const m = p.match(/^([a-zA-Z]:[\\/])(.*)$/); // Windows root
-  if (m) {
-    const rest = m[2];
-    if (!rest || rest === "" || rest === "\\" || rest === "/") return p;
-  }
-  const idx = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-  if (idx <= 0) return p.startsWith("/") ? "/" : p;
-  return p.slice(0, idx) || "/";
-}
-
 /**
  * Marca de generación de la navegación de un lado. Cada `navigate*` toma una
  * nueva y, al volver del listado, comprueba que sigue siendo la vigente: así el
@@ -19054,7 +19318,7 @@ async function navigateSftpRemote(sessionId, path, { record = true } = {}) {
       label: t("sftp.activity_list_remote"),
       detail: `${path}: ${msg}`,
     });
-    filesDiv.innerHTML = `<div class="sftp-empty error">Error: ${escHtml(msg)}</div>`;
+    filesDiv.innerHTML = `<div class="sftp-empty error">${escHtml(t("sftp.list_error", { err: msg }))}</div>`;
     // Si no se puede listar, esa ruta no debe quedar en el historial: el botón
     // Atrás volvería a estrellarse contra ella una y otra vez.
     forgetSftpPath(sessionId, "remote", path);
@@ -19086,7 +19350,7 @@ async function navigateSftpLocal(sessionId, path, { record = true } = {}) {
       label: t("sftp.activity_list_local"),
       detail: `${path}: ${String(err)}`,
     });
-    filesDiv.innerHTML = `<div class="sftp-empty error">Error: ${escHtml(String(err))}</div>`;
+    filesDiv.innerHTML = `<div class="sftp-empty error">${escHtml(t("sftp.list_error", { err: String(err) }))}</div>`;
     forgetSftpPath(sessionId, "local", path);
   }
 }
@@ -19428,27 +19692,36 @@ function ensureSftpRowDelegation(filesDiv, sessionId, side) {
     setSftpSelection(sessionId, side, sftpSelectionAfterClick(view.selected, row.dataset.path, toggle));
   });
 
-  filesDiv.addEventListener("dblclick", (ev) => {
+  filesDiv.addEventListener("dblclick", async (ev) => {
     const row = ev.target.closest(".sftp-row");
     if (!row) return;
     if (row.classList.contains("sftp-search-result")) {
       openSftpSearchResult(sessionId, side, row);
       return;
     }
-    const isDir = row.dataset.isDir === "true";
-    const rowData = {
-      path: row.dataset.path,
-      name: row.dataset.name,
-      isDir: false,
-      isSymlink: false,
-    };
-    if (side === "remote") {
-      if (isDir) navigateSftpRemote(sessionId, row.dataset.path);
-      else transferRows(sessionId, "download", [rowData]);
-    } else {
-      if (isDir) navigateSftpLocal(sessionId, row.dataset.path);
-      else transferRows(sessionId, "upload", [rowData]);
+    const { path, name } = row.dataset;
+    const s = sessions.get(sessionId);
+    if (!s?.sftp) return;
+    const navBefore = s.sftp.nav?.[side] || 0;
+    // Un enlace a carpeta llega como «no carpeta» (el listado trae el tipo del
+    // enlace): se sondea su destino listándolo, sin pintar nada.
+    const action = await sftpRowOpenAction(
+      { isDir: row.dataset.isDir === "true", isSymlink: row.dataset.isSymlink === "true" },
+      () => (side === "remote"
+        ? invoke("sftp_list_dir", { sessionId: s.sftp?.sftpSessionId, path })
+        : invoke("local_list_dir", { path })),
+    );
+    // Si mientras se sondeaba el usuario ya se fue a otra carpeta, no se le lleva de vuelta.
+    if (!isCurrentSftpNavigation(s, side, navBefore)) return;
+    if (action === "navigate") {
+      if (side === "remote") navigateSftpRemote(sessionId, path);
+      else navigateSftpLocal(sessionId, path);
+      return;
     }
+    // Fichero o enlace a fichero: se transfiere el contenido del destino. Va
+    // como fichero normal (`isSymlink: false`): la cola descarta los enlaces.
+    const rowData = { path, name, isDir: false, isSymlink: false };
+    transferRows(sessionId, side === "remote" ? "download" : "upload", [rowData]);
   });
 
   filesDiv.addEventListener("contextmenu", (ev) => {
@@ -19999,16 +20272,21 @@ function localTerminalAtPosition(position) {
   const sessionId = pane.dataset.session;
   if (!sessionId) return null;
   const s = sessions.get(sessionId);
-  if (!s || s.status === "closed" || s.type !== "local" || !s.terminal) return null;
+  // La consola local es `type: "ssh"`: se reconoce por su marca (local-shell.js).
+  if (!isLocalShellReady(s)) return null;
   return { pane, sessionId, session: s };
 }
 
 /** Inserta rutas locales (de un drop del SO) en el prompt de una consola local. */
 function insertOsPathsIntoLocalTerminal(session, paths) {
-  if (!session || session.type !== "local" || !session.terminal) return;
+  if (!isLocalShellReady(session)) return;
   // Solo usamos los marcadores de bracketed paste si el shell tiene el modo
   // activo; si no, las secuencias `ESC [200~` aparecerían literales en el prompt.
   const bracketed = !!session.terminal.modes?.bracketedPasteMode;
+  // Una ruta con caracteres de control podría salir del pegado y ejecutar
+  // órdenes: buildDropInsertText la descarta y aquí se avisa.
+  const rejected = paths.filter((path) => typeof path === "string" && hasControlChars(path)).length;
+  if (rejected) toast(t("toast.drop_paths_rejected", { n: rejected }), "warning", 8000);
   const text = buildDropInsertText(paths, { platform: osPlatformKind(), bracketed });
   if (!text) return;
   sendTerminalInput(session, text);
@@ -20136,6 +20414,7 @@ function showSftpContextMenu(x, y, sessionId, side) {
 }
 
 function hideSftpContextMenu() {
+  noteFloatingMenuHidden("sftp-context-menu");
   document.getElementById("sftp-context-menu")?.classList.add("hidden");
   sftpCtxTarget = null;
 }
@@ -20203,7 +20482,7 @@ function appendSftpActivity(panel, {
   detail = "",
   bytes = 0,
   startedAt = 0,
-  actionLabel = "Ver",
+  actionLabel = t("activity.view"),
   action = null,
 } = {}) {
   const wrap = panel.querySelector(".sftp-transfers-wrap");
@@ -20223,7 +20502,7 @@ function appendSftpActivity(panel, {
   ].filter(Boolean).join(" · ");
   row.innerHTML = `
     <div class="sftp-activity-main">
-      <span class="sftp-activity-status">${escHtml(status)}</span>
+      <span class="sftp-activity-status">${escHtml(sftpActivityStatusLabel(status))}</span>
       <span class="sftp-activity-label">${escHtml(label)}</span>
       <span class="sftp-activity-meta">${escHtml(meta)}</span>
     </div>
@@ -20271,7 +20550,14 @@ async function revealTransferBeforeInvoke(panel, transferEl) {
 }
 
 function transferDirectionLabel(direction) {
-  return direction === "upload" ? "Upload" : "Download";
+  return direction === "upload" ? t("sftp.direction_upload") : t("sftp.direction_download");
+}
+
+/** Texto del estado de una fila del registro SFTP; el código crudo se queda en la clase CSS. */
+function sftpActivityStatusLabel(status) {
+  const key = `sftp.status_${status}`;
+  const label = t(key);
+  return label === key ? status : label;
 }
 
 function recursiveConflictPolicyForTransfer(resolved) {
@@ -20299,16 +20585,21 @@ function enqueueSftpTransfers(sessionId, direction, rows) {
   if (cleanRows.length === 0) return;
 
   const conflictState = createTransferConflictState();
+  // El destino es la carpeta abierta al encolar, no la que haya cuando le toque
+  // el turno: la cola es secuencial y el panel sigue navegable. Una carpeta por
+  // tanda, como ya suponen los nombres reservados de `conflictState`.
+  const targetDir = direction === "upload" ? s.sftp.cwd : s.sftp.localCwd;
   for (const row of cleanRows) {
     const transferId = crypto.randomUUID();
-    const arrow = direction === "upload" ? "⬆" : "⬇";
-    const transferEl = addTransfer(s.sftp.panel, `${arrow} ${row.name}`, transferId);
+    // El sentido lo pinta el icono de `data-direction` (sprite), no un emoji.
+    const transferEl = addTransfer(s.sftp.panel, row.name, transferId);
     transferEl.dataset.direction = direction;
     setTransferPhase(transferEl, "queued", "queued");
     const job = {
       id: transferId,
       direction,
       row,
+      targetDir,
       conflictState,
       transferEl,
       status: "queued",
@@ -20324,7 +20615,8 @@ async function processSftpQueue(sessionId) {
   if (!s?.sftp || s.sftp.transferProcessing) return;
   s.sftp.transferProcessing = true;
   try {
-    while (s.sftp.transferQueue.length > 0) {
+    // Cerrar el panel deja `s.sftp` a null con la cola a medias.
+    while (s.sftp?.transferQueue?.length > 0) {
       const job = s.sftp.transferQueue.shift();
       if (!job || job.status === "canceled") continue;
       const result = await transferOne(
@@ -20395,6 +20687,15 @@ function sftpMaxConcurrent() {
 }
 
 /**
+ * Opciones de `transferNameKey` para un lado: el disco local de Windows y macOS
+ * no distingue mayúsculas por defecto (NTFS, APFS), así que allí `Informe.pdf`
+ * choca con `informe.PDF`. En Linux, y en el remoto, se comparan tal cual.
+ */
+function sftpNameKeyOptions(side) {
+  return { foldCase: side === "local" && ["windows", "macos"].includes(diagnosticsPlatform()) };
+}
+
+/**
  * Nombres del directorio actual de ese lado. Sale del listado en memoria, no de
  * las filas pintadas: con el listado virtualizado —o con un filtro de búsqueda
  * puesto— el DOM solo tiene una parte, y dar por libre un nombre que sí existe
@@ -20402,32 +20703,56 @@ function sftpMaxConcurrent() {
  */
 function renderedSftpNames(sessionId, side) {
   const s = sessions.get(sessionId);
-  const entries = s?.sftp?.entries?.[side];
-  if (!Array.isArray(entries)) return new Set();
-  return new Set(entries.map((e) => e?.name).filter(Boolean));
+  return transferNameSet(s?.sftp?.entries?.[side], sftpNameKeyOptions(side));
 }
 
-function destinationNameExists(sessionId, side, name, conflictState = null) {
-  if (renderedSftpNames(sessionId, side).has(name)) return true;
-  return !!conflictState?.reservedNames?.[side]?.has(name);
+/**
+ * Nombres de la carpeta de destino de un trabajo. Si el panel sigue en ella,
+ * sale del listado en memoria; si el usuario ya navegó a otra, se lista aparte
+ * (sin tocar lo que se ve). Puede lanzar si la carpeta ya no se puede listar.
+ */
+async function transferTargetNames(sessionId, target, conflictState = null) {
+  if (target.visible) return renderedSftpNames(sessionId, target.side);
+  // Una tanda en cola hacia una carpeta que ya no se ve la lista una sola vez
+  // (500 subidas no son 500 listados de una carpeta enorme): lo que la propia
+  // tanda va escribiendo lo cubren sus nombres reservados.
+  const cacheKey = `${target.side}:${target.dir}`;
+  const cached = conflictState?.listedNames?.get(cacheKey);
+  if (cached) return cached;
+  const s = sessions.get(sessionId);
+  const entries = target.side === "remote"
+    ? await invoke("sftp_list_dir", { sessionId: s?.sftp?.sftpSessionId, path: target.dir })
+    : await invoke("local_list_dir", { path: target.dir });
+  const names = transferNameSet(entries, sftpNameKeyOptions(target.side));
+  if (conflictState) (conflictState.listedNames ??= new Map()).set(cacheKey, names);
+  return names;
+}
+
+function destinationNameExists(names, side, name, conflictState = null) {
+  const key = transferNameKey(name, sftpNameKeyOptions(side));
+  if (names?.has(key)) return true;
+  return !!conflictState?.reservedNames?.[side]?.has(key);
 }
 
 function reserveDestinationName(side, name, conflictState = null) {
-  conflictState?.reservedNames?.[side]?.add(name);
+  conflictState?.reservedNames?.[side]?.add(transferNameKey(name, sftpNameKeyOptions(side)));
 }
 
-function autoRenameTransferName(sessionId, side, name, isDir, conflictState = null) {
+function autoRenameTransferName(names, side, name, isDir, conflictState = null) {
   const candidate = nextAvailableTransferName(
     name,
     isDir,
-    (value) => destinationNameExists(sessionId, side, value, conflictState),
+    (value) => destinationNameExists(names, side, value, conflictState),
   );
   reserveDestinationName(side, candidate, conflictState);
   return candidate;
 }
 
-async function promptSftpTransferConflict(name, targetSide, isDir) {
-  const where = targetSide === "local" ? t("toast.side_local") : t("toast.side_remote");
+async function promptSftpTransferConflict(name, targetSide, isDir, dir = "") {
+  const side = targetSide === "local" ? t("toast.side_local") : t("toast.side_remote");
+  // La carpeta va a la vista: con la cola, el destino puede no ser la que el
+  // panel enseña ahora.
+  const where = dir ? `${side} (${dir})` : side;
   const choice = await chooseThemed({
     title: t("sftp.conflict_title"),
     message: t(isDir ? "sftp.conflict_msg_dir" : "sftp.conflict_msg_file", { name, where }),
@@ -20444,9 +20769,9 @@ async function promptSftpTransferConflict(name, targetSide, isDir) {
   return { action, applyAll: choice.remember };
 }
 
-async function resolveTransferConflict(sessionId, direction, name, isDir, conflictState = null) {
-  const targetSide = direction === "upload" ? "remote" : "local";
-  if (!destinationNameExists(sessionId, targetSide, name, conflictState)) {
+async function resolveTransferConflict(target, names, name, isDir, conflictState = null) {
+  const targetSide = target.side;
+  if (!destinationNameExists(names, targetSide, name, conflictState)) {
     reserveDestinationName(targetSide, name, conflictState);
     return { action: "transfer", name };
   }
@@ -20457,7 +20782,7 @@ async function resolveTransferConflict(sessionId, direction, name, isDir, confli
     if (prefPolicy !== "ask") action = prefPolicy;
   }
   if (!action) {
-    const choice = await promptSftpTransferConflict(name, targetSide, isDir);
+    const choice = await promptSftpTransferConflict(name, targetSide, isDir, target.dir);
     action = choice.action;
     if (choice.applyAll && action !== "cancel") {
       conflictState.policy = action;
@@ -20469,7 +20794,7 @@ async function resolveTransferConflict(sessionId, direction, name, isDir, confli
   if (action === "rename") {
     return {
       action: "transfer",
-      name: autoRenameTransferName(sessionId, targetSide, name, isDir, conflictState),
+      name: autoRenameTransferName(names, targetSide, name, isDir, conflictState),
       renamed: true,
     };
   }
@@ -20480,10 +20805,45 @@ async function resolveTransferConflict(sessionId, direction, name, isDir, confli
 
 async function transferOne(sessionId, direction, srcPath, name, isDir, conflictState = null, job = null) {
   const s = sessions.get(sessionId);
-  if (!s?.sftp?.sftpSessionId) return;
+  if (!s?.sftp?.sftpSessionId) {
+    // Panel sin sesión de ficheros (cerrado, o a medias de cambiar a sudo): el
+    // trabajo no se ha copiado, así que queda en error y se puede reintentar,
+    // no «hecho».
+    if (job?.transferEl) markTransferError(job.transferEl, t("toast.session_not_found"));
+    if (job) job.status = "error";
+    return "error";
+  }
+  // La carpeta de destino es la fijada al encolar; el conflicto se comprueba y
+  // el fichero se escribe contra esa misma carpeta, aunque el panel ya esté en otra.
+  const target = transferTarget(job || { direction }, { cwd: s.sftp.cwd, localCwd: s.sftp.localCwd });
+  let names;
+  try {
+    names = await transferTargetNames(sessionId, target, conflictState);
+  } catch (err) {
+    // Si la carpeta ya no se puede listar (borrada, renombrada, sin permiso), no
+    // se escribe a ciegas ni en otro sitio: el trabajo queda en error, reintentable.
+    const errText = sftpErrorText(err);
+    if (job?.transferEl) {
+      markTransferError(job.transferEl, errText);
+      job.status = "error";
+    }
+    appendSftpActivity(s.sftp.panel, {
+      status: "error",
+      label: `${transferDirectionLabel(direction)} ${name}`,
+      detail: `${srcPath} → ${target.dir}: ${errText}`,
+      ...(job ? { actionLabel: t("activity.retry"), action: () => retrySftpTransfer(sessionId, job.id) } : {}),
+    });
+    const panel = s.sftp.panel;
+    toast(t("sftp.transfer_failed", { err: errText }), "error", 8000, {
+      category: "transfer",
+      actionLabel: t("sftp.view_log"),
+      onAction: () => revealSftpActivity(panel),
+    });
+    return "error";
+  }
   const resolved = await resolveTransferConflict(
-    sessionId,
-    direction,
+    target,
+    names,
     name,
     isDir,
     conflictState || createTransferConflictState(),
@@ -20505,9 +20865,8 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
 
   const panel = s.sftp.panel;
   const transferId = job?.id || crypto.randomUUID();
-  const arrow = direction === "upload" ? "⬆" : "⬇";
   const targetName = resolved.name;
-  const label = targetName === name ? `${arrow} ${name}` : `${arrow} ${name} → ${targetName}`;
+  const label = targetName === name ? name : `${name} → ${targetName}`;
   const transferEl = job?.transferEl || addTransfer(panel, label, transferId);
   transferEl.dataset.direction = direction;
   setTransferPhase(transferEl, "running", "preparing");
@@ -20547,7 +20906,7 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
 
   try {
     if (direction === "upload") {
-      const remotePath = joinRemote(s.sftp.cwd, targetName);
+      const remotePath = joinRemote(target.dir, targetName);
       finalTargetPath = remotePath;
       const invokeArgs = {
         sessionId: s.sftp.sftpSessionId,
@@ -20578,10 +20937,12 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
         startedAt,
       });
       notifySkippedSymlinks(panel, skippedSymlinks);
-      await navigateSftpRemote(sessionId, s.sftp.cwd);
+      // Solo se refresca si el panel sigue en esa carpeta: si el usuario navegó,
+      // recargar le devolvería a la de antes.
+      if (s.sftp.cwd === target.dir) await navigateSftpRemote(sessionId, target.dir);
     } else {
       const localPath = await invoke("local_path_join", {
-        base: s.sftp.localCwd,
+        base: target.dir,
         name: targetName,
       });
       finalTargetPath = localPath;
@@ -20612,7 +20973,7 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
         startedAt,
       });
       notifySkippedSymlinks(panel, skippedSymlinks);
-      await navigateSftpLocal(sessionId, s.sftp.localCwd);
+      if (s.sftp.localCwd === target.dir) await navigateSftpLocal(sessionId, target.dir);
     }
   } catch (err) {
     // Una subida sensible que el usuario no confirmó en el diálogo nativo es una
@@ -20739,14 +21100,14 @@ async function promptMkdir(sessionId, side) {
     }
     appendSftpActivity(s.sftp.panel, {
       status: "ok",
-      label: `Mkdir ${where}`,
+      label: `${t("sftp_nav.mkdir")} ${where}`,
       detail: path,
     });
   } catch (err) {
     toast(t("sftp.op_failed", { err: sftpErrorText(err) }), "error");
     appendSftpActivity(s.sftp.panel, {
       status: "error",
-      label: `Mkdir ${where}`,
+      label: `${t("sftp_nav.mkdir")} ${where}`,
       detail: `${name}: ${sftpErrorText(err)}`,
     });
   }
@@ -20920,7 +21281,7 @@ async function confirmDeleteRows(sessionId, side, rows) {
   else await navigateSftpRemote(sessionId, s.sftp.cwd);
   appendSftpActivity(s.sftp.panel, {
     status: failed ? "error" : "ok",
-    label: `Eliminar ${where}`,
+    label: `${t("sftp.delete_title")} ${where}`,
     detail: failed
       ? t("sftp.delete_summary_failed", { ok: okCount, failed })
       : t("sftp.delete_summary", { ok: okCount }),
@@ -21060,13 +21421,13 @@ function addTransfer(panel, label, transferId, detail = "") {
   if (ownerSession) el.dataset.sessionId = ownerSession;
   el.innerHTML = `
     <div class="sftp-transfer-label">${escHtml(label)}</div>
-    <div class="sftp-transfer-text">0 B / ?</div>
+    <div class="sftp-transfer-text" data-paused-label="${escHtml(t("sftp.state_paused"))}">0 B / ?</div>
     <div class="sftp-transfer-bar"><div class="sftp-transfer-fill" style="width:0%"></div></div>
     <div class="sftp-transfer-detail">${escHtml(detail)}</div>
     <div class="sftp-transfer-actions">
-      <button class="sftp-transfer-pause hidden" title="${escHtml(t("sftp.transfer_pause"))}">⏸</button>
-      <button class="sftp-transfer-resume hidden" title="${escHtml(t("sftp.transfer_resume"))}">▶</button>
-      <button class="sftp-transfer-retry hidden" title="${escHtml(t("sftp.transfer_retry"))}">↻</button>
+      <button class="sftp-transfer-pause hidden" title="${escHtml(t("sftp.transfer_pause"))}" aria-label="${escHtml(t("sftp.transfer_pause"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-pause"/></svg></button>
+      <button class="sftp-transfer-resume hidden" title="${escHtml(t("sftp.transfer_resume"))}" aria-label="${escHtml(t("sftp.transfer_resume"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-play"/></svg></button>
+      <button class="sftp-transfer-retry hidden" title="${escHtml(t("sftp.transfer_retry"))}" aria-label="${escHtml(t("sftp.transfer_retry"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-refresh"/></svg></button>
       <button class="sftp-transfer-close" title="${escHtml(t("sftp.transfer_dismiss"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
     </div>
   `;
@@ -21552,6 +21913,8 @@ async function buildConnectionsExportData(
   if (foldersByWorkspace) {
     data.foldersByWorkspace = foldersByWorkspace;
   }
+  // Nombres de sus workspaces: el equipo que lo importe puede no tenerlos.
+  data.workspaces = workspacesForExport(prefs.workspaces, profilesToExport, foldersByWorkspace);
   if (includeSecrets) {
     data.secrets = await collectExportedSecrets(profilesToExport);
   }
@@ -21577,12 +21940,12 @@ async function importExportedSecrets(data) {
   for (const [profileId, secrets] of Object.entries(entries)) {
     if (!secrets || typeof secrets !== "object") continue;
     if (secrets.password) {
-      if (await saveStoredSecret(passwordKey(profileId), secrets.password, "contraseña importada")) {
+      if (await saveStoredSecret(passwordKey(profileId), secrets.password, t("toast.secret_password"))) {
         imported++;
       }
     }
     if (secrets.passphrase) {
-      if (await saveStoredSecret(passphraseKey(profileId), secrets.passphrase, "passphrase importada")) {
+      if (await saveStoredSecret(passphraseKey(profileId), secrets.passphrase, t("toast.secret_passphrase"))) {
         imported++;
       }
     }
@@ -21640,7 +22003,7 @@ async function exportConnections(folderFilter, workspaceId = getActiveWorkspaceI
   try {
     await files.writeTextFile(file, JSON.stringify(data, null, 2));
     toast(
-      `${profilesToExport.length} conexiones exportadas${folderFilter ? ` (${folderFilter})` : ""}`,
+      `${t("prefs_data.export_done", { n: profilesToExport.length })}${folderFilter ? ` (${folderFilter})` : ""}`,
       "success"
     );
   } catch (err) {
@@ -21684,7 +22047,7 @@ async function exportConnectionsByWorkspace(workspaceId) {
 
   try {
     await files.writeTextFile(file, JSON.stringify(data, null, 2));
-    toast(`${profilesToExport.length} conexiones exportadas (${wsName})`, "success");
+    toast(`${t("prefs_data.export_done", { n: profilesToExport.length })} (${wsName})`, "success");
   } catch (err) {
     toast(fileErrorText(err), "error");
   }
@@ -21712,7 +22075,7 @@ async function importConnections() {
     const data = JSON.parse(text);
 
     if (!data.profiles || !Array.isArray(data.profiles)) {
-      throw new Error("Formato de archivo no válido");
+      throw new Error(t("prefs_data.import_invalid_format"));
     }
 
     // Una sola transacción: guardar perfil a perfil dejaba media importación
@@ -21724,6 +22087,18 @@ async function importConnections() {
       const idx = profiles.findIndex((p) => p.id === profile.id);
       if (idx >= 0) { profiles[idx] = profile; updated++; }
       else { profiles.push(profile); added++; }
+    }
+    // Sin su workspace en las prefs, las conexiones de uno que aquí no existe
+    // no salían en ninguna vista hasta reiniciar (y luego como «Workspace N»).
+    // Crearlo al importar es una edición: viaja en el bundle con su nombre.
+    const folderWorkspaceIds = data.foldersByWorkspace && typeof data.foldersByWorkspace === "object"
+      ? Object.entries(data.foldersByWorkspace)
+        .filter(([, folders]) => Array.isArray(folders) && folders.some((f) => typeof f === "string" && f.trim()))
+        .map(([wsId]) => wsId)
+      : [];
+    if (ensureWorkspacesForProfiles(workspaceNameMap(data.workspaces), folderWorkspaceIds)) {
+      prefs._prefsUpdatedAt = new Date().toISOString();
+      savePrefs();
     }
 
     if (data.foldersByWorkspace && typeof data.foldersByWorkspace === "object" && !Array.isArray(data.foldersByWorkspace)) {
@@ -21750,7 +22125,9 @@ async function importConnections() {
     renderConnectionList();
     scheduleProfileAutoSync();
     toast(
-      `Importadas: ${added} nuevas, ${updated} actualizadas${importedSecrets ? `, ${importedSecrets} secretos` : ""}`,
+      importedSecrets
+        ? t("prefs_data.import_done_secrets", { added, updated, secrets: importedSecrets })
+        : t("prefs_data.import_done", { added, updated }),
       "success",
     );
   } catch (err) {
@@ -22251,7 +22628,7 @@ function parseMremoteng(xmlText) {
         uid: `iw-${counter++}`,
         el: child,
         parent,
-        name: child.getAttribute("Name") || "(sin nombre)",
+        name: child.getAttribute("Name") || t("import_wizard.unnamed"),
         type: child.getAttribute("Type") || "Connection",
         protocol: child.getAttribute("Protocol") || "",
         children: [],
@@ -22757,7 +23134,7 @@ async function importWizardRun() {
           ? await invoke("asbru_decrypt", { blob: node.encPassword })
           : await mrngDecryptGcm(node.encPassword, masterPw, importWizard.meta.kdfIterations);
         if (plain) {
-          await saveStoredSecret(passwordKey(profile.id), plain, "contraseña");
+          await saveStoredSecret(passwordKey(profile.id), plain, t("toast.secret_password"));
           withPw++;
         }
       } catch {
@@ -23247,7 +23624,7 @@ function bindUIEvents() {
       const url = a.dataset.url;
       if (!url) return;
       invoke("plugin:opener|open_url", { url }).catch((err) =>
-        toast(`No se pudo abrir ${url}: ${err}`, "error", 6000)
+        toast(t("toast.link_open_error_url", { url, err }), "error", 6000)
       );
     });
   });
@@ -23578,6 +23955,16 @@ function bindUIEvents() {
 
   // Cerrar modal de conexión
   document.getElementById("btn-modal-close").addEventListener("click", closeModal);
+  // La barra de pestañas del modal de conexión es sticky justo debajo de la
+  // cabecera (también sticky); su altura cambia con la densidad, el tamaño de
+  // texto y el zoom, así que se mide en vez de fijarla en la hoja.
+  const connHeader = document.querySelector("#modal-connection > .modal-header");
+  if (connHeader && typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => {
+      document.getElementById("modal-connection")
+        ?.style.setProperty("--modal-header-h", `${connHeader.offsetHeight}px`);
+    }).observe(connHeader);
+  }
   document.getElementById("btn-modal-cancel").addEventListener("click", closeModal);
 
   // Tipo de conexión → ajustar campos y puerto
@@ -23614,6 +24001,9 @@ function bindUIEvents() {
     });
     kpSearch.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
+        // Con la lista abierta, Escape solo la cierra; con ella cerrada, sigue
+        // hacia el diálogo.
+        if (!document.getElementById("keepass-picker-list")?.classList.contains("hidden")) e.preventDefault();
         closeKeepassPicker();
       } else if (e.key === "Enter") {
         const first = kpList.querySelector(".keepass-picker-item");
@@ -23816,51 +24206,16 @@ function bindUIEvents() {
     if (openFloatingMenuEl()) closeFloatingMenus();
   });
 
+  // Escape de los diálogos: lo reparte el controlador de diálogos (solo al de
+  // arriba). Aquí quedan los menús flotantes, que se lo quedan si están
+  // abiertos. Antes esta cadena acababa SIEMPRE en closeModal() y
+  // closeSettingsModal(): un Escape en un desplegable cerraba también Nueva
+  // conexión (perdiendo lo escrito) o Preferencias por debajo de un hijo.
+  registerDialogs();
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      const credentialOverlay = document.getElementById("credential-modal-overlay");
-      if (credentialOverlay && !credentialOverlay.classList.contains("hidden")) {
-        closeCredentialPrompt(null);
-        e.preventDefault();
-        return;
-      }
-      if (isCredEditModalOpen()) {
-        closeCredEditModal();
-        e.preventDefault();
-        return;
-      }
-      const dupOverlay = document.getElementById("dup-modal-overlay");
-      if (dupOverlay && !dupOverlay.classList.contains("hidden")) {
-        closeDupPrompt(null);
-        e.preventDefault();
-        return;
-      }
-      if (isGlobalTunnelsModalOpen()) {
-        closeGlobalTunnelsModal();
-        e.preventDefault();
-        return;
-      }
-      const scriptPickOverlay = document.getElementById("script-pick-overlay");
-      if (scriptPickOverlay && !scriptPickOverlay.classList.contains("hidden")) {
-        closeScriptPicker();
-        e.preventDefault();
-        return;
-      }
-      const scriptRunOverlay = document.getElementById("script-run-overlay");
-      if (scriptRunOverlay && !scriptRunOverlay.classList.contains("hidden")) {
-        closeScriptRunModal();
-        e.preventDefault();
-        return;
-      }
-      if (isScriptsModalOpen()) {
-        closeScriptsModal();
-        e.preventDefault();
-        return;
-      }
-      closeModal();
-      closeSettingsModal();
-      closeFloatingMenus({ restoreFocus: true });
-    }
+    if (e.key !== "Escape" || e.defaultPrevented || !openFloatingMenuEl()) return;
+    closeFloatingMenus({ restoreFocus: true });
+    e.preventDefault();
   });
 
   // Navegación por teclado de los menús flotantes (flechas / Inicio / Fin / Tab).
@@ -24012,7 +24367,7 @@ async function resolveCommandText(text) {
 const PROFILE_TEMPLATES = [
   { id: "linux-ssh",   nameKey: "templates.linux_ssh",   defaults: { connection_type: "ssh", port: 22, auth_type: "password" } },
   { id: "ssh-key",     nameKey: "templates.ssh_key",     defaults: { connection_type: "ssh", port: 22, auth_type: "public_key" } },
-  { id: "bastion",     nameKey: "templates.bastion",     defaults: { connection_type: "ssh", port: 22, auth_type: "public_key", proxy_jump: "usuario@bastion:22" } },
+  { id: "bastion",     nameKey: "templates.bastion",     get defaults() { return { connection_type: "ssh", port: 22, auth_type: "public_key", proxy_jump: t("templates.bastion_proxy_example") }; } },
   { id: "ssh-legacy",  nameKey: "templates.ssh_legacy",  defaults: { connection_type: "ssh", port: 22, auth_type: "password", allow_legacy: true } },
   { id: "rdp-windows", nameKey: "templates.rdp_windows", defaults: { connection_type: "rdp", port: 3389, auth_type: "password" } },
   { id: "ftps",        nameKey: "templates.ftps",        defaults: { connection_type: "ftps", port: 21, auth_type: "password" } },
@@ -24514,6 +24869,24 @@ let _paletteItems = [];
 let _paletteFiltered = [];
 let _paletteActive = 0;
 
+/**
+ * Acción configurable (`modules/shortcuts/catalog.js`) que hace lo mismo que
+ * cada entrada de la paleta: la paleta enseña su atajo vigente al lado, así
+ * se aprende sin abrir Preferencias.
+ */
+const PALETTE_ACTION_SHORTCUT = {
+  "action:new-connection": "new_connection",
+  "action:local-shell": "new_local_shell",
+  "action:preferences": "open_preferences",
+  "action:show-shortcuts": "show_shortcuts",
+  "action:toggle-sftp": "sftp_toggle_panel",
+  "action:session-note": "open_note_editor",
+  "action:show-blocks-panel": "show_blocks_panel",
+  "action:copy-block-markdown": "copy_block_markdown",
+  "action:export-block-markdown": "export_block_markdown",
+  "action:diff-block": "diff_block_previous",
+};
+
 /* Frecuencia + recencia de uso de la paleta, persistidas en localStorage.
    `id` estable por entrada (action:…, profile:<id>, script:<id>, …). */
 const PALETTE_USAGE_KEY = "rustty.paletteUsage";
@@ -24557,6 +24930,7 @@ function buildPaletteSources() {
   add("action:new-template", { kind: "action", title: t("palette.action_new_template"), icon: PALETTE_ICONS.template, run: () => openNewConnectionFromTemplate() });
   add("action:local-shell", { kind: "action", title: t("palette.action_local_shell"), icon: PALETTE_ICONS.action, run: () => openLocalShell() });
   add("action:preferences", { kind: "action", title: t("palette.action_preferences"), icon: PALETTE_ICONS.action, run: () => openSettingsModal() });
+  add("action:show-shortcuts", { kind: "action", title: t("prefs_shortcuts.action_show_shortcuts"), icon: PALETTE_ICONS.action, run: () => openShortcutsHelp() });
   // Acciones contextuales: solo cuando aplican a la sesión/perfil activos.
   if (activeSftpSession()) {
     add("action:toggle-sftp", { kind: "action", title: t("palette.action_toggle_sftp"), icon: PALETTE_ICONS.sftp, run: () => toggleActiveSftpPanel() });
@@ -24655,6 +25029,26 @@ function renderPaletteResults(query) {
       .sort((a, b) => (b.score + b.f) - (a.score + a.f))
       .slice(0, 50)
       .map((x) => x.it);
+    // Conexión rápida: si la consulta es un destino, se ofrece conectar. Con
+    // forma inequívoca (usuario@, :puerto, IP) va arriba; un nombre con punto
+    // puede ser lo que se buscaba («deploy.sh») y va detrás del primer
+    // resultado, para no quitarle el Intro. La fila nombra el destino real: el
+    // perfil guardado de ese host si se va a reutilizar.
+    const quick = paletteQuickTarget(q);
+    if (quick) {
+      const existing = findQuickTargetProfile(profiles, quick.target);
+      const shown = existing
+        ? { username: existing.username || "", host: existing.host || quick.target.host, port: Number(existing.port || 22) }
+        : quick.target;
+      const item = {
+        id: "quick:connect", kind: "action", transient: true, icon: PALETTE_ICONS.profile,
+        title: t("palette.quick_connect", { target: formatQuickTarget(shown) }),
+        sub: t("palette.quick_connect_sub"),
+        run: () => quickConnectToTarget(quick.target),
+      };
+      if (quick.explicit) results.unshift(item);
+      else results.splice(results.length ? 1 : 0, 0, item);
+    }
   }
   _paletteFiltered = results;
   if (_paletteActive >= results.length) _paletteActive = 0;
@@ -24663,15 +25057,20 @@ function renderPaletteResults(query) {
     paletteSyncActiveDescendant();
     return;
   }
-  list.innerHTML = results.map((it, i) => `
+  list.innerHTML = results.map((it, i) => {
+    const shortcutId = PALETTE_ACTION_SHORTCUT[it.id];
+    const combo = shortcutId ? shortcuts.get(shortcutId) : null;
+    return `
     <div class="palette-item${i === _paletteActive ? " active" : ""}" id="palette-opt-${i}" data-palette-idx="${i}" role="option" aria-selected="${i === _paletteActive}">
       <span class="palette-item-icon">${it.icon || ""}</span>
       <span class="palette-item-body">
         <span class="palette-item-title">${escHtml(it.title)}</span>
         ${it.sub ? `<span class="palette-item-sub">${escHtml(it.sub)}</span>` : ""}
       </span>
+      ${combo ? `<kbd class="palette-item-kbd">${escHtml(formatAccelerator(combo))}</kbd>` : ""}
       <span class="palette-item-kind">${escHtml(t("palette.kind_" + it.kind))}</span>
-    </div>`).join("");
+    </div>`;
+  }).join("");
   paletteSyncActiveDescendant();
 }
 
@@ -24697,6 +25096,9 @@ function openCommandPalette() {
 
 function closeCommandPalette() {
   document.getElementById("command-palette-overlay")?.classList.add("hidden");
+  // Sin esperar al observador: `executePaletteIndex` ejecuta la acción justo
+  // después y puede enfocar el terminal o un buscador, aún inertes.
+  dialogs.reconcile();
   const input = document.getElementById("command-palette-input");
   input?.setAttribute("aria-expanded", "false");
   input?.removeAttribute("aria-activedescendant");
@@ -24717,7 +25119,8 @@ function paletteMoveActive(delta) {
 function executePaletteIndex(i) {
   const item = _paletteFiltered[i];
   if (!item) return;
-  bumpPaletteUsage(item.id);
+  // La conexión rápida depende de lo escrito: no entra en la frecencia.
+  if (!item.transient) bumpPaletteUsage(item.id);
   closeCommandPalette();
   try { item.run(); } catch (err) { console.error("[palette]", err); }
 }
@@ -24727,6 +25130,99 @@ function paletteInputKeydown(e) {
   else if (e.key === "ArrowUp") { e.preventDefault(); paletteMoveActive(-1); }
   else if (e.key === "Enter") { e.preventDefault(); executePaletteIndex(_paletteActive); }
   else if (e.key === "Escape") { e.preventDefault(); closeCommandPalette(); }
+}
+
+/* ── Chuleta de atajos ───────────────────────────────────────────────────
+   Modal con los atajos vigentes (de fábrica, de un preset o personalizados)
+   agrupados por contexto y con filtro; el agrupado y el filtrado son puros
+   (`modules/shortcuts/cheatsheet.js`). Abrir y cerrar son dos funciones
+   sueltas, fáciles de enganchar a un gestor común de diálogos: hoy siguen el
+   patrón de los demás overlays (clase `.hidden`, Escape y clic fuera), ponen
+   el foco en el filtro y lo devuelven a donde estaba al cerrar. */
+let _shortcutsHelpReturnFocus = null;
+
+function isShortcutsHelpOpen() {
+  const overlay = document.getElementById("shortcuts-help-overlay");
+  return !!overlay && !overlay.classList.contains("hidden");
+}
+
+function renderShortcutsHelp() {
+  const list = document.getElementById("shortcuts-help-list");
+  if (!list) return;
+  const query = /** @type {HTMLInputElement|null} */ (document.getElementById("shortcuts-help-filter"))?.value || "";
+  const groups = filterCheatsheet(buildCheatsheet({
+    get: (id) => shortcuts.get(id),
+    label: (id) => t(`prefs_shortcuts.action_${id}`),
+    groupLabel: (id) => t(`prefs_shortcuts.group_${id}`),
+    format: (combo) => formatAccelerator(combo),
+  }), query);
+  if (!groups.length) {
+    list.innerHTML = `<div class="palette-empty">${escHtml(t("palette.empty"))}</div>`;
+    return;
+  }
+  list.innerHTML = groups.map((group) => `
+    <section class="shortcuts-help-group" aria-labelledby="shortcuts-help-group-${group.id}">
+      <h3 id="shortcuts-help-group-${group.id}">${escHtml(group.label)}</h3>
+      <ul>${group.items.map((item) => `
+        <li class="shortcuts-help-row">
+          <span class="shortcuts-help-label">${escHtml(item.label)}</span>
+          <kbd class="shortcuts-help-combo">${item.keys.map((key) => `<kbd>${escHtml(key)}</kbd>`).join("")}</kbd>
+        </li>`).join("")}
+      </ul>
+    </section>`).join("");
+}
+
+function openShortcutsHelp() {
+  const overlay = document.getElementById("shortcuts-help-overlay");
+  const input = document.getElementById("shortcuts-help-filter");
+  if (!overlay || !(input instanceof HTMLInputElement)) return;
+  if (!overlay.classList.contains("hidden")) { input.focus(); return; }
+  const active = document.activeElement;
+  _shortcutsHelpReturnFocus = active instanceof HTMLElement && active !== document.body ? active : null;
+  input.value = "";
+  renderShortcutsHelp();
+  overlay.classList.remove("hidden");
+  setTimeout(() => input.focus(), 0);
+}
+
+/**
+ * @param {{ restoreFocus?: boolean }} [options] Sin restaurar cuando lo que
+ *   viene después (Preferencias) se lleva el foco.
+ */
+function closeShortcutsHelp({ restoreFocus = true } = {}) {
+  const overlay = document.getElementById("shortcuts-help-overlay");
+  if (!overlay || overlay.classList.contains("hidden")) return;
+  overlay.classList.add("hidden");
+  const target = _shortcutsHelpReturnFocus;
+  _shortcutsHelpReturnFocus = null;
+  if (!restoreFocus) return;
+  // Desde la paleta, el foco venía de su buscador, ya oculto: en ese caso
+  // vuelve al terminal activo.
+  if (target?.isConnected && target.getClientRects().length) target.focus();
+  else if (activeSessionId) sessions.get(activeSessionId)?.terminal?.focus();
+}
+
+function toggleShortcutsHelp() {
+  if (isShortcutsHelpOpen()) closeShortcutsHelp();
+  else openShortcutsHelp();
+}
+
+/** Enlace de la chuleta: Preferencias abiertas en la pestaña de atajos. */
+function openShortcutsPreferences() {
+  closeShortcutsHelp({ restoreFocus: false });
+  openSettingsModal();
+  switchPrefsTab("shortcuts");
+}
+
+function initShortcutsHelp() {
+  const overlay = document.getElementById("shortcuts-help-overlay");
+  if (!overlay) return;
+  overlay.addEventListener("mousedown", (e) => {
+    if (e.target === overlay) closeShortcutsHelp();
+  });
+  document.getElementById("shortcuts-help-filter")?.addEventListener("input", renderShortcutsHelp);
+  document.getElementById("btn-shortcuts-help-close")?.addEventListener("click", () => closeShortcutsHelp());
+  document.getElementById("btn-shortcuts-help-edit")?.addEventListener("click", openShortcutsPreferences);
 }
 
 /* ── Comprobación masiva de salud (DNS/TCP) ──────────────────────────────
@@ -24851,6 +25347,7 @@ function initCommandsAndPalette() {
   document.getElementById("command-palette-overlay")?.addEventListener("mousedown", (e) => {
     if (e.target.id === "command-palette-overlay") closeCommandPalette();
   });
+  initShortcutsHelp();
 }
 
 /**
@@ -24949,7 +25446,7 @@ function commandBlockText(session, block) {
 /** Destino legible de una sesión para la cabecera del Markdown exportado. */
 function sessionBlockHost(session) {
   if (!session) return "";
-  if (session.type === "local") return "localhost";
+  if (isLocalShellSession(session)) return "localhost";
   const profile = profiles.find((p) => p.id === session.profileId);
   if (!profile) return "";
   return `${profile.username ? `${profile.username}@` : ""}${profile.host || ""}`;
@@ -25296,6 +25793,91 @@ async function copyBlockDiffUnified() {
   toast(t("blocks.diff_copied"), "success");
 }
 
+// Diálogos: pila común con foco inicial, vuelta del foco a quien abrió el
+// diálogo, trampa de Tab, fondo inerte y Escape solo para el de arriba
+// (`modules/dialogs/`). Cada diálogo conserva su propia función de cerrar:
+// Escape la invoca tal cual, con sus efectos (revertir la vista previa,
+// resolver la promesa de una credencial, autoguardar la nota…).
+const dialogs = createDialogController({
+  // El fondo inerte es el contenido de #app salvo los tiradores de
+  // redimensionado de la ventana, que deben seguir funcionando con un modal.
+  background: () => [...(document.getElementById("app")?.children ?? [])]
+    .filter((el) => el.id !== "window-resize-handles"),
+  // Un menú contextual se oculta antes de abrir el diálogo que lanza: el
+  // disparador real es el que recordó el menú.
+  resolveOpener: (active) => {
+    const fromMenu = (!active && performance.now() - menuHiddenAt < MENU_OPENER_WINDOW_MS)
+      || FLOATING_MENU_IDS.some((id) => document.getElementById(id)?.contains(active));
+    return fromMenu && menuReturnFocus?.isConnected ? menuReturnFocus : active;
+  },
+  // Si el disparador ya no existe (la sidebar se repinta tras guardar o
+  // borrar): el terminal activo, el primer elemento enfocable del árbol de
+  // conexiones y, en último caso, la pestaña de Inicio.
+  fallbackFocus: () => [
+    activeSessionId ? sessions.get(activeSessionId)?.terminal?.textarea : null,
+    document.querySelector('#connection-list [tabindex="0"]'),
+    document.getElementById("home-tab"),
+  ],
+  hasOpenPopover: () => !!openFloatingMenuEl(),
+});
+
+/** Registra los overlays en el controlador de diálogos (una vez, en el arranque). */
+function registerDialogs() {
+  const click = (id) => () => document.getElementById(id)?.click();
+  const credentialHasField = () => !document.getElementById("credential-modal-input-row")?.classList.contains("hidden");
+  const credentialDanger = () => !!document.getElementById("btn-credential-submit")?.classList.contains("danger");
+  dialogs.register("connection", { overlay: "modal-overlay", close: closeModal });
+  dialogs.register("prefs", {
+    overlay: "modal-prefs-overlay", close: closeSettingsModal,
+    initialFocus: () => document.querySelector("#modal-prefs .prefs-nav-item.active"),
+  });
+  dialogs.register("credential", {
+    overlay: "credential-modal-overlay", close: () => closeCredentialPrompt(null),
+    cancel: "#btn-credential-cancel",
+    confirm: () => ({ confirm: !credentialHasField(), danger: credentialDanger() }),
+    initialFocus: () => (credentialHasField()
+      ? document.getElementById("credential-modal-input")
+      : document.getElementById(credentialDanger() ? "btn-credential-cancel" : "btn-credential-submit")),
+  });
+  dialogs.register("ask", { overlay: "ask-modal-overlay", close: () => closeAskPrompt(null) });
+  dialogs.register("dup", { overlay: "dup-modal-overlay", close: () => closeDupPrompt(null) });
+  dialogs.register("keepass", { overlay: "modal-keepass-overlay", close: closeKeepassModal });
+  dialogs.register("known_hosts", { overlay: "known-hosts-overlay", close: closeKnownHostsModal });
+  dialogs.register("snippet", { overlay: "snippet-edit-overlay", close: closeSnippetEditor });
+  dialogs.register("localcmd", { overlay: "localcmd-edit-overlay", close: closeLocalCmdEditor });
+  dialogs.register("cred_edit", { overlay: "cred-edit-overlay", close: closeCredEditModal });
+  dialogs.register("import", { overlay: "import-wizard-overlay", close: closeImportWizard });
+  dialogs.register("trash", { overlay: "trash-modal-overlay", close: click("trash-close") });
+  const activityPanel = document.getElementById("activity-center-panel");
+  activityPanel?.setAttribute("role", "dialog");
+  activityPanel?.setAttribute("aria-modal", "true");
+  dialogs.register("activity", {
+    overlay: "activity-center-overlay", dialog: "activity-center-panel", close: closeActivityCenter,
+    initialFocus: () => document.querySelector("#activity-center-panel .activity-filter.active"),
+  });
+  dialogs.register("health", { overlay: "health-overlay", close: closeHealthModal });
+  dialogs.register("block_diff", { overlay: "block-diff-overlay", close: closeBlockDiffModal });
+  dialogs.register("note", { overlay: "note-editor-overlay", close: handleNoteEditorEscape });
+  // Chuleta de atajos: Escape, la trampa de Tab y el fondo inerte, los comunes;
+  // la vuelta del foco la hace el controlador (desde la paleta, ya oculta, cae
+  // al terminal activo).
+  dialogs.register("shortcuts_help", {
+    overlay: "shortcuts-help-overlay", close: () => closeShortcutsHelp({ restoreFocus: false }),
+    initialFocus: () => document.getElementById("shortcuts-help-filter"),
+  });
+  // Los que ya tenían su Escape en la cadena antigua conservan el mismo cierre
+  // (en los túneles, Escape minimiza sin preguntar, como antes).
+  dialogs.register("global_tunnels", { overlay: "global-tunnels-overlay", close: closeGlobalTunnelsModal });
+  dialogs.register("scripts", { overlay: "scripts-overlay", close: closeScriptsModal });
+  dialogs.register("script_run", { overlay: "script-run-overlay", close: () => { closeScriptRunModal(); } });
+  dialogs.register("script_pick", { overlay: "script-pick-overlay", close: closeScriptPicker });
+  // La paleta y el editor de comandos ya gestionan su foco y su Escape; aquí
+  // ganan el fondo inerte, la trampa de Tab y la vuelta del foco.
+  dialogs.register("palette", { overlay: "command-palette-overlay", close: closeCommandPalette });
+  dialogs.register("cmd_editor", { overlay: "cmd-editor-overlay", close: () => closeCommandEditor(false) });
+  dialogs.bind();
+}
+
 const shortcuts = createShortcutController({
   getPrefs: () => prefs,
   save: () => { savePrefs(); scheduleProfileAutoSync(); },
@@ -25340,6 +25922,7 @@ const shortcuts = createShortcutController({
     open_command_editor: () => openCommandEditor(),
     open_note_editor: () => openActiveSessionNote(),
     command_palette: () => openCommandPalette(),
+    show_shortcuts: () => toggleShortcutsHelp(),
     clear_prompt_line: () => clearActivePromptLine(),
   },
 });
@@ -25398,8 +25981,18 @@ function handleRenameHotkey(e) {
 
 function handleGlobalShortcut(e) {
   if (shortcuts.capture(e)) return;
-  if (handleRenameHotkey(e)) return;
-  if (shortcuts.handle(e)) return;
+  // Con un diálogo modal abierto, los atajos no actúan sobre lo que queda
+  // detrás (Ctrl+W cerraría una sesión oculta, Ctrl+P escribiría en ella la
+  // contraseña): solo pasa la lista blanca de `modules/dialogs/stack.js`.
+  const modalOpen = dialogs.hasModal();
+  if (!modalOpen && handleRenameHotkey(e)) return;
+  // Con un modal abierto solo pasan los atajos seguros; además, el de la
+  // chuleta la cierra cuando es ella la que está arriba (sin esto la abría y
+  // no la volvía a cerrar).
+  const allowShortcut = (id) => dialogs.allowShortcut(id)
+    || (id === "show_shortcuts" && dialogs.top() === "shortcuts_help");
+  if (shortcuts.handle(e, { allow: allowShortcut })) return;
+  if (modalOpen) return;
 
   // Ctrl/Cmd+1…9 salta a la pestaña N (9 = última, convención de navegadores).
   // Va después del bucle de atajos configurables para no pisar un combo que el
@@ -25439,7 +26032,8 @@ function handleEditUndoRedo(e) {
  * Devuelve `true` si se activó alguna pestaña.
  */
 function jumpToTabByIndex(n) {
-  const tabs = [...document.querySelectorAll("#tabs-container .tab")];
+  // Las pestañas ocultas (la raíz de tmux en modo control) no cuentan.
+  const tabs = [...document.querySelectorAll("#tabs-container .tab:not(.hidden)")];
   if (!tabs.length) return false;
   const idx = n === 9 ? tabs.length - 1 : Math.min(n - 1, tabs.length - 1);
   const sid = tabs[idx]?.dataset?.session;
@@ -25600,7 +26194,7 @@ function runTerminalSearch(sessionId, direction) {
   const found = direction === "prev"
     ? s.searchAddon.findPrevious(term, opts)
     : s.searchAddon.findNext(term, opts);
-  summary.textContent = found ? "" : "Sin resultados";
+  summary.textContent = found ? "" : t("sidebar.search_no_results");
 }
 
 async function pasteIntoActiveTerminal() {
@@ -26188,12 +26782,8 @@ let _cmdHistDismissed = false;
 
 /** Devuelve la clave de borrador para la sesión: profileId o "local". */
 function _cmdEditorDraftKey(session) {
-  if (!session) return null;
-  // Las sesiones privadas no persisten el borrador de comando.
-  if (session.private) return null;
-  if (session.type === "ssh" && session.profileId) return session.profileId;
-  if (session.type === "local") return "local";
-  return null;
+  // Las privadas no lo persisten; las consolas locales comparten «local».
+  return commandDraftKey(session);
 }
 
 /**
@@ -26491,8 +27081,8 @@ function renderCommandHistoryList() {
  * área principal cambia de anchura.
  */
 /**
- * Modo zen / distraction-free: oculta rail + sidebar + tab-bar y deja solo
- * el área del terminal. Persiste en localStorage para que el atajo recuerde
+ * Modo zen / distraction-free: oculta rail + sidebar + tab-bar + barra de
+ * estado (todo por CSS, ver `body.zen-mode`) y deja solo el área del terminal. Persiste en localStorage para que el atajo recuerde
  * el estado entre sesiones (útil si la app queda en una pantalla secundaria
  * para presentar / grabar).
  */
@@ -26502,9 +27092,22 @@ function loadZenMode() {
   return localStorage.getItem(ZEN_MODE_KEY) === "1";
 }
 
+/**
+ * Ayuda del botón para salir del modo zen: nombra el atajo vigente, no el de
+ * fábrica. Va solo en `data-tooltip` (un `title` sacaría además el tooltip
+ * nativo) y se repinta tras cada `applyTranslations`, que no la conoce.
+ */
+function updateZenExitTooltip() {
+  const exitBtn = document.getElementById("zen-exit-btn");
+  if (!exitBtn) return;
+  const combo = shortcuts.get("toggle_zen_mode");
+  exitBtn.dataset.tooltip = t("window.zen_exit_title") + (combo ? ` (${formatAccelerator(combo)})` : "");
+}
+
 function applyZenMode(enabled) {
   document.body.classList.toggle("zen-mode", !!enabled);
   localStorage.setItem(ZEN_MODE_KEY, enabled ? "1" : "0");
+  updateZenExitTooltip();
   requestAnimationFrame(() => {
     for (const sid of viewSelection) {
       const s = sessions.get(sid);
@@ -26975,10 +27578,15 @@ function initWindowResizeHandles(win) {
 }
 
 function switchTab(delta) {
-  const order = [null, ...document.querySelectorAll("#tabs-container .tab")]
+  // Las pestañas ocultas (la raíz de tmux en modo control) no se recorren.
+  const order = [null, ...document.querySelectorAll("#tabs-container .tab:not(.hidden)")]
     .map((el) => el?.dataset?.session ?? null);
   if (!order.length) return;
-  const current = viewSelection.length === 0 ? null : activeSessionId;
+  // Con una pane tmux enfocada, la activa es la pane: se cuenta desde su ventana.
+  const activePane = sessions.get(activeSessionId);
+  const current = viewSelection.length === 0 ? null
+    : isTmuxPaneSession(activePane) ? tmuxWindowTabId(activePane._tmux.conn, activePane._tmux.window)
+    : activeSessionId;
   const idx = order.indexOf(current);
   const next = ((idx < 0 ? 0 : idx) + delta + order.length) % order.length;
   if (order[next] === null) selectHomeTab();
@@ -27152,7 +27760,7 @@ function enhanceSelect(selectEl) {
     if (!list.classList.contains("hidden")) position();
   };
   const onKeyDown = (e) => {
-    if (e.key === "Escape" && !list.classList.contains("hidden")) close();
+    if (e.key === "Escape" && !list.classList.contains("hidden")) { e.preventDefault(); close(); }
   };
   document.addEventListener("mousedown", onDocMouseDown);
   window.addEventListener("resize", onResize);
@@ -27269,6 +27877,7 @@ function showTabContextMenu(x, y, sessionId) {
 }
 
 function hideTabContextMenu() {
+  noteFloatingMenuHidden("tab-context-menu");
   document.getElementById("tab-context-menu").classList.add("hidden");
   tabCtxTargetId = null;
 }
@@ -27352,6 +27961,19 @@ async function handleTabContextAction(action) {
       const tab = document.querySelector(`.tab[data-session="${CSS.escape(sid)}"]`);
       return !tab?.classList.contains("is-pinned");
     });
+    // Conexiones tmux en modo control: sin panes, cada conexión por su raíz, y
+    // las ventanas de una conexión que se conserva con su aviso rojo propio.
+    let confirmEach;
+    ({ ids, confirmEach } = normalizeTmuxBatchClose({
+      candidates: ids,
+      all: sessions.keys(),
+      roleOf: (sid) => {
+        const s = sessions.get(sid);
+        if (isTmuxPaneSession(s)) return { role: "pane", conn: s._tmux.conn };
+        if (s?.type === "tmux-window") return { role: "window", conn: s._tmux.conn };
+        return isActiveTmuxControlRoot(s) ? { role: "root" } : { role: "plain" };
+      },
+    }));
     const liveCount = ids.filter((sid) => {
       const s = sessions.get(sid);
       return isSessionLive(s) || sessionHasActiveTransfers(s);
@@ -27368,6 +27990,7 @@ async function handleTabContextAction(action) {
       if (!ok) return;
     }
     for (const sid of ids) await closeSession(sid, { skipConfirm: true });
+    for (const sid of confirmEach) await closeSession(sid);
     return;
   }
   if (action === "duplicate") {
@@ -27494,7 +28117,7 @@ async function exportSessionHistory(sessionId) {
   while (lines.length && lines[lines.length - 1] === "") lines.pop();
 
   const profile = profiles.find((p) => p.id === s.profileId);
-  const baseName = profile?.name || (s._closeOverride ? "consola-local" : (s.type ? s.type.toUpperCase() : "sesion"));
+  const baseName = profile?.name || (s._closeOverride ? t("tabctx.export_history_local_name") : (s.type ? s.type.toUpperCase() : t("tabctx.export_history_session_name")));
   const safeName = baseName.replace(/[^\w.-]+/g, "_");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const defaultName = `rustty-${safeName}-${stamp}.txt`;
@@ -27504,7 +28127,7 @@ async function exportSessionHistory(sessionId) {
     file = await files.pickFileToSave({
       title: t("tabctx.export_history"),
       defaultPath: defaultName,
-      filters: [{ name: "Texto", extensions: ["txt"] }],
+      filters: [{ name: t("tabctx.export_history_filter"), extensions: ["txt"] }],
     });
   } catch (err) {
     toast(t("toast.dialog_open_error", { err }), "error");
@@ -27514,7 +28137,7 @@ async function exportSessionHistory(sessionId) {
 
   try {
     await files.writeTextFile(file, lines.join("\n") + "\n");
-    toast(t("toast.history_exported") || "Historial exportado", "success");
+    toast(t("toast.history_exported"), "success");
   } catch (err) {
     toast(fileErrorText(err), "error");
   }
@@ -27539,6 +28162,24 @@ const TOAST_COALESCE_CATEGORIES = new Set(["transfer", "sync", "error"]);
 
 // Toast vivo por categoría agrupable, para reutilizarlo mientras esté visible.
 const activeCategoryToasts = new Map();
+
+// Temporizador pausable de cada aviso: con el ratón encima o el foco dentro
+// no caduca, y su duración sigue la preferencia «Duración de los avisos».
+const toastTimers = new WeakMap();
+
+function armToastTimer(el, category, ms) {
+  const timer = createPausableTimer({
+    ms: toastDurationMs(ms, prefs.toastDuration),
+    onExpire: () => dismissToast(el, category),
+  });
+  toastTimers.set(el, timer);
+  el.addEventListener("mouseenter", () => timer.pause("hover"));
+  el.addEventListener("mouseleave", () => timer.resume("hover"));
+  el.addEventListener("focusin", () => timer.pause("focus"));
+  el.addEventListener("focusout", (e) => {
+    if (!el.contains(e.relatedTarget)) timer.resume("focus");
+  });
+}
 
 /**
  * Deriva la categoría de un toast. Prioriza `options.category` explícito
@@ -27582,11 +28223,7 @@ function toast(message, type = "info", ms = 3500, options = {}) {
     if (existing && existing.el.isConnected) {
       existing.extra += 1;
       updateToastContent(existing.el, message, type, options, existing.extra);
-      clearTimeout(existing.timer);
-      existing.timer = setTimeout(
-        () => dismissToast(existing.el, category),
-        ms,
-      );
+      toastTimers.get(existing.el)?.restart(toastDurationMs(ms, prefs.toastDuration));
       refreshToastOverflowCounter();
       return existing.el;
     }
@@ -27598,9 +28235,9 @@ function toast(message, type = "info", ms = 3500, options = {}) {
   updateToastContent(el, message, type, options, 0);
   container.appendChild(el);
 
-  const timer = setTimeout(() => dismissToast(el, category), ms);
+  armToastTimer(el, category, ms);
   if (TOAST_COALESCE_CATEGORIES.has(category)) {
-    activeCategoryToasts.set(category, { el, extra: 0, timer });
+    activeCategoryToasts.set(category, { el, extra: 0 });
   }
   refreshToastOverflowCounter();
   // Se devuelve el elemento para que un aviso de larga duración (p. ej. el de
@@ -27621,6 +28258,10 @@ function updateToastContent(el, message, type, options, extra) {
   // el resto, de forma cortés a través del contenedor `aria-live="polite"`.
   el.setAttribute("role", type === "error" ? "alert" : "status");
   if (el.dataset.category) el.classList.add(`toast-cat-${el.dataset.category}`);
+  // Si el foco estaba en un botón del aviso, retirarlo del DOM no siempre
+  // emite `focusout`: sin reanudar aquí, la pausa por foco no se quitaría
+  // nunca y el aviso no caducaría.
+  if (el.contains(document.activeElement)) toastTimers.get(el)?.resume("focus");
   el.replaceChildren();
 
   const text = document.createElement("span");
@@ -27647,6 +28288,15 @@ function updateToastContent(el, message, type, options, extra) {
     });
     el.appendChild(btn);
   }
+
+  // Cerrar a mano: imprescindible con «Hasta cerrarlos» y útil siempre.
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "toast-close";
+  close.setAttribute("aria-label", t("toast.close"));
+  close.innerHTML = '<svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg>';
+  close.addEventListener("click", () => dismissToast(el, el.dataset.category));
+  el.appendChild(close);
 }
 
 /**
@@ -27655,10 +28305,8 @@ function updateToastContent(el, message, type, options, extra) {
  */
 function dismissToast(el, category) {
   const tracked = category && activeCategoryToasts.get(category);
-  if (tracked && tracked.el === el) {
-    clearTimeout(tracked.timer);
-    activeCategoryToasts.delete(category);
-  }
+  toastTimers.get(el)?.stop();
+  if (tracked && tracked.el === el) activeCategoryToasts.delete(category);
   el.remove();
   refreshToastOverflowCounter();
 }
@@ -27680,9 +28328,10 @@ function refreshToastOverflowCounter() {
   let counter = container.querySelector(".toast.toast-overflow");
   if (overflow > 0) {
     if (!counter) {
-      counter = document.createElement("div");
+      // Un botón de verdad: se alcanza con Tab y se activa con Enter/Espacio.
+      counter = document.createElement("button");
+      counter.type = "button";
       counter.className = "toast toast-overflow";
-      counter.setAttribute("role", "status");
       counter.addEventListener("click", () => {
         openActivityCenter();
         all.forEach((t) => t.remove());

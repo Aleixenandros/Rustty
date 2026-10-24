@@ -92,6 +92,19 @@ describe("despacho de teclado", () => {
     expect(zoom).toHaveBeenCalledOnce();
   });
 
+  it("no ejecuta ni consume una acción filtrada por un diálogo abierto", () => {
+    const close = vi.fn();
+    const zoom = vi.fn();
+    const allow = (/** @type {string} */ id) => id === "ui_zoom_in";
+    const ctrlW = event("KeyW", { ctrlKey: true });
+    expect(dispatchShortcut(ctrlW, {}, { close_tab: close }, allow)).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    expect(ctrlW.preventDefault).not.toHaveBeenCalled();
+    const zoomKey = event("Equal", { ctrlKey: true, altKey: true });
+    expect(dispatchShortcut(zoomKey, {}, { ui_zoom_in: zoom }, allow)).toBe(true);
+    expect(zoom).toHaveBeenCalledOnce();
+  });
+
   it("respeta una acción desactivada", () => {
     const run = vi.fn();
     expect(dispatchShortcut(event("KeyN", { ctrlKey: true, shiftKey: true }),

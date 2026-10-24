@@ -7,10 +7,11 @@
 //! elevación real de privilegios al panel de ficheros.
 //!
 //! Cada sesión SFTP vive en su propio hilo con una Runtime de tokio
-//! single-threaded; los comandos se envían por un `std::sync::mpsc` desde
-//! el hilo principal de Tauri. Así aislamos tokio del resto del backend
-//! (que sigue usando `ssh2` síncrono para el shell interactivo y `std`
-//! para todo lo demás) sin forzar una migración general.
+//! single-threaded; los comandos llegan por un canal de tokio desde el hilo
+//! principal de Tauri. Entre comando y comando el worker **espera con `await`**:
+//! la sesión SSH (keepalives, respuestas a los sondeos del servidor, rekey) y el
+//! lector SFTP son tareas de esa misma runtime, y una espera síncrona las
+//! congelaba con el panel ocioso hasta que el servidor cortaba la conexión.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
@@ -94,6 +95,11 @@ pub struct FileEntry {
 pub struct TransferControls {
     canceled: Mutex<HashSet<String>>,
     paused: Mutex<HashSet<String>>,
+    /// La sesión se está cerrando: **toda** transferencia suya cuenta como
+    /// cancelada (también los ficheros de una carpeta y las pausadas), sin
+    /// consumirse. Sin esto, cerrar la pestaña o el panel dejaba la copia en
+    /// marcha en segundo plano, ya sin fila desde la que pararla.
+    closing: AtomicBool,
 }
 
 /// Pausa global: afecta a **todas** las transferencias de todas las sesiones a
@@ -128,6 +134,9 @@ struct TransferCtx<'a> {
     /// Identifica la transferencia ante los eventos de progreso y los controles.
     /// En una transferencia de carpeta, cada fichero recibe un hijo `{id}-{n}`.
     transfer_id: &'a str,
+    /// En un fichero de una transferencia de carpeta, el id de la carpeta: es
+    /// con el que el frontend pausa y cancela. `None` en una transferencia suelta.
+    parent_id: Option<&'a str>,
     app: &'a AppHandle,
     controls: &'a Arc<TransferControls>,
     verify_size: bool,
@@ -135,17 +144,30 @@ struct TransferCtx<'a> {
 
 impl<'a> TransferCtx<'a> {
     /// El mismo contexto para un fichero suelto dentro de una transferencia de
-    /// carpeta: cambia el `transfer_id` y conserva el resto.
+    /// carpeta: cambia el `transfer_id`, recuerda el de la carpeta y conserva el
+    /// resto.
     fn child<'b>(self, transfer_id: &'b str) -> TransferCtx<'b>
     where
         'a: 'b,
     {
         TransferCtx {
             transfer_id,
+            parent_id: Some(self.transfer_id),
             app: self.app,
             controls: self.controls,
             verify_size: self.verify_size,
         }
+    }
+
+    /// ¿Hay que cancelar esta transferencia? Ver
+    /// [`TransferControls::cancel_requested`].
+    fn cancel_requested(&self) -> bool {
+        self.controls.cancel_requested(self.transfer_id, self.parent_id)
+    }
+
+    /// ¿Está en pausa esta transferencia, o la carpeta a la que pertenece?
+    fn paused(&self) -> bool {
+        self.controls.paused_for(self.transfer_id, self.parent_id)
     }
 }
 
@@ -155,11 +177,35 @@ impl TransferControls {
     }
 
     fn take_cancel(&self, transfer_id: &str) -> bool {
-        self.canceled.lock_recover().remove(transfer_id)
+        self.closing.load(Ordering::Relaxed) || self.canceled.lock_recover().remove(transfer_id)
+    }
+
+    /// Cancela todo lo de la sesión, de una vez y para siempre: se llama al
+    /// cerrarla. Cada `connect` crea controles nuevos, así que no se arrastra a
+    /// una reconexión.
+    fn close(&self) {
+        self.closing.store(true, Ordering::Relaxed);
     }
 
     fn is_paused(&self, transfer_id: &str) -> bool {
         PAUSE_ALL.load(Ordering::Relaxed) || self.paused.lock_recover().contains(transfer_id)
+    }
+
+    /// Cancelación de `transfer_id` o, en un fichero de una carpeta, de la
+    /// carpeta `parent` (el frontend cancela siempre con el id de la carpeta).
+    /// La propia se consume (one-shot); la de la carpeta solo se consulta, para
+    /// que paren a la vez todos sus ficheros en curso (los de un lote van en
+    /// paralelo). La de la carpeta la consume el worker al terminarla, salga
+    /// como salga.
+    fn cancel_requested(&self, transfer_id: &str, parent: Option<&str>) -> bool {
+        self.take_cancel(transfer_id)
+            || parent.is_some_and(|p| self.canceled.lock_recover().contains(p))
+    }
+
+    /// Pausa de `transfer_id` o de la carpeta `parent` a la que pertenece.
+    fn paused_for(&self, transfer_id: &str, parent: Option<&str>) -> bool {
+        self.is_paused(transfer_id)
+            || parent.is_some_and(|p| self.paused.lock_recover().contains(p))
     }
 
     fn cancel(&self, transfer_id: String) {
@@ -337,7 +383,7 @@ struct FtpBackend {
 }
 
 struct SftpHandle {
-    tx: mpsc::Sender<SftpCommand>,
+    tx: tokio::sync::mpsc::UnboundedSender<SftpCommand>,
     controls: Arc<TransferControls>,
     /// Copia del handle de la app: con ella, una transferencia que espera turno
     /// puede decírselo al panel sin arrastrar el `AppHandle` por las firmas de
@@ -373,7 +419,7 @@ impl SftpManager {
         max_parallelism: usize,
         app_handle: AppHandle,
     ) -> Result<(), String> {
-        let (tx, rx) = mpsc::channel::<SftpCommand>();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<SftpCommand>();
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
         let controls = Arc::new(TransferControls::new());
 
@@ -435,13 +481,32 @@ impl SftpManager {
     /// bloquearlo esperando turno congelaría también su panel de ficheros. Aquí
     /// la espera solo detiene a la transferencia que la sufre. El hueco se
     /// suelta cuando el comando termina, que es cuando termina la copia.
+    ///
+    /// Una cancelación mientras espera (o justo al entrar) corta aquí, antes de
+    /// mandar nada al worker: así una subida cancelada en cola no llega a abrir
+    /// —y truncar— el fichero remoto cuando le toca el turno. `Ok(None)` = la
+    /// sesión no existe; lo dirá `send`.
     async fn wait_for_turn(
         &self,
         session_id: &str,
         transfer_id: &str,
-    ) -> Option<crate::transfer_slots::TransferSlot> {
-        let app = self.sessions.lock_recover().get(session_id)?.app.clone();
-        Some(crate::transfer_slots::take_with_notice(&app, transfer_id).await)
+    ) -> Result<Option<crate::transfer_slots::TransferSlot>, String> {
+        let Some((app, controls)) = self
+            .sessions
+            .lock_recover()
+            .get(session_id)
+            .map(|h| (h.app.clone(), Arc::clone(&h.controls)))
+        else {
+            return Ok(None);
+        };
+        let slot = crate::transfer_slots::take_with_notice(&app, transfer_id, || {
+            controls.take_cancel(transfer_id)
+        })
+        .await;
+        match slot {
+            Some(slot) if !controls.take_cancel(transfer_id) => Ok(Some(slot)),
+            _ => Err("transferencia cancelada".to_string()),
+        }
     }
 
     async fn send<T>(
@@ -533,7 +598,7 @@ impl SftpManager {
         transfer_id: String,
         verify_size: bool,
     ) -> Result<(), String> {
-        let _slot = self.wait_for_turn(session_id, &transfer_id).await;
+        let _slot = self.wait_for_turn(session_id, &transfer_id).await?;
         self.send(session_id, move |reply| SftpCommand::Download {
             remote,
             local,
@@ -552,7 +617,7 @@ impl SftpManager {
         transfer_id: String,
         verify_size: bool,
     ) -> Result<(), String> {
-        let _slot = self.wait_for_turn(session_id, &transfer_id).await;
+        let _slot = self.wait_for_turn(session_id, &transfer_id).await?;
         self.send(session_id, move |reply| SftpCommand::Upload {
             local,
             remote,
@@ -572,7 +637,7 @@ impl SftpManager {
         conflict_policy: TransferConflictPolicy,
         verify_size: bool,
     ) -> Result<(), String> {
-        let _slot = self.wait_for_turn(session_id, &transfer_id).await;
+        let _slot = self.wait_for_turn(session_id, &transfer_id).await?;
         self.send(session_id, move |reply| SftpCommand::DownloadDir {
             remote,
             local,
@@ -593,7 +658,7 @@ impl SftpManager {
         conflict_policy: TransferConflictPolicy,
         verify_size: bool,
     ) -> Result<(), String> {
-        let _slot = self.wait_for_turn(session_id, &transfer_id).await;
+        let _slot = self.wait_for_turn(session_id, &transfer_id).await?;
         self.send(session_id, move |reply| SftpCommand::UploadDir {
             local,
             remote,
@@ -634,6 +699,9 @@ impl SftpManager {
 
     pub fn disconnect(&self, session_id: &str) -> Result<(), String> {
         if let Some(handle) = self.sessions.lock_recover().remove(session_id) {
+            // El worker atiende `Close` cuando acaba lo que tenga entre manos:
+            // primero se cancela, para que eso acabe ya.
+            handle.controls.close();
             let _ = handle.tx.send(SftpCommand::Close);
         }
         Ok(())
@@ -652,6 +720,7 @@ impl SftpManager {
             .map(|(_, h)| h)
             .collect();
         for handle in handles {
+            handle.controls.close();
             let _ = handle.tx.send(SftpCommand::Close);
         }
     }
@@ -667,7 +736,7 @@ async fn run_sftp_worker(
     passphrase: Option<String>,
     elevated: bool,
     max_parallelism: usize,
-    rx: mpsc::Receiver<SftpCommand>,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<SftpCommand>,
     ready: mpsc::SyncSender<Result<(), String>>,
     app_handle: AppHandle,
     controls: Arc<TransferControls>,
@@ -691,14 +760,10 @@ async fn run_sftp_worker(
     };
     let _ = ready.send(Ok(()));
 
-    // Bucle bloqueante: recibe comandos del hilo principal y ejecuta en la
-    // runtime tokio de este hilo. `rx.recv()` es síncrono; tokio se usa
-    // sólo para el trabajo dentro de cada comando.
-    loop {
-        let cmd = match rx.recv() {
-            Ok(c) => c,
-            Err(_) => break,
-        };
+    // Recibe comandos del hilo principal y los ejecuta de uno en uno en la
+    // runtime tokio de este hilo. La espera es asíncrona a propósito (ver
+    // `next_command`): la runtime sigue atendiendo la sesión SSH mientras tanto.
+    while let Some(cmd) = next_command(&mut rx).await {
         match cmd {
             SftpCommand::ListDir { path, reply } => {
                 let _ = reply.send(backend.list_dir(&path).await);
@@ -734,6 +799,7 @@ async fn run_sftp_worker(
             } => {
                 let ctx = TransferCtx {
                     transfer_id: &transfer_id,
+                    parent_id: None,
                     app: &app_handle,
                     controls: &controls,
                     verify_size,
@@ -750,6 +816,7 @@ async fn run_sftp_worker(
             } => {
                 let ctx = TransferCtx {
                     transfer_id: &transfer_id,
+                    parent_id: None,
                     app: &app_handle,
                     controls: &controls,
                     verify_size,
@@ -767,12 +834,17 @@ async fn run_sftp_worker(
             } => {
                 let ctx = TransferCtx {
                     transfer_id: &transfer_id,
+                    parent_id: None,
                     app: &app_handle,
                     controls: &controls,
                     verify_size,
                 };
                 let res =
                     do_download_dir(backend.as_mut(), &remote, &local, ctx, conflict_policy).await;
+                // Sus ficheros solo consultan la cancelación de la carpeta (ver
+                // `TransferCtx::cancel_requested`): se consume aquí, para que
+                // «Reintentar», que reusa el id, no arranque ya cancelado.
+                controls.take_cancel(&transfer_id);
                 let _ = reply.send(res);
             }
             SftpCommand::UploadDir {
@@ -785,12 +857,14 @@ async fn run_sftp_worker(
             } => {
                 let ctx = TransferCtx {
                     transfer_id: &transfer_id,
+                    parent_id: None,
                     app: &app_handle,
                     controls: &controls,
                     verify_size,
                 };
                 let res =
                     do_upload_dir(backend.as_mut(), &local, &remote, ctx, conflict_policy).await;
+                controls.take_cancel(&transfer_id);
                 let _ = reply.send(res);
             }
             SftpCommand::Close => break,
@@ -800,6 +874,18 @@ async fn run_sftp_worker(
     // Cerrar sesión de transferencia ordenadamente.
     backend.close().await;
     let _ = session_id; // mantenemos por si queremos emitir eventos de cierre
+}
+
+/// Espera el siguiente comando del worker **sin bloquear su runtime**. russh
+/// lanza el bucle de la sesión SSH con `tokio::spawn` en esta misma runtime de
+/// un hilo, y russh-sftp su lector: con la antigua espera síncrona
+/// (`std::sync::mpsc::Receiver::recv`) nada de eso avanzaba con el panel ocioso.
+/// No salían los keepalives ni se contestaban los del servidor, y uno con
+/// `ClientAliveInterval` acababa cortando la sesión. `None` = el canal se cerró.
+async fn next_command(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<SftpCommand>,
+) -> Option<SftpCommand> {
+    rx.recv().await
 }
 
 async fn connect_and_open_backend(
@@ -847,8 +933,20 @@ async fn connect_and_open_backend(
             }
         }
         _ => {
+            let log = |stage, status, message: String| {
+                emit_sftp_log(app_handle, session_id, stage, status, message);
+            };
+            // El panel no reenvía agente ni X11: los dos saltos se verifican
+            // contra el known_hosts del usuario, sin nada más.
+            let host_key_check =
+                |_hop, host: &str, port| host_keys::client(host.to_string(), port, false, false);
             let sftp = connect_and_open_sftp(
-                profile, password, passphrase, elevated, app_handle, session_id,
+                profile,
+                password,
+                passphrase,
+                elevated,
+                &log,
+                &host_key_check,
             )
             .await?;
             Ok(Box::new(SftpBackend {
@@ -859,15 +957,40 @@ async fn connect_and_open_backend(
     }
 }
 
-/// Abre conexión SSH con russh, autentica, abre canal y arranca subsistema
-/// SFTP (o `sudo sftp-server` si `elevated`).
+/// Registro de etapas de la conexión del panel: `(etapa, estado, mensaje)`. En
+/// la app emite los eventos `sftp-log-*` de la sesión; los tests de integración,
+/// que no tienen `AppHandle`, lo recogen para comprobar las etapas.
+type SftpConnectLog<'a> = &'a dyn Fn(&'static str, &'static str, String);
+
+/// Etapa «bastion» del registro del panel para cada paso del salto.
+fn log_jump_stage(log: SftpConnectLog<'_>, stage: crate::ssh_transport::JumpStage<'_>) {
+    use crate::ssh_transport::JumpStage;
+    let (status, message) = match stage {
+        JumpStage::Connecting { addr } => ("info", format!("Conectando al bastión {addr}")),
+        JumpStage::Connected { addr } => {
+            ("ok", format!("Bastión conectado, host key verificada ({addr})"))
+        }
+        JumpStage::Authenticating { user } => {
+            ("info", format!("Autenticando en el bastión como {user}"))
+        }
+        JumpStage::Authenticated => ("ok", "Autenticado en el bastión".to_string()),
+        JumpStage::OpeningTunnel { target } => {
+            ("info", format!("Abriendo túnel del bastión hacia {target}"))
+        }
+    };
+    log("bastion", status, message);
+}
+
+/// Abre conexión SSH con russh (directa o por el bastión `ProxyJump` del
+/// perfil), autentica, abre canal y arranca subsistema SFTP (o `sudo
+/// sftp-server` si `elevated`).
 async fn connect_and_open_sftp(
     profile: &ConnectionProfile,
     password: Option<&str>,
     passphrase: Option<&str>,
     elevated: bool,
-    app_handle: &AppHandle,
-    session_id: &str,
+    log: SftpConnectLog<'_>,
+    host_key_check: &dyn Fn(crate::ssh_transport::Hop, &str, u16) -> crate::ssh_transport::HostKeyCheck,
 ) -> Result<SftpSession, String> {
     // window_size / maximum_packet_size de la config por defecto de russh
     // (2 MiB / 32 KiB) capan el throughput a ~window_size/RTT: con 25 ms de
@@ -890,6 +1013,16 @@ async fn connect_and_open_sftp(
         rekey_read_limit: usize::MAX,
         ..russh::Limits::default()
     };
+    // «Permitir cifrados antiguos» del perfil, como en el terminal: sin esto,
+    // un servidor que solo negocia aes-cbc o ssh-rsa abría el terminal y no el
+    // panel.
+    let preferred = if profile.allow_legacy_algorithms {
+        crate::ssh_manager::legacy_preferred(profile.legacy_algorithms.as_deref())
+    } else {
+        russh::Preferred::default()
+    };
+    // La misma config vale para el bastión: por él viaja el mismo caudal, así
+    // que su ventana también estrangularía las transferencias.
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
         window_size: 32 * 1024 * 1024,
@@ -899,41 +1032,42 @@ async fn connect_and_open_sftp(
         )),
         keepalive_max: crate::ssh_manager::DEFAULT_SSH_KEEPALIVE_MAX,
         limits,
+        preferred,
         ..Default::default()
     });
 
     let addr = format!("{}:{}", profile.host, profile.port);
-    emit_sftp_log(
-        app_handle,
-        session_id,
+    let via_bastion = crate::ssh_transport::jump_spec(profile).is_some();
+    log(
         "connect",
         "info",
-        format!("Conectando SFTP a {addr}"),
+        if via_bastion {
+            format!("Conectando SFTP a {addr} a través del bastión")
+        } else {
+            format!("Conectando SFTP a {addr}")
+        },
     );
-    let (client_handler, host_key_failure) =
-        host_keys::client(profile.host.clone(), profile.port, false, false);
-    let mut handle =
-        match crate::ssh_manager::russh_connect_addr(config, &addr, client_handler).await {
-            Ok(handle) => handle,
-            Err(err) => {
-                let reason = host_keys::take_failure(&host_key_failure)
-                    .unwrap_or_else(|| format!("No se puede conectar a {addr}: {err}"));
-                emit_sftp_log(app_handle, session_id, "connect", "error", reason.clone());
-                return Err(reason);
-            }
+    let mut handle = crate::ssh_transport::connect_profile_handle(
+        profile,
+        config,
+        password,
+        passphrase,
+        host_key_check,
+        &|stage| log_jump_stage(log, stage),
+    )
+    .await
+    .map_err(|err| {
+        let stage = match err.hop {
+            crate::ssh_transport::Hop::Bastion => "bastion",
+            crate::ssh_transport::Hop::Target => "connect",
         };
-    emit_sftp_log(
-        app_handle,
-        session_id,
-        "host_key",
-        "ok",
-        format!("Host key verificada ({addr})"),
-    );
+        log(stage, "error", err.message.clone());
+        err.message
+    })?;
+    log("host_key", "ok", format!("Host key verificada ({addr})"));
 
     // Autenticación
-    emit_sftp_log(
-        app_handle,
-        session_id,
+    log(
         "auth",
         "info",
         format!(
@@ -951,7 +1085,7 @@ async fn connect_and_open_sftp(
         AuthType::Password => {
             let pass = password.ok_or_else(|| {
                 let msg = "Se requiere contraseña".to_string();
-                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                log("auth", "error", msg.clone());
                 msg
             })?;
             // Con el camino de PAM (`PasswordAuthentication no`): la misma
@@ -965,19 +1099,19 @@ async fn connect_and_open_sftp(
             .await
             .map_err(|e| {
                 let msg = format!("Error de autenticación: {e}");
-                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                log("auth", "error", msg.clone());
                 msg
             })?
         }
         AuthType::PublicKey => {
             let key_path = profile.key_path.as_ref().ok_or_else(|| {
                 let msg = "Se requiere ruta de clave privada".to_string();
-                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                log("auth", "error", msg.clone());
                 msg
             })?;
             let key = load_secret_key(Path::new(key_path), passphrase).map_err(|e| {
                 let msg = format!("Clave inválida: {e}");
-                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                log("auth", "error", msg.clone());
                 msg
             })?;
             let hash_alg = handle
@@ -994,14 +1128,14 @@ async fn connect_and_open_sftp(
                 .await
                 .map_err(|e| {
                     let msg = format!("Error de autenticación por clave: {e}");
-                    emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                    log("auth", "error", msg.clone());
                     msg
                 })?
         }
         AuthType::Agent => authenticate_with_agent(&mut handle, &profile.username)
             .await
             .inspect_err(|e| {
-                emit_sftp_log(app_handle, session_id, "auth", "error", e.clone());
+                log("auth", "error", e.clone());
             })?,
         AuthType::KeyboardInteractive => {
             crate::ssh_manager::keyboard_interactive_auth(
@@ -1013,7 +1147,7 @@ async fn connect_and_open_sftp(
             .await
             .map_err(|e| {
                 let msg = e.to_string();
-                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                log("auth", "error", msg.clone());
                 msg
             })?
         }
@@ -1028,12 +1162,10 @@ async fn connect_and_open_sftp(
             ref remaining_methods,
             partial_success: true,
         } if remaining_methods.contains(&russh::MethodKind::KeyboardInteractive) => {
-            emit_sftp_log(
-                app_handle,
-                session_id,
+            log(
                 "auth",
                 "info",
-                "El servidor pide un segundo factor",
+                "El servidor pide un segundo factor".into(),
             );
             crate::ssh_manager::keyboard_interactive_auth(
                 &mut handle,
@@ -1044,7 +1176,7 @@ async fn connect_and_open_sftp(
             .await
             .map_err(|e| {
                 let msg = e.to_string();
-                emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+                log("auth", "error", msg.clone());
                 msg
             })?
         }
@@ -1053,7 +1185,7 @@ async fn connect_and_open_sftp(
 
     match auth {
         AuthResult::Success => {
-            emit_sftp_log(app_handle, session_id, "auth", "ok", "Autenticado");
+            log("auth", "ok", "Autenticado".into());
         }
         AuthResult::Failure {
             remaining_methods, ..
@@ -1062,7 +1194,7 @@ async fn connect_and_open_sftp(
                 "Autenticación fallida. Métodos restantes: {:?}",
                 remaining_methods
             );
-            emit_sftp_log(app_handle, session_id, "auth", "error", msg.clone());
+            log("auth", "error", msg.clone());
             return Err(msg);
         }
     }
@@ -1070,17 +1202,15 @@ async fn connect_and_open_sftp(
     // Abrir canal y activar SFTP (normal o elevado)
     let channel = handle.channel_open_session().await.map_err(|e| {
         let msg = format!("No se pudo abrir canal: {e}");
-        emit_sftp_log(app_handle, session_id, "channel", "error", msg.clone());
+        log("channel", "error", msg.clone());
         msg
     })?;
 
     if elevated {
-        emit_sftp_log(
-            app_handle,
-            session_id,
+        log(
             "subsystem",
             "info",
-            "Lanzando sudo sftp-server (modo elevado)",
+            "Lanzando sudo sftp-server (modo elevado)".into(),
         );
         // Probar las rutas habituales de sftp-server. Salimos con el primero
         // que sea ejecutable. El `exec` final sustituye al shell sh, así que
@@ -1088,20 +1218,18 @@ async fn connect_and_open_sftp(
         let cmd = r#"for p in /usr/libexec/openssh/sftp-server /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server /usr/libexec/sftp-server; do [ -x "$p" ] && exec sudo -n "$p"; done; echo "sftp-server binary not found" >&2; exit 127"#;
         channel.exec(true, cmd).await.map_err(|e| {
             let msg = format!("No se pudo lanzar sftp-server elevado: {e}");
-            emit_sftp_log(app_handle, session_id, "subsystem", "error", msg.clone());
+            log("subsystem", "error", msg.clone());
             msg
         })?;
     } else {
-        emit_sftp_log(
-            app_handle,
-            session_id,
+        log(
             "subsystem",
             "info",
-            "Abriendo subsistema sftp",
+            "Abriendo subsistema sftp".into(),
         );
         channel.request_subsystem(true, "sftp").await.map_err(|e| {
             let msg = format!("No se pudo abrir el subsistema SFTP: {e}");
-            emit_sftp_log(app_handle, session_id, "subsystem", "error", msg.clone());
+            log("subsystem", "error", msg.clone());
             msg
         })?;
     }
@@ -1123,18 +1251,16 @@ async fn connect_and_open_sftp(
         } else {
             format!("No se pudo iniciar sesión SFTP: {e}")
         };
-        emit_sftp_log(app_handle, session_id, "subsystem", "error", msg.clone());
+        log("subsystem", "error", msg.clone());
         msg
     })?;
-    emit_sftp_log(
-        app_handle,
-        session_id,
+    log(
         "ready",
         "ok",
         if elevated {
-            "Sesión SFTP elevada lista"
+            "Sesión SFTP elevada lista".to_string()
         } else {
-            "Sesión SFTP lista"
+            "Sesión SFTP lista".to_string()
         },
     );
 
@@ -1326,6 +1452,17 @@ impl FtpConnection {
         password: Option<&str>,
         ftps_cert_store: PathBuf,
     ) -> Result<Self, String> {
+        Self::connect_with_io_timeout(profile, password, ftps_cert_store, FTP_IO_TIMEOUT)
+    }
+
+    /// [`Self::connect`] con el plazo de E/S explícito: los tests lo bajan a
+    /// segundos para no tener que esperar el de producción.
+    fn connect_with_io_timeout(
+        profile: &ConnectionProfile,
+        password: Option<&str>,
+        ftps_cert_store: PathBuf,
+        io: Duration,
+    ) -> Result<Self, String> {
         let addr = format!("{}:{}", profile.host, profile.port);
         let username = if profile.username.trim().is_empty() {
             "anonymous"
@@ -1362,8 +1499,15 @@ impl FtpConnection {
             .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth();
             let connector = RustlsConnector::from(Arc::new(config));
-            let mut ftp = RustlsFtpStream::connect(addr.as_str())
+            let control = ftp_control_socket(profile, io)
+                .map_err(|e| format!("No se puede conectar FTPS a {addr}: {e}"))?;
+            // `into_secure` conserva el constructor de sockets de datos: también
+            // los canales de datos TLS heredan los plazos.
+            let mut ftp = RustlsFtpStream::connect_with_stream(control)
                 .map_err(|e| format!("No se puede conectar FTPS a {addr}: {e}"))?
+                .passive_stream_builder(move |a| {
+                    ftp_socket(a, io).map_err(suppaftp::FtpError::ConnectionError)
+                })
                 .into_secure(connector, profile.host.as_str())
                 .map_err(|e| format!("No se pudo iniciar TLS explícito: {e}"))?;
             ftp.login(username, pass)
@@ -1372,8 +1516,13 @@ impl FtpConnection {
                 .map_err(|e| format!("No se pudo activar modo binario FTPS: {e}"))?;
             Ok(Self::ExplicitTls(ftp))
         } else {
-            let mut ftp = FtpStream::connect(addr.as_str())
+            let control = ftp_control_socket(profile, io)
                 .map_err(|e| format!("No se puede conectar FTP a {addr}: {e}"))?;
+            let mut ftp = FtpStream::connect_with_stream(control)
+                .map_err(|e| format!("No se puede conectar FTP a {addr}: {e}"))?
+                .passive_stream_builder(move |a| {
+                    ftp_socket(a, io).map_err(suppaftp::FtpError::ConnectionError)
+                });
             ftp.login(username, pass)
                 .map_err(|e| format!("Error de autenticación FTP: {e}"))?;
             ftp.transfer_type(FtpTransferType::Binary)
@@ -1481,9 +1630,7 @@ impl FtpConnection {
         remote: &str,
         local: &Path,
         total: u64,
-        transfer_id: &str,
-        app: &AppHandle,
-        controls: &Arc<TransferControls>,
+        ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
         if let Some(parent) = local.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -1493,29 +1640,13 @@ impl FtpConnection {
         match self {
             Self::Plain(ftp) => {
                 let mut remote_file = ftp.retr_as_stream(remote).map_err(|e| e.to_string())?;
-                transfer_copy_blocking(
-                    &mut remote_file,
-                    &mut local_file,
-                    total,
-                    transfer_id,
-                    app,
-                    controls,
-                    false,
-                )?;
+                transfer_copy_blocking(&mut remote_file, &mut local_file, total, ctx, false)?;
                 remote_file.finish()
                     .map_err(|e| e.to_string())?;
             }
             Self::ExplicitTls(ftp) => {
                 let mut remote_file = ftp.retr_as_stream(remote).map_err(|e| e.to_string())?;
-                transfer_copy_blocking(
-                    &mut remote_file,
-                    &mut local_file,
-                    total,
-                    transfer_id,
-                    app,
-                    controls,
-                    false,
-                )?;
+                transfer_copy_blocking(&mut remote_file, &mut local_file, total, ctx, false)?;
                 remote_file.finish()
                     .map_err(|e| e.to_string())?;
             }
@@ -1528,37 +1659,30 @@ impl FtpConnection {
         local: &Path,
         remote: &str,
         total: u64,
-        transfer_id: &str,
-        app: &AppHandle,
-        controls: &Arc<TransferControls>,
+        ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
+        // El STOR vacía el destino en cuanto el servidor lo acepta: una subida
+        // cancelada antes de empezar no debe llegar a mandarlo.
+        if ctx.cancel_requested() {
+            let _ = ctx.app.emit(
+                &event_name(EventKind::SftpProgress, ctx.transfer_id),
+                serde_json::json!({
+                    "transferred": 0u64, "total": total, "done": true, "canceled": true,
+                }),
+            );
+            return Err("transferencia cancelada".to_string());
+        }
         let mut local_file = std::fs::File::open(local).map_err(|e| e.to_string())?;
         match self {
             Self::Plain(ftp) => {
                 let mut remote_file = ftp.put_with_stream(remote).map_err(|e| e.to_string())?;
-                transfer_copy_blocking(
-                    &mut local_file,
-                    &mut remote_file,
-                    total,
-                    transfer_id,
-                    app,
-                    controls,
-                    true,
-                )?;
+                transfer_copy_blocking(&mut local_file, &mut remote_file, total, ctx, true)?;
                 remote_file.finish()
                     .map_err(|e| e.to_string())?;
             }
             Self::ExplicitTls(ftp) => {
                 let mut remote_file = ftp.put_with_stream(remote).map_err(|e| e.to_string())?;
-                transfer_copy_blocking(
-                    &mut local_file,
-                    &mut remote_file,
-                    total,
-                    transfer_id,
-                    app,
-                    controls,
-                    true,
-                )?;
+                transfer_copy_blocking(&mut local_file, &mut remote_file, total, ctx, true)?;
                 remote_file.finish()
                     .map_err(|e| e.to_string())?;
             }
@@ -1580,6 +1704,72 @@ fn connect_ftp(
     ftps_cert_store: PathBuf,
 ) -> Result<FtpConnection, String> {
     FtpConnection::connect(profile, password, ftps_cert_store)
+}
+
+/// Plazo de E/S de cada socket FTP/FTPS (control y datos), el mismo que el de
+/// una petición SFTP. suppaftp no pone ninguno: un servidor que deja de
+/// contestar sin cerrar (suspensión, cambio de red, proceso parado) dejaba la
+/// lectura bloqueada para siempre, y con ella el worker de la sesión, su
+/// «Cancelar» y el hueco del techo de transferencias simultáneas.
+const FTP_IO_TIMEOUT: Duration = Duration::from_secs(SFTP_REQUEST_TIMEOUT_SECS);
+
+/// Abre un socket FTP (de control o de datos) con plazo de conexión, plazos de
+/// lectura y escritura y keepalive TCP. El keepalive no sobra: sin él, el canal
+/// de control, ocioso durante una transferencia larga, puede caducar en un NAT
+/// y el plazo convertiría eso en un fallo al leer el 226 final.
+fn ftp_socket(addr: std::net::SocketAddr, io: Duration) -> std::io::Result<std::net::TcpStream> {
+    let stream =
+        std::net::TcpStream::connect_timeout(&addr, crate::ssh_manager::TCP_CONNECT_TIMEOUT)?;
+    stream.set_read_timeout(Some(io))?;
+    stream.set_write_timeout(Some(io))?;
+    crate::ssh_manager::apply_tcp_keepalive(socket2::SockRef::from(&stream));
+    Ok(stream)
+}
+
+/// El socket de control del perfil, probando cada dirección del host. Los
+/// plazos van puestos **antes** de entregárselo a suppaftp, para que también
+/// la lectura del saludo 220 y del login estén acotadas.
+/// Host de un perfil tal como lo resuelve `ToSocketAddrs`: sin los corchetes
+/// de una IPv6 (`[2001:db8::5]`, la forma que también vale para SSH). Con la
+/// tupla `(host, puerto)`, std no los quita y lo manda a DNS, que no lo resuelve.
+fn ftp_resolvable_host(host: &str) -> &str {
+    let host = host.trim();
+    host.strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
+fn ftp_control_socket(
+    profile: &ConnectionProfile,
+    io: Duration,
+) -> std::io::Result<std::net::TcpStream> {
+    use std::net::ToSocketAddrs;
+    let mut last_err = None;
+    for addr in (ftp_resolvable_host(&profile.host), profile.port).to_socket_addrs()? {
+        match ftp_socket(addr, io) {
+            Ok(stream) => return Ok(stream),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "el nombre no resuelve a ninguna dirección",
+        )
+    }))
+}
+
+/// Texto de un error de E/S de una copia FTP. Un plazo agotado (`WouldBlock`
+/// en Unix, `TimedOut` en Windows) se cuenta como lo que es. Sin la palabra
+/// «cancel»: el panel clasifica por ella las transferencias canceladas.
+fn ftp_io_error(e: &std::io::Error) -> String {
+    match e.kind() {
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => format!(
+            "el servidor FTP dejó de responder ({} s sin datos)",
+            FTP_IO_TIMEOUT.as_secs()
+        ),
+        _ => e.to_string(),
+    }
 }
 
 #[async_trait(?Send)]
@@ -1630,7 +1820,7 @@ impl FileTransfer for FtpBackend {
         let part = part_path(local);
         let result = self
             .ftp
-            .download_to(remote, &part, total, ctx.transfer_id, ctx.app, ctx.controls)
+            .download_to(remote, &part, total, ctx)
             .and_then(|()| {
                 if !ctx.verify_size {
                     return Ok(());
@@ -1663,7 +1853,7 @@ impl FileTransfer for FtpBackend {
     ) -> Result<(), String> {
         let total = std::fs::metadata(local).map_err(|e| e.to_string())?.len();
         self.ftp
-            .upload_from(local, remote, total, ctx.transfer_id, ctx.app, ctx.controls)?;
+            .upload_from(local, remote, total, ctx)?;
         if ctx.verify_size {
             let written = self
                 .ftp
@@ -2017,10 +2207,7 @@ async fn pipelined_download(
     max_parallelism: usize,
 ) -> Result<(), String> {
     let TransferCtx {
-        transfer_id,
-        app,
-        controls,
-        ..
+        transfer_id, app, ..
     } = ctx;
     let event = event_name(EventKind::SftpProgress, transfer_id);
     let _ = app.emit(
@@ -2053,7 +2240,9 @@ async fn pipelined_download(
 
     let mut was_paused = false;
     loop {
-        if controls.take_cancel(transfer_id) {
+        // Dentro de una carpeta, también la cancelación y la pausa de la
+        // carpeta: si no, un fichero grande seguía a toda velocidad hasta el final.
+        if ctx.cancel_requested() {
             let _ = app.emit(
                 &event,
                 serde_json::json!({
@@ -2066,7 +2255,7 @@ async fn pipelined_download(
         // Pausa: dejamos terminar lo que ya está en vuelo, no encolamos nuevos
         // chunks y dormimos breves intervalos hasta que el usuario reanude o
         // cancele. Mantenemos handles SFTP abiertos para no perder posición.
-        let paused = controls.is_paused(transfer_id);
+        let paused = ctx.paused();
         if paused && !was_paused {
             let _ = app.emit(
                 &event,
@@ -2127,8 +2316,17 @@ async fn pipelined_download(
 
         while let Some(data) = completed.remove(&next_write) {
             let n = data.len() as u64;
-            if n == 0 {
-                return Err("EOF inesperado durante la descarga".to_string());
+            // Un trozo corto a mitad desalinearía `next_write`: ningún trozo
+            // posterior volvería a casar y la descarga acabaría «bien», truncada.
+            if chunk_is_short(next_write, n, total) {
+                return Err(if n == 0 {
+                    "EOF inesperado durante la descarga".to_string()
+                } else {
+                    format!(
+                        "el fichero remoto cambió de tamaño durante la descarga ({} de {total} B)",
+                        next_write + n
+                    )
+                });
             }
             local_file
                 .write_all(&data)
@@ -2149,12 +2347,26 @@ async fn pipelined_download(
         }
     }
 
+    // Red de seguridad: nunca se publica una descarga que no llegó a `total`.
+    if next_write != total {
+        return Err(format!(
+            "el fichero remoto cambió de tamaño durante la descarga ({next_write} de {total} B)"
+        ));
+    }
     local_file.flush().await.map_err(|e| e.to_string())?;
     let _ = app.emit(
         &event,
         serde_json::json!({ "transferred": transferred, "total": total, "done": true }),
     );
     Ok(())
+}
+
+/// `true` si el trozo de `offset` trae menos de lo que se pidió para él. Cada
+/// trozo pide `min(SFTP_CHUNK, total - offset)`, así que uno más corto solo sale
+/// de un EOF antes de `total`: el origen encogió a mitad de la copia (un
+/// `copytruncate`, una reescritura en sitio).
+fn chunk_is_short(offset: u64, got: u64, total: u64) -> bool {
+    got < total.saturating_sub(offset).min(SFTP_CHUNK)
 }
 
 /// Lee `len` bytes desde `offset` reintentando hasta cubrir el chunk o llegar
@@ -2189,16 +2401,26 @@ async fn pipelined_upload(
     max_parallelism: usize,
 ) -> Result<(), String> {
     let TransferCtx {
-        transfer_id,
-        app,
-        controls,
-        ..
+        transfer_id, app, ..
     } = ctx;
     let event = event_name(EventKind::SftpProgress, transfer_id);
     let _ = app.emit(
         &event,
         serde_json::json!({ "transferred": 0u64, "total": total, "done": false }),
     );
+
+    // Abrir con TRUNCATE vacía el remoto: si la cancelaron mientras esperaba su
+    // turno en el worker, no se llega a tocar. Aún no hay ningún handle que
+    // cerrar con `shutdown()`.
+    if ctx.cancel_requested() {
+        let _ = app.emit(
+            &event,
+            serde_json::json!({
+                "transferred": 0u64, "total": total, "done": true, "canceled": true,
+            }),
+        );
+        return Err("transferencia cancelada".to_string());
+    }
 
     // Crear/truncar el remoto antes de abrir handles paralelos. El primer
     // handle también nos sirve como uno de los N en vuelo.
@@ -2241,7 +2463,7 @@ async fn pipelined_upload(
     let mut was_paused = false;
 
     loop {
-        if controls.take_cancel(transfer_id) {
+        if ctx.cancel_requested() {
             let _ = app.emit(
                 &event,
                 serde_json::json!({
@@ -2251,7 +2473,7 @@ async fn pipelined_upload(
             return Err("transferencia cancelada".to_string());
         }
 
-        let paused = controls.is_paused(transfer_id);
+        let paused = ctx.paused();
         if paused && !was_paused {
             let _ = app.emit(
                 &event,
@@ -2285,10 +2507,14 @@ async fn pipelined_upload(
                         Err(e) => return Err(e.to_string()),
                     }
                 }
-                if filled == 0 {
-                    idle_files.push(f);
-                    next_offset = total; // forzar fin del bucle externo
-                    break;
+                // En un fichero regular `read` solo se queda corto en EOF: el
+                // local encogió desde que se midió. Antes se cortaba aquí y la
+                // subida acababa «bien» con el remoto a medias.
+                if chunk_is_short(off, filled as u64, total) {
+                    return Err(format!(
+                        "el fichero local cambió de tamaño durante la subida ({} de {total} B)",
+                        off + filled as u64
+                    ));
                 }
                 buf.truncate(filled);
 
@@ -2401,9 +2627,7 @@ fn transfer_copy_blocking<R, W>(
     src: &mut R,
     dst: &mut W,
     total: u64,
-    transfer_id: &str,
-    app: &AppHandle,
-    controls: &Arc<TransferControls>,
+    ctx: TransferCtx<'_>,
     // `upload`: `true` si los bytes salen. Decide contra qué techo se cuentan.
     upload: bool,
 ) -> Result<(), String>
@@ -2411,6 +2635,9 @@ where
     R: Read,
     W: Write,
 {
+    let TransferCtx {
+        transfer_id, app, ..
+    } = ctx;
     let mut buf = vec![0u8; 256 * 1024];
     let mut transferred: u64 = 0;
     let mut last_emit: u64 = 0;
@@ -2425,7 +2652,8 @@ where
 
     let mut was_paused = false;
     loop {
-        if controls.take_cancel(transfer_id) {
+        // Dentro de una carpeta, también la cancelación y la pausa de la carpeta.
+        if ctx.cancel_requested() {
             let _ = app.emit(
                 &event,
                 serde_json::json!({
@@ -2439,7 +2667,7 @@ where
         // bloqueando el hilo del worker con sleeps cortos: el stream queda
         // ocioso pero la conexión sigue viva (el server puede tirarla por
         // idle si la pausa es muy larga; aceptable).
-        let paused = controls.is_paused(transfer_id);
+        let paused = ctx.paused();
         if paused {
             if !was_paused {
                 let _ = app.emit(
@@ -2462,14 +2690,30 @@ where
             was_paused = false;
         }
 
-        let n = src.read(&mut buf).map_err(|e| e.to_string())?;
+        // Un fallo de E/S (también el plazo agotado de un servidor mudo) con una
+        // cancelación pendiente es esa cancelación: se informa como tal y se
+        // consume, para que «Reintentar», que reutiliza el id, no salga
+        // cancelado nada más empezar.
+        let io_failed = |e: std::io::Error| {
+            if ctx.cancel_requested() {
+                let _ = app.emit(
+                    &event,
+                    serde_json::json!({
+                        "transferred": transferred, "total": total, "done": true, "canceled": true,
+                    }),
+                );
+                return "transferencia cancelada".to_string();
+            }
+            ftp_io_error(&e)
+        };
+        let n = src.read(&mut buf).map_err(io_failed)?;
         if n == 0 {
             break;
         }
         // Techo de velocidad. Aquí la espera es bloqueante porque toda esta
         // copia lo es: corre en el hilo del worker FTP, no en el runtime async.
         crate::transfer_rate::throttle_blocking(n as u64, upload);
-        dst.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        dst.write_all(&buf[..n]).map_err(io_failed)?;
         transferred += n as u64;
 
         if transferred - last_emit >= 262_144 {
@@ -2483,7 +2727,7 @@ where
         }
     }
 
-    dst.flush().map_err(|e| e.to_string())?;
+    dst.flush().map_err(|e| ftp_io_error(&e))?;
     let _ = app.emit(
         &event,
         serde_json::json!({
@@ -3176,6 +3420,176 @@ mod tests {
     }
 
     #[test]
+    fn la_pausa_y_la_cancelacion_de_la_carpeta_llegan_al_fichero_en_curso() {
+        // Ningún test toca `PAUSE_ALL`, así que la pausa global no interfiere.
+        let c = TransferControls::new();
+        c.pause("t".into());
+        assert!(c.paused_for("t-3", Some("t")), "la pausa de la carpeta frena al fichero");
+        assert!(!c.paused_for("t-3", None), "un fichero suelto no mira a nadie más");
+        c.resume("t");
+        assert!(!c.paused_for("t-3", Some("t")));
+
+        c.cancel("t".into());
+        // Paran todos los ficheros de la carpeta, no solo el primero que mira.
+        assert!(c.cancel_requested("t-1", Some("t")));
+        assert!(c.cancel_requested("t-2", Some("t")));
+        // La consume el worker al terminar la carpeta: un reintento con el mismo
+        // id arranca limpio.
+        assert!(c.take_cancel("t"));
+        assert!(!c.cancel_requested("t-3", Some("t")));
+
+        // La propia de cada uno se sigue consumiendo al verla.
+        c.cancel("x".into());
+        assert!(c.cancel_requested("x", None));
+        assert!(!c.cancel_requested("x", None));
+    }
+
+    #[test]
+    fn cerrar_la_sesion_cancela_cualquier_transferencia() {
+        let c = TransferControls::new();
+        assert!(!c.take_cancel("t"));
+        c.pause("t".into());
+        c.close();
+        assert!(c.take_cancel("t"), "también la que estaba en pausa");
+        assert!(c.take_cancel("t-3"), "también los ficheros de una carpeta");
+        assert!(c.take_cancel("t"), "no se consume: vale hasta que el worker cierra");
+    }
+
+    /// Mientras el worker espera un comando, las demás tareas de su runtime
+    /// (en producción, la sesión SSH y el lector SFTP) tienen que seguir
+    /// avanzando.
+    #[test]
+    fn el_worker_no_congela_su_runtime_mientras_espera_comandos() {
+        use std::sync::atomic::AtomicUsize;
+        let ticks = Arc::new(AtomicUsize::new(0));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SftpCommand>();
+        let contador = Arc::clone(&ticks);
+        // Mismo tipo de runtime que el worker (`SftpManager::connect`).
+        let worker = thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            rt.block_on(async move {
+                tokio::spawn(async move {
+                    let mut tic = tokio::time::interval(Duration::from_millis(10));
+                    loop {
+                        tic.tick().await;
+                        contador.fetch_add(1, Ordering::Relaxed);
+                    }
+                });
+                matches!(next_command(&mut rx).await, Some(SftpCommand::Close))
+            })
+        });
+        thread::sleep(Duration::from_millis(300));
+        let vistos = ticks.load(Ordering::Relaxed);
+        let _ = tx.send(SftpCommand::Close);
+        assert!(worker.join().expect("el worker no debe entrar en pánico"));
+        assert!(vistos >= 10, "la runtime se quedó parada esperando: {vistos} ticks");
+    }
+
+    /// **Integración**: con el panel abierto y sin tocar, la sesión SFTP sigue
+    /// viva frente a un `sshd` que sondea al cliente cada segundo y corta al
+    /// primer sondeo sin respuesta (`ClientAliveInterval 1`,
+    /// `ClientAliveCountMax 1`). Con la espera síncrona de antes, la runtime del
+    /// worker no contestaba y el servidor cerraba a los ~2 s.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[test]
+    fn sftp_el_panel_ocioso_sigue_contestando_al_servidor() {
+        let Some(server) =
+            crate::ssh_fixture::start_with_config("ClientAliveInterval 1\nClientAliveCountMax 1\n")
+                .expect("arrancar sshd")
+        else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        // La host key se siembra de antemano en un known_hosts propio: así el
+        // test no depende de la política TOFU global (la tocan otros tests).
+        let known_hosts = server.known_hosts_path();
+        let host_pub = std::fs::read_to_string(known_hosts.with_file_name("hostkey.pub"))
+            .expect("leer la host key del fixture");
+        let host_pub: Vec<&str> = host_pub.split_whitespace().take(2).collect();
+        std::fs::write(
+            &known_hosts,
+            format!("{}\n", server.host_key_line_for(&host_pub.join(" "))),
+        )
+        .expect("sembrar known_hosts");
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SftpCommand>();
+        // El siguiente comando tarda en llegar, como en un panel sin tocar.
+        let remitente = thread::spawn(move || {
+            thread::sleep(Duration::from_secs(4));
+            let _ = tx.send(SftpCommand::Close);
+        });
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let listado = rt.block_on(async move {
+            let addr = format!("127.0.0.1:{}", server.port);
+            let (handler, failure) =
+                host_keys::client_with_known_hosts("127.0.0.1".into(), server.port, known_hosts);
+            let mut handle = crate::ssh_manager::russh_connect_addr(
+                Arc::new(client::Config::default()),
+                &addr,
+                handler,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                panic!("no conectó: {e}. host_keys: {:?}", host_keys::take_failure(&failure))
+            });
+            let key = server.user_key.to_string_lossy().into_owned();
+            let auth = crate::ssh_manager::authenticate_handle(
+                &mut handle,
+                &AuthType::PublicKey,
+                &server.username,
+                "127.0.0.1",
+                None,
+                None,
+                Some(&key),
+            )
+            .await
+            .expect("autenticación");
+            assert!(matches!(auth, AuthResult::Success), "autenticación: {auth:?}");
+            let channel = handle.channel_open_session().await.expect("abrir canal");
+            channel
+                .request_subsystem(true, "sftp")
+                .await
+                .expect("subsistema sftp");
+            let sftp = SftpSession::new(channel.into_stream())
+                .await
+                .expect("sesión SFTP");
+            // La misma espera entre comandos que el worker.
+            assert!(matches!(next_command(&mut rx).await, Some(SftpCommand::Close)));
+            let listado = sftp.read_dir(".".to_string()).await.map(|_| ());
+            drop(server);
+            listado
+        });
+        remitente.join().expect("el remitente no debe entrar en pánico");
+        listado.expect("tras el reposo la sesión SFTP tiene que seguir viva");
+    }
+
+    #[test]
+    fn un_trozo_corto_a_mitad_es_que_el_origen_encogio() {
+        let total = 3 * SFTP_CHUNK;
+        // Trozo completo, en cualquier punto.
+        assert!(!chunk_is_short(0, SFTP_CHUNK, total));
+        assert!(!chunk_is_short(2 * SFTP_CHUNK, SFTP_CHUNK, total));
+        // A mitad, corto o vacío: el origen llegó a EOF antes de tiempo.
+        assert!(chunk_is_short(SFTP_CHUNK, 1000, total));
+        assert!(chunk_is_short(SFTP_CHUNK, 0, total));
+        // El último puede ser más corto que un trozo, pero no que lo que queda.
+        let total = 2 * SFTP_CHUNK + 10;
+        assert!(!chunk_is_short(2 * SFTP_CHUNK, 10, total));
+        assert!(chunk_is_short(2 * SFTP_CHUNK, 5, total));
+        // Al reanudar, los trozos arrancan en el punto de corte, no en la rejilla.
+        let start = 1234;
+        assert!(!chunk_is_short(start, SFTP_CHUNK, start + SFTP_CHUNK + 1));
+        assert!(!chunk_is_short(start + SFTP_CHUNK, 1, start + SFTP_CHUNK + 1));
+    }
+
+    #[test]
     fn part_path_es_hermano_del_destino_final() {
         let final_path = Path::new("/home/u/Descargas/informe.pdf");
         let p = part_path(final_path);
@@ -3253,6 +3667,15 @@ mod tests {
 
         let mut conn =
             connect_ftp(&profile, None, cert_store).expect("conectar y autenticar FTP anónimo");
+
+        // El canal de control lleva el plazo de E/S: un servidor mudo no cuelga.
+        let FtpConnection::Plain(ftp) = &conn else {
+            panic!("un perfil FTP plano debe dar una conexión plana");
+        };
+        assert_eq!(
+            ftp.get_ref().read_timeout().expect("leer el plazo del socket"),
+            Some(FTP_IO_TIMEOUT)
+        );
 
         // Recién conectados, el directorio de trabajo es la raíz.
         assert_eq!(conn.pwd().expect("pwd"), "/");
@@ -3334,6 +3757,344 @@ mod tests {
             cambiado.is_err(),
             "una huella FTPS cambiada debió rechazar la conexión"
         );
+    }
+
+    /// Los tests SFTP contra `sshd` reales comparten la política TOFU global de
+    /// `host_keys` y el rango de puertos efímeros: se serializan, como los de
+    /// `ssh_manager` con su `SSH_IT_LOCK`.
+    #[cfg(target_os = "linux")]
+    static SFTP_IT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Etapas que el panel deja en su registro: `(etapa, estado, mensaje)`.
+    #[cfg(target_os = "linux")]
+    type LoggedStages = Vec<(&'static str, &'static str, String)>;
+
+    /// Perfil SSH por clave pública contra el fixture `server`.
+    #[cfg(target_os = "linux")]
+    fn ssh_profile(server: &crate::ssh_fixture::FakeSshServer) -> ConnectionProfile {
+        let mut profile = ftp_profile(server.port);
+        profile.connection_type = "ssh".to_string();
+        profile.username = server.username.clone();
+        profile.auth_type = AuthType::PublicKey;
+        profile.key_path = Some(server.user_key.to_string_lossy().into_owned());
+        profile
+    }
+
+    /// Autoriza la clave de usuario de `other` en el `sshd` de `server`: el
+    /// bastión se autentica con las credenciales del perfil, que son las del
+    /// destino.
+    #[cfg(target_os = "linux")]
+    fn authorize_key_of(
+        server: &crate::ssh_fixture::FakeSshServer,
+        other: &crate::ssh_fixture::FakeSshServer,
+    ) {
+        let public = std::fs::read_to_string(other.user_key.with_extension("pub"))
+            .expect("clave pública del destino");
+        let mut authorized = std::fs::OpenOptions::new()
+            .append(true)
+            .open(server.authorized_keys_path())
+            .expect("abrir authorized_keys");
+        authorized
+            .write_all(public.as_bytes())
+            .expect("autorizar la clave");
+    }
+
+    /// Abre el panel SFTP por su camino de producción (`connect_and_open_sftp`),
+    /// con las host keys de los dos saltos en un `known_hosts` aislado, y
+    /// devuelve la sesión junto con las etapas que registró.
+    #[cfg(target_os = "linux")]
+    async fn open_panel_sftp(
+        profile: &ConnectionProfile,
+        known_hosts: &Path,
+    ) -> (Result<SftpSession, String>, LoggedStages) {
+        let stages = std::cell::RefCell::new(Vec::new());
+        let log = |stage, status, message: String| {
+            stages.borrow_mut().push((stage, status, message));
+        };
+        let host_key_check = |_hop, host: &str, port| {
+            host_keys::client_with_known_hosts(host.to_string(), port, known_hosts.to_path_buf())
+        };
+        let result =
+            connect_and_open_sftp(profile, None, None, false, &log, &host_key_check).await;
+        (result, stages.into_inner())
+    }
+
+    /// **Integración**: el panel SFTP de un servidor detrás de un bastión. Con
+    /// dos `sshd` reales y `proxy_jump` en el perfil, el panel conecta al
+    /// bastión, salta por `direct-tcpip`, abre el subsistema sftp del destino y
+    /// lista un directorio. Antes conectaba directo y no miraba el bastión: el
+    /// terminal entraba y el panel no.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn sftp_lista_un_directorio_a_traves_del_bastion() {
+        let _guard = SFTP_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let (Some(bastion), Some(target)) = (
+            ssh_fixture::start().expect("arrancar bastión"),
+            ssh_fixture::start().expect("arrancar destino"),
+        ) else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+        authorize_key_of(&bastion, &target);
+
+        // Un directorio con contenido conocido. El `sshd` del fixture sirve el
+        // sistema de ficheros del usuario que corre el test.
+        let dir = std::env::temp_dir().join(format!("rustty-sftp-jump-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("crear directorio");
+        std::fs::write(dir.join("hola.txt"), b"hola").expect("crear fichero");
+
+        let mut profile = ssh_profile(&target);
+        profile.proxy_jump = Some(format!("{}@127.0.0.1:{}", bastion.username, bastion.port));
+        let known_hosts = target.known_hosts_path();
+        let (result, stages) = open_panel_sftp(&profile, &known_hosts).await;
+        let sftp = result.unwrap_or_else(|e| {
+            panic!("el panel no abrió SFTP por el bastión: {e}. Registro: {stages:#?}")
+        });
+
+        let listed = do_list_dir(&sftp, &dir.to_string_lossy())
+            .await
+            .expect("listar el directorio por el salto");
+        assert!(
+            listed.iter().any(|e| e.name == "hola.txt" && !e.is_dir),
+            "el listado debía incluir hola.txt, salió: {listed:?}"
+        );
+
+        // El salto quedó en el registro del panel, en su etapa propia.
+        let bastion_ok: Vec<&String> = stages
+            .iter()
+            .filter(|(stage, status, _)| *stage == "bastion" && *status == "ok")
+            .map(|(_, _, message)| message)
+            .collect();
+        assert!(
+            bastion_ok.iter().any(|m| m.contains("Autenticado en el bastión")),
+            "faltan las etapas del bastión: {stages:#?}"
+        );
+        assert!(
+            stages.iter().any(|(stage, status, _)| *stage == "ready" && *status == "ok"),
+            "el panel debía quedar listo: {stages:#?}"
+        );
+
+        // Las dos host keys pasaron por la verificación: el known_hosts aislado
+        // recuerda al bastión y al destino.
+        let recorded = std::fs::read_to_string(&known_hosts).expect("known_hosts");
+        assert!(
+            recorded.contains(&format!("[127.0.0.1]:{}", bastion.port)),
+            "no se verificó la host key del bastión:\n{recorded}"
+        );
+        assert!(
+            recorded.contains(&format!("[127.0.0.1]:{}", target.port)),
+            "no se verificó la host key del destino:\n{recorded}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **Integración**: «Permitir cifrados antiguos» también vale para el panel.
+    /// Un `sshd` que solo negocia `aes128-cbc` rechaza el panel con la casilla
+    /// apagada y lo acepta con ella; y como bastión de otro servidor, la misma
+    /// config viaja a los dos saltos.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn sftp_negocia_los_cifrados_antiguos_del_perfil() {
+        let _guard = SFTP_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let (Some(legacy), Some(target)) = (
+            ssh_fixture::start_with_config("Ciphers aes128-cbc").expect("arrancar sshd antiguo"),
+            ssh_fixture::start().expect("arrancar destino"),
+        ) else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+
+        // 1) Sin la casilla no hay cifrado común: el handshake falla.
+        let mut profile = ssh_profile(&legacy);
+        let known_hosts = legacy.known_hosts_path();
+        let (result, stages) = open_panel_sftp(&profile, &known_hosts).await;
+        assert!(result.is_err(), "sin cifrados antiguos debía fallar: {stages:#?}");
+        assert!(
+            stages.iter().any(|(stage, status, _)| *stage == "connect" && *status == "error"),
+            "el fallo debía registrarse en la etapa de conexión: {stages:#?}"
+        );
+
+        // 2) Con la casilla (solo aes128-cbc), el panel abre y lista.
+        profile.allow_legacy_algorithms = true;
+        profile.legacy_algorithms = Some(vec!["aes128-cbc".to_string()]);
+        let (result, stages) = open_panel_sftp(&profile, &known_hosts).await;
+        let sftp = result.unwrap_or_else(|e| {
+            panic!("con cifrados antiguos debía abrir SFTP: {e}. Registro: {stages:#?}")
+        });
+        do_list_dir(&sftp, "/").await.expect("listar la raíz");
+
+        // 3) El servidor antiguo como bastión de uno moderno.
+        authorize_key_of(&legacy, &target);
+        let mut via = ssh_profile(&target);
+        via.proxy_jump = Some(format!("{}@127.0.0.1:{}", legacy.username, legacy.port));
+        let jump_known_hosts = target.known_hosts_path();
+        let (result, stages) = open_panel_sftp(&via, &jump_known_hosts).await;
+        assert!(
+            result.is_err(),
+            "sin cifrados antiguos el bastión no debía aceptar: {stages:#?}"
+        );
+        assert!(
+            stages.iter().any(|(stage, status, _)| *stage == "bastion" && *status == "error"),
+            "el fallo debía registrarse en la etapa del bastión: {stages:#?}"
+        );
+        via.allow_legacy_algorithms = true;
+        via.legacy_algorithms = Some(vec!["aes128-cbc".to_string()]);
+        let (result, stages) = open_panel_sftp(&via, &jump_known_hosts).await;
+        let sftp = result.unwrap_or_else(|e| {
+            panic!("el bastión antiguo debía dejar pasar al panel: {e}. Registro: {stages:#?}")
+        });
+        do_list_dir(&sftp, "/").await.expect("listar la raíz por el salto");
+    }
+
+    /// Dónde se calla el servidor FTP de mentira de [`ftp_mudo`].
+    #[cfg(target_os = "linux")]
+    #[derive(Clone, Copy)]
+    enum Mudo {
+        /// Acepta la conexión y no manda ni el saludo 220.
+        SinSaludo,
+        /// Saluda, pero no contesta al login.
+        TrasElSaludo,
+        /// Empieza a mandar un fichero y se queda callado a mitad, sin el 226.
+        EnLosDatos,
+    }
+
+    /// Servidor FTP mínimo, a mano, que deja de contestar sin cerrar nada: lo
+    /// que hace un servidor que se suspende, se para o se queda tras un corte de
+    /// red sin RST. Devuelve el puerto.
+    #[cfg(target_os = "linux")]
+    fn ftp_mudo(modo: Mudo) -> u16 {
+        use std::io::{BufRead, BufReader};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("escuchar");
+        let port = listener.local_addr().expect("puerto").port();
+        thread::spawn(move || {
+            let Ok((control, _)) = listener.accept() else { return };
+            if matches!(modo, Mudo::SinSaludo) {
+                thread::sleep(Duration::from_secs(30));
+                return;
+            }
+            let Ok(mut w) = control.try_clone() else { return };
+            let _ = w.write_all(b"220 hola\r\n");
+            let mut datos = None;
+            // Los sockets de datos se quedan abiertos (y mudos) hasta el final.
+            let mut retenidos = Vec::new();
+            let mut lines = BufReader::new(control);
+            let mut line = String::new();
+            while lines.read_line(&mut line).is_ok_and(|n| n > 0) {
+                let cmd = line.trim().to_ascii_uppercase();
+                line.clear();
+                let reply = if cmd.starts_with("USER") {
+                    (!matches!(modo, Mudo::TrasElSaludo)).then(|| "230 dentro".to_string())
+                } else if cmd.starts_with("TYPE") {
+                    Some("200 vale".to_string())
+                } else if cmd.starts_with("PASV") {
+                    let Ok(l) = std::net::TcpListener::bind("127.0.0.1:0") else { return };
+                    let Ok(p) = l.local_addr().map(|a| a.port()) else { return };
+                    datos = Some(l);
+                    Some(format!(
+                        "227 Entering Passive Mode (127,0,0,1,{},{})",
+                        p / 256,
+                        p % 256
+                    ))
+                } else if cmd.starts_with("RETR") {
+                    let Some(Ok((mut d, _))) = datos.take().map(|l| l.accept()) else { return };
+                    let _ = w.write_all(b"150 ahi va\r\n");
+                    let _ = d.write_all(b"hola");
+                    retenidos.push(d);
+                    None
+                } else {
+                    Some("502 no".to_string())
+                };
+                if let Some(r) = reply {
+                    let _ = w.write_all(format!("{r}\r\n").as_bytes());
+                }
+            }
+        });
+        port
+    }
+
+    /// Corre `f` en otro hilo y falla si no vuelve en `plazo`: sin el plazo de
+    /// E/S estos tests se colgarían, y así fallan en vez de bloquear la suite.
+    #[cfg(target_os = "linux")]
+    fn vuelve_antes_de<T: Send + 'static>(
+        plazo: Duration,
+        f: impl FnOnce() -> T + Send + 'static,
+    ) -> T {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(plazo)
+            .expect("se quedó esperando a un servidor mudo: falta el plazo de E/S")
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ftp_un_servidor_mudo_al_conectar_no_cuelga() {
+        for modo in [Mudo::SinSaludo, Mudo::TrasElSaludo] {
+            let port = ftp_mudo(modo);
+            let res = vuelve_antes_de(Duration::from_secs(20), move || {
+                FtpConnection::connect_with_io_timeout(
+                    &ftp_profile(port),
+                    None,
+                    PathBuf::from("/nonexistent/ftps_certs.json"),
+                    Duration::from_secs(1),
+                )
+                .map(|_| ())
+            });
+            assert!(res.is_err(), "conectar con un servidor mudo tiene que fallar");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ftp_una_descarga_atascada_falla_por_plazo() {
+        let port = ftp_mudo(Mudo::EnLosDatos);
+        let (recibido, error) = vuelve_antes_de(Duration::from_secs(20), move || {
+            let conn = FtpConnection::connect_with_io_timeout(
+                &ftp_profile(port),
+                None,
+                PathBuf::from("/nonexistent/ftps_certs.json"),
+                Duration::from_secs(1),
+            )
+            .expect("conectar con el servidor de mentira");
+            let FtpConnection::Plain(mut ftp) = conn else {
+                panic!("un perfil FTP plano debe dar una conexión plana");
+            };
+            let mut stream = ftp.retr_as_stream("x").expect("abrir RETR");
+            let mut recibido = Vec::new();
+            let err = stream
+                .read_to_end(&mut recibido)
+                .expect_err("el canal de datos se calla: la lectura tiene que caducar");
+            // Soltar el stream lee el 226, que tampoco llega: también caduca.
+            drop(stream);
+            (recibido, ftp_io_error(&err))
+        });
+        assert_eq!(recibido, b"hola", "lo que sí llegó se ha leído");
+        assert!(error.contains("dejó de responder"), "{error}");
+        assert!(!error.contains("cancel"), "no puede parecer una cancelación: {error}");
+    }
+
+    /// Una IPv6 entre corchetes (como se escribe para SSH) vuelve a conectar por
+    /// FTP: se resuelve sin los corchetes; un nombre o una IPv4 no cambian.
+    #[test]
+    fn el_host_ftp_se_resuelve_sin_los_corchetes_de_una_ipv6() {
+        use std::net::ToSocketAddrs;
+        assert_eq!(ftp_resolvable_host("[2001:db8::5]"), "2001:db8::5");
+        assert_eq!(ftp_resolvable_host(" [::1] "), "::1");
+        assert_eq!(ftp_resolvable_host("ftp.example"), "ftp.example");
+        assert_eq!(ftp_resolvable_host("10.0.0.5"), "10.0.0.5");
+        let addrs: Vec<_> = (ftp_resolvable_host("[::1]"), 21).to_socket_addrs().unwrap().collect();
+        assert_eq!(addrs.len(), 1);
+        assert!(addrs[0].is_ipv6());
     }
 
     #[tokio::test]
