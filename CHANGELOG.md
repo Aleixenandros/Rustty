@@ -2,6 +2,35 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.21.0] - 2026-10-25
+
+### Añadido
+
+- Selección rápida en el terminal: con Ctrl+Shift+Espacio cada IP, URL, ruta, hash, UUID o ID de contenedor de la pantalla recibe una o dos letras; al teclearlas se copia, y en mayúscula además se pega en el prompt. Funciona en SSH, en la consola local, en las panes de tmux y dentro de less, htop o vim.
+- En Preferencias → Terminal se pueden añadir patrones propios para la selección rápida (si llevan un grupo entre paréntesis, se copia solo el grupo) y desactivar los patrones de serie.
+- Lo que copias en Neovim, tmux o helix dentro de un servidor puede llegar a tu portapapeles: actívalo en Preferencias → Seguridad (desactivado por defecto, o «Preguntar» para ver antes qué se va a copiar); el servidor nunca puede leer tu portapapeles.
+- Un script puede avisarte al terminar con las secuencias de aviso habituales de los terminales; es opcional y se activa en Preferencias → Terminal.
+- Cuando un programa informa de su progreso, la pestaña muestra una barra fina con el avance, en rojo si falla y en amarillo si se pausa.
+- El título que ponen bash, zsh o vim aparece en el tooltip de la pestaña, o junto a su nombre si lo eliges; si renombras la pestaña, manda tu nombre.
+- Las ventanas de tmux en modo control también entienden el portapapeles, los avisos y el progreso.
+- Nuevo modo solo lectura para vigilar un log o un proceso largo sin riesgo: desde el menú de la pestaña (o un atajo que puedes asignar) bloquea teclado, pegado, Ctrl+P, snippets, el editor de comandos y el broadcast; un candado lo indica y el aviso que sale al teclear permite desbloquear.
+- Cada conexión puede abrirse siempre en solo lectura, y una opción hace que todas las PROD se abran así.
+- Cada conexión SSH puede abrir directamente un comando en lugar del shell (entrar ya como administrador, en una carpeta o dentro de un contenedor), con valores que se rellenan o se preguntan al conectar.
+- Las conexiones SSH pueden enviar variables de entorno al servidor (idioma, zona horaria, un nombre de operador…), también en las pestañas nuevas de la misma conexión, y el diagnóstico avisa de las que el servidor no acepta.
+- Se puede elegir el tipo de terminal de cada conexión para equipos antiguos o de red que no entienden el habitual.
+- Al importar ~/.ssh/config se traen también el comando remoto, las variables de entorno y el tipo de terminal de cada servidor.
+- La línea de órdenes respeta el comando, las variables y el tipo de terminal de la conexión; con --exec manda el comando que se le indique.
+
+### Cambiado
+
+- La pantalla de carga y la cabecera del inicio muestran el icono de Rustty en lugar de una terminal genérica.
+- Dependencias: `crypto-bigint` sube a 0.7.9, porque la versión que llevaba la 2.20.0 se retiró del registro, y una acción del CI al día.
+- Pruebas: casi un centenar de pruebas nuevas, entre ellas el comando y las variables de entorno contra un servidor SSH real, y pruebas de extremo a extremo del progreso, el título, el modo solo lectura y la selección rápida en una consola local.
+
+### Corregido
+
+- Al reconectar a mano se vuelven a preguntar los valores que la conexión pide al conectar, en vez de mandarlos vacíos.
+
 ## [2.20.0] - 2026-10-25
 
 ### Añadido
