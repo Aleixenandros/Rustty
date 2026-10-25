@@ -24,6 +24,14 @@ export const DEFAULT_PREFS = {
   // largos o con caracteres de control) muestran una previsualización
   // tematizada que el usuario debe confirmar antes de enviarse a la sesión.
   confirmRiskyPaste: true,
+  // OSC 52: el servidor copia al portapapeles (Neovim, tmux, helix por SSH).
+  // "off" (default) lo ignora, "ask" pregunta enseñando lo que copiaría y
+  // "allow" lo copia; una sesión privada como mucho pregunta. Solo escritura:
+  // la consulta del portapapeles no se contesta nunca.
+  oscClipboard:    "off",       // "off" | "ask" | "allow"
+  // Las conexiones con entorno PROD se abren en solo lectura (sin teclado,
+  // pegado ni broadcast hasta desbloquearlas). Opt-in.
+  readOnlyProd:    false,
   // Primera conexión SSH: si está activo (default), se muestra la huella de la
   // host key desconocida y se pide confirmación antes de guardarla. Al
   // desactivarlo se vuelve al TOFU automático clásico (la primera clave se
@@ -108,6 +116,14 @@ export const DEFAULT_PREFS = {
   // del shell no hace nada. El umbral es la duración mínima para avisar.
   cmdDoneNotify:      false,
   cmdDoneNotifySecs:  15,
+  // Avisos que pide el propio servidor (OSC 9 y OSC 777;notify): un script que
+  // acaba con `printf '\e]9;Backup listo\a'`. Opt-in; por el mismo router.
+  oscNotify:          false,
+  // Barra de progreso en la pestaña cuando un programa lo informa (OSC 9;4).
+  oscProgress:        true,
+  // Título que fija el servidor (OSC 0/2): "off", "tooltip" (default) o "tab"
+  // (junto al nombre). El alias manual de la pestaña manda siempre.
+  remoteTitleMode:    "tooltip",
   scrollback:      5000,
   // Directorio inicial de las consolas locales nuevas. "" = $HOME (o el dir del
   // usuario). Una ruta válida se usa como cwd al abrir/reabrir la consola; si no
@@ -205,6 +221,12 @@ export const DEFAULT_PREFS = {
   // Se aplican en orden — la primera coincidencia gana.
   highlightRules:  defaultHighlightRules(),
   _highlightRulesSeeded: true,
+  // Selección rápida (Ctrl+Shift+Espacio): etiqueta lo copiable de la pantalla.
+  // `quickSelectBuiltins` usa los patrones de serie (IPs, URLs, rutas, hashes,
+  // IDs…); `quickSelectPatterns` son regex propias `{ pattern }`, con los
+  // topes de `modules/terminal/quick-select.js`. Van por delante de las de serie.
+  quickSelectBuiltins: true,
+  quickSelectPatterns: [],
   // Densidad de la interfaz: "comfortable" (por defecto) o "compact".
   // Reduce padding/altura en sidebar, tabs y modales sin tocar xterm.
   uiDensity:       "comfortable",

@@ -450,7 +450,11 @@ pub fn ssh_connect(
         profile.session_log = log_val;
     }
 
+    // Las respuestas a los `${ask:}` valen también para el comando al conectar
+    // y las variables de entorno del perfil (`template_asks` las pregunta).
+    let launch_answers = ask_answers.clone().unwrap_or_default();
     let resolved_password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
+    let launch = crate::remote_launch::resolve_with_store(&profile, &cred_state, launch_answers);
 
     let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
@@ -465,6 +469,7 @@ pub fn ssh_connect(
                 on_data,
                 cols: cols.unwrap_or(80),
                 rows: rows.unwrap_or(24),
+                launch,
             },
             data_dir.0.clone(),
         )?;
@@ -3213,9 +3218,11 @@ pub fn session_snapshot_list(data_dir: State<crate::DataDir>) -> Result<Vec<Stri
 /// frontend usa esto para, antes de conectar, preguntar al usuario cada valor y
 /// pasarlo de vuelta como `ask_answers`.
 ///
-/// Campos cubiertos en esta fase: la **contraseña propia** del perfil cuando
+/// Campos cubiertos: la **contraseña propia** del perfil cuando
 /// `password_source == own` (la que el usuario guardó en el keyring como
-/// `password:<id>`). Otros orígenes (KeePass/maestra) no llevan `${ask:}`.
+/// `password:<id>`) y, en un perfil SSH, el comando al conectar y los valores
+/// de sus variables de entorno. Otros orígenes de la contraseña (KeePass/
+/// maestra) no llevan `${ask:}`.
 #[tauri::command]
 pub fn template_asks(
     profile_state: State<'_, ProfileManager>,
@@ -3234,21 +3241,22 @@ pub fn template_asks(
         .keepass_entry_uuid
         .as_deref()
         .is_some_and(|s| !s.is_empty());
-    if profile.password_source != PasswordSource::Own || has_keepass {
-        return Ok(vec![]);
-    }
-
     // Leemos la contraseña guardada en el keyring (si la hay) para escanearla.
-    let stored = keyring::Entry::new(keyring_scope::SERVICE, &format!("password:{}", profile.id))
-        .ok()
-        .and_then(|e| e.get_password().ok());
-    let Some(pw) = stored else {
-        return Ok(vec![]);
+    let stored = if profile.password_source != PasswordSource::Own || has_keepass {
+        None
+    } else {
+        keyring::Entry::new(keyring_scope::SERVICE, &format!("password:{}", profile.id))
+            .ok()
+            .and_then(|e| e.get_password().ok())
     };
+    let mut asks = stored.as_deref().map(credentials::collect_asks).unwrap_or_default();
+    if profile.connection_type == "ssh" {
+        asks.extend(crate::remote_launch::collect_asks(&profile, true));
+    }
 
     // Deduplicamos por etiqueta conservando el orden de aparición.
     let mut seen = std::collections::HashSet::new();
-    let asks = credentials::collect_asks(&pw)
+    let asks = asks
         .into_iter()
         .filter(|a| seen.insert(a.label.clone()))
         .collect();

@@ -345,6 +345,9 @@ pub struct SessionSpec {
     /// se formateaba para un terminal mucho más estrecho del real.
     pub cols: u32,
     pub rows: u32,
+    /// TERM, variables de entorno y comando al conectar, ya resueltos (los
+    /// `${...}` y los `${ask:}` se resuelven una vez, al conectar).
+    pub launch: crate::remote_launch::SessionLaunch,
 }
 
 pub struct SshManager {
@@ -749,6 +752,7 @@ async fn run_session_with_reconnect(
         password,
         passphrase,
         app_handle,
+        launch,
         ..
     } = spec.clone();
     let max_attempts = profile.auto_reconnect.unwrap_or(0);
@@ -763,12 +767,15 @@ async fn run_session_with_reconnect(
     // redactar defensivamente cualquier mensaje de error antes de emitirlo a un
     // canal no confiable, por si una capa inferior llegara a interpolarlos.
     // `Zeroizing`: estas copias del secreto (para redacción) se borran de memoria
-    // al liberarse, en vez de quedar en el heap tras el drop.
+    // al liberarse, en vez de quedar en el heap tras el drop. También los
+    // `${secret:}`/`${master:}` del comando y de las variables del perfil: un
+    // error que citara el comando no debe sacar su valor.
     let secret_values: Vec<Zeroizing<String>> = [password.clone(), passphrase.clone()]
         .into_iter()
         .flatten()
         .filter(|s| !s.is_empty())
         .map(Zeroizing::new)
+        .chain(launch.secrets.iter().cloned())
         .collect();
 
     // Estado de keepalive compartido con el worker: el toggle en vivo lo escribe
@@ -1503,26 +1510,77 @@ async fn kill_remote_process(
     let _ = reply.send(result);
 }
 
+/// Plazo para las respuestas del servidor a las variables de entorno pedidas
+/// con respuesta: llegan enseguida; si no, se sigue sin saber cuáles rechazó.
+const ENV_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Pide al servidor las variables de entorno del perfil (`env` del canal),
+/// antes del shell o del comando. Con `want_reply` espera las respuestas —el
+/// protocolo las entrega en orden— y devuelve los nombres que el servidor
+/// rechazó (sshd solo acepta los de su `AcceptEnv`); un rechazo nunca es fatal.
+/// Sin respuesta, como `SendEnv`/`SetEnv` de OpenSSH: lo rechazado se pierde en
+/// silencio. Va antes del PTY para que ninguna otra respuesta se intercale.
+pub(crate) async fn send_env_vars(
+    channel: &mut russh::Channel<client::Msg>,
+    vars: &[(String, String)],
+    want_reply: bool,
+) -> Vec<String> {
+    let mut sent: Vec<&str> = Vec::new();
+    for (name, value) in vars {
+        if channel
+            .set_env(want_reply, name.as_str(), value.as_str())
+            .await
+            .is_ok()
+        {
+            sent.push(name);
+        }
+    }
+    let mut refused = Vec::new();
+    if !want_reply || sent.is_empty() {
+        return refused;
+    }
+    let mut answered = 0;
+    let replies = async {
+        while answered < sent.len() {
+            match channel.wait().await {
+                Some(ChannelMsg::Success) => answered += 1,
+                Some(ChannelMsg::Failure) => {
+                    refused.push(sent[answered].to_string());
+                    answered += 1;
+                }
+                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                Some(_) => {}
+            }
+        }
+    };
+    let _ = tokio::time::timeout(ENV_REPLY_TIMEOUT, replies).await;
+    refused
+}
+
 /// Abre una shell hija (F0.3) sobre el handle ya autenticado: canal nuevo +
 /// PTY + shell, y su tarea de E/S propia. Siempre un shell **pelado**, aunque
-/// el perfil tenga sesión persistente: un segundo `attach -A` a la misma
-/// sesión tmux/screen duplicaría la misma pantalla, no daría otra terminal.
+/// el perfil tenga sesión persistente o comando al conectar: un segundo
+/// `attach -A` a la misma sesión tmux/screen duplicaría la misma pantalla, no
+/// daría otra terminal, y «Nueva pestaña en esta conexión» promete un shell.
+/// Sí hereda el TERM y las variables de entorno del perfil (sin esperar
+/// respuesta: lo que el servidor rechace ya lo anotó la conexión principal).
 async fn open_extra_shell(
     handle: &client::Handle<host_keys::KnownHostsClient>,
     shell_id: &str,
     on_data: Channel<Response>,
-    cols: u32,
-    rows: u32,
+    (cols, rows): (u32, u32),
+    launch: &crate::remote_launch::SessionLaunch,
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     shells: &mut HashMap<String, mpsc::UnboundedSender<ShellMsg>>,
 ) -> Result<(), String> {
     let (cols, rows) = if cols == 0 || rows == 0 { (80, 24) } else { (cols, rows) };
-    let channel = handle
+    let mut channel = handle
         .channel_open_session()
         .await
         .map_err(|e| format!("No se pudo abrir el canal: {e}"))?;
+    send_env_vars(&mut channel, &launch.env, false).await;
     channel
-        .request_pty(true, "xterm-256color", cols, rows, 0, 0, &[])
+        .request_pty(true, launch.term(), cols, rows, 0, 0, &[])
         .await
         .map_err(|e| format!("No se pudo solicitar PTY: {e}"))?;
     channel
@@ -1619,6 +1677,7 @@ async fn run_session(
         on_data,
         cols,
         rows,
+        launch,
     } = spec;
     // Defensivo: un pane aún no medido podría mandar 0. `request_pty` con 0
     // columnas dejaría al shell remoto sin poder formatear nada.
@@ -1980,6 +2039,37 @@ async fn run_session(
             .await;
     }
 
+    // Variables de entorno del perfil, antes de todo lo demás (también en modo
+    // control y con sesión persistente: las hereda lo que se lance). Se piden
+    // con respuesta para anotar las que el servidor rechaza —solo acepta las de
+    // su `AcceptEnv`—; un rechazo no es fatal. En el log van nombres, nunca
+    // valores (pueden venir de `${secret:}`).
+    for notice in &launch.notices {
+        emit_connection_log(&app_handle, &session_id, "remote_launch", "warning", notice.clone());
+    }
+    if !launch.env.is_empty() {
+        let refused = send_env_vars(&mut channel, &launch.env, true).await;
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "remote_env",
+            "info",
+            format!("Variables de entorno: {}", launch.env_names()),
+        );
+        if !refused.is_empty() {
+            emit_connection_log(
+                &app_handle,
+                &session_id,
+                "remote_env",
+                "warning",
+                format!(
+                    "El servidor no aceptó {}: solo admite las variables de su AcceptEnv",
+                    refused.join(", ")
+                ),
+            );
+        }
+    }
+
     // Modo control de tmux (opt-in por perfil): la conexión deja de transportar
     // un terminal y pasa a hablar el protocolo de líneas de `tmux -C`. Exige
     // tmux >= 3.2 en el remoto; sin él (o versión ilegible), degradación
@@ -2043,10 +2133,18 @@ async fn run_session(
             )));
         }
     } else if let Err(e) = channel
-        .request_pty(true, "xterm-256color", cols, rows, 0, 0, &[])
+        .request_pty(true, launch.term(), cols, rows, 0, 0, &[])
         .await
     {
         return SessionExit::Fatal(AppError::Ssh(format!("No se pudo solicitar PTY: {e}")));
+    } else if let Some(term) = launch.term {
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "remote_launch",
+            "info",
+            format!("Tipo de terminal: {term}"),
+        );
     }
 
     // Sesión persistente opt-in (tmux/screen): si el binario está en el remoto,
@@ -2095,21 +2193,59 @@ async fn run_session(
         }
     }
 
-    if control.is_none() {
-        match &persist_cmd {
-            Some(cmd) => {
-                if let Err(e) = channel.exec(true, cmd.as_str()).await {
-                    return SessionExit::Fatal(AppError::Ssh(format!(
-                        "No se pudo abrir la sesión persistente: {e}"
-                    )));
-                }
+    // Qué arranca el canal, con la precedencia documentada en `remote_launch`:
+    // modo control > sesión persistente > comando al conectar > shell.
+    let launched = crate::remote_launch::choose_launch(
+        control.is_some(),
+        persist_cmd.as_deref(),
+        launch.command.as_deref(),
+    );
+    if launch.command.is_some() && !matches!(launched, crate::remote_launch::Launch::Command(_)) {
+        emit_connection_log(
+            &app_handle,
+            &session_id,
+            "remote_launch",
+            "info",
+            if control.is_some() {
+                "El comando al conectar no se ejecuta: manda el modo control de tmux"
+            } else {
+                "El comando al conectar no se ejecuta: manda la sesión persistente"
+            },
+        );
+    }
+    match launched {
+        crate::remote_launch::Launch::TmuxControl => {}
+        crate::remote_launch::Launch::Persistent(cmd) => {
+            if let Err(e) = channel.exec(true, cmd).await {
+                return SessionExit::Fatal(AppError::Ssh(format!(
+                    "No se pudo abrir la sesión persistente: {e}"
+                )));
             }
-            None => {
-                if let Err(e) = channel.request_shell(true).await {
-                    return SessionExit::Fatal(AppError::Ssh(format!(
-                        "No se pudo abrir shell: {e}"
-                    )));
-                }
+        }
+        crate::remote_launch::Launch::Command(cmd) => {
+            // En el log, la plantilla del perfil: el comando resuelto puede
+            // llevar el valor de un `${secret:}`.
+            emit_connection_log(
+                &app_handle,
+                &session_id,
+                "remote_launch",
+                "info",
+                format!(
+                    "Comando al conectar: {}",
+                    launch.command_template.as_deref().unwrap_or_default()
+                ),
+            );
+            if let Err(e) = channel.exec(true, cmd).await {
+                return SessionExit::Fatal(AppError::Ssh(format!(
+                    "No se pudo ejecutar el comando al conectar: {e}"
+                )));
+            }
+        }
+        crate::remote_launch::Launch::Shell => {
+            if let Err(e) = channel.request_shell(true).await {
+                return SessionExit::Fatal(AppError::Ssh(format!(
+                    "No se pudo abrir shell: {e}"
+                )));
             }
         }
     }
@@ -2343,8 +2479,8 @@ async fn run_session(
                             &handle,
                             &shell_id,
                             on_data,
-                            cols,
-                            rows,
+                            (cols, rows),
+                            &launch,
                             cmd_tx.clone(),
                             &mut shells,
                         ).await;
@@ -4041,6 +4177,148 @@ mod tests {
             .await
             .expect("escribir en B tras cerrar A");
         leer_hasta(&mut shell_b, "sigo-viva-48").await;
+    }
+
+    /// Perfil SSH con comando al conectar, variables y TERM, resuelto como al
+    /// conectar (internos y `${env:}` con el resolver por defecto).
+    #[cfg(target_os = "linux")]
+    fn launch_de_prueba(command: &str) -> crate::remote_launch::SessionLaunch {
+        let mut profile: ConnectionProfile = serde_json::from_str(
+            r#"{"id":"p","name":"Fixture","host":"127.0.0.1","port":22,"username":"u",
+                "domain":null,"auth_type":"public_key","key_path":null,"group":null,
+                "created_at":"2026-10-25T00:00:00Z"}"#,
+        )
+        .expect("perfil");
+        profile.remote_command = Some(command.to_string());
+        profile.term_type = Some("vt100".into());
+        profile.env_vars = vec![
+            crate::profiles::ProfileEnvVar {
+                name: "RUSTTY_PRUEBA".into(),
+                value: "valor de ${profileName}".into(),
+            },
+            crate::profiles::ProfileEnvVar {
+                name: "NO_ADMITIDA".into(),
+                value: "x".into(),
+            },
+        ];
+        let resolver = crate::subst::DefaultResolver::new(crate::subst::SubstContext::from_profile(
+            &profile,
+        ));
+        crate::remote_launch::resolve(&profile, &resolver)
+    }
+
+    /// **Integración**: el canal principal contra un `sshd` real con
+    /// `AcceptEnv RUSTTY_*`, por los mismos pasos que `run_session`: variables
+    /// con respuesta (la que el servidor no admite se anota como rechazada y
+    /// no rompe nada), PTY con el TERM elegido y el comando al conectar por
+    /// `exec` en vez del shell. El comando imprime lo que ve.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_comando_al_conectar_con_entorno_y_tipo_de_terminal() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::remote_launch::{choose_launch, Launch};
+        use crate::ssh_fixture;
+
+        let Some(server) =
+            ssh_fixture::start_with_config("AcceptEnv RUSTTY_*").expect("arrancar sshd")
+        else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+        let handle = connect_and_auth(&server).await;
+        let launch = launch_de_prueba(
+            "printf 'fin:%s:%s:%s\\n' \"$RUSTTY_PRUEBA\" \"$TERM\" \"${NO_ADMITIDA:-nada}\"; tty -s && echo con-tty",
+        );
+
+        let mut channel = handle.channel_open_session().await.expect("abrir canal");
+        let refused = send_env_vars(&mut channel, &launch.env, true).await;
+        assert_eq!(refused, vec!["NO_ADMITIDA".to_string()]);
+        channel
+            .request_pty(true, launch.term(), 80, 24, 0, 0, &[])
+            .await
+            .expect("pedir PTY");
+        let Launch::Command(command) = choose_launch(false, None, launch.command.as_deref()) else {
+            panic!("con comando y sin sesión persistente manda el comando");
+        };
+        channel.exec(true, command).await.expect("ejecutar el comando");
+
+        let mut acc: Vec<u8> = Vec::new();
+        let lectura = async {
+            while let Some(msg) = channel.wait().await {
+                if let ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } = msg {
+                    acc.extend_from_slice(&data);
+                }
+                if String::from_utf8_lossy(&acc).contains("con-tty") {
+                    break;
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(15), lectura)
+            .await
+            .expect("plazo agotado esperando la salida del comando");
+        let salida = String::from_utf8_lossy(&acc);
+        assert!(
+            salida.contains("fin:valor de Fixture:vt100:nada"),
+            "salida del comando: {salida:?}"
+        );
+        assert!(salida.contains("con-tty"), "el comando corre sobre el PTY: {salida:?}");
+    }
+
+    /// **Integración**: «Nueva pestaña en esta conexión» por `open_extra_shell`
+    /// contra un `sshd` real: hereda el entorno y el TERM del perfil, pero abre
+    /// un **shell** aunque el perfil tenga comando al conectar. El marcador usa
+    /// `$((…))`: solo una shell viva lo evalúa.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_nueva_pestana_hereda_entorno_y_term_pero_abre_un_shell() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let Some(server) =
+            ssh_fixture::start_with_config("AcceptEnv RUSTTY_*").expect("arrancar sshd")
+        else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+        let handle = connect_and_auth(&server).await;
+        let launch = launch_de_prueba("echo esto-no-debe-ejecutarse; exit 7");
+
+        let (data_tx, mut data_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let on_data: Channel<Response> = Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Raw(bytes) = body {
+                let _ = data_tx.send(bytes);
+            }
+            Ok(())
+        });
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
+        let mut shells = HashMap::new();
+        open_extra_shell(&handle, "hija", on_data, (80, 24), &launch, cmd_tx, &mut shells)
+            .await
+            .expect("abrir la shell hija");
+        shells["hija"]
+            .send(ShellMsg::Input(
+                b"echo marca-$RUSTTY_PRUEBA-$TERM-$((6*7))\n".to_vec(),
+            ))
+            .expect("escribir en la shell hija");
+
+        let mut acc = String::new();
+        let lectura = async {
+            while let Some(bytes) = data_rx.recv().await {
+                acc.push_str(&String::from_utf8_lossy(&bytes));
+                if acc.contains("marca-valor de Fixture-vt100-42") {
+                    break;
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(15), lectura)
+            .await
+            .unwrap_or_else(|_| panic!("plazo agotado; salida: {acc:?}"));
+        assert!(!acc.contains("esto-no-debe-ejecutarse"), "{acc:?}");
+        let _ = shells["hija"].send(ShellMsg::Close);
     }
 
     /// **Integración**: el núcleo del asistente de «acceso sin contraseña»

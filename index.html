@@ -25,11 +25,7 @@
          suprime (html.no-boot-screen). -->
     <div id="boot-screen" role="status" aria-live="polite" data-tauri-drag-region>
       <div class="boot-screen-brand" data-tauri-drag-region>
-        <svg class="boot-screen-icon" viewBox="0 0 18 18" width="40" height="40" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 4.5h12v9h-12z"/>
-          <path d="M5.5 8 7.5 10 5.5 12"/>
-          <path d="M9 12h3.5"/>
-        </svg>
+        <img class="app-icon boot-screen-icon" src="/app-icon.png" width="52" height="52" alt="" draggable="false" />
         <span class="boot-screen-logo">Rustty</span>
       </div>
       <div class="boot-screen-bar" aria-hidden="true"></div>
@@ -285,6 +281,11 @@
               <span class="status-rec-dot"></span>
               <span translate="no">REC</span>
             </span>
+            <button type="button" class="status-readonly hidden" id="status-readonly"
+                    data-i18n-title="status.read_only_unlock" title="Sesión en solo lectura: pulsa para desbloquearla"
+                    data-i18n-aria-label="status.read_only_unlock" aria-label="Sesión en solo lectura: pulsa para desbloquearla">
+              <svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-lock"/></svg>
+            </button>
             <button type="button" class="status-overflow-btn" id="status-overflow-btn"
                     data-i18n-title="status.overflow_more" title="Más detalles"
                     data-i18n-aria-label="status.overflow_more" aria-label="Más detalles"
@@ -330,11 +331,7 @@
             <div class="dashboard-shell">
               <section class="dashboard-command">
                 <div class="dashboard-brand" aria-hidden="true">
-                  <svg viewBox="0 0 18 18" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3 4.5h12v9h-12z"/>
-                    <path d="M5.5 8 7.5 10 5.5 12"/>
-                    <path d="M9 12h3.5"/>
-                  </svg>
+                  <img class="app-icon" src="/app-icon.png" width="60" height="60" alt="" draggable="false" />
                 </div>
                 <div class="dashboard-title">Rustty</div>
                 <div id="dashboard-workspace-chip" class="dashboard-workspace-chip" aria-live="polite"></div>
@@ -449,6 +446,7 @@
         <symbol id="ci-tunnel" viewBox="0 0 16 16"><path d="M3.5 6h7.5M9 4l2 2-2 2"/><path d="M12.5 10H5M7 8l-2 2 2 2"/></symbol>
         <symbol id="ci-duplicate" viewBox="0 0 16 16"><path d="M6.2 6.2h6.3v6.3H6.2z"/><path d="M9.7 6.2V4.3a.8.8 0 0 0-.8-.8H3.9a.8.8 0 0 0-.8.8v5a.8.8 0 0 0 .8.8h1.8"/></symbol>
         <symbol id="ci-key" viewBox="0 0 16 16"><circle cx="10.2" cy="5.8" r="2.6"/><path d="M8.4 7.6 3.5 12.5"/><path d="M5.2 10.8l1.4 1.4M3.9 12.1l1.3 1.3"/></symbol>
+        <symbol id="ci-lock" viewBox="0 0 16 16"><rect x="3.4" y="7.2" width="9.2" height="6.4" rx="1.3"/><path d="M5.4 7.2V5.3a2.6 2.6 0 0 1 5.2 0v1.9"/></symbol>
         <symbol id="ci-star" viewBox="0 0 16 16"><path d="M8 2.6l1.6 3.4 3.7.5-2.7 2.6.7 3.7L8 11.6 4.7 13.3l.7-3.7L2.7 7.1l3.7-.5z"/></symbol>
         <symbol id="ci-pin" viewBox="0 0 16 16"><path d="M5.8 3h4.4"/><path d="M6.4 3 6 7.2 4.2 9.3h7.6L10 7.2 9.6 3"/><path d="M8 9.3V13"/></symbol>
         <symbol id="ci-arrow-up" viewBox="0 0 16 16"><path d="M8 3v9.5M4.8 6.2 8 3l3.2 3.2"/></symbol>
@@ -727,6 +725,9 @@
       <button class="ctx-item tabctx-keepalive hidden" data-tabctx="toggle-keepalive">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg></span><span class="tabctx-keepalive-label" data-i18n="tabctx.keepalive_enable">Mantener sesión activa</span>
       </button>
+      <button class="ctx-item tabctx-read-only hidden" data-tabctx="toggle-read-only">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-lock"/></svg></span><span data-i18n="tabctx.read_only">Solo lectura</span>
+      </button>
 
       <!-- Grupo 2 · Acciones de división/vista (visibilidad calculada al abrir el menú) -->
       <div class="ctx-sep tabctx-view-sep hidden"></div>
@@ -834,6 +835,16 @@
             </select>
             <p class="form-hint" data-i18n="modal_conn.environment_hint">
               Muestra un badge del entorno en la pestaña, la barra lateral, el dashboard y la barra de estado, para distinguir producción de un vistazo.
+            </p>
+          </div>
+
+          <div class="form-row" id="field-open-read-only" data-modal-pane="general">
+            <label class="checkbox-label">
+              <input id="f-open-read-only" type="checkbox" />
+              <span data-i18n="modal_conn.open_read_only">Abrir en solo lectura</span>
+            </label>
+            <p class="form-hint" data-i18n="modal_conn.open_read_only_hint">
+              Las sesiones de esta conexión se abren sin aceptar teclado, pegado ni broadcast, para vigilar un log o un proceso largo sin riesgo. Se desbloquean desde el menú de la pestaña.
             </p>
           </div>
 
@@ -1203,6 +1214,51 @@
               </label>
               <p class="form-hint" data-i18n="modal_conn.tmux_control_hint">
                 La sesión tmux del servidor se muestra como pestañas y splits de Rustty: persistencia, varias shells sobre una única conexión y panes reales. Necesita tmux 3.2 o superior en el servidor; sin él se abre un shell normal con aviso. Comparte el nombre de sesión del reenganche clásico, al que sustituye si ambos están marcados.
+              </p>
+            </div>
+
+            <div class="form-row">
+              <label for="f-remote-command"><span data-i18n="modal_conn.remote_command">Comando al conectar</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+              <input id="f-remote-command" type="text" spellcheck="false" autocomplete="off" maxlength="4096" placeholder="sudo -i" />
+              <label class="checkbox-label">
+                <input id="f-remote-command-shell" type="checkbox" />
+                <span data-i18n="modal_conn.remote_command_shell">El comando abre un shell interactivo</span>
+              </label>
+              <p class="form-hint" data-i18n="modal_conn.remote_command_hint">
+                Se ejecuta en lugar del shell al conectar (sudo -i, cd /srv/app &amp;&amp; exec bash -l, docker exec -it app sh) y admite ${var:}, ${env:}, ${secret:} y ${ask:}. El modo control de tmux y la sesión persistente tienen prioridad. Marca la casilla si acaba en un shell, para que el panel SFTP pueda seguir la carpeta.
+              </p>
+            </div>
+
+            <div class="form-row">
+              <label for="f-env-vars"><span data-i18n="modal_conn.env_vars">Variables de entorno</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+              <textarea id="f-env-vars" rows="3" spellcheck="false" autocomplete="off" data-i18n-placeholder="modal_conn.env_vars_ph" placeholder="LANG=es_ES.UTF-8"></textarea>
+              <p class="form-error hidden" data-error-for="f-env-vars"></p>
+              <p class="form-hint" data-i18n="modal_conn.env_vars_hint">
+                Una por línea, NOMBRE=valor; los valores admiten ${var:}, ${env:}, ${secret:} y ${ask:}. Se envían antes del shell o del comando, también en las pestañas nuevas de esta conexión.
+              </p>
+              <p class="form-hint warning">
+                <svg class="hint-warn-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                  <path d="M8 2 L15 14 H1 Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                  <line x1="8" y1="6.3" x2="8" y2="9.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                  <circle cx="8" cy="11.8" r="0.95" fill="currentColor"/>
+                </svg>
+                <span data-i18n="modal_conn.env_vars_accept_env">El servidor solo acepta las variables de su AcceptEnv (LANG y LC_* suelen estar); las demás se ignoran y se anotan en el diagnóstico de conexión.</span>
+              </p>
+            </div>
+
+            <div class="form-row">
+              <label for="f-term-type" data-i18n="modal_conn.term_type">Tipo de terminal (TERM)</label>
+              <select id="f-term-type">
+                <option value="" data-i18n="modal_conn.term_type_default">xterm-256color (por defecto)</option>
+                <option value="xterm" translate="no">xterm</option>
+                <option value="screen-256color" translate="no">screen-256color</option>
+                <option value="tmux-256color" translate="no">tmux-256color</option>
+                <option value="vt220" translate="no">vt220</option>
+                <option value="vt100" translate="no">vt100</option>
+                <option value="linux" translate="no">linux</option>
+              </select>
+              <p class="form-hint" data-i18n="modal_conn.term_type_hint">
+                Lo que se pide al servidor como TERM. Cámbialo solo si el equipo no entiende xterm-256color: vt100, vt220 o linux en equipos de red o sistemas antiguos.
               </p>
             </div>
 
@@ -2210,6 +2266,32 @@
               </div>
 
               <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-osc-notify" />
+                  <span data-i18n="prefs_terminal.osc_notify">Avisos que pide el servidor</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.osc_notify_hint">Un script o una herramienta pueden pedir un aviso (OSC 9 y OSC 777), por ejemplo al terminar una copia de seguridad. Se muestra como el aviso de comando largo: nada con la sesión a la vista, un toast con la app activa o una notificación del sistema en segundo plano. Nunca en sesiones privadas y, como mucho, tres cada diez segundos.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-osc-progress" />
+                  <span data-i18n="prefs_terminal.osc_progress">Barra de progreso en la pestaña</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.osc_progress_hint">Cuando un programa informa de su avance (OSC 9;4), una barra fina en la pestaña lo muestra: azul en curso, roja con error, amarilla en pausa y en movimiento si no sabe cuánto falta.</p>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-remote-title" data-i18n="prefs_terminal.remote_title">Título que fija el servidor</label>
+                <select id="pref-remote-title">
+                  <option value="tooltip" data-i18n="prefs_terminal.remote_title_tooltip">En el tooltip de la pestaña</option>
+                  <option value="tab" data-i18n="prefs_terminal.remote_title_tab">Junto al nombre de la pestaña</option>
+                  <option value="off" data-i18n="prefs_terminal.remote_title_off">No mostrarlo</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="prefs_terminal.remote_title_hint">El que ponen bash, zsh o vim (OSC 0/2), como la carpeta o el fichero abierto. Si renombras la pestaña, manda tu nombre.</p>
+
+              <div class="settings-row">
                 <label for="pref-local-cwd" data-i18n="prefs_terminal.local_cwd">Carpeta inicial de la consola local</label>
                 <div class="settings-control">
                   <input type="text" id="pref-local-cwd" placeholder="$HOME" data-i18n-placeholder="prefs_terminal.local_cwd_placeholder" />
@@ -2242,6 +2324,27 @@
                   <tbody id="highlight-rules-body"></tbody>
                 </table>
                 <button type="button" class="btn-secondary" id="btn-highlight-add" data-i18n="prefs_terminal.highlight_add">＋ Añadir regla</button>
+              </div>
+
+              <div class="settings-row">
+                <label data-i18n="prefs_terminal.quick_select_title">Selección rápida</label>
+                <p class="form-hint" data-i18n="prefs_terminal.quick_select_hint">
+                  Con su atajo (Ctrl+Shift+Espacio de fábrica) cada IP, URL, ruta, hash o ID de la pantalla recibe una o dos letras: al teclearlas se copia, y en mayúscula además se pega en el prompt. Tus patrones (expresiones regulares) van por delante de los de serie; si llevan un grupo entre paréntesis, se copia solo el grupo.
+                </p>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-quick-select-builtins" />
+                  <span data-i18n="prefs_terminal.quick_select_builtins">Usar también los patrones de serie</span>
+                </label>
+                <table class="highlight-rules-table">
+                  <thead>
+                    <tr>
+                      <th data-i18n="prefs_terminal.highlight_pattern">Patrón</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="quick-select-patterns-body"></tbody>
+                </table>
+                <button type="button" class="btn-secondary" id="btn-quick-select-add" data-i18n="prefs_terminal.quick_select_add">＋ Añadir patrón</button>
               </div>
             </section>
 
@@ -3010,6 +3113,24 @@
                   <span data-i18n="prefs_terminal.confirm_risky_paste">Confirmar pegados peligrosos</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_terminal.confirm_risky_paste_hint">Pide confirmación antes de pegar texto multilínea, muy largo o con caracteres de control</p>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-osc-clipboard" data-i18n="prefs_security.osc_clipboard">El servidor puede copiar al portapapeles</label>
+                <select id="pref-osc-clipboard">
+                  <option value="off" data-i18n="prefs_security.osc_clipboard_off">Desactivado</option>
+                  <option value="ask" data-i18n="prefs_security.osc_clipboard_ask">Preguntar</option>
+                  <option value="allow" data-i18n="prefs_security.osc_clipboard_allow">Permitir</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="prefs_security.osc_clipboard_hint">Neovim, tmux o helix pueden copiar desde el servidor (OSC 52) para que lo que copias allí llegue a tu portapapeles. «Preguntar» enseña el principio del texto antes de copiarlo; en las sesiones privadas, como mucho se pregunta. El servidor nunca puede leer tu portapapeles.</p>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-read-only-prod" />
+                  <span data-i18n="prefs_security.read_only_prod">Abrir en solo lectura las conexiones PROD</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_security.read_only_prod_hint">Las sesiones de las conexiones marcadas como PROD se abren sin aceptar teclado, pegado ni broadcast. Se desbloquean desde el menú de la pestaña, el candado de la barra inferior o el aviso que aparece al teclear.</p>
               </div>
 
               <div class="settings-row">

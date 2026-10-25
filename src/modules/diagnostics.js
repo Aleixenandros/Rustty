@@ -28,6 +28,7 @@ export const PREFS_EXCLUDED_KEYS = Object.freeze([
   "workspaces",           // nombres propios de su organización
   "customThemes",
   "highlightRules",       // regex propias; pueden llevar hostnames o usuarios
+  "quickSelectPatterns",  // ídem (patrones de la selección rápida)
   "syncPassphrase",
   "syncToken",
 ]);

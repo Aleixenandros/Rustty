@@ -115,6 +115,16 @@ pub struct ProfileCredential {
     pub master_credential_id: Option<String>,
 }
 
+/// Variable de entorno de un perfil SSH (`env_vars`): se pide al servidor con
+/// `set_env` antes del shell o del comando. El nombre se valida al usarla
+/// (`remote_launch::is_valid_env_name`) y el valor admite `${...}`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProfileEnvVar {
+    pub name: String,
+    #[serde(default)]
+    pub value: String,
+}
+
 /// Perfil de conexión guardado por el usuario.
 /// Soporta SSH, RDP y transferencia FTP/FTPS. No almacena contraseñas en texto
 /// plano; usa keyring.
@@ -190,6 +200,30 @@ pub struct ConnectionProfile {
     /// perfil. Se sanea a `[A-Za-z0-9_-]` antes de usarse (ver `mux`).
     #[serde(default)]
     pub persist_session_name: Option<String>,
+    /// Comando al conectar (opt-in): el canal interactivo lo ejecuta sobre el
+    /// PTY (`exec`) en vez de abrir el shell — `sudo -i`, `cd /srv/app && exec
+    /// bash -l`, `docker exec -it app sh`—. Admite `${var:}`, `${env:}`,
+    /// `${secret:}` y `${ask:}`. Precedencia: modo control de tmux > sesión
+    /// persistente > comando al conectar > shell (`remote_launch::choose_launch`).
+    /// `None`/vacío = shell.
+    #[serde(default)]
+    pub remote_command: Option<String>,
+    /// El comando al conectar acaba en un shell interactivo: solo entonces se
+    /// inyecta el hook OSC 7 de `follow_cwd` (lo decide el frontend). Sin él,
+    /// teclear el hook dentro de un `docker exec … sh` o de un programa sería
+    /// escribirle basura.
+    #[serde(default)]
+    pub remote_command_shell: bool,
+    /// Variables de entorno que se piden al servidor antes del shell o del
+    /// comando, también en las pestañas nuevas de la conexión. El servidor
+    /// solo acepta las de su `AcceptEnv`; un rechazo no es fatal.
+    #[serde(default)]
+    pub env_vars: Vec<ProfileEnvVar>,
+    /// Tipo de terminal (TERM) que se pide con el PTY, de una lista cerrada
+    /// (`remote_launch::TERM_TYPES`). `None` = `xterm-256color` en la app y el
+    /// `TERM` del terminal local en la CLI.
+    #[serde(default)]
+    pub term_type: Option<String>,
     /// Modo control de tmux (opt-in): la sesión tmux del servidor se muestra
     /// como pestañas y splits nativos (una pestaña por ventana, un split por
     /// pane). Excluyente con `persist_session` (si ambos, gana este). El
@@ -211,6 +245,11 @@ pub struct ConnectionProfile {
     /// solo lo refuerza.
     #[serde(default)]
     pub environment: Option<String>,
+    /// Si true, las sesiones de este perfil se abren en solo lectura: la
+    /// interfaz no envía teclado, pegado ni broadcast hasta desbloquearlas.
+    /// Solo lo consume el frontend (`modules/terminal/read-only.js`).
+    #[serde(default)]
+    pub open_read_only: bool,
     /// Si true, extiende las listas de algoritmos preferidos con variantes
     /// legacy (aes-cbc, 3des-cbc, dh-sha1, hmac-sha1, ssh-rsa) para poder
     /// conectar con servidores antiguos. Reduce la seguridad. Actúa como
@@ -451,11 +490,62 @@ mod tests {
     }
 
     #[test]
+    fn un_perfil_viejo_se_lee_sin_comando_entorno_ni_tipo_de_terminal() {
+        // Perfiles (y bundles de sync) anteriores a estos campos: se leen igual,
+        // con shell, sin variables y con el TERM de siempre.
+        let perfil: ConnectionProfile =
+            serde_json::from_str(JSON_SIN_WORKSPACE).expect("JSON válido");
+        assert!(perfil.remote_command.is_none());
+        assert!(!perfil.remote_command_shell);
+        assert!(perfil.env_vars.is_empty());
+        assert!(perfil.term_type.is_none());
+    }
+
+    #[test]
+    fn comando_entorno_y_tipo_de_terminal_viajan_con_el_perfil() {
+        let json = JSON_SIN_WORKSPACE.replace(
+            "\"created_at\"",
+            "\"remote_command\": \"sudo -i\",\n\
+             \"remote_command_shell\": true,\n\
+             \"env_vars\": [{\"name\": \"LANG\", \"value\": \"es_ES.UTF-8\"}, {\"name\": \"OPERADOR\"}],\n\
+             \"term_type\": \"vt100\",\n\
+             \"created_at\"",
+        );
+        let perfil: ConnectionProfile = serde_json::from_str(&json).expect("JSON válido");
+        let de_vuelta: ConnectionProfile =
+            serde_json::from_str(&serde_json::to_string(&perfil).unwrap()).unwrap();
+        assert_eq!(de_vuelta.remote_command.as_deref(), Some("sudo -i"));
+        assert!(de_vuelta.remote_command_shell);
+        assert_eq!(
+            de_vuelta.env_vars,
+            vec![
+                ProfileEnvVar { name: "LANG".into(), value: "es_ES.UTF-8".into() },
+                // Sin `value`: variable vacía, no un perfil ilegible.
+                ProfileEnvVar { name: "OPERADOR".into(), value: String::new() },
+            ]
+        );
+        assert_eq!(de_vuelta.term_type.as_deref(), Some("vt100"));
+    }
+
+    #[test]
     fn password_source_por_defecto_es_own() {
         let perfil: ConnectionProfile =
             serde_json::from_str(JSON_SIN_WORKSPACE).expect("JSON válido");
         assert_eq!(perfil.password_source, PasswordSource::Own);
         assert!(perfil.master_credential_id.is_none());
+    }
+
+    #[test]
+    fn abrir_en_solo_lectura_es_opt_in_y_se_conserva() {
+        // Un perfil anterior al campo se abre como siempre, sin bloquear…
+        let mut perfil: ConnectionProfile =
+            serde_json::from_str(JSON_SIN_WORKSPACE).expect("JSON válido");
+        assert!(!perfil.open_read_only);
+        // …y el que lo activa lo conserva al guardarse y releerse.
+        perfil.open_read_only = true;
+        let serializado = serde_json::to_string(&perfil).expect("serializa");
+        let de_vuelta: ConnectionProfile = serde_json::from_str(&serializado).expect("deserializa");
+        assert!(de_vuelta.open_read_only);
     }
 
     #[test]

@@ -42,6 +42,7 @@ mod kbd_fixture;
 mod rdp_fixture;
 mod rdp_certs;
 mod rdp_manager;
+mod remote_launch;
 #[cfg(all(test, target_os = "linux"))]
 mod ssh_fixture;
 #[cfg(all(test, target_os = "linux"))]

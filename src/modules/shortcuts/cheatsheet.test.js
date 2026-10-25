@@ -44,6 +44,22 @@ describe("show_shortcuts", () => {
   });
 });
 
+describe("quick_select", () => {
+  it("se abre con Ctrl+Shift+Espacio por tecla física", () => {
+    expect(SHORTCUT_ACTIONS.quick_select.default).toBe("Ctrl+Shift+Space");
+    const event = { key: " ", code: "Space", ctrlKey: true, altKey: false, shiftKey: true, metaKey: false };
+    expect(comboFromEvent(event)).toBe("Ctrl+Shift+Space");
+  });
+
+  it("no choca con ningún otro atajo de fábrica ni de los presets, y Ctrl+Espacio queda libre", () => {
+    for (const preset of Object.values(SHORTCUT_PRESETS)) {
+      const prefs = { shortcuts: preset };
+      expect(SHORTCUT_IDS.filter((id) => getShortcut(prefs, id) === "Ctrl+Shift+Space")).toEqual(["quick_select"]);
+      expect(SHORTCUT_IDS.filter((id) => getShortcut(prefs, id) === "Ctrl+Space")).toEqual([]);
+    }
+  });
+});
+
 describe("buildCheatsheet", () => {
   it("agrupa los atajos vigentes y omite los desactivados o sin combinación", () => {
     const groups = sheet({ shortcuts: { close_tab: null } });

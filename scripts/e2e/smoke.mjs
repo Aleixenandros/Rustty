@@ -7,6 +7,9 @@
 //   3. Al recargar el webview con esa consola viva, el backend la BARRE
 //      (`sweep_orphan_sessions`): no quedan shells sin dueño.
 //   4. Una consola que termina deja el aviso de cierre DESPUÉS de su salida.
+//      Otra consola emite un título (OSC 0) y un progreso (OSC 9;4) que se ven
+//      en su pestaña, y en solo lectura el editor de comandos no le envía nada
+//      hasta que el aviso la desbloquea (`terminal-protocols.mjs`).
 //   5. Mínimo privilegio del IPC: sin permiso del diálogo no se lee ni se
 //      escribe nada; los `Include` de ~/.ssh/config no salen de ~/.ssh ni
 //      devuelven una clave privada; un comando local autorizado recibe un valor
@@ -42,6 +45,8 @@ import { checkSyncFeedback } from "./sync-feedback.mjs";
 import { checkShortcuts } from "./shortcuts.mjs";
 import { checkDialogs } from "./dialogs.mjs";
 import { checkTunnels } from "./tunnels.mjs";
+import { checkTerminalProtocols } from "./terminal-protocols.mjs";
+import { checkQuickSelect } from "./quick-select.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const application = path.join(root, "src-tauri/target/debug/rustty");
@@ -476,6 +481,8 @@ async function main() {
     );
     check("al terminar el shell la pestaña pasa a cerrada", /error/.test(String(closed)), String(closed));
 
+    await checkTerminalProtocols(app, check, workDir);
+
     await checkPrefsSync(app, workDir, check);
     await checkSyncFeedback(app, check);
     await checkShortcuts(app, check);
@@ -489,6 +496,7 @@ async function main() {
       console.log("  --   sin sshd en esta máquina: se salta la sección del panel SFTP");
     }
     await checkTunnels(app, check, artifactsDir);
+    await checkQuickSelect(app, check, workDir);
     if (process.env.E2E_SCREENSHOT) await app.screenshot(process.env.E2E_SCREENSHOT);
   } catch (err) {
     if (artifactsDir) await app.screenshot(path.join(artifactsDir, "failure.png")).catch(() => {});

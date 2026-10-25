@@ -30,7 +30,14 @@ export const SHORTCUT_ACTIONS = {
   ui_zoom_out: { default: "Ctrl+Alt+-" },
   ui_zoom_reset: { default: "Ctrl+Alt+0" },
   reconnect_session: { default: "Ctrl+Shift+R" },
+  // Solo lectura de la sesión activa. Sin combinación de fábrica: cualquiera
+  // que se elija se la quitaría a un programa del terminal.
+  toggle_read_only: { default: null },
   find_in_terminal: { default: "Ctrl+F" },
+  // Selección rápida, con la combinación de WezTerm. Ctrl+Espacio sin
+  // Mayúsculas sigue llegando al terminal: es la marca de Emacs y el
+  // autocompletado de algunos shells. Se lee por tecla física (`Space`).
+  quick_select: { default: "Ctrl+Shift+Space" },
   clear_terminal: { default: null },
   sftp_toggle_panel: { default: "Ctrl+Shift+F" },
   sftp_toggle_follow: { default: null },

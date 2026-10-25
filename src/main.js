@@ -83,6 +83,10 @@ import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { buildCheatsheet, filterCheatsheet } from "./modules/shortcuts/cheatsheet.js";
 import { formatAccelerator } from "./modules/platform.js";
 import { buildQuickProfile, findQuickTargetProfile, formatQuickTarget, paletteQuickTarget, parseQuickTarget } from "./modules/quick-connect.js";
+import {
+  MAX_ENV_VALUE_LEN, MAX_ENV_VARS, allowsOsc7Hook, applySshConfigLaunchKey, formatEnvVarsText, launchKind,
+  launchFieldsChanged, launchFieldsFromBlock, normalizeRemoteCommand, normalizeTermType, parseEnvVarsText,
+} from "./modules/remote-launch.js";
 import { tabIndexForKey } from "./modules/tab-navigation.js";
 import { TOAST_DURATIONS, createPausableTimer, toastDurationMs } from "./modules/toast-timer.js";
 import {
@@ -94,12 +98,30 @@ import {
 } from "./modules/terminal/blocks.js";
 import { extractBlockText, blockToMarkdown, blockFileName } from "./modules/terminal/block-text.js";
 import { diffLines, pairDiffRows, diffToUnifiedText } from "./modules/terminal/diff.js";
+import {
+  OSC52_MAX_BYTES,
+  clipboardExcerpt,
+  createNotifyLimiter,
+  effectiveClipboardPolicy,
+  nextProgress,
+  normalizeClipboardPolicy,
+  normalizeRemoteTitleMode,
+  parseOsc52,
+  parseOsc777,
+  parseOsc9,
+  remoteTitleView,
+  sanitizeRemoteTitle,
+  tooltipWithRemoteTitle,
+} from "./modules/terminal/osc.js";
+import { opensReadOnly, readOnlyInputDecision, readOnlyKeyAction } from "./modules/terminal/read-only.js";
 import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { inkTokens, ringColor } from "./modules/themes/ink.js";
 import { compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
 import { createChunkDecoder } from "./modules/terminal/chunk-decoder.js";
 import { createShellCloseGate } from "./modules/terminal/shell-close.js";
+import { QUICK_SELECT_MAX_PATTERNS, QUICK_SELECT_MAX_PATTERN_LENGTH, quickSelectPatternError } from "./modules/terminal/quick-select.js";
+import { createQuickSelect } from "./modules/terminal/quick-select-ui.js";
 import { createPromptQueue } from "./modules/dialogs/prompt-queue.js";
 import { reconnectRoute, runReconnectOnce } from "./modules/sessions/reconnect.js";
 import { commandDraftKey, isLocalShellReady, isLocalShellSession } from "./modules/sessions/local-shell.js";
@@ -1761,6 +1783,10 @@ function openSettingsModal() {
   document.getElementById("pref-right-click-paste").checked = prefs.rightClickPaste;
   const confirmRiskyPasteEl = document.getElementById("pref-confirm-risky-paste");
   if (confirmRiskyPasteEl) confirmRiskyPasteEl.checked = prefs.confirmRiskyPaste !== false;
+  const oscClipboardEl = document.getElementById("pref-osc-clipboard");
+  if (oscClipboardEl) oscClipboardEl.value = normalizeClipboardPolicy(prefs.oscClipboard);
+  const readOnlyProdEl = document.getElementById("pref-read-only-prod");
+  if (readOnlyProdEl) readOnlyProdEl.checked = !!prefs.readOnlyProd;
   const strictHostKeyEl = document.getElementById("pref-strict-host-key");
   if (strictHostKeyEl) strictHostKeyEl.checked = prefs.strictHostKey !== false;
   const hostKeyChangePromptEl = document.getElementById("pref-hostkey-change-prompt");
@@ -1841,6 +1867,12 @@ function openSettingsModal() {
   if (_cmdNotify) _cmdNotify.checked = !!prefs.cmdDoneNotify;
   const _cmdNotifySecs = document.getElementById("pref-cmd-notify-secs");
   if (_cmdNotifySecs) _cmdNotifySecs.value = String(Math.max(1, Number(prefs.cmdDoneNotifySecs) || 15));
+  const _oscNotify = document.getElementById("pref-osc-notify");
+  if (_oscNotify) _oscNotify.checked = !!prefs.oscNotify;
+  const _oscProgress = document.getElementById("pref-osc-progress");
+  if (_oscProgress) _oscProgress.checked = prefs.oscProgress !== false;
+  const _remoteTitle = document.getElementById("pref-remote-title");
+  if (_remoteTitle) _remoteTitle.value = normalizeRemoteTitleMode(prefs.remoteTitleMode);
   const _ligEl = document.getElementById("pref-terminal-ligatures");
   if (_ligEl) _ligEl.checked = !!prefs.terminalLigatures;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
@@ -1876,6 +1908,9 @@ function openSettingsModal() {
   const _localCmdOutput = document.getElementById("pref-localcmd-output");
   if (_localCmdOutput) _localCmdOutput.value = String(localCmdMaxOutputKb());
   renderHighlightRulesEditor();
+  const _qsBuiltins = document.getElementById("pref-quick-select-builtins");
+  if (_qsBuiltins) _qsBuiltins.checked = prefs.quickSelectBuiltins !== false;
+  renderQuickSelectPatternsEditor();
 
   // Marcar el radio + .selected correspondientes al tema de UI actual
   document.querySelectorAll('input[name="pref-theme"]').forEach((r) => {
@@ -3944,6 +3979,8 @@ function readPrefsFromModal() {
     copyOnSelect:    document.getElementById("pref-copy-on-select").checked,
     rightClickPaste: document.getElementById("pref-right-click-paste").checked,
     confirmRiskyPaste: document.getElementById("pref-confirm-risky-paste")?.checked ?? true,
+    oscClipboard:      normalizeClipboardPolicy(document.getElementById("pref-osc-clipboard")?.value),
+    readOnlyProd:      !!document.getElementById("pref-read-only-prod")?.checked,
     strictHostKey:     document.getElementById("pref-strict-host-key")?.checked ?? true,
     hostKeyChangePrompt: document.getElementById("pref-hostkey-change-prompt")?.checked ?? true,
     strictFtpsCert:    document.getElementById("pref-strict-ftps-cert")?.checked ?? true,
@@ -3986,6 +4023,9 @@ function readPrefsFromModal() {
     cursorBlink:     document.getElementById("pref-cursor-blink").checked,
     cmdDoneNotify:   !!document.getElementById("pref-cmd-notify")?.checked,
     cmdDoneNotifySecs: Math.min(3600, Math.max(1, Number(document.getElementById("pref-cmd-notify-secs")?.value) || 15)),
+    oscNotify:       !!document.getElementById("pref-osc-notify")?.checked,
+    oscProgress:     document.getElementById("pref-osc-progress")?.checked ?? true,
+    remoteTitleMode: normalizeRemoteTitleMode(document.getElementById("pref-remote-title")?.value),
     terminalLigatures: !!document.getElementById("pref-terminal-ligatures")?.checked,
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     tmuxScrollbackLines: (() => {
@@ -4055,6 +4095,8 @@ function readPrefsFromModal() {
     autostart:          !!document.getElementById("pref-autostart")?.checked,
     autostartMinimized: !!document.getElementById("pref-autostart-minimized")?.checked,
     highlightRules:  readHighlightRulesFromEditor(),
+    quickSelectBuiltins: document.getElementById("pref-quick-select-builtins")?.checked ?? true,
+    quickSelectPatterns: readQuickSelectPatternsFromEditor(),
   };
 }
 
@@ -4076,6 +4118,8 @@ function savePrefsFromModal() {
   // Reaplica la disposición del panel SFTP (remoto izquierda/derecha) a los
   // paneles ya abiertos.
   applySftpRemoteSideToAll();
+  // Dónde se ve el título remoto (OSC 0/2): se repinta en las pestañas abiertas.
+  for (const [sid, s] of sessions) if (s.remoteTitle && !isTmuxPaneSession(s)) updateTabRemoteTitle(sid);
   // Persistir también la configuración de la pestaña de Sincronización
   // (config del backend + secretos al keyring) si existe el formulario.
   if (document.getElementById("sync-enabled")) {
@@ -7876,6 +7920,57 @@ function updatePersistSessionFields() {
   if (box) box.hidden = !on;
 }
 
+/** Texto del aviso de las variables de entorno (`parseEnvVarsText`). */
+function envVarsErrorText(error) {
+  switch (error.code) {
+    case "duplicate": return t("modal_conn.err_env_duplicate", { line: error.line, name: error.name });
+    case "value_too_long": return t("modal_conn.err_env_value_long", { line: error.line, max: MAX_ENV_VALUE_LEN });
+    case "too_many": return t("modal_conn.err_env_too_many", { max: MAX_ENV_VARS });
+    default: return t("modal_conn.err_env_line", { line: error.line });
+  }
+}
+
+/**
+ * Valida las variables de entorno del formulario en un perfil SSH (los demás
+ * no las usan): aviso bajo el campo y `setCustomValidity`, para que guardar
+ * lleve a la pestaña Avanzado en vez de mandar lo que el backend descartaría.
+ */
+function validateRemoteLaunchFields() {
+  const input = document.getElementById("f-env-vars");
+  if (!input) return true;
+  const isSsh = (document.getElementById("f-conn-type")?.value || "ssh") === "ssh";
+  const { error } = isSsh ? parseEnvVarsText(input.value) : { error: null };
+  const message = error ? envVarsErrorText(error) : "";
+  input.setCustomValidity(message);
+  input.classList.toggle("input-invalid", !!message);
+  const errEl = document.querySelector('.form-error[data-error-for="f-env-vars"]');
+  if (errEl) {
+    errEl.textContent = message;
+    errEl.classList.toggle("hidden", !message);
+  }
+  return !message;
+}
+
+/** Rellena comando al conectar, variables y TERM con los del perfil (o vacíos). */
+function fillRemoteLaunchFields(profile) {
+  const set = (id, prop, v) => { const el = document.getElementById(id); if (el) el[prop] = v; };
+  set("f-remote-command", "value", profile?.remote_command || "");
+  set("f-remote-command-shell", "checked", !!profile?.remote_command_shell);
+  set("f-env-vars", "value", formatEnvVarsText(profile?.env_vars));
+  set("f-term-type", "value", normalizeTermType(profile?.term_type) || "");
+  validateRemoteLaunchFields();
+}
+
+/** Comando al conectar, variables y TERM del formulario, como los guarda el perfil. */
+function readRemoteLaunchFields() {
+  return {
+    remote_command: normalizeRemoteCommand(document.getElementById("f-remote-command")?.value),
+    remote_command_shell: document.getElementById("f-remote-command-shell")?.checked ?? false,
+    env_vars: parseEnvVarsText(document.getElementById("f-env-vars")?.value).vars,
+    term_type: normalizeTermType(document.getElementById("f-term-type")?.value),
+  };
+}
+
 // Renderiza las casillas con el estado del perfil y ajusta la visibilidad.
 async function applyLegacyAlgorithmsUI(selectedIds) {
   const catalog = await ensureLegacyAlgoCatalog();
@@ -7910,6 +8005,7 @@ function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiv
   document.getElementById("f-save-passphrase").checked = true;
   applyLegacyAlgorithmsUI(null);
   updatePersistSessionFields();
+  fillRemoteLaunchFields(null);
   setPasswordSource("own");
   populateMasterCredSelect(null);
   refreshKeepassStatus().then(() => {
@@ -8030,6 +8126,9 @@ function renderConnectionSummary() {
     if (document.getElementById("f-allow-legacy")?.checked) badges.push({ kind: "warn", label: t("modal_conn.summary_legacy") });
     if (document.getElementById("f-agent-forwarding")?.checked) badges.push({ kind: "info", label: t("modal_conn.summary_agent_fwd") });
     if (document.getElementById("f-x11-forwarding")?.checked) badges.push({ kind: "info", label: t("modal_conn.summary_x11_fwd") });
+    if (normalizeRemoteCommand(document.getElementById("f-remote-command")?.value)) {
+      badges.push({ kind: "info", label: t("modal_conn.remote_command") });
+    }
     if (document.getElementById("f-session-log")?.checked) badges.push({ kind: "info", label: t("modal_conn.summary_session_log") });
     if ((document.getElementById("f-mac-address")?.value || "").trim()) badges.push({ kind: "info", label: t("modal_conn.summary_wol") });
   }
@@ -8108,6 +8207,8 @@ function openEditConnectionModal(profileId) {
   if (_fPromptRegex) _fPromptRegex.value = profile.prompt_regex || "";
   const _fEnvironment = document.getElementById("f-environment");
   if (_fEnvironment) _fEnvironment.value = PROFILE_ENVIRONMENTS.includes(profile.environment) ? profile.environment : "";
+  const _fOpenReadOnly = document.getElementById("f-open-read-only");
+  if (_fOpenReadOnly) _fOpenReadOnly.checked = !!profile.open_read_only;
   document.getElementById("f-allow-legacy").checked = !!profile.allow_legacy_algorithms;
   applyLegacyAlgorithmsUI(profile.legacy_algorithms ?? null);
   document.getElementById("f-agent-forwarding").checked = !!profile.agent_forwarding;
@@ -8136,6 +8237,9 @@ function openEditConnectionModal(profileId) {
   });
   setConnectionModalPane("general");
   clearAllConnectionModalErrors();
+  // Después de limpiar avisos: unas variables inválidas (llegadas por sync o
+  // import) se señalan ya al abrir.
+  fillRemoteLaunchFields(profile);
   renderConnectionSummary();
   applyConnectionModalSize();
   document.getElementById("modal-overlay").classList.remove("hidden");
@@ -9041,6 +9145,8 @@ function updateConnTypeFields(type, adjustPort = false) {
   const isPasswordOnly = isExternal || isFileTransfer;
   document.getElementById("field-domain").classList.toggle("hidden", !isRdp);
   document.getElementById("field-rdp-display").classList.toggle("hidden", !isRdp);
+  // Solo lectura: solo tiene sentido con un terminal (SSH).
+  document.getElementById("field-open-read-only")?.classList.toggle("hidden", isPasswordOnly);
   document.getElementById("field-auth-type").classList.toggle("hidden", isPasswordOnly);
   document.getElementById("field-key-path").classList.add("hidden");
   document.getElementById("field-passphrase").classList.add("hidden");
@@ -9470,6 +9576,7 @@ async function chooseThemed({
   submitLabel = t("modal_credential.accept"),
   rememberLabel,
   danger = false,
+  armSubmit = false,
   actions = [],
 }) {
   const result = await promptCredential({
@@ -9479,6 +9586,7 @@ async function chooseThemed({
     rememberLabel,
     hideInput: true,
     danger,
+    armSubmit,
     extraActions: actions,
   });
   if (!result) return null;
@@ -9596,10 +9704,12 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     persist_session: document.getElementById("f-persist-session")?.checked ?? false,
     persist_session_tool: document.getElementById("f-persist-tool")?.value || null,
     persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
+    ...readRemoteLaunchFields(),
     tmux_control: document.getElementById("f-tmux-control")?.checked ?? false,
     cmd_notify_secs: keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     prompt_regex: (document.getElementById("f-prompt-regex")?.value || "").trim() || null,
     environment: document.getElementById("f-environment")?.value || null,
+    open_read_only: document.getElementById("f-open-read-only")?.checked ?? false,
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     legacy_algorithms: collectLegacyAlgorithms(),
     agent_forwarding: document.getElementById("f-agent-forwarding").checked,
@@ -9824,10 +9934,12 @@ async function saveAndClose(shouldConnect) {
     persist_session:     document.getElementById("f-persist-session")?.checked ?? false,
     persist_session_tool: document.getElementById("f-persist-tool")?.value || null,
     persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
+    ...readRemoteLaunchFields(),
     tmux_control:        document.getElementById("f-tmux-control")?.checked ?? false,
     cmd_notify_secs:     keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     prompt_regex:        (document.getElementById("f-prompt-regex")?.value || "").trim() || null,
     environment:         document.getElementById("f-environment")?.value || null,
+    open_read_only:      document.getElementById("f-open-read-only")?.checked ?? false,
     allow_legacy_algorithms: document.getElementById("f-allow-legacy").checked,
     legacy_algorithms:   collectLegacyAlgorithms(),
     agent_forwarding:    document.getElementById("f-agent-forwarding").checked,
@@ -11194,11 +11306,15 @@ function upsertTmuxWindow(root, payload) {
       unlisteners: [],
       status: "connected",
       private: root.private,
+      // Una conexión abierta en solo lectura lo hereda en cada ventana; desde
+      // ahí se desbloquea ventana a ventana.
+      readOnly: !!root.readOnly,
       _tmux: { conn: root.id, window: windowId },
     });
     const profile = profiles.find((p) => p.id === root.profileId);
     const name = payload.name || `${profile?.name || "tmux"} · ${windowId}`;
     createTab(tabId, { name, connection_type: "ssh" }, "connected", { sftp: false, private: root.private });
+    updateTabReadOnly(tabId);
     info = { tabId, name, layout: null, panes: new Map() };
     wins.set(windowId, info);
     const showNow = viewSelection.length === 0 || viewSelection.includes(root.id);
@@ -11233,6 +11349,8 @@ function ensureTmuxPane(root, windowId, ref) {
   if (existing) {
     // break-pane: la pane cambia de ventana conservando sesión y scrollback.
     if (existing._tmux) existing._tmux.window = windowId;
+    // …y pasa a seguir la solo lectura de su ventana nueva.
+    syncReadOnlyTerminal(existing);
     return;
   }
   createTmuxPaneSession(root, windowId, ref);
@@ -11292,6 +11410,11 @@ function createTmuxPaneSession(root, windowId, ref) {
   };
   sessions.set(ref.logicalId, sessionObj);
   slot.addEventListener("mousedown", () => focusTmuxPane(ref.logicalId));
+  // Mismos protocolos que una pestaña (portapapeles, avisos, progreso), y la
+  // solo lectura de su ventana desde el primer instante.
+  installTerminalProtocols(terminal, sessionObj);
+  installReadOnlyKeyGuard(terminal, sessionObj);
+  syncReadOnlyTerminal(sessionObj);
   terminal.onData((data) => handleTerminalInput(sessionObj, data));
   bindTmuxPaneChannel(sessionObj).catch((err) => console.error("[tmux] bind", err));
 }
@@ -11454,6 +11577,8 @@ function attachTmuxDividerDrag(node, index, divider) {
 }
 
 function destroyTmuxPane(root, logicalId) {
+  // Una selección rápida abierta pertenece a la pestaña que se va o se deja.
+  quickSelect.cancel();
   const s = sessions.get(logicalId);
   if (!s?._tmux) return;
   const info = tmuxWindowsOf(root).get(s._tmux.window);
@@ -11674,6 +11799,9 @@ function updateTabLabel(sessionId) {
   const profile = s ? profiles.find((p) => p.id === s.profileId) : null;
   tab.title = buildTabTooltip(profile, alias);
   tab.classList.toggle("has-alias", !!alias);
+  // El tooltip se acaba de rehacer: el título remoto vuelve a su sitio.
+  delete tab.dataset.remoteTitle;
+  updateTabRemoteTitle(sessionId);
 }
 
 /**
@@ -11761,7 +11889,9 @@ function updateBroadcastClasses() {
   document.querySelectorAll(".terminal-pane").forEach((p) => {
     const sid = p.dataset.session;
     const s = sessions.get(sid);
-    const eligible = !!s && !!s.terminal && s.type !== "rdp" && viewSelection.includes(sid);
+    // Una pane en solo lectura no recibe la réplica: no se marca como si la recibiera.
+    const eligible = !!s && !!s.terminal && s.type !== "rdp" && viewSelection.includes(sid)
+      && !isSessionReadOnly(s);
     p.classList.toggle("pane-broadcasting", on && eligible);
   });
   const btn = document.querySelector('#view-layout-bar button[data-action="broadcast"]');
@@ -11797,12 +11927,351 @@ function clearTabActivity(sessionId) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// SOLO LECTURA DEL TERMINAL
+// ═══════════════════════════════════════════════════════════════
+// Bloquea toda la entrada hacia una sesión (teclado, pegado, Ctrl+P, snippets,
+// editor multilínea y broadcast) para vigilar un `tail -f` o una migración sin
+// que una tecla escapada la corte. Copiar, buscar y desplazarse siguen
+// funcionando, y el Intro sobre una sesión cerrada sigue reconectando. El
+// control está en `sendTerminalInput`; `disableStdin` es la segunda barrera.
+
+/** Sesión que guarda el estado: en una pane de tmux, su pestaña-ventana. */
+function readOnlyOwner(s) {
+  if (isTmuxPaneSession(s)) return sessions.get(tmuxWindowTabId(s._tmux.conn, s._tmux.window)) || null;
+  return s || null;
+}
+
+function isSessionReadOnly(s) {
+  return !!readOnlyOwner(s)?.readOnly;
+}
+
+/** ¿Admite la sesión el modo solo lectura? Las que tienen terminal propio o son una ventana tmux. */
+function canSessionBeReadOnly(s) {
+  if (!s || isExternalLauncherType(s.type)) return false;
+  return !!s.terminal || s.type === "tmux-window";
+}
+
+/**
+ * Segunda barrera: con `disableStdin` xterm no emite `onData` (teclado,
+ * pegado, informes de ratón). Tampoco salen sus respuestas automáticas a las
+ * consultas del servidor: en solo lectura no se envía nada.
+ */
+function syncReadOnlyTerminal(s) {
+  if (s?.terminal) s.terminal.options.disableStdin = isSessionReadOnly(s);
+}
+
+function setSessionReadOnly(sessionId, on) {
+  const owner = readOnlyOwner(sessions.get(sessionId));
+  if (!owner) return;
+  owner.readOnly = !!on;
+  const terminals = owner.type === "tmux-window"
+    ? [...sessions.values()].filter((p) => isTmuxPaneSession(p)
+      && p._tmux.conn === owner._tmux.conn && p._tmux.window === owner._tmux.window)
+    : [owner];
+  terminals.forEach(syncReadOnlyTerminal);
+  if (!on && owner._readOnlyToast?.isConnected) dismissToast(owner._readOnlyToast, "default");
+  updateTabReadOnly(owner.id);
+  updateBroadcastClasses();
+  updateStatusBar();
+}
+
+function toggleActiveSessionReadOnly() {
+  const s = activeSessionId ? sessions.get(activeSessionId) : null;
+  if (!canSessionBeReadOnly(s)) return;
+  setSessionReadOnly(s.id, !isSessionReadOnly(s));
+}
+
+/** Aviso breve en vez de enviar nada; uno por sesión a la vez, por muchas teclas que lleguen. */
+function notifyReadOnlyBlocked(s) {
+  const owner = readOnlyOwner(s);
+  if (!owner || owner._readOnlyToast?.isConnected) return;
+  owner._readOnlyToast = toast(t("toast.read_only_blocked"), "warning", 4000, {
+    actionLabel: t("toast.read_only_unlock"),
+    onAction: () => setSessionReadOnly(owner.id, false),
+    skipActivity: true,
+  });
+}
+
+/** Corta de entrada una acción que solo serviría para escribir en la sesión. */
+function guardReadOnlyInput(s) {
+  if (!isSessionReadOnly(s)) return false;
+  notifyReadOnlyBlocked(s);
+  return true;
+}
+
+/** Candado de la pestaña, delante del nombre. */
+function updateTabReadOnly(sessionId) {
+  const tab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
+  if (!tab) return;
+  const on = !!sessions.get(sessionId)?.readOnly;
+  tab.classList.toggle("is-read-only", on);
+  let badge = tab.querySelector(".tab-readonly-badge");
+  if (!on) {
+    badge?.remove();
+    return;
+  }
+  if (badge) return;
+  badge = document.createElement("span");
+  badge.className = "tab-readonly-badge";
+  badge.title = t("tabctx.read_only");
+  badge.innerHTML = '<svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-lock"/></svg>';
+  tab.insertBefore(badge, tab.querySelector(".tab-name"));
+}
+
+/** Candado de la barra inferior: visible con la sesión activa bloqueada; pulsarlo la desbloquea. */
+function renderStatusReadOnly(s) {
+  const btn = document.getElementById("status-readonly");
+  if (!btn) return;
+  btn.classList.toggle("hidden", !isSessionReadOnly(s));
+  if (btn.dataset.bound) return;
+  btn.dataset.bound = "1";
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (activeSessionId) setSessionReadOnly(activeSessionId, false);
+  });
+}
+
+/** Tecla traducida por xterm en una sesión bloqueada: reconectar (Intro sobre cerrada) o avisar. */
+function installReadOnlyKeyGuard(terminal, sessionObj) {
+  terminal.onKey(({ key }) => {
+    const action = readOnlyKeyAction({ readOnly: isSessionReadOnly(sessionObj), status: sessionObj.status, key });
+    if (action === "reconnect") reconnectSession(sessionObj.id);
+    else if (action === "notify") notifyReadOnlyBlocked(sessionObj);
+  });
+  // El pegado nativo de xterm (también el clic central) ya lo corta
+  // `disableStdin`; aquí solo se avisa de que no ha salido.
+  terminal.element?.addEventListener("paste", () => {
+    if (isSessionReadOnly(sessionObj)) notifyReadOnlyBlocked(sessionObj);
+  }, true);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PROTOCOLOS MODERNOS DEL TERMINAL: OSC 52, 9, 9;4, 777 Y 0/2
+// ═══════════════════════════════════════════════════════════════
+// Comunes a las pestañas y a las panes de tmux. Lo que llega por aquí lo
+// escribe el servidor: el saneado y los topes viven en `modules/terminal/osc.js`.
+
+// Con el portapapeles desactivado, la pista de dónde activarlo sale una sola
+// vez por arranque: quien lo apagó a propósito no tiene por qué verla más.
+let _osc52OffHinted = false;
+// Sin noticias de una barra de progreso en este tiempo, se retira: un programa
+// que muere a medias no deja la pestaña marcada para siempre.
+const TERMINAL_PROGRESS_STALE_MS = 30000;
+
+/** Pestaña donde se ve una sesión: la de su ventana si es una pane de tmux. */
+function sessionTabId(s) {
+  return isTmuxPaneSession(s) ? tmuxWindowTabId(s._tmux.conn, s._tmux.window) : s.id;
+}
+
+/** Nombre con el que se presenta la sesión: el de su pestaña (una consola local no tiene perfil). */
+function protocolSessionName(s) {
+  return getSessionTabLabel(sessionTabId(s)) || sessionNotifyName(s);
+}
+
+function installTerminalProtocols(terminal, sessionObj) {
+  // OSC 52: copiar al portapapeles desde el servidor (Neovim 0.10 por SSH,
+  // tmux con `set-clipboard`, helix). Solo escritura: la consulta `?` no se
+  // contesta nunca, devolvería al servidor lo que el usuario tenga copiado.
+  terminal.parser.registerOscHandler(52, (data) => {
+    handleOsc52(sessionObj, data).catch((err) => console.debug("[osc52]", err));
+    return true;
+  });
+  // OSC 9: aviso de escritorio (iTerm2) o, con subcomando 4, progreso (ConEmu).
+  terminal.parser.registerOscHandler(9, (data) => {
+    // Con los avisos apagados (lo predeterminado), solo interesa el progreso:
+    // ni se analiza ni se sanea un aviso que no se va a enseñar.
+    if (!prefs.oscNotify && !/^4(?:;|$)/.test(data)) return true;
+    const ev = parseOsc9(data);
+    if (ev.kind === "progress") handleTerminalProgress(sessionObj, ev);
+    else if (ev.kind === "notify") handleTerminalNotify(sessionObj, ev);
+    return true;
+  });
+  // OSC 777;notify;título;texto (urxvt, foot).
+  terminal.parser.registerOscHandler(777, (data) => {
+    if (!prefs.oscNotify) return true;
+    const ev = parseOsc777(data);
+    if (ev.kind === "notify") handleTerminalNotify(sessionObj, ev);
+    return true;
+  });
+  // OSC 0/2: el título que fijan bash, zsh o vim (xterm ya los interpreta).
+  terminal.onTitleChange((title) => handleRemoteTitle(sessionObj, title));
+}
+
+async function handleOsc52(sessionObj, data) {
+  const req = parseOsc52(data);
+  if (req.kind !== "write") {
+    if (req.kind === "invalid" && req.reason === "too_large" && !sessionObj._osc52TooLarge) {
+      sessionObj._osc52TooLarge = true;
+      toast(t("modal_osc_clipboard.too_large", { kib: OSC52_MAX_BYTES / 1024 }), "warning", 6000);
+    }
+    return;
+  }
+  // En tmux el permiso es de la conexión: una pregunta por pane sería un incordio.
+  const owner = isTmuxPaneSession(sessionObj) ? sessions.get(sessionObj._tmux.conn) || sessionObj : sessionObj;
+  const policy = effectiveClipboardPolicy(prefs.oscClipboard, {
+    isPrivate: !!sessionObj.private,
+    sessionAllowed: !!owner._osc52Allowed,
+  });
+  if (policy === "off") {
+    if (!_osc52OffHinted) {
+      _osc52OffHinted = true;
+      toast(t("modal_osc_clipboard.off_hint"), "info", 8000, {
+        actionLabel: t("modal_prefs.title"),
+        onAction: () => { openSettingsModal(); switchPrefsTab("security"); },
+      });
+    }
+    return;
+  }
+  if (policy === "ask") {
+    // Mientras se pregunta, lo que llegue de esa conexión se descarta: el
+    // usuario decide sobre lo que está viendo, no sobre una cola a ciegas. Y
+    // si ya dijo que no, no se vuelve a preguntar en esta sesión: cada
+    // pregunta era otra ocasión de aceptar sin querer.
+    if (owner._osc52Asking || owner._osc52Denied) return;
+    owner._osc52Asking = true;
+    try {
+      const { excerpt, chars, lines } = clipboardExcerpt(req.text);
+      const choice = await chooseThemed({
+        title: t("modal_osc_clipboard.title"),
+        message: t("modal_osc_clipboard.message", { name: protocolSessionName(sessionObj), chars, lines, excerpt }),
+        submitLabel: t("modal_osc_clipboard.submit"),
+        // Una sesión privada, como mucho, pregunta: sin «Permitir en esta sesión».
+        rememberLabel: sessionObj.private ? undefined : t("modal_osc_clipboard.remember"),
+        // El foco empieza en «Cancelar» y el envío se ignora un instante: el
+        // servidor elige cuándo aparece el diálogo, y un Intro o un Espacio
+        // que ya venía tecleado no debe aceptarlo.
+        danger: true,
+        armSubmit: true,
+      });
+      if (!choice) {
+        owner._osc52Denied = true;
+        return;
+      }
+      if (choice.remember && !sessionObj.private) owner._osc52Allowed = true;
+    } finally {
+      owner._osc52Asking = false;
+    }
+  }
+  await writeSystemClipboardText(req.text);
+}
+
+function handleTerminalNotify(sessionObj, ev) {
+  // Opt-in, y nunca en una sesión privada (el aviso queda en la actividad y en
+  // el centro de notificaciones del sistema).
+  if (!prefs.oscNotify || sessionObj.private) return;
+  sessionObj._oscNotifyLimiter ??= createNotifyLimiter();
+  if (!sessionObj._oscNotifyLimiter.allow()) return;
+  const name = protocolSessionName(sessionObj);
+  routeSessionNotification(sessionTabId(sessionObj), ev.title || name,
+    t("notify.osc_text", { name, text: ev.body }), "info");
+}
+
+function handleTerminalProgress(sessionObj, ev) {
+  if (prefs.oscProgress === false) return;
+  const tabId = sessionTabId(sessionObj);
+  const holder = sessions.get(tabId);
+  if (!holder) return;
+  holder._progress = nextProgress(holder._progress || null, ev);
+  clearTimeout(holder._progressTimer);
+  holder._progressTimer = holder._progress
+    ? setTimeout(() => clearTabProgress(tabId), TERMINAL_PROGRESS_STALE_MS)
+    : null;
+  renderTabProgress(tabId);
+}
+
+function clearTabProgress(sessionId) {
+  const s = sessions.get(sessionId);
+  if (s) {
+    clearTimeout(s._progressTimer);
+    s._progressTimer = null;
+    s._progress = null;
+  }
+  renderTabProgress(sessionId);
+}
+
+/** Barra fina en el borde superior de la pestaña; el estado lo pinta el CSS con tokens. */
+function renderTabProgress(sessionId) {
+  const tab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
+  if (!tab) return;
+  const progress = sessions.get(sessionId)?._progress || null;
+  let bar = tab.querySelector(".tab-progress");
+  if (!progress) {
+    bar?.remove();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement("span");
+    bar.className = "tab-progress";
+    bar.setAttribute("role", "progressbar");
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+    bar.appendChild(document.createElement("span")).className = "tab-progress-fill";
+    tab.appendChild(bar);
+  }
+  bar.dataset.state = progress.state;
+  bar.setAttribute("aria-label", t("terminal.progress_label"));
+  if (progress.value == null) bar.removeAttribute("aria-valuenow");
+  else bar.setAttribute("aria-valuenow", String(progress.value));
+  const fill = bar.querySelector(".tab-progress-fill");
+  if (fill) fill.style.width = progress.state === "indeterminate" ? "" : `${progress.value ?? 0}%`;
+}
+
+function handleRemoteTitle(sessionObj, rawTitle) {
+  const title = sanitizeRemoteTitle(rawTitle);
+  if (title === (sessionObj.remoteTitle || "")) return;
+  sessionObj.remoteTitle = title;
+  // Una pane de tmux no tiene pestaña propia: su ventana la nombra tmux.
+  if (!isTmuxPaneSession(sessionObj)) updateTabRemoteTitle(sessionObj.id);
+}
+
+/**
+ * Título remoto en la pestaña, según Preferencias: una línea más del tooltip
+ * o un texto junto al nombre (el alias manual manda sobre él). No toca el
+ * nombre ni el resto del tooltip, que pueden llevar sufijos propios (la shell
+ * hija «·2», el usuario de «Conectar como», la sesión privada).
+ */
+function updateTabRemoteTitle(sessionId) {
+  const tab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
+  const s = sessions.get(sessionId);
+  if (!tab || !s) return;
+  const remote = remoteTitleView({ alias: s.alias, remoteTitle: s.remoteTitle, mode: prefs.remoteTitleMode });
+  tab.title = tooltipWithRemoteTitle(tab.title, tab.dataset.remoteTitle || "", remote.inTooltip);
+  if (remote.inTooltip) tab.dataset.remoteTitle = remote.inTooltip;
+  else delete tab.dataset.remoteTitle;
+  renderTabRemoteTitle(tab, remote.inTab);
+}
+
+/** Título remoto junto al nombre de la pestaña (modo «junto al nombre»). */
+function renderTabRemoteTitle(tab, text) {
+  let el = tab.querySelector(".tab-remote-title");
+  if (!text) {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("span");
+    el.className = "tab-remote-title";
+    tab.querySelector(".tab-name")?.after(el);
+  }
+  el.textContent = text;
+}
+
 /**
  * Envía input a una sesión terminal (SSH o shell local).
- * Se usa tanto para la pane origen como para replicar en broadcast.
+ * Se usa tanto para la pane origen como para replicar en broadcast
+ * (`origin: "broadcast"`); lo que Rustty manda por su cuenta al conectar va
+ * con `origin: "system"`.
  */
-function sendTerminalInput(sessionObj, data) {
+function sendTerminalInput(sessionObj, data, { origin = "user" } = {}) {
   if (!sessionObj) return;
+  // Solo lectura: el único punto de control de la entrada (pane activa,
+  // broadcast, pegados, snippets, editor y panes tmux), antes de la rama tmux.
+  const verdict = readOnlyInputDecision({ readOnly: isSessionReadOnly(sessionObj), origin });
+  if (verdict !== "send") {
+    if (verdict === "block") notifyReadOnlyBlocked(sessionObj);
+    return;
+  }
   // Pane tmux: nunca bytes crudos — send-keys hex coalescido por frame (F3.1).
   if (sessionObj._tmux) {
     queueTmuxInput(sessionObj, data);
@@ -11911,6 +12380,8 @@ function buildPastePreviewMessage(text, reason) {
 
 async function pasteClipboardIntoSession(sessionObj) {
   if (!sessionObj || sessionObj.status === "closed" || !sessionObj.terminal || sessionObj.type === "rdp") return;
+  // En solo lectura se avisa sin leer el portapapeles ni preguntar nada.
+  if (guardReadOnlyInput(sessionObj)) return;
   const text = await readSystemClipboardText();
   if (!text) return;
 
@@ -11987,6 +12458,44 @@ function readHighlightRulesFromEditor() {
       bold: tr.querySelector(".hl-bold").checked,
     }))
     .filter((r) => r.pattern);
+}
+
+/* ─── Editor de patrones propios de la selección rápida ─── */
+// Mismo editor que el resaltado por regex: una fila por patrón. Uno inválido
+// o demasiado largo se marca y se ignora al usar la selección; no rompe nada.
+
+/** Ejemplo del campo «patrón» de la selección rápida (el grupo es lo que se copia). */
+// i18n-exempt: es una expresión regular de muestra, no texto de interfaz.
+const QS_PATTERN_EXAMPLE = "ticket-(\\d+)";
+
+function renderQuickSelectPatternsEditor(patterns = prefs.quickSelectPatterns) {
+  const body = document.getElementById("quick-select-patterns-body");
+  if (!body) return;
+  const list = Array.isArray(patterns) ? patterns : [];
+  body.innerHTML = list.map((item) => `
+    <tr>
+      <td><input type="text" class="hl-pattern qs-pattern" value="${escHtml(typeof item === "string" ? item : item?.pattern || "")}" placeholder="${escHtml(QS_PATTERN_EXAMPLE)}" spellcheck="false" /></td>
+      <td><button type="button" class="btn-icon-sm danger qs-delete" title="${escHtml(t("ctx.delete"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button></td>
+    </tr>`).join("");
+  body.querySelectorAll(".qs-pattern").forEach(markQuickSelectPattern);
+  const add = document.getElementById("btn-quick-select-add");
+  if (add) add.disabled = list.length >= QUICK_SELECT_MAX_PATTERNS;
+}
+
+function markQuickSelectPattern(input) {
+  const value = input.value.trim();
+  const bad = value !== "" && quickSelectPatternError(value) !== null;
+  input.classList.toggle("input-invalid", bad);
+  input.setAttribute("aria-invalid", String(bad));
+  input.title = bad ? t("prefs_terminal.quick_select_invalid", { max: QUICK_SELECT_MAX_PATTERN_LENGTH }) : "";
+}
+
+function readQuickSelectPatternsFromEditor(keepEmpty = false) {
+  const body = document.getElementById("quick-select-patterns-body");
+  if (!body) return Array.isArray(prefs.quickSelectPatterns) ? prefs.quickSelectPatterns : [];
+  return [...body.querySelectorAll(".qs-pattern")]
+    .map((input) => ({ pattern: input.value.trim() }))
+    .filter((p) => keepEmpty || p.pattern);
 }
 
 // Tabla nombre-color → código SGR para foreground brillante (90–97).
@@ -12227,6 +12736,11 @@ function clearTerminalOutputQueue(sessionObj) {
 function injectOsc7Setup(sessionId) {
   const s = sessions.get(sessionId);
   if (!s || s.status !== "connected" || s._osc7Injected) return;
+  // Lo pide «Seguir terminal» del panel SFTP en cualquier momento, no solo al
+  // conectar: con un programa en primer plano, el `\r` contestaría lo que esté
+  // esperando (un `[y/N]`). En solo lectura no se teclea, y se puede repetir al
+  // desbloquear porque aún no cuenta como inyectado.
+  if (guardReadOnlyInput(s)) return;
   s._osc7Injected = true;
   // Para no contaminar el historial del shell remoto:
   //   - El espacio inicial hace que la línea se ignore si el shell tiene
@@ -12248,7 +12762,9 @@ function injectOsc7Setup(sessionId) {
 
 function canInjectOsc7ForSession(sessionObj) {
   const profile = sessionObj?.profileId ? profiles.find((p) => p.id === sessionObj.profileId) : null;
-  return !profile || profile.follow_cwd !== false;
+  // Con comando al conectar, solo si el perfil dice que abre un shell; las
+  // pestañas nuevas de la conexión siempre abren uno.
+  return allowsOsc7Hook(profile, { childShell: !!sessionObj?._parentSessionId });
 }
 
 function setSftpFollow(sessionId, enabled, button = null) {
@@ -12402,6 +12918,10 @@ async function reconnectSshInPlace(s) {
     ? await resolveOverrideAuthCredentials(profile, s._overrides)
     : await resolveSshCredentials(profile);
   if (!creds) return;
+  // Los `${ask:}` (contraseña, comando al conectar, variables) se vuelven a
+  // preguntar: sin respuesta, el servidor recibiría el marcador literal.
+  const askAnswers = await askProfileAnswers(profile.id);
+  if (askAnswers === null) return;
   // Mientras se pedían las credenciales pudo cerrarse la pestaña (Ctrl+W) o
   // cambiar su estado: no se abre una conexión sin pestaña. De aquí a
   // «conectando» todo es síncrono.
@@ -12440,6 +12960,7 @@ async function reconnectSshInPlace(s) {
       profileId: profile.id,
       password:   creds.password   || null,
       passphrase: creds.passphrase || null,
+      askAnswers: Object.keys(askAnswers).length ? askAnswers : null,
       // Conserva el modo privado al reconectar: no reactivar la grabación de
       // sesión aunque el perfil la tenga habilitada.
       sessionLogOverride: s.private ? false : null,
@@ -12464,8 +12985,9 @@ function handleTerminalInput(sessionObj, data) {
   captureCommandKeystroke(sessionObj, data);
   feedScriptRecorderInput(sessionObj, data);
   if (isBroadcastOn() && viewSelection.includes(sessionObj.id) && viewSelection.length > 1) {
+    // Las réplicas se saltan en silencio las panes en solo lectura.
     viewSelection.forEach((sid) => {
-      sendTerminalInput(sessions.get(sid), data);
+      sendTerminalInput(sessions.get(sid), data, { origin: sid === sessionObj.id ? "user" : "broadcast" });
     });
   } else {
     sendTerminalInput(sessionObj, data);
@@ -12478,6 +13000,8 @@ function handleTerminalInput(sessionObj, data) {
  * - additive=true:  toggle de sid dentro de la selección (mínimo 1)
  */
 function selectSession(sid, additive = false) {
+  // Una selección rápida abierta pertenece a la pestaña que se va o se deja.
+  quickSelect.cancel();
   // La raíz de una conexión tmux en modo control está oculta y su canal es un
   // protocolo, no un terminal: quien llegue a ella (reabrir el perfil, su
   // SFTP, la lista de pestañas) ve su primera ventana.
@@ -12579,6 +13103,7 @@ function clearStatusBar() {
   if (metricsToggle) metricsToggle.classList.add("hidden");
   const metricsExpand = document.getElementById("status-metrics-expand");
   if (metricsExpand) metricsExpand.classList.add("hidden");
+  document.getElementById("status-readonly")?.classList.add("hidden");
   closeStatusOverflowPopover();
 }
 
@@ -13305,6 +13830,7 @@ function updateStatusBar() {
   // Badge REC si el perfil tiene session_log activado.
   const recWrap = document.getElementById("status-rec-wrap");
   if (recWrap) recWrap.classList.toggle("hidden", !profile.session_log);
+  renderStatusReadOnly(s);
 
   renderStatusConnectionLog();
 
@@ -13958,8 +14484,13 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     // Sesión privada/efímera: suprime toda persistencia (recientes, actividad,
     // borrador, session_log). Se establece en createTerminalTab y createTab.
     private: isPrivate,
+    // Solo lectura desde el primer byte si lo pide el perfil («Abrir en solo
+    // lectura») o la preferencia de las conexiones PROD.
+    readOnly: opensReadOnly(profile, prefs),
   };
   sessions.set(sessionId, sessionObj);
+  updateTabReadOnly(sessionId);
+  syncReadOnlyTerminal(sessionObj);
   wirePaneFocusOnClick(pane, sessionId);
   terminal.onBell(() => triggerTerminalBell(prefs.bell, pane));
 
@@ -14074,6 +14605,10 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     }
     return true;
   });
+
+  // OSC 52 (portapapeles), 9/777 (avisos), 9;4 (progreso) y 0/2 (título).
+  installTerminalProtocols(terminal, sessionObj);
+  installReadOnlyKeyGuard(terminal, sessionObj);
 
   // Copiar al portapapeles al seleccionar (se activa/desactiva según prefs en tiempo real)
   terminal.onSelectionChange(() => {
@@ -14389,12 +14924,16 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     // tmux ni a una sesión persistente que se reengancha (initialDirCommand).
     // En un shell normal cada (re)conexión abre uno nuevo, así que se repite.
     // Va en bytes, como toda entrada: el comando espera `Vec<u8>` y una cadena
-    // se rechazaba en silencio.
-    const cdLine = s ? initialDirCommand(s._initialDir, {
+    // se rechazaba en silencio. Con comando al conectar tampoco: caería dentro
+    // del programa (en `sudo -i`, en su contraseña: un intento fallido para
+    // pam_faillock). Una pestaña hija siempre abre un shell.
+    const ownerProfile = s ? profiles.find((p) => p.id === s.profileId) : null;
+    const runsCommand = !s?._parentSessionId && launchKind(ownerProfile) === "command";
+    const cdLine = s && !runsCommand ? initialDirCommand(s._initialDir, {
       tmuxControl: !!s._tmuxControl,
-      persistSession: !!profiles.find((p) => p.id === s.profileId)?.persist_session,
+      persistSession: !!ownerProfile?.persist_session,
     }) : null;
-    if (cdLine) sendTerminalInput(s, cdLine);
+    if (cdLine) sendTerminalInput(s, cdLine, { origin: "system" });
     // Una shell hija comparte la conexión de su raíz: los túneles automáticos
     // y el monitor son de la CONEXIÓN (ya los gestiona la pestaña raíz);
     // relanzarlos aquí los duplicaría o pisaría su cadencia.
@@ -14588,6 +15127,8 @@ function setActiveTab(sessionId) {
 function updateTabStatus(sessionId, status) {
   document.querySelector(`.tab[data-session="${sessionId}"] .tab-dot`)
     ?.setAttribute("class", `tab-dot ${status}`);
+  // Una sesión caída no sigue enseñando el progreso que dejó a medias.
+  if (status === "closed" || status === "error") clearTabProgress(sessionId);
   if (sessionId === activeSessionId) updateStatusBar();
 }
 
@@ -14820,6 +15361,8 @@ async function disconnectAll() {
 }
 
 function removeTab(sessionId) {
+  // Una selección rápida abierta pertenece a la pestaña que se va o se deja.
+  quickSelect.cancel();
   document.querySelector(`.tab[data-session="${sessionId}"]`)?.remove();
   const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
   if (pane) {
@@ -20280,6 +20823,7 @@ function localTerminalAtPosition(position) {
 /** Inserta rutas locales (de un drop del SO) en el prompt de una consola local. */
 function insertOsPathsIntoLocalTerminal(session, paths) {
   if (!isLocalShellReady(session)) return;
+  if (guardReadOnlyInput(session)) return;
   // Solo usamos los marcadores de bracketed paste si el shell tiene el modo
   // activo; si no, las secuencias `ESC [200~` aparecerían literales en el prompt.
   const bracketed = !!session.terminal.modes?.bracketedPasteMode;
@@ -22146,7 +22690,7 @@ const SSH_UNSUPPORTED_KEYS = new Set([
   "preferredauthentications", "pubkeyauthentication", "passwordauthentication",
   "ciphers", "macs", "kexalgorithms", "hostkeyalgorithms", "loglevel",
   "compression", "addkeystoagent", "requesttty", "sendenv", "setenv",
-  "canonicalizehostname", "tcpkeepalive", "connecttimeout", "connectionattempts",
+  "remotecommand", "canonicalizehostname", "tcpkeepalive", "connecttimeout", "connectionattempts",
 ]);
 
 /**
@@ -22275,9 +22819,11 @@ function parseSshForward(kind, value) {
  *
  * Es asíncrono porque resuelve las directivas `Include` (lee ficheros vía el
  * backend). Soporta: Host, HostName, User, Port, IdentityFile, ProxyJump,
- * ServerAliveInterval (keepalive), IdentityAgent y los forwards
- * (Local/Remote/Dynamic). Las claves reconocidas pero no mapeables se acumulan
- * en `unsupported` (globales y por host) para mostrarlas en el resumen.
+ * ServerAliveInterval (keepalive), IdentityAgent, los forwards
+ * (Local/Remote/Dynamic) y el arranque del canal (SetEnv, SendEnv,
+ * RemoteCommand y RequestTTY, en `modules/remote-launch.js`). Las claves
+ * reconocidas pero no mapeables se acumulan en `unsupported` (globales y por
+ * host) para mostrarlas en el resumen.
  *
  * Devuelve `{ blocks, unsupported }` donde cada bloque incluye además
  * `keepAliveSecs` y `tunnels`.
@@ -22339,9 +22885,17 @@ async function parseSshConfig(content, homeDir) {
           }
           break;
         }
-        default:
+        default: {
+          // Comando al conectar, variables de entorno y TERM del bloque. Fuera
+          // de un Host concreto (comodines) no se aplican y se informan abajo.
+          const launchIssues = current ? applySshConfigLaunchKey(current, key, value) : null;
+          if (launchIssues) {
+            for (const item of launchIssues) unsupported.add(item);
+            break;
+          }
           // Claves reconocidas pero sin mapeo: informar.
           if (SSH_UNSUPPORTED_KEYS.has(key)) unsupported.add(m[1]);
+        }
       }
     }
   }
@@ -22406,6 +22960,8 @@ async function importFromSshConfig() {
       keep_alive_secs: Number.isFinite(b.keepAliveSecs) ? b.keepAliveSecs : null,
       proxy_jump: b.proxyJump || null,
       ssh_tunnels: b.tunnels || [],
+      // Solo los que el bloque declara (`remote_command`, `env_vars`, `term_type`).
+      ...launchFieldsFromBlock(b),
     };
   };
 
@@ -22428,6 +22984,7 @@ async function importFromSshConfig() {
     if ((fields.proxy_jump || null) !== (prof.proxy_jump || null)) changed.push("proxy_jump");
     if ((fields.keep_alive_secs ?? null) !== (prof.keep_alive_secs ?? null)) changed.push("keep_alive_secs");
     if (tunnelKey(fields.ssh_tunnels) !== tunnelKey(prof.ssh_tunnels)) changed.push("ssh_tunnels");
+    changed.push(...launchFieldsChanged(fields, prof));
     return changed;
   };
 
@@ -22506,6 +23063,9 @@ async function importFromSshConfig() {
     wol_broadcast: null,
     wol_port: null,
     ssh_tunnels: fields.ssh_tunnels,
+    remote_command: fields.remote_command ?? null,
+    env_vars: fields.env_vars ?? [],
+    term_type: fields.term_type ?? null,
     created_at: now,
     updated_at: now,
   });
@@ -22524,6 +23084,9 @@ async function importFromSshConfig() {
     keep_alive_secs: fields.keep_alive_secs,
     proxy_jump: fields.proxy_jump,
     ssh_tunnels: fields.ssh_tunnels,
+    ...("remote_command" in fields ? { remote_command: fields.remote_command } : {}),
+    ...("env_vars" in fields ? { env_vars: fields.env_vars } : {}),
+    ...("term_type" in fields ? { term_type: fields.term_type } : {}),
     updated_at: now,
   }));
 
@@ -23201,10 +23764,16 @@ function bindUIEvents() {
         if (["f-host", "f-port", "f-proxy-jump", "f-mac-address"].includes(e.target.id)) {
           validateConnectionField(e.target.id);
         }
+        if (e.target.id === "f-env-vars") validateRemoteLaunchFields();
       }
       renderConnectionSummary();
     });
-    _connForm.addEventListener("change", () => renderConnectionSummary());
+    _connForm.addEventListener("change", (e) => {
+      // Las variables solo se validan en perfiles SSH: cambiar el tipo
+      // retira (o vuelve a poner) el aviso.
+      if (e.target?.id === "f-conn-type") validateRemoteLaunchFields();
+      renderConnectionSummary();
+    });
   }
 
   // Despliega/oculta la lista granular de algoritmos legacy al activar la opción.
@@ -23600,6 +24169,26 @@ function bindUIEvents() {
         tr?.remove();
       }
     });
+
+  // Editor de patrones de la selección rápida: lo añadido o borrado vive en
+  // el formulario hasta Guardar (no toca `prefs` antes de tiempo).
+  document.getElementById("btn-quick-select-add")
+    ?.addEventListener("click", () => {
+      const patterns = readQuickSelectPatternsFromEditor(true);
+      if (patterns.length >= QUICK_SELECT_MAX_PATTERNS) return;
+      renderQuickSelectPatternsEditor([...patterns, { pattern: "" }]);
+      document.querySelector("#quick-select-patterns-body tr:last-child .qs-pattern")?.focus();
+    });
+  const quickSelectBody = document.getElementById("quick-select-patterns-body");
+  quickSelectBody?.addEventListener("click", (e) => {
+    const remove = e.target.closest?.(".qs-delete");
+    if (!remove) return;
+    remove.closest("tr")?.remove();
+    renderQuickSelectPatternsEditor(readQuickSelectPatternsFromEditor(true));
+  });
+  quickSelectBody?.addEventListener("input", (e) => {
+    if (e.target.classList?.contains("qs-pattern")) markQuickSelectPattern(e.target);
+  });
 
   // Navegación entre secciones de Preferencias
   document.querySelectorAll(".prefs-nav-item").forEach((btn) => {
@@ -24538,6 +25127,7 @@ async function runSnippet(snippet) {
     toast(t("prefs_commands.toast_no_session"), "warning");
     return;
   }
+  if (guardReadOnlyInput(target)) return;
   if (snippet.confirm) {
     const ok = await confirmThemed({
       title: t("prefs_commands.confirm_insert_title"),
@@ -24937,6 +25527,11 @@ function buildPaletteSources() {
   }
   if ((activeSessionId && sessions.get(activeSessionId)?.profileId) || activeProfileId()) {
     add("action:session-note", { kind: "action", title: t("palette.action_session_note"), icon: PALETTE_ICONS.note, run: () => openActiveSessionNote() });
+  }
+  // Solo lectura: su atajo nace sin combinación, así que la paleta es su
+  // camino de teclado de serie.
+  if (canSessionBeReadOnly(activeSessionId ? sessions.get(activeSessionId) : null)) {
+    add("action:toggle-read-only", { kind: "action", title: t("prefs_shortcuts.action_toggle_read_only"), icon: PALETTE_ICONS.action, run: () => toggleActiveSessionReadOnly() });
   }
   // Acciones de bloque: solo con una sesión de terminal viva que ya haya
   // registrado algún bloque OSC 133 (si el shell no lo emite, no hay nada que
@@ -25878,6 +26473,29 @@ function registerDialogs() {
   dialogs.bind();
 }
 
+// Selección rápida: etiqueta IPs, URLs, rutas, hashes e IDs de la pantalla del
+// terminal activo; la letra copia y la mayúscula además pega en el prompt.
+// Mientras está abierta se queda el teclado (`modules/terminal/quick-select-ui.js`).
+const quickSelect = createQuickSelect({
+  getPrefs: () => prefs,
+  copy: (text) => writeSystemClipboardText(text),
+  paste: (s, text) => sendTerminalInput(s, text),
+  toast, t,
+  isToggleKey: (e) => {
+    const combo = shortcuts.get("quick_select");
+    return !!combo && comboFromEvent(e) === combo;
+  },
+  hasModal: () => dialogs.hasModal(),
+  restoreInput: (s) => syncReadOnlyTerminal(s),
+});
+
+/** Abre la selección rápida en el terminal activo (SSH, consola local o pane de tmux). */
+function startQuickSelect() {
+  const s = activeSessionId ? sessions.get(activeSessionId) : null;
+  if (!s?.terminal || isExternalLauncherType(s.type) || isActiveTmuxControlRoot(s)) return false;
+  return quickSelect.start(s);
+}
+
 const shortcuts = createShortcutController({
   getPrefs: () => prefs,
   save: () => { savePrefs(); scheduleProfileAutoSync(); },
@@ -25912,7 +26530,9 @@ const shortcuts = createShortcutController({
     ui_zoom_out: () => adjustUiZoom(-1),
     ui_zoom_reset: () => adjustUiZoom("reset"),
     reconnect_session: () => { if (activeSessionId) reconnectSession(activeSessionId); },
+    toggle_read_only: () => toggleActiveSessionReadOnly(),
     find_in_terminal: () => toggleTerminalSearch(),
+    quick_select: () => startQuickSelect(),
     clear_terminal: () => clearActiveTerminal(),
     sftp_toggle_panel: () => toggleActiveSftpPanel(),
     sftp_toggle_follow: () => toggleActiveSftpFollow(),
@@ -26213,6 +26833,7 @@ function clearActivePromptLine() {
   if (!activeSessionId) return;
   const s = sessions.get(activeSessionId);
   if (!s || s.status === "closed" || !s.terminal || isExternalLauncherType(s.type)) return;
+  if (guardReadOnlyInput(s)) return;
   sendTerminalInput(s, "\x01\x0b");
 }
 
@@ -26225,6 +26846,8 @@ async function pasteSessionPasswordIntoActiveTerminal() {
   if (!activeSessionId) return;
   const s = sessions.get(activeSessionId);
   if (!s) return;
+  // Solo lectura: ni se lee la contraseña ni se difunde a las demás panes.
+  if (guardReadOnlyInput(s)) return;
   if (s._closeOverride || isExternalLauncherType(s.type) || !s.profileId) {
     toast(t("toast.paste_password_ssh_only"), "warning");
     return;
@@ -26269,7 +26892,8 @@ async function pasteSessionPasswordIntoActiveTerminal() {
   // sendTerminalInput no registra en el historial de comandos, así que la
   // contraseña nunca se captura aunque se difunda.
   if (mode === "all") {
-    viewSelection.forEach((sid) => sendTerminalInput(sessions.get(sid), password));
+    viewSelection.forEach((sid) => sendTerminalInput(sessions.get(sid), password,
+      { origin: sid === s.id ? "user" : "broadcast" }));
   } else {
     sendTerminalInput(s, password);
   }
@@ -26867,6 +27491,8 @@ function insertCommandEditor() {
     toast(t("cmd_editor.toast_no_session"), "warning");
     return;
   }
+  // Solo lectura: el editor sigue abierto con lo escrito, sin enviarlo.
+  if (guardReadOnlyInput(session)) return;
 
   sendTerminalInput(session, text);
   closeCommandEditor(true); // limpia borrador tras insertar
@@ -27867,6 +28493,17 @@ function showTabContextMenu(x, y, sessionId) {
     }
   }
 
+  // «Solo lectura»: casilla de la sesión (en una ventana tmux, de sus panes).
+  const roItem = menu.querySelector(".tabctx-read-only");
+  if (roItem) {
+    const canRo = canSessionBeReadOnly(ctxSession);
+    roItem.classList.toggle("hidden", !canRo);
+    const on = canRo && isSessionReadOnly(ctxSession);
+    roItem.classList.toggle("active", on);
+    roItem.setAttribute("role", "menuitemcheckbox");
+    roItem.setAttribute("aria-checked", on ? "true" : "false");
+  }
+
   const targetTab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
   const isPinned = !!targetTab?.classList.contains("is-pinned");
   const pinLabel = menu.querySelector(".tabctx-pin-label");
@@ -27931,6 +28568,11 @@ async function handleTabContextAction(action) {
 
   if (action === "toggle-keepalive") {
     await toggleSessionKeepAlive(targetId);
+    return;
+  }
+
+  if (action === "toggle-read-only") {
+    setSessionReadOnly(targetId, !isSessionReadOnly(sessions.get(targetId)));
     return;
   }
 

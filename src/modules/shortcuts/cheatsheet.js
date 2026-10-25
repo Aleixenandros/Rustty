@@ -21,9 +21,10 @@ export const SHORTCUT_GROUPS = [
   ] },
   { id: "tabs", actions: [
     "new_local_shell", "close_tab", "next_tab", "prev_tab", "next_pane", "prev_pane", "reconnect_session",
+    "toggle_read_only",
   ] },
   { id: "terminal", actions: [
-    "copy_terminal", "paste_terminal", "paste_password", "find_in_terminal", "clear_terminal",
+    "copy_terminal", "paste_terminal", "paste_password", "find_in_terminal", "quick_select", "clear_terminal",
     "clear_prompt_line", "zoom_in", "zoom_out", "zoom_reset", "open_command_editor", "open_note_editor",
   ] },
   { id: "blocks", actions: [

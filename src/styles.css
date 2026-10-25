@@ -284,6 +284,15 @@ html.no-boot-screen #boot-screen {
   gap: var(--space-3);
   color: var(--blue);
 }
+/* El icono de la aplicación (el cangrejo de `src-tauri/icons`) en la pantalla
+   de carga y en la cabecera del inicio: imagen propia, nunca un emoji. */
+.app-icon {
+  display: block;
+  flex: 0 0 auto;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
 .boot-screen-logo {
   font-family: var(--font-mono);
   font-weight: 700;
@@ -1872,6 +1881,75 @@ body.has-session-tabs .tab-home .tab-name {
   display: block;
 }
 
+/* ─── Solo lectura: candado delante del nombre ───────────────── */
+.tab-readonly-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--yellow);
+}
+.tab-readonly-badge .ctx-icon-svg {
+  width: 12px;
+  height: 12px;
+  vertical-align: 0;
+}
+
+/* ─── Título que fija el servidor (OSC 0/2), junto al nombre ─── */
+.tab-remote-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--overlay1);
+}
+.tab:has(.tab-remote-title) { max-width: 260px; }
+
+/* ─── Progreso que informa el servidor (OSC 9;4) ────────────────
+   Barra fina en el borde superior (el inferior es el de la pestaña activa).
+   Indeterminado = un tramo que barre; con movimiento reducido, quieto. */
+.tab-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--blue) 18%, transparent);
+}
+.tab-progress-fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--blue);
+  transition: width 0.2s ease;
+}
+.tab-progress[data-state="error"] { background: color-mix(in srgb, var(--red) 18%, transparent); }
+.tab-progress[data-state="error"] .tab-progress-fill { background: var(--red); }
+.tab-progress[data-state="paused"] { background: color-mix(in srgb, var(--yellow) 18%, transparent); }
+.tab-progress[data-state="paused"] .tab-progress-fill { background: var(--yellow); }
+.tab-progress[data-state="indeterminate"] .tab-progress-fill {
+  width: 35%;
+  animation: tab-progress-sweep 1.4s ease-in-out infinite;
+}
+@keyframes tab-progress-sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(290%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-progress[data-state="indeterminate"] .tab-progress-fill {
+    width: 100%;
+    animation: none;
+    opacity: 0.55;
+  }
+}
+body.reduce-motion .tab-progress[data-state="indeterminate"] .tab-progress-fill {
+  width: 100%;
+  animation: none;
+  opacity: 0.55;
+}
+
 /* ─── Contenedor de terminales ───────────────────────────────── */
 #terminals-container {
   flex: 1;
@@ -2555,6 +2633,24 @@ body.reduce-motion.terminal-bell-visual::after {
 #status-bar .status-metrics-toggle:hover { background: var(--surface0); color: var(--text); }
 #status-bar .status-metrics-toggle.active { color: var(--green); }
 
+/* Candado de solo lectura: siempre a la vista (no se pliega en la barra
+   compacta); pulsarlo desbloquea la sesión. */
+#status-bar .status-readonly {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--yellow) 14%, transparent);
+  color: var(--yellow);
+  cursor: pointer;
+  padding: 0;
+}
+#status-bar .status-readonly:hover { background: color-mix(in srgb, var(--yellow) 26%, transparent); }
+
 #status-bar.status-bar--compact .status-cwd,
 #status-bar.status-bar--compact .status-dims,
 #status-bar.status-bar--compact .status-latency,
@@ -2984,15 +3080,15 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   align-items: center;
   justify-content: center;
   width: 68px;
-  height: 52px;
+  height: 64px;
   font-size: 48px;
   line-height: 1;
   color: var(--blue);
 }
 
-.dashboard-brand svg {
-  width: 44px;
-  height: 44px;
+.dashboard-brand .app-icon {
+  width: 60px;
+  height: 60px;
 }
 
 .dashboard-title {
@@ -3391,13 +3487,13 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 
   .dashboard-brand {
     width: 52px;
-    height: 42px;
+    height: 52px;
     font-size: 38px;
   }
 
-  .dashboard-brand svg {
-    width: 36px;
-    height: 36px;
+  .dashboard-brand .app-icon {
+    width: 48px;
+    height: 48px;
   }
 
   .dashboard-search-wrap {
@@ -4774,6 +4870,13 @@ textarea {
   min-height: 92px;
   resize: vertical;
   line-height: 1.45;
+}
+
+/* Comando al conectar y variables de entorno del perfil: texto de shell. */
+#f-remote-command,
+#f-env-vars {
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 select option {
@@ -9603,6 +9706,71 @@ body.zen-mode #zen-exit-btn {
   border-radius: var(--radius-pill);
   opacity: 0.85;
   pointer-events: none;
+}
+
+/* ─── Selección rápida (Ctrl+Shift+Espacio) ────────────────────
+   Capa propia sobre `.xterm-screen` (las decoraciones de xterm no existen
+   en el buffer alternativo de less, htop o vim): subraya cada coincidencia
+   y pone su etiqueta en la primera celda. Por encima de las decoraciones de
+   xterm (6–8) y por debajo de su capa de accesibilidad (10); no captura el
+   ratón, que cancela la selección. */
+.quick-select-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.quick-select-marks {
+  position: absolute;
+  inset: 0;
+}
+
+.quick-select-match {
+  position: absolute;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--yellow) 22%, transparent);
+  border-bottom: 1px solid var(--yellow);
+}
+
+.quick-select-label {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  min-width: fit-content;
+  padding: 0 1px;
+  background: var(--yellow);
+  color: var(--on-yellow);
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--shadow-1);
+}
+
+.quick-select-label.is-dimmed {
+  opacity: 0.3;
+}
+
+.quick-select-hint {
+  position: absolute;
+  bottom: var(--space-1);
+  right: var(--space-2);
+  padding: 2px var(--space-2);
+  background: var(--surface-popover);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-2);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  opacity: 0.92;
+}
+/* Abajo tapaba una etiqueta: arriba (lo decide `quickSelectHintPlacement`). */
+.quick-select-hint.is-top {
+  top: var(--space-1);
+  bottom: auto;
 }
 
 /* ─── Mini barra de progreso por fila SFTP — slice #16 ─────────

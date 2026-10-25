@@ -31,7 +31,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::credentials::{self, CredentialKind, CredentialStore};
 use crate::host_keys;
 use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
-use crate::ssh_manager::{authenticate_handle, legacy_preferred, parse_jump_spec};
+use crate::remote_launch::{self, SessionLaunch};
+use crate::ssh_manager::{authenticate_handle, legacy_preferred, parse_jump_spec, send_env_vars};
 use crate::workspace_index;
 
 use crate::keyring_scope::SERVICE as KEYRING_SERVICE;
@@ -155,10 +156,13 @@ enum TransferOp {
     Put { local: String, remote: String },
 }
 
-#[derive(Debug)]
 struct CliSecrets {
     password: Option<String>,
     passphrase: Option<String>,
+    /// TERM, variables de entorno y comando al conectar del perfil, ya
+    /// resueltos: sus valores pueden salir de `${secret:}`, por eso viajan
+    /// aquí. Vacío en las transferencias, que no abren terminal.
+    launch: SessionLaunch,
 }
 
 /// De dónde sale el stdin del comando remoto.
@@ -716,6 +720,10 @@ incorrecto. En multi-host, 0 si todos acabaron en 0 y 1 si alguno no; en una cop
 1 si algun fichero no se pudo copiar (el resto se copia igual). Sin --tty, un stdin que es un
 terminal se cierra al instante; una tuberia o un fichero se reenvian.
 
+Perfil: -c sin --exec abre el comando al conectar del perfil (o un shell); --exec y --script lo
+sustituyen. Las variables de entorno y el tipo de terminal del perfil valen en ambos casos (sin
+tipo elegido, se usa el TERM local); los valores ${{ask:}} se preguntan por la terminal.
+
 Host keys: una huella nueva se pregunta por la terminal; sin terminal (script, cron, tuberia)
 se rechaza, salvo con --accept-host-key, --host-key, o la confirmacion desactivada en
 Preferencias > Seguridad. La contrasena del perfil vale tambien en servidores que solo admiten
@@ -1005,7 +1013,64 @@ fn resolve_secrets(profile: &ConnectionProfile) -> Result<CliSecrets, String> {
     Ok(CliSecrets {
         password,
         passphrase,
+        launch: SessionLaunch::default(),
     })
+}
+
+/// TERM, variables y comando del perfil para la CLI, con los `${...}`
+/// resueltos como en la app. Los `${ask:}` se preguntan por la terminal (por
+/// stderr, como las contraseñas); sin terminal no hay a quién preguntar y la
+/// conexión no sigue con el marcador literal. `with_command = false` con
+/// `--exec`/`--script`: el comando del perfil no se usa y no se pregunta por él.
+fn resolve_cli_launch(
+    profile: &ConnectionProfile,
+    store: &CredentialStore,
+    with_command: bool,
+) -> Result<SessionLaunch, String> {
+    let mut answers = HashMap::new();
+    for ask in remote_launch::collect_asks(profile, with_command) {
+        if answers.contains_key(&ask.label) {
+            continue;
+        }
+        if !std::io::stdin().is_terminal() {
+            return Err(format!(
+                "El perfil {} pide «{}» al conectar y no hay terminal donde preguntarlo.",
+                profile.name, ask.label
+            ));
+        }
+        let value = prompt_line(&ask.label, &ask.options)?;
+        answers.insert(ask.label, value);
+    }
+    let mut launch = remote_launch::resolve_with_store(profile, store, answers);
+    if !with_command {
+        launch.command = None;
+    }
+    Ok(launch)
+}
+
+/// Pregunta un valor visible (`${ask:}`) por stderr y lo lee de stdin.
+fn prompt_line(label: &str, options: &[String]) -> Result<String, String> {
+    use std::io::Write;
+    if options.is_empty() {
+        eprint!("{label}: ");
+    } else {
+        eprint!("{label} [{}]: ", options.join("/"));
+    }
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|e| format!("Error leyendo stdin: {e}"))?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+/// TERM del PTY en la CLI: el elegido en el perfil o, si no eligió ninguno, el
+/// del terminal local (lo que de verdad va a pintar), como `ssh`.
+fn cli_term(launch: &SessionLaunch) -> String {
+    match launch.term {
+        Some(term) => term.to_string(),
+        None => env::var("TERM").unwrap_or_else(|_| remote_launch::DEFAULT_TERM.to_string()),
+    }
 }
 
 /// Aplica el motor de sustitución a una contraseña «propia» leída del keyring:
@@ -1175,17 +1240,28 @@ async fn run_ssh_session(
     if profile.agent_forwarding {
         let _ = channel.agent_forward(false).await;
     }
+    // Como OpenSSH: sin esperar respuesta; lo que el servidor no admita en su
+    // `AcceptEnv` se ignora en silencio.
+    send_env_vars(&mut channel, &secrets.launch.env, false).await;
 
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    let term = env::var("TERM").unwrap_or_else(|_| "xterm-256color".to_string());
+    let term = cli_term(&secrets.launch);
     channel
         .request_pty(true, &term, cols as u32, rows as u32, 0, 0, &[])
         .await
         .map_err(|e| format!("No se pudo solicitar PTY: {e}"))?;
-    channel
-        .request_shell(true)
-        .await
-        .map_err(|e| format!("No se pudo abrir shell: {e}"))?;
+    // `rustty -c X` sin `--exec` respeta el comando al conectar del perfil
+    // (la CLI no reengancha sesiones persistentes ni el modo control).
+    match secrets.launch.command.as_deref() {
+        Some(command) => channel
+            .exec(true, command)
+            .await
+            .map_err(|e| format!("No se pudo ejecutar el comando al conectar: {e}"))?,
+        None => channel
+            .request_shell(true)
+            .await
+            .map_err(|e| format!("No se pudo abrir shell: {e}"))?,
+    }
 
     let _raw = RawModeGuard::enter()?;
     let mut stdin = tokio::io::stdin();
@@ -1315,6 +1391,7 @@ async fn exec_remote(
         profile.agent_forwarding,
         stdin,
         capture,
+        &secrets.launch,
     )
     .await
 }
@@ -1325,6 +1402,9 @@ async fn exec_remote(
 ///
 /// El código de salida llega en `ExitStatus`, que el servidor manda **después**
 /// del `Eof`: por eso el `Eof` no termina el bucle (era el bug del 255 fijo).
+///
+/// `launch` aporta las variables de entorno del perfil y su TERM (con `--tty`);
+/// su comando no: con `--exec` manda el de la línea de órdenes.
 async fn exec_on_handle(
     handle: &mut client::Handle<host_keys::KnownHostsClient>,
     command: &str,
@@ -1332,6 +1412,7 @@ async fn exec_on_handle(
     agent_forwarding: bool,
     stdin: StdinMode,
     capture: bool,
+    launch: &SessionLaunch,
 ) -> Result<ExecOutcome, ExecError> {
     let mut channel = handle
         .channel_open_session()
@@ -1341,10 +1422,11 @@ async fn exec_on_handle(
     if agent_forwarding {
         let _ = channel.agent_forward(false).await;
     }
+    send_env_vars(&mut channel, &launch.env, false).await;
 
     let _raw = if tty {
         let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-        let term = env::var("TERM").unwrap_or_else(|_| "xterm-256color".to_string());
+        let term = cli_term(launch);
         channel
             .request_pty(true, &term, cols as u32, rows as u32, 0, 0, &[])
             .await
@@ -1580,6 +1662,18 @@ fn print_grouped(result: &HostResult, quiet: bool) {
     }
 }
 
+/// Completa los secretos de una ejecución con `--exec`/`--script` con el
+/// entorno y el TERM del perfil (sin su comando, que la orden sustituye).
+fn with_cli_launch(
+    secrets: Result<CliSecrets, String>,
+    profile: &ConnectionProfile,
+    store: &CredentialStore,
+) -> Result<CliSecrets, String> {
+    let mut secrets = secrets?;
+    secrets.launch = resolve_cli_launch(profile, store, false)?;
+    Ok(secrets)
+}
+
 /// Catálogo de credenciales del directorio de datos (el mismo que la app).
 fn cli_credential_store() -> CredentialStore {
     CredentialStore::new(crate::resolve_data_dir())
@@ -1608,7 +1702,8 @@ fn connect_single(
 ) -> Result<i32, String> {
     let catalog = load_catalog()?;
     let candidates = select_profiles(&catalog, selector)?;
-    let profile = prepare_profile(find_profile(&candidates, query)?, &cli_credential_store());
+    let store = cli_credential_store();
+    let profile = prepare_profile(find_profile(&candidates, query)?, &store);
     if remote_command.is_some() && !is_ssh_profile(&profile) {
         return Err(format!(
             "'{}' es un perfil SFTP sin shell: usa --get/--put.",
@@ -1624,7 +1719,8 @@ fn connect_single(
                     profile.name
                 ));
             }
-            let secrets = resolve_secrets(&profile)?;
+            let mut secrets = resolve_secrets(&profile)?;
+            secrets.launch = resolve_cli_launch(&profile, &store, true)?;
             announce(&profile, &opts);
             match block_on_cli(run_ssh_session(profile, secrets, opts.host_key.clone()))? {
                 Ok(()) => Ok(0),
@@ -1635,7 +1731,9 @@ fn connect_single(
             }
         }
         Some(remote) => {
-            let secrets = resolve_secrets(&profile);
+            // `--exec`/`--script` sustituyen al comando del perfil; el entorno
+            // y el TERM del perfil sí viajan.
+            let secrets = with_cli_launch(resolve_secrets(&profile), &profile, &store);
             let stdin = stdin_mode(&remote, &opts, false)?;
             announce(&profile, &opts);
             let capture = opts.machine();
@@ -1677,7 +1775,7 @@ fn run_many(
         .map(|p| {
             let ws = catalog.workspace_ref(&p);
             let p = prepare_profile(&p, &store);
-            let secrets = resolve_secrets(&p);
+            let secrets = with_cli_launch(resolve_secrets(&p), &p, &store);
             (p, secrets, ws)
         })
         .collect();
@@ -2557,6 +2655,39 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// `rustty -c X` sin `--exec` usa el comando del perfil; con `--exec`
+    /// (`with_command = false`) lo sustituye la orden, pero el entorno y el TERM
+    /// del perfil viajan igual. Sin TERM elegido manda el del terminal local.
+    #[test]
+    fn la_cli_respeta_el_comando_del_perfil_y_exec_lo_sustituye() {
+        let dir = std::env::temp_dir().join(format!("rustty-cli-launch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = CredentialStore::new(dir.clone());
+        let mut p = profile("web01", "default", None, "ssh");
+        p.remote_command = Some("cd /srv/${profileName} && exec bash -l".into());
+        p.env_vars = vec![crate::profiles::ProfileEnvVar {
+            name: "LANG".into(),
+            value: "C.UTF-8".into(),
+        }];
+        p.term_type = Some("vt100".into());
+
+        let interactive = resolve_cli_launch(&p, &store, true).expect("sin preguntas");
+        assert_eq!(
+            interactive.command.as_deref(),
+            Some("cd /srv/web01 && exec bash -l")
+        );
+        assert_eq!(cli_term(&interactive), "vt100");
+
+        let exec = resolve_cli_launch(&p, &store, false).expect("sin preguntas");
+        assert!(exec.command.is_none(), "--exec sustituye al comando del perfil");
+        assert_eq!(exec.env, vec![("LANG".to_string(), "C.UTF-8".to_string())]);
+
+        p.term_type = None;
+        let local = env::var("TERM").unwrap_or_else(|_| remote_launch::DEFAULT_TERM.to_string());
+        assert_eq!(cli_term(&resolve_cli_launch(&p, &store, false).unwrap()), local);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn catalog() -> Catalog {
         let mut names = HashMap::new();
         names.insert("ws-omnia".to_string(), "Omnia".to_string());
@@ -3098,7 +3229,7 @@ mod tests {
         ) -> ExecOutcome {
             tokio::time::timeout(
                 Duration::from_secs(15),
-                exec_on_handle(handle, command, false, false, stdin, true),
+                exec_on_handle(handle, command, false, false, stdin, true, &SessionLaunch::default()),
             )
             .await
             .expect("el exec no debe colgarse")
@@ -3161,6 +3292,48 @@ mod tests {
             assert_eq!(split.exit_code, Some(5));
             assert_eq!(String::from_utf8_lossy(&split.stdout), "fuera\n");
             assert_eq!(String::from_utf8_lossy(&split.stderr), "error\n");
+        }
+
+        /// `--exec` lleva el entorno del perfil (el comando lo pone la orden):
+        /// la variable que el servidor admite en su `AcceptEnv` llega al
+        /// comando, y la que no, se ignora en silencio como en OpenSSH, sin
+        /// romper la ejecución.
+        #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+        #[tokio::test]
+        async fn el_exec_lleva_las_variables_de_entorno_del_perfil() {
+            let _guard = CLI_IT_LOCK.lock().await;
+            let Some(server) =
+                ssh_fixture::start_with_config("AcceptEnv RUSTTY_*").expect("arrancar sshd")
+            else {
+                eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+                return;
+            };
+            host_keys::set_strict_first_connect(false);
+            let mut handle = fixture_handle(&server).await;
+            let launch = SessionLaunch {
+                env: vec![
+                    ("RUSTTY_CLI".into(), "desde la cli".into()),
+                    ("NO_ADMITIDA".into(), "x".into()),
+                ],
+                ..Default::default()
+            };
+            let out = tokio::time::timeout(
+                Duration::from_secs(15),
+                exec_on_handle(
+                    &mut handle,
+                    "printf '%s|%s' \"$RUSTTY_CLI\" \"${NO_ADMITIDA:-nada}\"",
+                    false,
+                    false,
+                    StdinMode::Closed,
+                    true,
+                    &launch,
+                ),
+            )
+            .await
+            .expect("el exec no debe colgarse")
+            .expect("exec");
+            assert_eq!(out.exit_code, Some(0));
+            assert_eq!(String::from_utf8_lossy(&out.stdout), "desde la cli|nada");
         }
 
         /// `--put -r` y `--get -r` de verdad: un árbol con subcarpetas, un

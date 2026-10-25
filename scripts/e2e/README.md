@@ -23,6 +23,13 @@ restablece atajos, confirma/cancela presets y abre el formulario de conexión co
 una combinación personalizada. Comprueba el foco y los datos persistidos; no
 simula la distribución física del teclado ni los atajos reservados por el SO.
 
+La sección de protocolos del terminal (`terminal-protocols.mjs`) hace que una
+consola local emita con `printf` un título (OSC 0) y un progreso (OSC 9;4) y
+comprueba el tooltip y la barra de la pestaña; después activa la solo lectura
+desde el menú de la pestaña, comprueba que el editor de comandos no envía nada
+y que el «Desbloquear» del aviso devuelve la entrada. El portapapeles (OSC 52)
+no se prueba: tocaría el portapapeles real del escritorio.
+
 La sección de diálogos (`dialogs.mjs`) comprueba el controlador común: el foco
 entra al abrir Nueva conexión y vuelve a quien la abrió al cerrar, el fondo
 queda inerte (salvo los tiradores de la ventana), Escape en el selector de
@@ -37,6 +44,12 @@ El panel de túneles se comprueba en claro, oscuro y una ventana de 800 px:
 controles de cabecera juntos, contenido sin desbordar, minimizar/reabrir,
 cerrar y confirmar/cancelar el borrado de un túnel guardado. Las capturas se
 guardan en `E2E_ARTIFACT_DIR`; no se abren conexiones SSH para esta sección.
+
+La selección rápida (`quick-select.mjs`) imprime una IP y un hash en una
+consola local, la abre con Ctrl+Shift+Espacio y comprueba las etiquetas (sin
+prefijos ambiguos), que una tecla ajena no llega al shell, que la letra copia,
+que Escape y el propio atajo la cierran y que la mayúscula pega en el prompt.
+Lee el portapapeles del sistema y deja al final lo que hubiera antes.
 
 En Linux hacen falta `cargo build --locked` en `src-tauri/`, `npm ci`,
 `tauri-driver` 2.1.0, WebKitWebDriver, `wmctrl` y un escritorio con gestor de
