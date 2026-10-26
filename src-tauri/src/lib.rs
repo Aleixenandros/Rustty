@@ -16,6 +16,9 @@ mod host_keys;
 // `dead_code` con clippy bloqueante. Mismo criterio que `mux` y `tmux`.
 pub mod ipc;
 pub mod ipc_error;
+mod jump_forward;
+mod jump_pool;
+mod jump_route;
 mod keepass_manager;
 // `pub` como `mux`/`tmux`: sus helpers puros (p. ej. `install_command_at`)
 // los usa también el test de integración de otro módulo.
@@ -98,6 +101,22 @@ pub(crate) const WINDOW_STATE_FLAGS: tauri_plugin_window_state::StateFlags =
 /// Plazo tras el que la ventana principal se muestra aunque el frontend no lo
 /// haya pedido: red de seguridad para un bundle que no llega a ejecutarse.
 const WINDOW_REVEAL_DEADLINE: Duration = Duration::from_secs(20);
+
+/// Al cerrar la app, un salto activo que no debe sobrevivir al reinicio
+/// (`keep: Some(false)`) sale de `jump-settings.json`: la CLI no tiene que
+/// seguir saliendo por un salto que la interfaz ya no tendrá puesto.
+fn forget_unkept_active_jump(app: &tauri::AppHandle) {
+    let pool = app.state::<jump_pool::JumpPool>();
+    let mut settings = pool.settings();
+    if settings.keep != Some(false) || settings.active().is_none() {
+        return;
+    }
+    settings.active_profile_id = None;
+    let data_dir = app.state::<DataDir>();
+    if let Err(err) = jump_pool::save_settings(&data_dir.0, &settings) {
+        log::warn!("no se pudo retirar el salto activo al salir: {err}");
+    }
+}
 
 /// Directorio de datos efectivo de la aplicación.
 ///
@@ -316,6 +335,8 @@ pub fn run() {
             // diálogo nativo y los consumen las lecturas/escrituras de ficheros.
             app.manage(file_grants::FileGrants::new());
             app.manage(SftpManager::new());
+            app.manage(jump_pool::JumpPool::new());
+            app.manage(jump_forward::ForwardRegistry::new());
             let profile_manager = ProfileManager::new(data_dir.clone());
             // Migración idempotente: vuelca el campo inline `notes` de los
             // perfiles a ficheros `notes/<id>.md` la primera vez. A partir de
@@ -465,6 +486,10 @@ pub fn run() {
             commands::ssh_set_metrics,
             commands::ssh_kill_process,
             commands::get_profile_password,
+            // ── Saltos (salto activo, pool, prueba)
+            commands::jump_probe,
+            commands::jump_pool_ready,
+            commands::jump_settings_set,
             // ── Keyring (credenciales del SO)
             commands::keyring_set,
             commands::keyring_get,
@@ -586,11 +611,12 @@ pub fn run() {
         // rastro aquí; si el log termina sin estas líneas, el proceso murió por
         // fuera (crash nativo del webview, `TerminateProcess`, corte de luz) y
         // eso ya es un diagnóstico en sí mismo.
-        .run(|_app, event| match event {
+        .run(|app, event| match event {
             tauri::RunEvent::ExitRequested { .. } => {
                 log::info!("salida solicitada");
             }
             tauri::RunEvent::Exit => {
+                forget_unkept_active_jump(app);
                 log::info!("Rustty finaliza");
             }
             _ => {}

@@ -37,6 +37,18 @@ describe("normalizePrefs", () => {
     expect(p2.userFoldersByWorkspace.w1).toEqual(["Mías"]);
   });
 
+  it("sanea las preferencias del salto activo sin fechar el bundle", () => {
+    const p = normalizePrefs(
+      { workspaces: [{ id: "default", name: "Default" }], activeJumpProfileId: 7, routePill: "x", jumpIdleSecs: 0 },
+      null,
+      deps
+    );
+    expect(p.activeJumpProfileId).toBeNull();
+    expect(p.routePill).toBe("auto");
+    expect(p.jumpIdleSecs).toBe(5);
+    expect(p._prefsUpdatedAt).toBeUndefined();
+  });
+
   it("todo workspace tiene su array de carpetas", () => {
     const p = normalizePrefs(
       { workspaces: [{ id: "a" }, { id: "b" }], activeWorkspaceId: "a" },

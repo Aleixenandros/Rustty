@@ -32,6 +32,12 @@ pub struct RdpHandle {
     /// (que lleva `${…}` sin sustituir y puede haber cambiado entre medias).
     host: String,
     port: u16,
+    /// Reenvío local por la ruta de saltos, si la conexión va por un salto. El
+    /// cliente apunta a la dirección local del reenvío; el reenvío vive lo que él.
+    forward: Option<crate::jump_forward::LocalForward>,
+    /// Cuándo se lanzó: un proceso que muere enseguida era un lanzador (ver
+    /// `jump_forward`).
+    launched_at: std::time::Instant,
 }
 
 struct SpawnedRdpClient {
@@ -186,6 +192,9 @@ pub struct RdpTarget<'a> {
     /// Cómo abre la ventana el cliente. Lo resuelve el llamador (perfil sobre
     /// preferencia global); aquí llega ya decidido.
     pub display: RdpDisplay,
+    /// Reenvío local por la ruta de saltos: con él, el cliente se lanza contra
+    /// la dirección local del reenvío en vez de contra `host:port`.
+    pub forward: Option<crate::jump_forward::LocalForward>,
 }
 
 /// Gestor de sesiones RDP.
@@ -215,7 +224,15 @@ impl RdpManager {
             domain,
             password,
             display,
+            forward,
         } = target;
+        // Por un salto, el cliente habla con el reenvío local; el destino real
+        // lo alcanza el salto.
+        let local_host = forward.as_ref().map(|fwd| fwd.host().to_string());
+        let (host, port) = match (&local_host, &forward) {
+            (Some(local), Some(fwd)) => (local.as_str(), fwd.port()),
+            _ => (host, port),
+        };
         // Antes de tocar el Gestor de credenciales o lanzar nada: el host va al
         // `.rdp`, a una URL y, en los caminos de reserva de Windows, a `cmd`.
         crate::external_client::check_launch_host(host)?;
@@ -267,6 +284,8 @@ impl RdpManager {
                 cred_host,
                 host: host.to_string(),
                 port,
+                forward,
+                launched_at: std::time::Instant::now(),
             },
         );
 
@@ -302,6 +321,9 @@ impl RdpManager {
                 }
                 if let Some(h) = handle.cred_host.take() {
                     release_windows_credential(&cred_guards, &h);
+                }
+                if let Some(forward) = handle.forward.take() {
+                    forward.release_after_exit(handle.launched_at.elapsed());
                 }
                 let payload =
                     close_payload(status, handle.output_tail.as_ref(), &handle.host, handle.port);

@@ -293,6 +293,25 @@ export const DEFAULT_PREFS = {
   // historial vive en localStorage (clave `rustty-command-history`), no en
   // prefs, para no entrar en la sincronización en la nube.
   shareCommandHistory: false,
+  // ─── Salto activo («todo por aquí») ──────────────────────────
+  // Locales de este equipo: NO van en SYNCED_PREF_KEYS. Lo sanea
+  // `normalizeJumpPrefs` (`modules/jump-route.js`) al cargar.
+  // Perfil SSH por el que salen TODAS las conexiones nuevas (null = directo).
+  activeJumpProfileId: null,
+  // Mantener el salto activo al reiniciar la app (por defecto se quita).
+  activeJumpKeep:      false,
+  // Últimos saltos usados (más reciente primero, máx. 5), para los menús.
+  recentJumpProfileIds: [],
+  // Compartir una sola conexión con cada salto entre las sesiones que van por
+  // él (como ControlMaster) y cerrarla tras estos segundos sin uso.
+  jumpReuse:           true,
+  jumpIdleSecs:        60,
+  // Protocolos que no pueden ir por un salto (FTP, WebDAV…) con salto activo:
+  // "direct" conecta directo avisando; "block" no conecta.
+  jumpUnsupported:     "direct",
+  // Píldora de ruta de la barra lateral: "auto" (si hay salto activo, saltos
+  // recientes o perfiles con bastión), "always" o "never".
+  routePill:           "auto",
 };
 
 /** Cada carga recibe sus propios mapas y listas, sin compartir los defaults. */

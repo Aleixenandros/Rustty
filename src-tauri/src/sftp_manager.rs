@@ -376,6 +376,9 @@ struct SftpBackend {
     /// imponen un límite bajo de handles abiertos y un valor alto provoca
     /// "Handle limit reached".
     max_parallelism: usize,
+    /// La cadena de saltos por la que va el panel: mientras viva la sesión, la
+    /// conexión con los saltos sigue abierta (y compartida en el pool).
+    _jump: Option<crate::jump_pool::JumpLease>,
 }
 
 struct FtpBackend {
@@ -418,6 +421,7 @@ impl SftpManager {
         elevated: bool,
         max_parallelism: usize,
         app_handle: AppHandle,
+        routing: crate::jump_pool::Routing,
     ) -> Result<(), String> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<SftpCommand>();
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
@@ -439,10 +443,13 @@ impl SftpManager {
             };
             rt.block_on(run_sftp_worker(
                 sid,
-                profile,
-                password,
-                passphrase,
-                elevated,
+                OpenRequest {
+                    profile: &profile,
+                    password: password.as_deref(),
+                    passphrase: passphrase.as_deref(),
+                    elevated,
+                    routing: &routing,
+                },
                 max_parallelism,
                 rx,
                 ready_tx,
@@ -728,28 +735,16 @@ impl SftpManager {
 
 // ─── Worker ──────────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
 async fn run_sftp_worker(
     session_id: String,
-    profile: ConnectionProfile,
-    password: Option<String>,
-    passphrase: Option<String>,
-    elevated: bool,
+    request: OpenRequest<'_>,
     max_parallelism: usize,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<SftpCommand>,
     ready: mpsc::SyncSender<Result<(), String>>,
     app_handle: AppHandle,
     controls: Arc<TransferControls>,
 ) {
-    let mut backend = match connect_and_open_backend(
-        &profile,
-        password.as_deref(),
-        passphrase.as_deref(),
-        elevated,
-        max_parallelism,
-        &app_handle,
-        &session_id,
-    )
+    let mut backend = match connect_and_open_backend(request, max_parallelism, &app_handle, &session_id)
     .await
     {
         Ok(s) => s,
@@ -888,15 +883,26 @@ async fn next_command(
     rx.recv().await
 }
 
-async fn connect_and_open_backend(
-    profile: &ConnectionProfile,
-    password: Option<&str>,
-    passphrase: Option<&str>,
+/// Lo que se pide abrir: el perfil, sus secretos, el modo elevado y la ruta de
+/// saltos (con el pool donde compartirlos).
+#[derive(Clone, Copy)]
+struct OpenRequest<'a> {
+    profile: &'a ConnectionProfile,
+    password: Option<&'a str>,
+    passphrase: Option<&'a str>,
     elevated: bool,
+    routing: &'a crate::jump_pool::Routing,
+}
+
+async fn connect_and_open_backend(
+    request: OpenRequest<'_>,
     max_parallelism: usize,
     app_handle: &AppHandle,
     session_id: &str,
 ) -> Result<Box<dyn FileTransfer>, String> {
+    let OpenRequest {
+        profile, password, ..
+    } = request;
     match profile.connection_type.as_str() {
         "ftp" | "ftps" => {
             emit_sftp_log(
@@ -936,22 +942,15 @@ async fn connect_and_open_backend(
             let log = |stage, status, message: String| {
                 emit_sftp_log(app_handle, session_id, stage, status, message);
             };
-            // El panel no reenvía agente ni X11: los dos saltos se verifican
-            // contra el known_hosts del usuario, sin nada más.
-            let host_key_check =
-                |_hop, host: &str, port| host_keys::client(host.to_string(), port, false, false);
-            let sftp = connect_and_open_sftp(
-                profile,
-                password,
-                passphrase,
-                elevated,
-                &log,
-                &host_key_check,
-            )
-            .await?;
+            // El panel no reenvía agente ni X11: los saltos y el destino se
+            // verifican contra el known_hosts del usuario, sin nada más.
+            let (sftp, jump) =
+                connect_and_open_sftp(request, &log, &crate::ssh_transport::default_host_key_check)
+                    .await?;
             Ok(Box::new(SftpBackend {
                 sftp,
                 max_parallelism,
+                _jump: jump,
             }))
         }
     }
@@ -962,36 +961,28 @@ async fn connect_and_open_backend(
 /// que no tienen `AppHandle`, lo recogen para comprobar las etapas.
 type SftpConnectLog<'a> = &'a dyn Fn(&'static str, &'static str, String);
 
-/// Etapa «bastion» del registro del panel para cada paso del salto.
+/// Etapa «bastion» del registro del panel para cada paso de la ruta de saltos
+/// (la etapa conserva su nombre de siempre; el texto cuenta cada salto).
 fn log_jump_stage(log: SftpConnectLog<'_>, stage: crate::ssh_transport::JumpStage<'_>) {
-    use crate::ssh_transport::JumpStage;
-    let (status, message) = match stage {
-        JumpStage::Connecting { addr } => ("info", format!("Conectando al bastión {addr}")),
-        JumpStage::Connected { addr } => {
-            ("ok", format!("Bastión conectado, host key verificada ({addr})"))
-        }
-        JumpStage::Authenticating { user } => {
-            ("info", format!("Autenticando en el bastión como {user}"))
-        }
-        JumpStage::Authenticated => ("ok", "Autenticado en el bastión".to_string()),
-        JumpStage::OpeningTunnel { target } => {
-            ("info", format!("Abriendo túnel del bastión hacia {target}"))
-        }
-    };
-    log("bastion", status, message);
+    log("bastion", stage.status(), stage.message());
 }
 
-/// Abre conexión SSH con russh (directa o por el bastión `ProxyJump` del
-/// perfil), autentica, abre canal y arranca subsistema SFTP (o `sudo
-/// sftp-server` si `elevated`).
+/// Abre conexión SSH con russh (directa o por la ruta de saltos), autentica,
+/// abre canal y arranca subsistema SFTP (o `sudo sftp-server` si `elevated`).
+/// Devuelve también el arrendamiento de la cadena de saltos, que tiene que
+/// vivir lo que viva la sesión.
 async fn connect_and_open_sftp(
-    profile: &ConnectionProfile,
-    password: Option<&str>,
-    passphrase: Option<&str>,
-    elevated: bool,
+    request: OpenRequest<'_>,
     log: SftpConnectLog<'_>,
-    host_key_check: &dyn Fn(crate::ssh_transport::Hop, &str, u16) -> crate::ssh_transport::HostKeyCheck,
-) -> Result<SftpSession, String> {
+    host_key_check: crate::ssh_transport::HostKeyFactory<'_>,
+) -> Result<(SftpSession, Option<crate::jump_pool::JumpLease>), String> {
+    let OpenRequest {
+        profile,
+        password,
+        passphrase,
+        elevated,
+        routing,
+    } = request;
     // window_size / maximum_packet_size de la config por defecto de russh
     // (2 MiB / 32 KiB) capan el throughput a ~window_size/RTT: con 25 ms de
     // RTT el techo queda en ~80 MB/s y baja drásticamente con RTTs mayores,
@@ -1021,8 +1012,9 @@ async fn connect_and_open_sftp(
     } else {
         russh::Preferred::default()
     };
-    // La misma config vale para el bastión: por él viaja el mismo caudal, así
-    // que su ventana también estrangularía las transferencias.
+    // Los saltos llevan su propia config, con la misma ventana grande y sin
+    // rekey por bytes (`ssh_transport::jump_client_config`): por ellos viaja
+    // el mismo caudal.
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(3600)),
         window_size: 32 * 1024 * 1024,
@@ -1037,28 +1029,33 @@ async fn connect_and_open_sftp(
     });
 
     let addr = format!("{}:{}", profile.host, profile.port);
-    let via_bastion = crate::ssh_transport::jump_spec(profile).is_some();
     log(
         "connect",
         "info",
-        if via_bastion {
-            format!("Conectando SFTP a {addr} a través del bastión")
-        } else {
+        if routing.route.is_empty() {
             format!("Conectando SFTP a {addr}")
+        } else {
+            format!(
+                "Conectando SFTP a {addr} a través de {}",
+                routing.route.describe()
+            )
         },
     );
-    let mut handle = crate::ssh_transport::connect_profile_handle(
+    let crate::ssh_transport::RoutedHandle {
+        mut handle,
+        lease: jump,
+    } = crate::ssh_transport::connect_profile_handle(
         profile,
+        &routing.route,
+        routing.pool.as_ref(),
         config,
-        password,
-        passphrase,
         host_key_check,
         &|stage| log_jump_stage(log, stage),
     )
     .await
     .map_err(|err| {
         let stage = match err.hop {
-            crate::ssh_transport::Hop::Bastion => "bastion",
+            crate::ssh_transport::Hop::Jump { .. } => "bastion",
             crate::ssh_transport::Hop::Target => "connect",
         };
         log(stage, "error", err.message.clone());
@@ -1264,7 +1261,7 @@ async fn connect_and_open_sftp(
         },
     );
 
-    Ok(sftp)
+    Ok((sftp, jump))
 }
 
 /// Autenticación vía agente SSH. Probamos cada identidad hasta que una
@@ -3814,8 +3811,28 @@ mod tests {
         let host_key_check = |_hop, host: &str, port| {
             host_keys::client_with_known_hosts(host.to_string(), port, known_hosts.to_path_buf())
         };
-        let result =
-            connect_and_open_sftp(profile, None, None, false, &log, &host_key_check).await;
+        // La ruta como la construye la app: el bastión de texto del perfil,
+        // con las credenciales del perfil.
+        let route = crate::jump_route::route_with(
+            &[],
+            profile,
+            crate::jump_route::HopSecrets::default(),
+            None,
+            &mut |p| p.clone(),
+            &mut |_| crate::jump_route::HopSecrets::default(),
+        )
+        .expect("ruta del perfil");
+        let routing = crate::jump_pool::Routing { route, pool: None };
+        let request = OpenRequest {
+            profile,
+            password: None,
+            passphrase: None,
+            elevated: false,
+            routing: &routing,
+        };
+        let result = connect_and_open_sftp(request, &log, &host_key_check)
+            .await
+            .map(|(sftp, _jump)| sftp);
         (result, stages.into_inner())
     }
 
@@ -3870,7 +3887,7 @@ mod tests {
             .map(|(_, _, message)| message)
             .collect();
         assert!(
-            bastion_ok.iter().any(|m| m.contains("Autenticado en el bastión")),
+            bastion_ok.iter().any(|m| m.contains("Autenticado en el salto 1/1")),
             "faltan las etapas del bastión: {stages:#?}"
         );
         assert!(

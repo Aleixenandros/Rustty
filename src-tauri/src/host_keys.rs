@@ -209,6 +209,7 @@ pub fn resolve_prompt(prompt_id: &str, accept: bool) -> bool {
 async fn confirm_host_key(
     host: &str,
     port: u16,
+    via_jump: bool,
     key: &PublicKey,
     previous: &[(usize, String)],
 ) -> Result<bool, String> {
@@ -231,7 +232,7 @@ async fn confirm_host_key(
         port,
         fingerprint,
         key_type,
-        via_jump: false,
+        via_jump,
         changed,
         previous: previous
             .iter()
@@ -367,12 +368,47 @@ pub struct KnownHostsClient {
     /// ni se escribe. Es la verificación sin estado de `plink -hostkey`, para
     /// scripts que no quieren depender del `known_hosts` de quien los lanza.
     expected_fingerprint: Option<String>,
+    /// El servidor es un **salto** de la ruta (bastión), no el destino: viaja
+    /// en la pregunta de host key (`viaJump`) para que el diálogo lo diga.
+    via_jump: bool,
+    /// `true` mientras se espera a que el usuario conteste una pregunta de host
+    /// key de este servidor. Quien pone plazo al handshake para el reloj
+    /// mientras tanto: el usuario tiene sus 120 s para leer la huella.
+    prompting: Arc<AtomicBool>,
+}
+
+/// Marca una pregunta de host key en curso mientras vive (también si el futuro
+/// que espera la respuesta se suelta a medias).
+struct PromptInFlight<'a>(&'a AtomicBool);
+
+impl<'a> PromptInFlight<'a> {
+    fn start(flag: &'a AtomicBool) -> Self {
+        flag.store(true, Ordering::Relaxed);
+        Self(flag)
+    }
+}
+
+impl Drop for PromptInFlight<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
 }
 
 impl KnownHostsClient {
     /// Fija la huella esperada del servidor (ver `expected_fingerprint`).
     pub fn expect_fingerprint(&mut self, fingerprint: Option<String>) {
         self.expected_fingerprint = fingerprint;
+    }
+
+    /// Marca este servidor como un salto de la ruta (ver `via_jump`).
+    pub fn mark_jump(&mut self) {
+        self.via_jump = true;
+    }
+
+    /// Marca de «pregunta de host key en curso» (ver `prompting`), para quien
+    /// mide el plazo del handshake desde fuera.
+    pub fn prompt_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.prompting)
     }
 
     /// `check_known_hosts` de russh, contra el fichero de este cliente.
@@ -616,6 +652,8 @@ pub fn client_with_remote_forwards(
             remote_forwards,
             known_hosts_path: None,
             expected_fingerprint: None,
+            via_jump: false,
+            prompting: Arc::new(AtomicBool::new(false)),
         },
         failure,
     )
@@ -643,6 +681,8 @@ pub fn client_with_known_hosts(
             remote_forwards: remote_forward_map(),
             known_hosts_path: Some(known_hosts_path),
             expected_fingerprint: None,
+            via_jump: false,
+            prompting: Arc::new(AtomicBool::new(false)),
         },
         failure,
     )
@@ -688,7 +728,11 @@ impl KnownHostsClient {
             return false;
         }
 
-        match confirm_host_key(&self.host, self.port, key, &previous).await {
+        let asked = {
+            let _prompt = PromptInFlight::start(&self.prompting);
+            confirm_host_key(&self.host, self.port, self.via_jump, key, &previous).await
+        };
+        match asked {
             Ok(true) => {
                 match self.replace_known_hosts_entries(&previous, key) {
                     Ok(()) => true,
@@ -793,9 +837,18 @@ impl client::Handler for KnownHostsClient {
                         // host. Con el modo estricto (default) el usuario confirma
                         // la huella antes de aprenderla; sin él, TOFU clásico.
                         if strict_first_connect() {
-                            match confirm_host_key(&self.host, self.port, server_public_key, &[])
+                            let asked = {
+                                let _prompt = PromptInFlight::start(&self.prompting);
+                                confirm_host_key(
+                                    &self.host,
+                                    self.port,
+                                    self.via_jump,
+                                    server_public_key,
+                                    &[],
+                                )
                                 .await
-                            {
+                            };
+                            match asked {
                                 Ok(true) => {}
                                 Ok(false) => {
                                     self.set_failure(format!(
@@ -1302,6 +1355,8 @@ mod tests {
             remote_forwards: remote_forward_map(),
             known_hosts_path: Some(kh.clone()),
             expected_fingerprint: None,
+            via_jump: false,
+            prompting: Arc::new(AtomicBool::new(false)),
         };
         (kh, client)
     }

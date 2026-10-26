@@ -38,8 +38,7 @@ use crate::host_keys;
 use crate::ipc::{event_name, EventKind};
 use crate::profiles::ConnectionProfile;
 use crate::ssh_manager::{
-    authenticate_handle, legacy_preferred, parse_jump_spec, russh_connect_addr,
-    DEFAULT_SSH_KEEPALIVE_MAX, DEFAULT_SSH_KEEPALIVE_SECS,
+    authenticate_handle, legacy_preferred, DEFAULT_SSH_KEEPALIVE_MAX, DEFAULT_SSH_KEEPALIVE_SECS,
 };
 use crate::subst::{redact_secrets, substitute, InternalVar, Resolver, SubstContext, REDACTED};
 
@@ -59,6 +58,10 @@ pub struct ResolvedHost {
     pub profile: ConnectionProfile,
     pub password: Option<String>,
     pub passphrase: Option<String>,
+    /// Ruta de saltos del host (con los secretos de cada salto ya resueltos) y
+    /// el pool de la app: los hosts del fan-out que van por el mismo salto
+    /// comparten su conexión.
+    pub routing: crate::jump_pool::Routing,
 }
 
 // ─── Payloads de evento (camelCase estricto) ─────────────────────────────────
@@ -204,14 +207,16 @@ fn parse_marker_exit(buf: &str, prefix: &str) -> Option<i32> {
 
 type ClientHandle = client::Handle<host_keys::KnownHostsClient>;
 
-/// Abre una conexión russh al host reutilizando la auth/host-key de
-/// `ssh_manager` (incluye ProxyJump) y devuelve el handle + un canal de shell
-/// con PTY listo para bombear comandos.
+/// Abre una conexión russh al host (directa o por su ruta de saltos, con la
+/// auth/host-key de `ssh_manager` y el TOFU de siempre) y devuelve el handle,
+/// un canal de shell con PTY listo para bombear comandos y el arrendamiento de
+/// la cadena de saltos, que tiene que vivir lo que viva el handle.
 async fn connect_shell(
     profile: &ConnectionProfile,
     password: Option<&str>,
     passphrase: Option<&str>,
-) -> Result<(ClientHandle, Channel<Msg>), String> {
+    routing: &crate::jump_pool::Routing,
+) -> Result<(ClientHandle, Channel<Msg>, Option<crate::jump_pool::JumpLease>), String> {
     let preferred = if profile.allow_legacy_algorithms {
         legacy_preferred(profile.legacy_algorithms.as_deref())
     } else {
@@ -229,84 +234,33 @@ async fn connect_shell(
         preferred,
         ..Default::default()
     });
-    let addr = format!("{}:{}", profile.host, profile.port);
-    let proxy_spec = profile
-        .proxy_jump
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
     let pw = password.map(str::to_string);
     let pp = passphrase.map(str::to_string);
 
-    let mut handle = if let Some(spec) = proxy_spec {
-        // ── ProxyJump: bastion → direct-tcpip → handshake del destino.
-        let (b_user, b_host, b_port) = parse_jump_spec(spec, &profile.username);
-        let bastion_addr = format!("{b_host}:{b_port}");
-        let (bastion_handler, bastion_failure) =
-            host_keys::client(b_host.clone(), b_port, false, false);
-        let mut bastion = russh_connect_addr(config.clone(), &bastion_addr, bastion_handler)
-            .await
-            .map_err(|err| {
-                host_keys::take_failure(&bastion_failure).unwrap_or_else(|| {
-                    format!("No se pudo conectar al bastion {bastion_addr}: {err}")
-                })
-            })?;
-        match authenticate_handle(
-            &mut bastion,
-            &profile.auth_type,
-            &b_user,
-            &b_host,
-            pw.as_ref(),
-            pp.as_ref(),
-            profile.key_path.as_deref(),
-        )
-        .await
-        .map_err(|e| e.to_string())?
-        {
-            AuthResult::Success => {}
-            AuthResult::Failure { .. } => {
-                return Err("Autenticación contra el bastion fallida".into())
-            }
+    let host_key_check = |hop: crate::ssh_transport::Hop, host: &str, port: u16| match hop {
+        crate::ssh_transport::Hop::Target => host_keys::client(
+            host.to_string(),
+            port,
+            profile.agent_forwarding,
+            profile.x11_forwarding,
+        ),
+        crate::ssh_transport::Hop::Jump { .. } => {
+            crate::ssh_transport::default_host_key_check(hop, host, port)
         }
-        let chan = bastion
-            .channel_open_direct_tcpip(
-                profile.host.clone(),
-                profile.port as u32,
-                "127.0.0.1".to_string(),
-                0,
-            )
-            .await
-            .map_err(|e| {
-                format!("No se pudo abrir canal direct-tcpip a través del bastion: {e}")
-            })?;
-        let stream = chan.into_stream();
-        let (target_handler, target_failure) = host_keys::client(
-            profile.host.clone(),
-            profile.port,
-            profile.agent_forwarding,
-            profile.x11_forwarding,
-        );
-        client::connect_stream(config, stream, target_handler)
-            .await
-            .map_err(|err| {
-                host_keys::take_failure(&target_failure).unwrap_or_else(|| {
-                    format!("No se pudo establecer SSH con {addr} a través del bastion: {err}")
-                })
-            })?
-    } else {
-        let (handler, failure) = host_keys::client(
-            profile.host.clone(),
-            profile.port,
-            profile.agent_forwarding,
-            profile.x11_forwarding,
-        );
-        russh_connect_addr(config, &addr, handler)
-            .await
-            .map_err(|err| {
-                host_keys::take_failure(&failure)
-                    .unwrap_or_else(|| format!("No se pudo conectar a {addr}: {err}"))
-            })?
     };
+    let crate::ssh_transport::RoutedHandle {
+        mut handle,
+        lease,
+    } = crate::ssh_transport::connect_profile_handle(
+        profile,
+        &routing.route,
+        routing.pool.as_ref(),
+        config,
+        &host_key_check,
+        &crate::ssh_transport::no_stage_log,
+    )
+    .await
+    .map_err(|err| err.message)?;
 
     match authenticate_handle(
         &mut handle,
@@ -338,7 +292,7 @@ async fn connect_shell(
         .request_shell(true)
         .await
         .map_err(|e| format!("No se pudo abrir shell: {e}"))?;
-    Ok((handle, channel))
+    Ok((handle, channel, lease))
 }
 
 // ─── Resolución de `${...}` en los `send` ────────────────────────────────────
@@ -1047,18 +1001,22 @@ async fn run_host(
         total_steps,
     );
 
-    // La contraseña de conexión también se redacta defensivamente de la salida.
+    // La contraseña de conexión (y las de los saltos) también se redactan
+    // defensivamente de la salida.
     let mut secrets = Vec::new();
     if let Some(p) = host.password.as_ref() {
         if !p.is_empty() {
             secrets.push(p.clone());
         }
     }
+    secrets.extend(host.routing.route.secret_values().iter().map(|s| s.to_string()));
 
-    let (handle, channel) = match connect_shell(
+    // `_jump_lease`: la cadena de saltos vive lo que el host.
+    let (handle, channel, _jump_lease) = match connect_shell(
         &profile,
         host.password.as_deref(),
         host.passphrase.as_deref(),
+        &host.routing,
     )
     .await
     {
@@ -1650,6 +1608,8 @@ mod tests {
             x11_forwarding: false,
             auto_reconnect: None,
             proxy_jump: None,
+            proxy_jump_profile_id: None,
+            ignore_active_jump: false,
             mac_address: None,
             wol_broadcast: None,
             wol_port: None,

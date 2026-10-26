@@ -24,11 +24,32 @@ rustty --workspace Omnia -c web
 
 Rustty busca el perfil por nombre, id, IP o host. Si hay varias coincidencias, muestra las opciones y te pide afinar la búsqueda; `--workspace` y `--group` acotan dónde buscar.
 
-La conexión reutiliza los datos del perfil: host/IP, puerto, usuario, método de autenticación, keyring, `known_hosts`, ProxyJump, keepalive, agent forwarding y compatibilidad legacy si estaba activada.
+La conexión reutiliza los datos del perfil: host/IP, puerto, usuario, método de autenticación, keyring, `known_hosts`, sus saltos (ver [Saltos](#saltos)), keepalive, agent forwarding y compatibilidad legacy si estaba activada.
 
 Si falta una contraseña o passphrase en el keyring, Rustty la pide en la terminal sin mostrarla. La pregunta va por la salida de errores, así que la salida normal queda limpia aunque haya que teclearla.
 
 La contraseña del perfil vale también en servidores que **solo admiten `keyboard-interactive`** (PAM con `PasswordAuthentication no`, lo habitual en entornos corporativos): Rustty la entrega a la primera pregunta del intercambio, igual que haría quien la teclea en `ssh`. Si después el servidor pide un **segundo factor** (un código de verificación, Duo, un token), la CLI lo pregunta por la terminal; sin terminal, la conexión falla con un error que dice a quién y por qué.
+
+## Saltos
+
+```bash
+rustty -c web-interna                         # por el salto activo de la app y el bastión del perfil
+rustty -c web-interna -J oficina-win          # a través del perfil «oficina-win»
+rustty -c web-interna -J ops@10.0.0.1:2222    # a través de esa dirección, como ssh -J
+rustty -c web-interna --direct                # sin ningún salto
+```
+
+Sin opciones, la CLI sale por el mismo camino que la interfaz:
+
+- El **salto activo** («todo por aquí») que tengas puesto en la app va delante, salvo que el perfil lo excluya («No usar el salto activo»), que el perfil sea el propio salto o uno de su cadena, o que el bastión del perfil ya pase por él. La app deja el salto activo apuntado para la CLI cada vez que lo cambias.
+- Después, el **bastión del perfil**: si es un perfil guardado, ese perfil (y el suyo, si lo tiene: cadenas de hasta 8 saltos); si es una dirección de texto, esa dirección.
+
+Cada salto entra con **sus** credenciales: un bastión de perfil, con las de su perfil (keyring o credencial maestra; si faltan, se preguntan por la terminal, una sola vez aunque lo usen varios servidores); una dirección de texto, con las del perfil que la declara. Cada salto verifica su host key contra `known_hosts`, con las mismas preguntas que el destino.
+
+- **`-J <salto>`** conecta a través de un perfil SSH o SFTP guardado (por su nombre o id exactos, sin distinguir mayúsculas; si ese perfil tiene su propio bastión, va delante) o, si no es ningún perfil, de esa dirección `[usuario@]host[:puerto]` con las credenciales del destino, como `ssh -J`. Es puntual: no cambia el perfil.
+- **`--direct`** conecta sin ningún salto: ni el activo ni el bastión del perfil.
+
+Un perfil de salto que ya no existe, un bucle de bastiones o más de 8 saltos se rechazan con un error que lo dice. Si un salto no deja abrir túneles (`AllowTcpForwarding no` en su servidor), el error lo nombra.
 
 ## Ejecutar comandos remotos
 
@@ -216,7 +237,7 @@ rustty -c produccion --host-key SHA256:uQAtx5MA1iF9jq547yBEjEJYlWBFUsApAs9ILZLdZ
 ```
 
 - **`--accept-host-key`** equivale a desactivar la confirmación solo para esa ejecución. Es cómodo en una tirada multi-host y renuncia a la comprobación de la primera conexión, igual que la preferencia; una clave **cambiada** respecto a `known_hosts` se sigue rechazando.
-- **`--host-key <huella>`** es la opción segura para automatizar: tú declaras qué huella esperas y Rustty acepta solo esa, sin estado. La huella se admite tal como la muestran Rustty, `ssh-keygen -lf` (`256 SHA256:… usuario@equipo (ED25519)`) o plink (`ssh-ed25519 255 SHA256:…`), con o sin el prefijo `SHA256:`. Solo con `-c`; con ProxyJump se aplica al servidor de destino y el bastión se verifica contra `known_hosts` como siempre. Si la huella no coincide, la conexión se rechaza mostrando las dos y `known_hosts` queda intacto.
+- **`--host-key <huella>`** es la opción segura para automatizar: tú declaras qué huella esperas y Rustty acepta solo esa, sin estado. La huella se admite tal como la muestran Rustty, `ssh-keygen -lf` (`256 SHA256:… usuario@equipo (ED25519)`) o plink (`ssh-ed25519 255 SHA256:…`), con o sin el prefijo `SHA256:`. Solo con `-c`; con saltos se aplica al servidor de destino y cada salto se verifica contra `known_hosts` como siempre. Si la huella no coincide, la conexión se rechaza mostrando las dos y `known_hosts` queda intacto.
 - Sin opciones, la CLI aplica lo que tengas en **Preferencias → Seguridad** (confirmar la huella en la primera conexión; preguntar si cambia): la interfaz lo deja guardado para la CLI cada vez que se abre o se guardan las preferencias, así que hasta que la abras una vez con esta versión rige el modo estricto.
 
 ## Limitaciones

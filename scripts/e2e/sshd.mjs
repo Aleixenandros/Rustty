@@ -59,10 +59,13 @@ async function waitForPort(port, timeoutMs) {
 
 /**
  * Arranca `sshd` en `dir`. Devuelve `{ port, clientKey, knownHostsLine, user, stop }`.
+ * Con `logFile`, el registro (en DEBUG1: autenticaciones y canales) va a ese
+ * fichero, para contar desde el test qué ha visto el servidor.
  * @param {string} sshd  Binario de `sshd`.
  * @param {string} dir   Carpeta de trabajo (se crea).
+ * @param {{ logFile?: string }} [opts]
  */
-export async function startSshd(sshd, dir) {
+export async function startSshd(sshd, dir, { logFile } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const hostKey = path.join(dir, "host_ed25519");
   const clientKey = path.join(dir, "client_ed25519");
@@ -88,10 +91,11 @@ export async function startSshd(sshd, dir) {
       "PasswordAuthentication no",
       "PubkeyAuthentication yes",
       "Subsystem sftp internal-sftp",
+      ...(logFile ? ["LogLevel DEBUG1"] : []),
       "",
     ].join("\n"),
   );
-  const child = spawn(sshd, ["-D", "-e", "-f", config], { stdio: "ignore" });
+  const child = spawn(sshd, ["-D", ...(logFile ? ["-E", logFile] : ["-e"]), "-f", config], { stdio: "ignore" });
   await waitForPort(port, 10000);
   const hostPub = fs.readFileSync(`${hostKey}.pub`, "utf8").trim().split(/\s+/).slice(0, 2).join(" ");
   return {

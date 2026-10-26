@@ -175,6 +175,16 @@
             <button class="btn-link" id="btn-first-import" data-i18n="sidebar.empty_import">Importar de otro cliente…</button>
           </div>
         </div>
+        <!-- Píldora de ruta: por dónde salen las conexiones nuevas (salto activo). -->
+        <div class="sidebar-route hidden" id="sidebar-route">
+          <button type="button" id="sidebar-route-pill" class="sidebar-route-pill" aria-haspopup="menu" aria-expanded="false">
+            <svg class="ctx-icon-svg sidebar-route-icon" aria-hidden="true"><use href="#ci-route"/></svg>
+            <span id="sidebar-route-label" class="sidebar-route-label"></span>
+          </button>
+          <button type="button" id="sidebar-route-clear" class="sidebar-route-clear hidden" data-i18n-title="jump.pill_clear" data-i18n-aria-label="jump.pill_clear" title="Quitar el salto activo" aria-label="Quitar el salto activo">
+            <svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg>
+          </button>
+        </div>
         <div class="sidebar-sync-footer">
           <button id="sidebar-sync-status" class="sidebar-sync-status" type="button" data-i18n-title="prefs_sync.title" data-i18n-aria-label="prefs_sync.title" title="Sincronización">
             <span class="sync-dot idle" id="sidebar-sync-dot"></span>
@@ -237,6 +247,10 @@
               <span class="status-dot" id="status-dot" role="button" tabindex="0" title="Diagnóstico de conexión" data-i18n-title="terminal.diagnostics_title"></span>
               <span id="status-user-host">—</span>
               <span id="status-env" class="env-badge hidden"></span>
+            </span>
+            <span class="status-route hidden" id="status-route">
+              <svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-route"/></svg>
+              <span id="status-route-text" class="status-route-text"></span>
             </span>
             <span class="status-sep"></span>
             <span class="status-cwd hidden" id="status-cwd-wrap" title="Directorio remoto actual (OSC 7)" data-i18n-title="status.cwd_title">
@@ -443,6 +457,7 @@
         <symbol id="ci-pause" viewBox="0 0 16 16"><path d="M6 4v8M10 4v8"/></symbol>
         <symbol id="ci-restore" viewBox="0 0 16 16"><path d="M3.4 8a4.6 4.6 0 1 0 1.3-3.2"/><path d="M2.6 2v3h3"/></symbol>
         <symbol id="ci-power" viewBox="0 0 16 16"><path d="M8 2.8v5.2"/><path d="M5.3 5.1a4.5 4.5 0 1 0 5.4 0"/></symbol>
+        <symbol id="ci-route" viewBox="0 0 16 16"><circle cx="3.4" cy="12.6" r="1.5"/><circle cx="12.6" cy="3.4" r="1.5"/><path d="M5 12.6h5a2 2 0 0 0 0-4H6a2 2 0 0 1 0-4h5"/></symbol>
         <symbol id="ci-tunnel" viewBox="0 0 16 16"><path d="M3.5 6h7.5M9 4l2 2-2 2"/><path d="M12.5 10H5M7 8l-2 2 2 2"/></symbol>
         <symbol id="ci-duplicate" viewBox="0 0 16 16"><path d="M6.2 6.2h6.3v6.3H6.2z"/><path d="M9.7 6.2V4.3a.8.8 0 0 0-.8-.8H3.9a.8.8 0 0 0-.8.8v5a.8.8 0 0 0 .8.8h1.8"/></symbol>
         <symbol id="ci-key" viewBox="0 0 16 16"><circle cx="10.2" cy="5.8" r="2.6"/><path d="M8.4 7.6 3.5 12.5"/><path d="M5.2 10.8l1.4 1.4M3.9 12.1l1.3 1.3"/></symbol>
@@ -557,6 +572,11 @@
       <button class="ctx-item ctx-conn-only hidden" data-ctx="connect-overrides">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span data-i18n="ctx.connect_overrides">Conectar con cambios…</span>
       </button>
+      <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-jump-via-only hidden" id="ctx-connect-via" aria-haspopup="menu">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-route"/></svg></span><span data-i18n="jump.ctx_connect_via">Conectar a través de</span>
+        <span class="ctx-submenu-arrow">▸</span>
+        <div class="ctx-submenu" id="ctx-connect-via-submenu" role="menu"></div>
+      </div>
 
       <!-- Grupo 2 · Editar y organizar -->
       <div class="ctx-sep ctx-conn-only hidden"></div>
@@ -605,6 +625,9 @@
 
       <!-- Grupo 3 · Red y avanzado -->
       <div class="ctx-sep ctx-conn-only hidden"></div>
+      <button class="ctx-item ctx-conn-only ctx-jump-active-only hidden" data-ctx="toggle-active-jump" id="ctx-toggle-active-jump">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-route"/></svg></span><span id="ctx-active-jump-label" data-i18n="jump.ctx_use_active">Usar como salto activo</span>
+      </button>
       <div class="ctx-item ctx-has-submenu ctx-conn-only hidden" id="ctx-tunnels" aria-haspopup="menu">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span><span data-i18n="ctx.tunnels">Túneles</span>
         <span class="ctx-submenu-arrow">▸</span>
@@ -1068,6 +1091,35 @@
             </button>
           </div>
 
+          <!-- Bastión: perfil guardado (con SUS credenciales) o dirección manual
+               (con las de este perfil). Fuera de #field-advanced porque RDP, VNC,
+               Telnet y SFTP también pueden ir por un salto. -->
+          <div class="form-advanced-inline" id="field-bastion" data-modal-pane="advanced">
+            <div class="form-row" id="field-bastion-select">
+              <label for="f-proxy-jump-mode" data-i18n="jump.form_bastion">Bastión</label>
+              <select id="f-proxy-jump-mode">
+                <option value="" data-i18n="jump.form_none">Ninguno (conexión directa)</option>
+                <option value="manual" data-i18n="jump.form_manual">Dirección manual…</option>
+              </select>
+              <p class="form-error hidden" id="f-proxy-jump-missing" data-i18n="jump.form_missing">El bastión guardado ya no existe: elige otro o deja «Ninguno».</p>
+              <p class="form-hint" data-i18n="jump.form_hint">Conecta primero al bastión y desde él al destino. Una conexión guardada entra con sus propias credenciales; la dirección manual reutiliza las de esta conexión (ProxyJump).</p>
+            </div>
+
+            <div class="form-row hidden" id="field-proxy-jump-manual">
+              <label for="f-proxy-jump" data-i18n="jump.form_manual_label">Dirección del bastión</label>
+              <input id="f-proxy-jump" type="text" placeholder="[usuario@]host[:puerto]" data-i18n-placeholder="modal_conn.proxy_jump_ph" />
+              <p class="form-error hidden" data-error-for="f-proxy-jump"></p>
+            </div>
+
+            <div class="form-row">
+              <label class="checkbox-label">
+                <input id="f-ignore-active-jump" type="checkbox" />
+                <span data-i18n="jump.form_ignore_active">No usar nunca el salto activo con esta conexión</span>
+              </label>
+              <p class="form-hint" data-i18n="jump.form_ignore_active_hint">Irá siempre directa (o por su propio bastión), aunque haya un salto activo.</p>
+            </div>
+          </div>
+
           <div class="form-advanced-inline ssh-only" id="field-advanced" data-modal-pane="advanced">
 
             <div class="form-row">
@@ -1158,14 +1210,6 @@
               <input id="f-auto-reconnect" type="number" min="0" max="20" step="1" placeholder="0" />
               <p class="form-hint" data-i18n="modal_conn.auto_reconnect_hint">
                 0 = desactivado. Número de reintentos automáticos al caer la conexión, con backoff exponencial (2s, 4s, 8s…).
-              </p>
-            </div>
-
-            <div class="form-row">
-              <label for="f-proxy-jump" data-i18n="modal_conn.proxy_jump">Bastion / Jump host</label>
-              <input id="f-proxy-jump" type="text" placeholder="[usuario@]host[:puerto]" data-i18n-placeholder="modal_conn.proxy_jump_ph" />
-              <p class="form-hint" data-i18n="modal_conn.proxy_jump_hint">
-                Conecta primero a este host bastión y abre un canal SSH al destino real a través suyo (ProxyJump). Reutiliza las credenciales del perfil.
               </p>
             </div>
 
@@ -1853,6 +1897,25 @@
       </div>
     </div>
 
+    <!-- Menú de la píldora de ruta (lo rellena main.js). -->
+    <div id="route-menu" class="hidden" role="menu" data-i18n-aria-label="jump.pill_label" aria-label="Ruta de las conexiones nuevas"></div>
+
+    <!-- Selector «Elegir conexión…»: salto activo y «Conectar a través de». -->
+    <div id="jump-picker-overlay" class="hidden">
+      <div id="jump-picker-modal" role="dialog" aria-modal="true" aria-labelledby="jump-picker-title">
+        <div class="modal-header">
+          <h2 id="jump-picker-title"></h2>
+          <button type="button" class="btn-icon" id="btn-jump-picker-close" data-i18n-aria-label="toast.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+        </div>
+        <p class="jump-picker-hint" id="jump-picker-hint"></p>
+        <input id="jump-picker-filter" type="text" autocomplete="off" spellcheck="false"
+               role="combobox" aria-expanded="true" aria-controls="jump-picker-list" aria-autocomplete="list"
+               data-i18n-placeholder="jump.picker_filter" placeholder="Filtrar por nombre, host o usuario…"
+               data-i18n-aria-label="jump.picker_filter" aria-label="Filtrar por nombre, host o usuario…" />
+        <div id="jump-picker-list" role="listbox" data-i18n-aria-label="jump.picker_list" aria-label="Conexiones SSH"></div>
+      </div>
+    </div>
+
     <div id="command-palette-overlay" class="hidden">
       <div id="command-palette-modal" role="dialog" aria-modal="true" data-i18n-aria-label="palette.title" aria-label="Paleta de comandos">
         <input id="command-palette-input" type="text" autocomplete="off" spellcheck="false"
@@ -2100,6 +2163,10 @@
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="security">
               <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/></svg></span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_security">Seguridad</span>
+            </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="jump">
+              <span class="prefs-nav-icon"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="3.4" cy="12.6" r="1.5"/><circle cx="12.6" cy="3.4" r="1.5"/><path d="M5 12.6h5a2 2 0 0 0 0-4H6a2 2 0 0 1 0-4h5"/></svg></span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_jump">Saltos</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="commands">
               <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 9 12 4 17"/><line x1="12" y1="17" x2="20" y2="17"/></svg></span>
@@ -3186,6 +3253,65 @@
             </section>
 
             <!-- ── Copias de seguridad ── -->
+            <!-- ── Saltos: salto activo y conexión compartida con los bastiones ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="jump">
+              <h3 class="prefs-panel-title" data-i18n="jump.prefs_title">Salto activo y bastiones</h3>
+              <p class="prefs-panel-hint" data-i18n="jump.prefs_hint">Un salto es una conexión SSH por la que pasan otras antes de llegar a su destino. Con un salto activo, todas las conexiones nuevas salen por él; cada conexión puede tener además su propio bastión.</p>
+
+              <div class="settings-row settings-row-inline">
+                <span class="settings-label" data-i18n="jump.prefs_active">Salto activo</span>
+                <div class="settings-control settings-control-wide jump-prefs-active">
+                  <span id="pref-jump-active-name" class="jump-prefs-active-name"></span>
+                  <button type="button" class="btn-secondary btn-compact" id="btn-pref-jump-pick" data-i18n="jump.prefs_active_pick">Elegir…</button>
+                  <button type="button" class="btn-secondary btn-compact hidden" id="btn-pref-jump-clear" data-i18n="jump.pill_clear">Quitar el salto activo</button>
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-jump-keep" />
+                  <span data-i18n="jump.prefs_keep">Mantener el salto activo al reiniciar Rustty</span>
+                </label>
+                <p class="settings-hint" data-i18n="jump.prefs_keep_hint">Si lo desactivas, cada vez que abras Rustty las conexiones vuelven a salir directas. El salto activo es de este equipo: no se sincroniza.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-jump-reuse" />
+                  <span data-i18n="jump.prefs_reuse">Compartir la conexión con cada salto entre sesiones</span>
+                </label>
+                <p class="settings-hint" data-i18n="jump.prefs_reuse_hint">Las sesiones que van por el mismo salto usan una sola conexión con él: una sola autenticación y una sola pregunta de contraseña o de huella.</p>
+              </div>
+
+              <div class="settings-row settings-row-inline" id="pref-jump-idle-row">
+                <label for="pref-jump-idle" data-i18n="jump.prefs_idle">Cerrarla tras este tiempo sin uso</label>
+                <div class="settings-control">
+                  <input type="number" id="pref-jump-idle" min="5" max="3600" step="5" />
+                  <span class="settings-unit" data-i18n="prefs_terminal.unit_seconds">segundos</span>
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <label for="pref-jump-unsupported" data-i18n="jump.prefs_unsupported">Protocolos que no pueden ir por un salto (FTP, FTPS, WebDAV)</label>
+                <div class="settings-control">
+                  <select id="pref-jump-unsupported">
+                    <option value="direct" data-i18n="jump.prefs_unsupported_direct">Conectar directo y avisar</option>
+                    <option value="block" data-i18n="jump.prefs_unsupported_block">No conectar</option>
+                  </select>
+                  <p class="settings-hint" data-i18n="jump.prefs_unsupported_hint">Con un salto activo puesto. El FTP abre otros puertos para los datos y el HTTPS de WebDAV comprobaría el certificado contra otro nombre: por eso no pueden ir por un salto.</p>
+                </div>
+              </div>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-route-pill" data-i18n="jump.prefs_pill">Mostrar la ruta en la barra lateral</label>
+                <select id="pref-route-pill">
+                  <option value="auto" data-i18n="jump.prefs_pill_auto">Cuando se use algún salto</option>
+                  <option value="always" data-i18n="jump.prefs_pill_always">Siempre</option>
+                  <option value="never" data-i18n="jump.prefs_pill_never">Nunca</option>
+                </select>
+              </div>
+            </section>
+
             <section class="prefs-panel" role="tabpanel" data-prefs-panel="data">
               <h3 class="prefs-panel-title" data-i18n="prefs_sync.title">Sincronización en la nube</h3>
               <p class="prefs-panel-hint" data-i18n="prefs_sync.hint">

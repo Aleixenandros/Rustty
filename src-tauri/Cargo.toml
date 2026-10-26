@@ -48,7 +48,9 @@ serde_json = "1"
 russh = { version = "0.64", features = ["des"] }
 russh-sftp = "2.3"
 suppaftp = { version = "12.1.0", features = ["rustls-ring"] }
-tokio = { version = "1", features = ["rt", "net", "io-util", "io-std", "sync", "fs", "macros", "time"] }
+# `rt-multi-thread`: el runtime propio de las conexiones a los saltos
+# (`jump_pool::jump_runtime`), que comparten sesiones de hilos distintos.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "io-std", "sync", "fs", "macros", "time"] }
 # Configuración fina de sockets TCP (SO_KEEPALIVE + TCP_KEEPIDLE/INTVL) para
 # detectar caídas de NAT/microcortes en sesiones SSH/SFTP idle.
 socket2 = { version = "0.6", features = ["all"] }

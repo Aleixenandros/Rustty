@@ -208,6 +208,39 @@ fn emit_connection_log(
     );
 }
 
+/// Pinta en el registro de conexión una etapa de la ruta de saltos. Al abrir
+/// el túnel hacia el destino, lo siguiente es su handshake: se anuncia ahí la
+/// verificación de su host key, como en la conexión directa.
+fn log_jump_stage(
+    app_handle: &AppHandle,
+    session_id: &str,
+    stage: &crate::ssh_transport::JumpStage<'_>,
+) {
+    emit_connection_log(app_handle, session_id, "jump", stage.status(), stage.message());
+    if let crate::ssh_transport::JumpStage::OpeningTunnel { target, .. } = stage {
+        emit_connection_log(
+            app_handle,
+            session_id,
+            "verifying_host_key",
+            "info",
+            format!("Verificando host key de {target}"),
+        );
+    }
+}
+
+/// `AppError` de un fallo de la ruta, con la misma clasificación que tenían los
+/// caminos de bastión: host key y autenticación son de autenticación (el
+/// mensaje de host key conserva su marcador), un túnel rechazado es SSH y el
+/// transporte es E/S.
+fn connect_error_to_app(err: crate::ssh_transport::ConnectError) -> AppError {
+    use crate::ssh_transport::ConnectFailure;
+    match err.failure {
+        ConnectFailure::HostKey | ConnectFailure::Auth => AppError::Auth(err.message),
+        ConnectFailure::Tunnel => AppError::Ssh(err.message),
+        ConnectFailure::Transport => AppError::Io(err.message),
+    }
+}
+
 // ─── Mensajes del frontend al hilo SSH ──────────────────────────────────────
 
 pub enum SessionCommand {
@@ -348,6 +381,10 @@ pub struct SessionSpec {
     /// TERM, variables de entorno y comando al conectar, ya resueltos (los
     /// `${...}` y los `${ask:}` se resuelven una vez, al conectar).
     pub launch: crate::remote_launch::SessionLaunch,
+    /// Ruta de saltos (resuelta una vez, al conectar) y pool donde compartirlos.
+    /// La reconexión automática vuelve a salir por ella: si la conexión con un
+    /// salto murió, el pool la reconstruye.
+    pub routing: crate::jump_pool::Routing,
 }
 
 pub struct SshManager {
@@ -687,6 +724,7 @@ pub async fn test_connection(
     profile: ConnectionProfile,
     password: Option<String>,
     passphrase: Option<String>,
+    routing: crate::jump_pool::Routing,
     app_handle: AppHandle,
 ) -> Result<(), String> {
     // Redacción defensiva del mensaje de error de prueba antes de devolverlo al
@@ -699,8 +737,9 @@ pub async fn test_connection(
         .flatten()
         .filter(|s| !s.is_empty())
         .map(Zeroizing::new)
+        .chain(routing.route.secret_values())
         .collect();
-    run_connection_test(test_id, profile, password, passphrase, app_handle)
+    run_connection_test(test_id, profile, password, passphrase, routing, app_handle)
         .await
         .map_err(|e| crate::subst::redact_secrets(&e.to_string(), &secret_values))
 }
@@ -753,6 +792,7 @@ async fn run_session_with_reconnect(
         passphrase,
         app_handle,
         launch,
+        routing,
         ..
     } = spec.clone();
     let max_attempts = profile.auto_reconnect.unwrap_or(0);
@@ -776,6 +816,7 @@ async fn run_session_with_reconnect(
         .filter(|s| !s.is_empty())
         .map(Zeroizing::new)
         .chain(launch.secrets.iter().cloned())
+        .chain(routing.route.secret_values())
         .collect();
 
     // Estado de keepalive compartido con el worker: el toggle en vivo lo escribe
@@ -912,6 +953,7 @@ async fn run_connection_test(
     profile: ConnectionProfile,
     password: Option<String>,
     passphrase: Option<String>,
+    routing: crate::jump_pool::Routing,
     app_handle: AppHandle,
 ) -> Result<(), AppError> {
     let preferred = if profile.allow_legacy_algorithms {
@@ -927,11 +969,6 @@ async fn run_connection_test(
         ..Default::default()
     });
     let addr = format!("{}:{}", profile.host, profile.port);
-    let proxy_spec = profile
-        .proxy_jump
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
 
     emit_connection_log(
         &app_handle,
@@ -940,158 +977,54 @@ async fn run_connection_test(
         "info",
         format!("Resolviendo {}:{}", profile.host, profile.port),
     );
-
-    let mut handle = if let Some(spec) = proxy_spec {
-        let (b_user, b_host, b_port) = parse_jump_spec(spec, &profile.username);
-        let bastion_addr = format!("{}:{}", b_host, b_port);
-        let (bastion_handler, bastion_failure) =
-            host_keys::client(b_host.clone(), b_port, false, false);
-
-        emit_connection_log(
-            &app_handle,
-            &test_id,
-            "connecting",
-            "info",
-            format!("Conectando al bastion {bastion_addr}"),
-        );
+    emit_connection_log(
+        &app_handle,
+        &test_id,
+        "connecting",
+        "info",
+        if routing.route.is_empty() {
+            format!("Conectando a {addr}")
+        } else {
+            format!("Conectando a {addr} a través de {}", routing.route.describe())
+        },
+    );
+    if routing.route.is_empty() {
         emit_connection_log(
             &app_handle,
             &test_id,
             "verifying_host_key",
             "info",
-            format!("Verificando host key del bastion {b_host}:{b_port}"),
+            format!("Verificando host key de {addr}"),
         );
-        let mut bastion = russh_connect_addr(config.clone(), &bastion_addr, bastion_handler)
-            .await
-            .map_err(|err| {
-                host_keys::take_failure(&bastion_failure)
-                    .map(AppError::Auth)
-                    .unwrap_or_else(|| {
-                        AppError::Io(format!(
-                            "No se puede conectar al bastion {bastion_addr}: {err}"
-                        ))
-                    })
-            })?;
-        emit_connection_log(
-            &app_handle,
-            &test_id,
-            "connecting",
-            "ok",
-            format!("Bastion conectado: {bastion_addr}"),
-        );
-
-        emit_connection_log(
-            &app_handle,
-            &test_id,
-            "authenticating",
-            "info",
-            format!("Autenticando en bastion como {b_user}"),
-        );
-        match authenticate_handle(
-            &mut bastion,
-            &profile.auth_type,
-            &b_user,
-            &b_host,
-            password.as_ref(),
-            passphrase.as_ref(),
-            profile.key_path.as_deref(),
-        )
-        .await?
-        {
-            AuthResult::Success => {}
-            AuthResult::Failure {
-                remaining_methods, ..
-            } => {
-                return Err(AppError::Auth(format!(
-                    "Autenticación contra bastion fallida. Métodos restantes: {:?}",
-                    remaining_methods
-                )));
-            }
+    }
+    let host_key_check = |hop: crate::ssh_transport::Hop, host: &str, port: u16| match hop {
+        crate::ssh_transport::Hop::Target => host_keys::client(
+            host.to_string(),
+            port,
+            profile.agent_forwarding,
+            profile.x11_forwarding,
+        ),
+        crate::ssh_transport::Hop::Jump { .. } => {
+            crate::ssh_transport::default_host_key_check(hop, host, port)
         }
-        emit_connection_log(
-            &app_handle,
-            &test_id,
-            "authenticating",
-            "ok",
-            "Autenticación contra bastion completada",
-        );
-
-        emit_connection_log(
-            &app_handle,
-            &test_id,
-            "connecting",
-            "info",
-            format!("Abriendo túnel del bastion hacia {addr}"),
-        );
-        let chan = bastion
-            .channel_open_direct_tcpip(
-                profile.host.clone(),
-                profile.port as u32,
-                "127.0.0.1".to_string(),
-                0,
-            )
-            .await
-            .map_err(|e| {
-                AppError::Ssh(format!(
-                    "No se pudo abrir canal direct-tcpip a través del bastion: {e}"
-                ))
-            })?;
-        let stream = chan.into_stream();
-        let (target_handler, target_failure) = host_keys::client(
-            profile.host.clone(),
-            profile.port,
-            profile.agent_forwarding,
-            profile.x11_forwarding,
-        );
-        emit_connection_log(
-            &app_handle,
-            &test_id,
-            "verifying_host_key",
-            "info",
-            format!("Verificando host key de {addr}"),
-        );
-        client::connect_stream(config, stream, target_handler)
-            .await
-            .map_err(|err| {
-                host_keys::take_failure(&target_failure)
-                    .map(AppError::Auth)
-                    .unwrap_or_else(|| {
-                        AppError::Io(format!(
-                            "No se puede establecer SSH con {addr} a través del bastion: {err}"
-                        ))
-                    })
-            })?
-    } else {
-        let (client_handler, host_key_failure) = host_keys::client(
-            profile.host.clone(),
-            profile.port,
-            profile.agent_forwarding,
-            profile.x11_forwarding,
-        );
-        emit_connection_log(
-            &app_handle,
-            &test_id,
-            "connecting",
-            "info",
-            format!("Conectando a {addr}"),
-        );
-        emit_connection_log(
-            &app_handle,
-            &test_id,
-            "verifying_host_key",
-            "info",
-            format!("Verificando host key de {addr}"),
-        );
-        russh_connect_addr(config, &addr, client_handler)
-            .await
-            .map_err(|err| {
-                host_keys::take_failure(&host_key_failure)
-                    .map(AppError::Auth)
-                    .unwrap_or_else(|| {
-                        AppError::Io(format!("No se puede conectar a {addr}: {err}"))
-                    })
-            })?
     };
+    let on_stage = |stage: crate::ssh_transport::JumpStage<'_>| {
+        log_jump_stage(&app_handle, &test_id, &stage);
+    };
+    let crate::ssh_transport::RoutedHandle {
+        mut handle,
+        lease: _jump_lease,
+    } = crate::ssh_transport::connect_routed(
+        &routing.route,
+        routing.pool.as_ref(),
+        &profile.host,
+        profile.port,
+        config,
+        &host_key_check,
+        &on_stage,
+    )
+    .await
+    .map_err(connect_error_to_app)?;
 
     emit_connection_log(
         &app_handle,
@@ -1678,6 +1611,7 @@ async fn run_session(
         cols,
         rows,
         launch,
+        routing,
     } = spec;
     // Defensivo: un pane aún no medido podría mandar 0. `request_pty` con 0
     // columnas dejaría al shell remoto sin poder formatear nada.
@@ -1707,11 +1641,6 @@ async fn run_session(
     });
     let remote_forwards = host_keys::remote_forward_map();
     let addr = format!("{}:{}", profile.host, profile.port);
-    let proxy_spec = profile
-        .proxy_jump
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
 
     emit_connection_log(
         &app_handle,
@@ -1721,149 +1650,79 @@ async fn run_session(
         format!("Resolviendo {}:{}", profile.host, profile.port),
     );
 
-    let mut handle = if let Some(spec) = proxy_spec {
-        // ── Modo ProxyJump: conectar al bastion → direct-tcpip → handshake target
-        let (b_user, b_host, b_port) = parse_jump_spec(spec, &profile.username);
-        let bastion_addr = format!("{}:{}", b_host, b_port);
-        let (bastion_handler, bastion_failure) =
-            host_keys::client(b_host.clone(), b_port, false, false);
+    // `_jump_lease`: la cadena de saltos tiene que vivir lo que viva la sesión
+    // (con nombre, no `_`, que la soltaría al momento).
+    let (mut handle, _jump_lease) = if !routing.route.is_empty() {
+        // ── Por la ruta de saltos: cada salto con sus credenciales y su host
+        // key; el destino, por un `direct-tcpip` del último.
         emit_connection_log(
             &app_handle,
             &session_id,
             "connecting",
             "info",
-            format!("Conectando al bastion {bastion_addr}"),
+            format!("Conectando a {addr} a través de {}", routing.route.describe()),
         );
-        emit_connection_log(
-            &app_handle,
-            &session_id,
-            "verifying_host_key",
-            "info",
-            format!("Verificando host key del bastion {b_host}:{b_port}"),
-        );
-        let mut bastion =
-            match russh_connect_addr(config.clone(), &bastion_addr, bastion_handler).await {
-                Ok(h) => h,
-                Err(err) => {
-                    if let Some(reason) = host_keys::take_failure(&bastion_failure) {
-                        return SessionExit::Fatal(AppError::Auth(format!("Bastion: {reason}")));
-                    }
-                    emit_connection_log(
-                        &app_handle,
-                        &session_id,
-                        "connecting",
-                        "error",
-                        format!("No se puede conectar al bastion {bastion_addr}: {err}"),
-                    );
-                    let _ = app_handle.emit(
-                        &event_name(EventKind::SshError, &session_id),
-                        format!("No se puede conectar al bastion {bastion_addr}: {err}"),
-                    );
-                    return SessionExit::ServerClosed { stable: false };
-                }
-            };
-        emit_connection_log(
-            &app_handle,
-            &session_id,
-            "connecting",
-            "ok",
-            format!("Bastion conectado: {bastion_addr}"),
-        );
-
-        emit_connection_log(
-            &app_handle,
-            &session_id,
-            "authenticating",
-            "info",
-            format!("Autenticando en bastion como {b_user}"),
-        );
-        match authenticate_handle(
-            &mut bastion,
-            &profile.auth_type,
-            &b_user,
-            &b_host,
-            password.as_ref(),
-            passphrase.as_ref(),
-            profile.key_path.as_deref(),
+        let host_key_check = |hop: crate::ssh_transport::Hop, host: &str, port: u16| match hop {
+            crate::ssh_transport::Hop::Target => host_keys::client_with_remote_forwards(
+                host.to_string(),
+                port,
+                profile.agent_forwarding,
+                profile.x11_forwarding,
+                remote_forwards.clone(),
+            ),
+            crate::ssh_transport::Hop::Jump { .. } => {
+                crate::ssh_transport::default_host_key_check(hop, host, port)
+            }
+        };
+        let on_stage = |stage: crate::ssh_transport::JumpStage<'_>| {
+            log_jump_stage(&app_handle, &session_id, &stage);
+        };
+        match crate::ssh_transport::connect_routed(
+            &routing.route,
+            routing.pool.as_ref(),
+            &profile.host,
+            profile.port,
+            config,
+            &host_key_check,
+            &on_stage,
         )
         .await
         {
-            Ok(AuthResult::Success) => {}
-            Ok(AuthResult::Failure {
-                remaining_methods, ..
-            }) => {
-                return SessionExit::Fatal(AppError::Auth(format!(
-                    "Autenticación contra bastion fallida. Métodos restantes: {:?}",
-                    remaining_methods
-                )));
-            }
-            Err(e) => return SessionExit::Fatal(AppError::Auth(format!("Bastion: {e}"))),
-        }
-        emit_connection_log(
-            &app_handle,
-            &session_id,
-            "authenticating",
-            "ok",
-            "Autenticación contra bastion completada",
-        );
-
-        emit_connection_log(
-            &app_handle,
-            &session_id,
-            "connecting",
-            "info",
-            format!("Abriendo túnel del bastion hacia {addr}"),
-        );
-        let chan = match bastion
-            .channel_open_direct_tcpip(
-                profile.host.clone(),
-                profile.port as u32,
-                "127.0.0.1".to_string(),
-                0,
-            )
-            .await
-        {
-            Ok(c) => c,
-            Err(e) => {
-                return SessionExit::Fatal(AppError::Ssh(format!(
-                    "No se pudo abrir canal direct-tcpip a través del bastion: {e}"
-                )))
-            }
-        };
-        let stream = chan.into_stream();
-
-        let (target_handler, target_failure) = host_keys::client_with_remote_forwards(
-            profile.host.clone(),
-            profile.port,
-            profile.agent_forwarding,
-            profile.x11_forwarding,
-            remote_forwards.clone(),
-        );
-        emit_connection_log(
-            &app_handle,
-            &session_id,
-            "verifying_host_key",
-            "info",
-            format!("Verificando host key de {}", addr),
-        );
-        match client::connect_stream(config, stream, target_handler).await {
-            Ok(h) => {
+            Ok(routed) => {
                 emit_connection_log(
                     &app_handle,
                     &session_id,
                     "connecting",
                     "ok",
-                    format!("SSH establecido con {addr} a través del bastion"),
+                    format!(
+                        "SSH establecido con {addr} a través de {}",
+                        routing.route.describe()
+                    ),
                 );
-                h
+                (routed.handle, routed.lease)
             }
             Err(err) => {
-                if let Some(reason) = host_keys::take_failure(&target_failure) {
-                    return SessionExit::Fatal(AppError::Auth(reason));
+                use crate::ssh_transport::{ConnectFailure, Hop};
+                // Un salto que no responde es reintentable, como lo era el
+                // bastión: la reconexión vuelve a pasar por la ruta (y el pool
+                // reconstruye lo que murió). Host key, autenticación y túnel
+                // rechazado son fatales; el destino que falla tras el último
+                // salto también, como antes.
+                if let (Hop::Jump { .. }, ConnectFailure::Transport) = (err.hop, err.failure) {
+                    emit_connection_log(
+                        &app_handle,
+                        &session_id,
+                        "connecting",
+                        "error",
+                        err.message.clone(),
+                    );
+                    let _ = app_handle.emit(
+                        &event_name(EventKind::SshError, &session_id),
+                        err.message,
+                    );
+                    return SessionExit::ServerClosed { stable: false };
                 }
-                return SessionExit::Fatal(AppError::Io(format!(
-                    "No se puede establecer SSH con {addr} a través del bastion: {err}"
-                )));
+                return SessionExit::Fatal(connect_error_to_app(err));
             }
         }
     } else {
@@ -1950,7 +1809,7 @@ async fn run_session(
                     "ok",
                     format!("TCP/SSH establecido con {addr}"),
                 );
-                h
+                (h, None)
             }
             None => {
                 emit_connection_log(

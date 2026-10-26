@@ -1,4 +1,6 @@
 // @ts-check
+import { normalizeJumpPrefs } from "../jump-route.js";
+
 /**
  * Normalización y migraciones **puras** de las preferencias al cargarlas.
  *
@@ -80,5 +82,7 @@ export function normalizePrefs(prefs, stored, deps) {
   if (!prefs.lang || !supportedLangs.includes(prefs.lang)) {
     prefs.lang = detectLanguage();
   }
+  // Salto activo y compañía: locales, se sanean sin fechar nada.
+  normalizeJumpPrefs(prefs);
   return prefs;
 }

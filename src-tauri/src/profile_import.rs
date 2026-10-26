@@ -298,20 +298,46 @@ fn same_profile(a: &ConnectionProfile, b: &ConnectionProfile) -> bool {
     serde_json::to_value(a).ok() == serde_json::to_value(b).ok()
 }
 
+/// Perfil existente al que corresponde una entrada: el de su id o, si no, el
+/// del mismo workspace con el mismo nombre (sin distinguir mayúsculas).
+fn matching_profile<'a>(
+    existing: &'a [ConnectionProfile],
+    entry: &ConnectionProfile,
+) -> Option<&'a ConnectionProfile> {
+    existing.iter().find(|p| p.id == entry.id).or_else(|| {
+        existing.iter().find(|p| {
+            p.workspace_id == entry.workspace_id && p.name.eq_ignore_ascii_case(&entry.name)
+        })
+    })
+}
+
 /// Cruza las entradas con los perfiles existentes y decide qué crear, qué
 /// actualizar y qué omitir.
+///
+/// Una entrada que casa por nombre con un perfil existente **adopta su id**, y
+/// otra del mismo fichero puede tenerla por bastión (`proxy_jump_profile_id`
+/// con el id del fichero): esa referencia se traduce al id adoptado antes de
+/// comparar, o el salto apuntaría a un perfil que no existe.
 pub fn plan(existing: &[ConnectionProfile], entries: Vec<Prepared>) -> Plan {
+    let remap: std::collections::HashMap<String, String> = entries
+        .iter()
+        .filter_map(|entry| {
+            let current = matching_profile(existing, &entry.profile)?;
+            (current.id != entry.profile.id).then(|| (entry.profile.id.clone(), current.id.clone()))
+        })
+        .collect();
     let mut plan = Plan::default();
     let mut touched: HashSet<String> = HashSet::new();
     for mut entry in entries {
-        let by_id = existing.iter().find(|p| p.id == entry.profile.id);
-        let by_name = by_id.or_else(|| {
-            existing.iter().find(|p| {
-                p.workspace_id == entry.profile.workspace_id
-                    && p.name.eq_ignore_ascii_case(&entry.profile.name)
-            })
-        });
-        match by_name {
+        if let Some(adopted) = entry
+            .profile
+            .proxy_jump_profile_id
+            .as_ref()
+            .and_then(|id| remap.get(id))
+        {
+            entry.profile.proxy_jump_profile_id = Some(adopted.clone());
+        }
+        match matching_profile(existing, &entry.profile) {
             Some(current) => {
                 entry.profile.id = current.id.clone();
                 entry.profile.created_at = current.created_at.clone();
@@ -481,6 +507,26 @@ mod tests {
         assert_eq!(p.workspace_id, "ws-omnia");
         assert_eq!(p.port, 3389);
         assert_eq!(p.domain.as_deref(), Some("CORP"));
+    }
+
+    #[test]
+    fn el_bastion_de_perfil_sigue_al_id_que_adopta_su_perfil() {
+        // «bastion» ya existe con otro id: la entrada adopta el existente y el
+        // destino que la referenciaba por el id del fichero pasa a apuntarle.
+        let current = vec![existing("bastion", "id-bastion-local")];
+        let entries = vec![
+            prepare(json!({"id": "f-bastion", "name": "bastion", "host": "b", "username": "u"}), &opts()).unwrap(),
+            prepare(json!({"id": "f-web", "name": "web", "host": "w", "username": "u", "proxy_jump_profile_id": "f-bastion"}), &opts()).unwrap(),
+            // Una referencia a un perfil que no está en el fichero se deja tal cual.
+            prepare(json!({"id": "f-db", "name": "db", "host": "d", "username": "u", "proxy_jump_profile_id": "otro"}), &opts()).unwrap(),
+        ];
+        let plan = plan(&current, entries);
+        assert_eq!(plan.update.len(), 1);
+        assert_eq!(plan.update[0].profile.id, "id-bastion-local");
+        let web = plan.create.iter().find(|e| e.profile.name == "web").unwrap();
+        assert_eq!(web.profile.proxy_jump_profile_id.as_deref(), Some("id-bastion-local"));
+        let db = plan.create.iter().find(|e| e.profile.name == "db").unwrap();
+        assert_eq!(db.profile.proxy_jump_profile_id.as_deref(), Some("otro"));
     }
 
     #[test]

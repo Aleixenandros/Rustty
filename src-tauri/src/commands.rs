@@ -12,6 +12,9 @@ use crate::credentials::{self, CredentialKind, CredentialMeta, CredentialStore};
 use crate::external_client::{TelnetManager, VncManager};
 use crate::host_keys::fingerprint_sha256;
 use crate::ipc_error::{IpcError, IpcErrorKind};
+use crate::jump_forward::ForwardRegistry;
+use crate::jump_pool::{JumpPool, Routing};
+use crate::jump_route::JumpRequest;
 use crate::keepass_manager;
 use crate::keyring_scope;
 use crate::file_grants::{self, FileGrants, GrantMode};
@@ -345,8 +348,11 @@ fn health_check_one(t: &HealthTarget) -> HealthResult {
 pub struct ConnectOverrides {
     pub username: Option<String>,
     pub port: Option<u16>,
-    /// `Some("")` quita el bastion del perfil; `Some(s)` lo sustituye;
-    /// `None` conserva el del perfil.
+    /// Bastión **de texto**: `Some("")` lo quita; `Some(s)` lo sustituye;
+    /// `None` conserva el del perfil. El bastión de perfil
+    /// (`proxy_jump_profile_id`) no se toca aquí: lo decide la ruta (`jumps`),
+    /// y con él puesto el de texto no se usa. «Sin saltos» = `jumps: []` más
+    /// `proxy_jump: ""`.
     pub proxy_jump: Option<String>,
     /// Cambia el método de autenticación. Si se indica, la contraseña o
     /// passphrase necesarias llegan en los parámetros `password`/`passphrase`
@@ -375,6 +381,9 @@ fn apply_connect_overrides(profile: &mut ConnectionProfile, ov: &ConnectOverride
         } else {
             Some(j.to_string())
         };
+        // Un bastión puntual (o «sin bastión») sustituye también al bastión de
+        // perfil: si no, el de perfil mandaría y el texto se ignoraría.
+        profile.proxy_jump_profile_id = None;
     }
     if let Some(at) = ov.auth_type.clone() {
         profile.auth_type = at;
@@ -401,9 +410,13 @@ fn apply_connect_overrides(profile: &mut ConnectionProfile, ov: &ConnectOverride
 // obligaría a cambiar la forma del payload en `main.js` —y un fallo ahí no lo
 // caza el compilador, sino el usuario al conectar—. Cuando se trocee
 // `commands.rs` por dominios (tarea del backlog) entrarán los structs de args.
+//
+// `async` (corre fuera del hilo principal): resolver la ruta de saltos lee del
+// keyring los secretos de cada salto, y el servicio de secretos puede tardar
+// (o pedir que se desbloquee) mientras la ventana tiene que seguir viva.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn ssh_connect(
+pub async fn ssh_connect(
     ssh_state: State<'_, SshManager>,
     profile_state: State<'_, ProfileManager>,
     cred_state: State<'_, CredentialStore>,
@@ -431,11 +444,16 @@ pub fn ssh_connect(
     // siempre; `ssh_manager` también defiende contra 0.
     cols: Option<u32>,
     rows: Option<u32>,
+    // Ruta de saltos que calcula la interfaz (salto activo, «Conectar a través
+    // de», ruta propia del perfil). `None` = solo la ruta propia del perfil.
+    jumps: Option<Vec<JumpRequest>>,
+    jump_pool: State<'_, JumpPool>,
 ) -> Result<String, IpcError> {
     let profiles = profile_state.load_all()?;
     let mut profile = profiles
-        .into_iter()
+        .iter()
         .find(|p| p.id == profile_id)
+        .cloned()
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
     if let Some(cid) = credential_id.as_deref() {
         apply_credential(&mut profile, cid)?;
@@ -455,6 +473,15 @@ pub fn ssh_connect(
     let launch_answers = ask_answers.clone().unwrap_or_default();
     let resolved_password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
     let launch = crate::remote_launch::resolve_with_store(&profile, &cred_state, launch_answers);
+    let routing = app_routing(
+        &profiles,
+        &profile,
+        resolved_password.as_deref(),
+        passphrase.as_deref(),
+        jumps.as_deref(),
+        &cred_state,
+        &jump_pool,
+    )?;
 
     let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
@@ -470,6 +497,7 @@ pub fn ssh_connect(
                 cols: cols.unwrap_or(80),
                 rows: rows.unwrap_or(24),
                 launch,
+                routing,
             },
             data_dir.0.clone(),
         )?;
@@ -499,11 +527,10 @@ pub async fn ssh_setup_key_access(
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
     credentials::substitute_connection_fields(&mut profile, &cred_state);
-    if profile
-        .proxy_jump
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|s| !s.is_empty())
+    // El asistente conecta directo: con un bastión (de texto o de perfil) iría
+    // a la dirección privada del destino sin pasar por él.
+    if crate::ssh_transport::jump_spec(&profile).is_some()
+        || crate::jump_route::profile_jump_id(&profile).is_some()
     {
         return Err(
             "Los perfiles con ProxyJump todavía no soportan el asistente de acceso con clave"
@@ -536,18 +563,37 @@ pub async fn ssh_setup_key_access(
 /// se espera el resultado por un oneshot. La versión síncrona original hacía
 /// `rx.recv()` bloqueante en el hilo principal de Tauri y congelaba toda la
 /// ventana hasta ~30 s contra un host filtrado.
+// Frontera IPC: argumentos dictados por el `invoke` del frontend (ver
+// `ssh_connect`).
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn ssh_test_connection(
     cred_state: State<'_, CredentialStore>,
+    profile_state: State<'_, ProfileManager>,
+    jump_pool: State<'_, JumpPool>,
     app_handle: AppHandle,
     mut profile: ConnectionProfile,
     password: Option<String>,
     passphrase: Option<String>,
     test_id: String,
     ask_answers: Option<std::collections::HashMap<String, String>>,
+    // Ruta de saltos (ver `ssh_connect`). La prueba sale por ella y reutiliza
+    // la conexión con los saltos si ya está en el pool.
+    jumps: Option<Vec<JumpRequest>>,
 ) -> Result<(), String> {
     credentials::substitute_connection_fields(&mut profile, &cred_state);
     let resolved_password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
+    let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
+    let routing = app_routing(
+        &profiles,
+        &profile,
+        resolved_password.as_deref(),
+        passphrase.as_deref(),
+        jumps.as_deref(),
+        &cred_state,
+        &jump_pool,
+    )
+    .map_err(|e| e.message)?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         let result = match tokio::runtime::Builder::new_current_thread()
@@ -559,6 +605,7 @@ pub async fn ssh_test_connection(
                 profile,
                 resolved_password,
                 passphrase,
+                routing,
                 app_handle,
             )),
             Err(e) => Err(format!("No se pudo crear runtime tokio: {e}")),
@@ -567,6 +614,86 @@ pub async fn ssh_test_connection(
     });
     rx.await
         .map_err(|e| format!("La prueba de conexión no respondió: {e}"))?
+}
+
+// ─── Salto activo y pool de saltos ───────────────────────────────────────────
+
+/// «Probar el salto»: conecta la cadena de `jumps` (reutilizando la del pool si
+/// está viva) y abre un túnel de prueba desde el último salto para saber si su
+/// servidor deja abrir túneles (`AllowTcpForwarding`). Un fallo de conexión no
+/// es un error del comando: vuelve en el informe (`ok: false`), con el texto
+/// para el usuario. Sí lo es una ruta imposible (perfil borrado, bucle…).
+#[tauri::command]
+pub async fn jump_probe(
+    profile_state: State<'_, ProfileManager>,
+    cred_state: State<'_, CredentialStore>,
+    jump_pool: State<'_, JumpPool>,
+    jumps: Vec<JumpRequest>,
+) -> Result<crate::jump_route::JumpProbeReport, IpcError> {
+    let profiles = profile_state.load_all()?;
+    let route = crate::jump_route::app_jump_route(&profiles, &jumps, &cred_state)?;
+    if route.is_empty() {
+        return Err(IpcError::new(
+            IpcErrorKind::NotFound,
+            "No hay ningún salto que probar.",
+        ));
+    }
+    let pool = jump_pool.inner().clone();
+    // Hilo propio con su runtime, como la prueba de conexión: la autenticación
+    // (y sus preguntas) no tiene por qué ser `Send`.
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let report = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => Ok(rt.block_on(crate::ssh_transport::probe_route(
+                &route,
+                Some(&pool),
+                &crate::ssh_transport::default_host_key_check,
+            ))),
+            Err(e) => Err(format!("No se pudo crear runtime tokio: {e}")),
+        };
+        let _ = tx.send(report);
+    });
+    rx.await
+        .map_err(|e| IpcError::classify(format!("La prueba del salto no respondió: {e}")))?
+        .map_err(IpcError::classify)
+}
+
+/// ¿Hay en el pool una conexión viva para exactamente esta secuencia de
+/// perfiles-salto (con sus saltos de texto)? La interfaz se ahorra pedir
+/// contraseñas que no van a hacer falta. Una ruta imposible es `false`.
+#[tauri::command]
+pub fn jump_pool_ready(
+    profile_state: State<'_, ProfileManager>,
+    cred_state: State<'_, CredentialStore>,
+    jump_pool: State<'_, JumpPool>,
+    profile_ids: Vec<String>,
+) -> bool {
+    let Ok(profiles) = profile_state.load_all() else {
+        return false;
+    };
+    match crate::jump_route::pool_key_for(&profiles, &profile_ids, &cred_state) {
+        Ok(key) => jump_pool.ready(&key),
+        Err(_) => false,
+    }
+}
+
+/// Ajustes del salto (compartir conexión, segundos sin uso, salto activo). La
+/// interfaz los manda al arrancar y cada vez que cambian; se quedan en memoria
+/// para el pool y se vuelcan a `jump-settings.json` para que la CLI vea el salto
+/// activo.
+#[tauri::command]
+pub fn jump_settings_set(
+    jump_pool: State<'_, JumpPool>,
+    data_dir: State<'_, DataDir>,
+    settings: crate::jump_pool::JumpSettings,
+) -> Result<(), String> {
+    jump_pool.set_settings(settings.clone());
+    crate::jump_pool::save_settings(&data_dir.0, &settings)
+        .map(|_| ())
+        .map_err(|e| format!("No se pudieron guardar los ajustes del salto: {e}"))
 }
 
 /// Resuelve la contraseña efectiva de un perfil según su `password_source`,
@@ -583,7 +710,7 @@ pub async fn ssh_test_connection(
 ///
 /// `ask_answers` contiene las respuestas a los `${ask:}` que el frontend pidió
 /// al usuario (clave = etiqueta); es `None`/vacío para perfiles sin `${ask:}`.
-fn resolve_profile_password(
+pub(crate) fn resolve_profile_password(
     profile: &ConnectionProfile,
     store: &CredentialStore,
     password: Option<String>,
@@ -636,6 +763,34 @@ fn resolve_profile_password(
             other => Ok(other),
         },
     }
+}
+
+/// Ruta de saltos de una conexión de la app y el pool donde compartirlos.
+/// `target` llega ya preparado (identidad, overrides y `${var:}` aplicados);
+/// sus secretos valen para su bastión de texto. `jumps: None` = la ruta propia
+/// del perfil (`proxy_jump_profile_id`), sin salto activo.
+pub(crate) fn app_routing(
+    profiles: &[ConnectionProfile],
+    target: &ConnectionProfile,
+    password: Option<&str>,
+    passphrase: Option<&str>,
+    jumps: Option<&[JumpRequest]>,
+    store: &CredentialStore,
+    pool: &JumpPool,
+) -> Result<Routing, IpcError> {
+    let route = crate::jump_route::app_route(
+        profiles,
+        target,
+        crate::jump_route::HopSecrets {
+            password: password.map(str::to_string),
+            passphrase: passphrase.map(str::to_string),
+            unavailable: None,
+        },
+        jumps,
+        store,
+    )?;
+    let pool = (!route.is_empty()).then(|| pool.clone());
+    Ok(Routing { route, pool })
 }
 
 /// Resuelve la contraseña desde la entrada KeePass referenciada por el perfil.
@@ -1018,12 +1173,18 @@ pub async fn ssh_kill_process(
 // obligaría a cambiar la forma del payload en `main.js` —y un fallo ahí no lo
 // caza el compilador, sino el usuario al conectar—. Cuando se trocee
 // `commands.rs` por dominios (tarea del backlog) entrarán los structs de args.
+//
+// `async` desde la ruta de saltos: con un salto, conectar con él (y quizá
+// preguntar su host key o su contraseña) lleva tiempo y no puede hacerse en el
+// hilo principal, que es el que atiende las respuestas a esas preguntas.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn rdp_connect(
+pub async fn rdp_connect(
     rdp_state: State<'_, RdpManager>,
     profile_state: State<'_, ProfileManager>,
     cred_state: State<'_, CredentialStore>,
+    jump_pool: State<'_, JumpPool>,
+    forwards: State<'_, ForwardRegistry>,
     app_handle: AppHandle,
     profile_id: String,
     password: Option<String>,
@@ -1036,18 +1197,39 @@ pub fn rdp_connect(
     // (`rdp-closed-{id}`) antes de lanzar el proceso y no perder un cierre
     // inmediato.
     session_id: String,
+    // Ruta de saltos (ver `ssh_connect`): con saltos, el cliente RDP se lanza
+    // contra un reenvío local que llega al servidor por ellos.
+    jumps: Option<Vec<JumpRequest>>,
+    // Cambios puntuales (ver `ssh_connect`); en la práctica `proxy_jump: ""`
+    // de «Sin saltos», que quita también el bastión de texto del perfil.
+    overrides: Option<ConnectOverrides>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
-        .into_iter()
+        .iter()
         .find(|p| p.id == profile_id)
+        .cloned()
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
     if let Some(cid) = credential_id.as_deref() {
         apply_credential(&mut profile, cid)?;
     }
+    if let Some(ov) = overrides.as_ref() {
+        apply_connect_overrides(&mut profile, ov);
+    }
     credentials::substitute_connection_fields(&mut profile, &cred_state);
 
     let password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
+    let forward = external_forward(
+        "RDP",
+        &profiles,
+        &profile,
+        password.as_deref(),
+        jumps.as_deref(),
+        &cred_state,
+        &jump_pool,
+        &forwards,
+    )
+    .await?;
 
     rdp_state.launch(
         crate::rdp_manager::RdpTarget {
@@ -1067,11 +1249,67 @@ pub fn rdp_connect(
                     .filter(|v| !v.trim().is_empty())
                     .or(display.as_deref()),
             ),
+            forward,
         },
         app_handle,
     )?;
 
     Ok(session_id)
+}
+
+/// Reenvío local de un cliente externo (RDP, VNC, Telnet) por su ruta de
+/// saltos, o `None` si va directo. Conecta la cadena antes de volver, así que
+/// sus errores (host key, contraseña, túneles prohibidos) llegan aquí.
+// Los argumentos son los de los tres comandos que lo llaman; agruparlos sería
+// otro struct de ida y vuelta para una función privada.
+#[allow(clippy::too_many_arguments)]
+async fn external_forward(
+    kind: &str,
+    profiles: &[ConnectionProfile],
+    profile: &ConnectionProfile,
+    password: Option<&str>,
+    jumps: Option<&[JumpRequest]>,
+    store: &CredentialStore,
+    pool: &JumpPool,
+    forwards: &ForwardRegistry,
+) -> Result<Option<crate::jump_forward::LocalForward>, String> {
+    if let Some(message) = text_bastion_without_password(kind, profile, password) {
+        return Err(message);
+    }
+    let routing = app_routing(profiles, profile, password, None, jumps, store, pool)
+        .map_err(|e| e.message)?;
+    if routing.route.is_empty() {
+        return Ok(None);
+    }
+    crate::jump_forward::open_forward_detached(
+        forwards.clone(),
+        routing,
+        profile.host.clone(),
+        profile.port,
+    )
+    .await
+    .map(Some)
+}
+
+/// Un bastión de texto (`proxy_jump`) entra con las credenciales del perfil que
+/// lo declara. En una conexión VNC o Telnet (o un RDP sin contraseña guardada)
+/// no hay contraseña que darle: mejor decirlo antes de conectar que dejar que
+/// el salto falle con un «Se requiere contraseña» que no explica nada.
+fn text_bastion_without_password(
+    kind: &str,
+    profile: &ConnectionProfile,
+    password: Option<&str>,
+) -> Option<String> {
+    let spec = crate::ssh_transport::jump_spec(profile)?;
+    let applies = crate::jump_route::profile_jump_id(profile).is_none()
+        && profile.auth_type == AuthType::Password
+        && password.is_none_or(str::is_empty);
+    applies.then(|| {
+        format!(
+            "El bastión {spec} de esta conexión {kind} entra con sus credenciales, y no tiene \
+             contraseña que darle: guarda el bastión como conexión SSH y elígelo como salto."
+        )
+    })
 }
 
 /// Termina el proceso RDP asociado a la sesión
@@ -1097,26 +1335,48 @@ pub fn rdp_forget_cert(host: String, port: u16) -> Result<bool, String> {
 
 /// Lanza el visor VNC externo del sistema y devuelve el session_id.
 /// El backend emitirá `vnc-closed-{id}` cuando el proceso externo termine.
+// `async` por la ruta de saltos, como `rdp_connect`.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn vnc_connect(
+pub async fn vnc_connect(
     vnc_state: State<'_, VncManager>,
     profile_state: State<'_, ProfileManager>,
     cred_state: State<'_, CredentialStore>,
+    jump_pool: State<'_, JumpPool>,
+    forwards: State<'_, ForwardRegistry>,
     app_handle: AppHandle,
     profile_id: String,
     credential_id: Option<String>,
     // Preasignado por el frontend (ver `rdp_connect`).
     session_id: String,
+    // Ruta de saltos y cambios puntuales (ver `rdp_connect`).
+    jumps: Option<Vec<JumpRequest>>,
+    overrides: Option<ConnectOverrides>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
-        .into_iter()
+        .iter()
         .find(|p| p.id == profile_id)
+        .cloned()
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
     if let Some(cid) = credential_id.as_deref() {
         apply_credential(&mut profile, cid)?;
     }
+    if let Some(ov) = overrides.as_ref() {
+        apply_connect_overrides(&mut profile, ov);
+    }
     credentials::substitute_connection_fields(&mut profile, &cred_state);
+    let forward = external_forward(
+        "VNC",
+        &profiles,
+        &profile,
+        None,
+        jumps.as_deref(),
+        &cred_state,
+        &jump_pool,
+        &forwards,
+    )
+    .await?;
 
     vnc_state.launch(
         session_id.clone(),
@@ -1124,6 +1384,7 @@ pub fn vnc_connect(
         &profile.host,
         profile.port,
         app_handle,
+        forward,
     )?;
     Ok(session_id)
 }
@@ -1138,26 +1399,48 @@ pub fn vnc_disconnect(vnc_state: State<'_, VncManager>, session_id: String) -> R
 
 /// Lanza el cliente Telnet externo (en un emulador de terminal) y devuelve el
 /// session_id. El backend emitirá `telnet-closed-{id}` al terminar el proceso.
+// `async` por la ruta de saltos, como `rdp_connect`.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn telnet_connect(
+pub async fn telnet_connect(
     telnet_state: State<'_, TelnetManager>,
     profile_state: State<'_, ProfileManager>,
     cred_state: State<'_, CredentialStore>,
+    jump_pool: State<'_, JumpPool>,
+    forwards: State<'_, ForwardRegistry>,
     app_handle: AppHandle,
     profile_id: String,
     credential_id: Option<String>,
     // Preasignado por el frontend (ver `rdp_connect`).
     session_id: String,
+    // Ruta de saltos y cambios puntuales (ver `rdp_connect`).
+    jumps: Option<Vec<JumpRequest>>,
+    overrides: Option<ConnectOverrides>,
 ) -> Result<String, String> {
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
-        .into_iter()
+        .iter()
         .find(|p| p.id == profile_id)
+        .cloned()
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
     if let Some(cid) = credential_id.as_deref() {
         apply_credential(&mut profile, cid)?;
     }
+    if let Some(ov) = overrides.as_ref() {
+        apply_connect_overrides(&mut profile, ov);
+    }
     credentials::substitute_connection_fields(&mut profile, &cred_state);
+    let forward = external_forward(
+        "Telnet",
+        &profiles,
+        &profile,
+        None,
+        jumps.as_deref(),
+        &cred_state,
+        &jump_pool,
+        &forwards,
+    )
+    .await?;
 
     telnet_state.launch(
         session_id.clone(),
@@ -1165,6 +1448,7 @@ pub fn telnet_connect(
         &profile.host,
         profile.port,
         app_handle,
+        forward,
     )?;
     Ok(session_id)
 }
@@ -1261,18 +1545,53 @@ pub async fn sftp_connect(
     ask_answers: Option<std::collections::HashMap<String, String>>,
     max_concurrent: Option<usize>,
     credential_id: Option<String>,
+    // Ruta de saltos que calcula la interfaz (salto activo, «Conectar a través
+    // de», ruta propia del perfil). `None` = solo la ruta propia del perfil.
+    jumps: Option<Vec<JumpRequest>>,
+    // Cambios puntuales de la sesión de la que cuelga el panel; en la práctica
+    // `proxy_jump: ""` cuando la sesión se abrió «Sin saltos».
+    overrides: Option<ConnectOverrides>,
+    jump_pool: State<'_, JumpPool>,
 ) -> Result<String, IpcError> {
     let profiles = profile_state.load_all()?;
     let mut profile = profiles
-        .into_iter()
+        .iter()
         .find(|p| p.id == profile_id)
+        .cloned()
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
     if let Some(cid) = credential_id.as_deref() {
         apply_credential(&mut profile, cid)?;
     }
+    if let Some(ov) = overrides.as_ref() {
+        apply_connect_overrides(&mut profile, ov);
+    }
     credentials::substitute_connection_fields(&mut profile, &cred_state);
 
     let password = resolve_profile_password(&profile, &cred_state, password, ask_answers)?;
+    let routing = if crate::jump_route::can_be_jump(&profile) {
+        app_routing(
+            &profiles,
+            &profile,
+            password.as_deref(),
+            passphrase.as_deref(),
+            jumps.as_deref(),
+            &cred_state,
+            &jump_pool,
+        )?
+    } else if jumps.as_deref().is_some_and(|j| !j.is_empty()) {
+        // FTP/FTPS no pueden ir por un salto: los datos de FTP pasivo usan
+        // otros puertos. La interfaz decide (directo con aviso, o bloquear);
+        // si aun así llega una ruta, se dice en vez de salir directo a callar.
+        return Err(IpcError::new(
+            IpcErrorKind::Protocol,
+            format!(
+                "Las conexiones {} no pueden ir por un salto SSH: conecta sin saltos.",
+                profile.connection_type.to_uppercase()
+            ),
+        ));
+    } else {
+        Routing::direct()
+    };
 
     let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     // Concurrencia de transferencia por sesión. Default 4 (conservador para
@@ -1288,6 +1607,7 @@ pub async fn sftp_connect(
             elevated.unwrap_or(false),
             max_parallelism,
             app_handle,
+            routing,
         )
         .await?;
     Ok(session_id)
@@ -3377,9 +3697,12 @@ pub fn scripts_preview(
 /// Lanza el fan-out de un script sobre los `profile_ids` (ya resueltos por el
 /// frontend). Spawnea las tareas y devuelve enseguida: el progreso llega por los
 /// eventos `script-*-{run_id}`.
+///
+/// `async`, como `ssh_connect`: los secretos de los destinos y de sus saltos
+/// salen del keyring, y eso no debe frenar el hilo principal.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn scripts_run(
+pub async fn scripts_run(
     app: AppHandle,
     state: State<'_, ScriptManager>,
     profiles_state: State<'_, ProfileManager>,
@@ -3388,6 +3711,12 @@ pub fn scripts_run(
     run_id: String,
     profile_ids: Vec<String>,
     options: RunOptions,
+    // Ruta de saltos de cada host (id de perfil destino → ids de los perfiles-
+    // salto, en orden), como la calcula la interfaz. Un host sin entrada (o sin
+    // el mapa) sale por su ruta propia. Los secretos de los saltos salen del
+    // keyring/KeePass/maestra, como los de los destinos.
+    routes: Option<std::collections::HashMap<String, Vec<String>>>,
+    jump_pool: State<'_, JumpPool>,
 ) -> Result<(), String> {
     let script = state
         .get(&script_id)?
@@ -3422,10 +3751,31 @@ pub fn scripts_run(
             }
             None => resolve_connection_credentials(&profile, &cred_state, &options.params)?,
         };
+        let jumps: Option<Vec<JumpRequest>> = routes.as_ref().and_then(|r| r.get(pid)).map(|ids| {
+            ids.iter()
+                .map(|id| JumpRequest {
+                    profile_id: id.clone(),
+                    password: None,
+                    passphrase: None,
+                    ask_answers: Some(options.params.clone()),
+                })
+                .collect()
+        });
+        let routing = app_routing(
+            &profiles,
+            &profile,
+            password.as_deref(),
+            passphrase.as_deref(),
+            jumps.as_deref(),
+            &cred_state,
+            &jump_pool,
+        )
+        .map_err(|e| format!("{}: {}", profile.name, e.message))?;
         hosts.push(crate::scripts::runner::ResolvedHost {
             profile,
             password,
             passphrase,
+            routing,
         });
     }
     if hosts.is_empty() {
@@ -3486,11 +3836,23 @@ pub fn scripts_history_clear(state: State<'_, ScriptManager>) -> Result<(), Stri
 /// Resuelve las credenciales de CONEXIÓN de un perfil para el motor de scripts:
 /// contraseña (keyring/KeePass/maestra, con sustitución de `${}`) y passphrase de
 /// clave privada (keyring). No expone nada; se pasa directamente al runner.
-fn resolve_connection_credentials(
+pub(crate) fn resolve_connection_credentials(
     profile: &ConnectionProfile,
     store: &CredentialStore,
     params: &std::collections::HashMap<String, String>,
 ) -> Result<(Option<String>, Option<String>), String> {
+    let password = resolve_stored_password(profile, store, params)?;
+    Ok((password, stored_passphrase(profile)))
+}
+
+/// La contraseña guardada del perfil: la propia del keyring (origen `Own` sin
+/// KeePass) pasada por el motor de sustitución, o la de KeePass o la credencial
+/// maestra (`resolve_profile_password`).
+pub(crate) fn resolve_stored_password(
+    profile: &ConnectionProfile,
+    store: &CredentialStore,
+    params: &std::collections::HashMap<String, String>,
+) -> Result<Option<String>, String> {
     let has_keepass = profile
         .keepass_entry_uuid
         .as_deref()
@@ -3504,16 +3866,17 @@ fn resolve_connection_credentials(
     } else {
         None
     };
-    let password = resolve_profile_password(profile, store, stored_pw, Some(params.clone()))?;
+    resolve_profile_password(profile, store, stored_pw, Some(params.clone()))
+}
 
-    let passphrase = if profile.auth_type == AuthType::PublicKey {
-        keyring::Entry::new(keyring_scope::SERVICE, &format!("passphrase:{}", profile.id))
-            .ok()
-            .and_then(|e| e.get_password().ok())
-    } else {
-        None
-    };
-    Ok((password, passphrase))
+/// La passphrase guardada de la clave del perfil (solo si autentica por clave).
+pub(crate) fn stored_passphrase(profile: &ConnectionProfile) -> Option<String> {
+    if profile.auth_type != AuthType::PublicKey {
+        return None;
+    }
+    keyring::Entry::new(keyring_scope::SERVICE, &format!("passphrase:{}", profile.id))
+        .ok()
+        .and_then(|e| e.get_password().ok())
 }
 
 /// Resuelve las credenciales alternativas de un run de scripts a
@@ -3880,6 +4243,50 @@ mod tests {
         }
         let ok = local_path_join(base.clone(), "informe.pdf".into()).unwrap();
         assert_eq!(PathBuf::from(ok), PathBuf::from(&base).join("informe.pdf"));
+    }
+
+    fn vnc_profile(proxy_jump: Option<&str>) -> ConnectionProfile {
+        let mut profile: ConnectionProfile = serde_json::from_value(serde_json::json!({
+            "id": "vnc", "name": "Escritorio", "host": "10.0.0.7", "port": 5900,
+            "username": "", "connection_type": "vnc", "domain": null,
+            "auth_type": "password", "key_path": null, "group": null,
+            "created_at": "2026-10-26T00:00:00Z"
+        }))
+        .expect("perfil");
+        profile.proxy_jump = proxy_jump.map(str::to_string);
+        profile
+    }
+
+    #[test]
+    fn un_bastion_de_texto_sin_contrasena_se_avisa_antes_de_conectar() {
+        // VNC no lleva contraseña: su bastión de texto no podría entrar.
+        let texted = vnc_profile(Some("ops@gw"));
+        let msg = text_bastion_without_password("VNC", &texted, None).expect("aviso");
+        assert!(msg.contains("ops@gw") && msg.contains("VNC"), "{msg}");
+        assert!(!msg.contains("  "), "sin espacios de más: {msg}");
+        // Con contraseña (un RDP que la guarda), sin bastión de texto, o con
+        // bastión de perfil (que manda), no hay nada que avisar.
+        assert!(text_bastion_without_password("RDP", &texted, Some("pw")).is_none());
+        assert!(text_bastion_without_password("VNC", &vnc_profile(None), None).is_none());
+        let mut profiled = texted.clone();
+        profiled.proxy_jump_profile_id = Some("salto".into());
+        assert!(text_bastion_without_password("VNC", &profiled, None).is_none());
+        // «Sin saltos» (`proxy_jump: ""`) quita el bastión de texto antes de
+        // mirarlo, y también el de perfil.
+        let mut direct = profiled;
+        apply_connect_overrides(
+            &mut direct,
+            &ConnectOverrides {
+                username: None,
+                port: None,
+                proxy_jump: Some(String::new()),
+                auth_type: None,
+                key_path: None,
+            },
+        );
+        assert_eq!(direct.proxy_jump, None);
+        assert_eq!(direct.proxy_jump_profile_id, None);
+        assert!(text_bastion_without_password("VNC", &direct, None).is_none());
     }
 
     fn health_target(id: &str, port: u16) -> HealthTarget {

@@ -30,9 +30,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::credentials::{self, CredentialKind, CredentialStore};
 use crate::host_keys;
+use crate::jump_route::{self, HopSecrets, JumpRoute, RouteChoice};
 use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManager};
 use crate::remote_launch::{self, SessionLaunch};
-use crate::ssh_manager::{authenticate_handle, legacy_preferred, parse_jump_spec, send_env_vars};
+use crate::ssh_manager::{authenticate_handle, legacy_preferred, send_env_vars};
+use crate::ssh_transport::{Hop, RoutedHandle};
 use crate::workspace_index;
 
 use crate::keyring_scope::SERVICE as KEYRING_SERVICE;
@@ -115,6 +117,24 @@ struct RunOptions {
     /// `--host-key <huella>`: la huella SHA256 que debe tener el servidor, ya
     /// normalizada. Con ella known_hosts no interviene (ver `host_keys`).
     host_key: Option<String>,
+    /// Por dónde sale la conexión: `-J`, `--direct` o, sin ellos, el salto
+    /// activo de la app y la ruta propia del perfil.
+    jump: CliJump,
+}
+
+/// Salto de la conexión pedido en la línea de órdenes.
+#[derive(Debug, Clone, Default, PartialEq)]
+enum CliJump {
+    /// El salto activo que dejó la app (`jump-settings.json`) delante de la
+    /// ruta propia del perfil (`proxy_jump_profile_id`, `proxy_jump`).
+    #[default]
+    Auto,
+    /// `--direct`: ningún salto, tampoco el bastión de texto del perfil.
+    Direct,
+    /// `-J <perfil|[user@]host[:port]>`: a través de ese perfil (por nombre o
+    /// id) o, si no es ninguno, de esa dirección con las credenciales del
+    /// destino, como `ssh -J`.
+    Via(String),
 }
 
 impl Default for RunOptions {
@@ -130,6 +150,7 @@ impl Default for RunOptions {
             recursive: false,
             accept_host_key: false,
             host_key: None,
+            jump: CliJump::Auto,
         }
     }
 }
@@ -163,6 +184,8 @@ struct CliSecrets {
     /// resueltos: sus valores pueden salir de `${secret:}`, por eso viajan
     /// aquí. Vacío en las transferencias, que no abren terminal.
     launch: SessionLaunch,
+    /// Saltos hasta el servidor, con los secretos de cada uno. Vacía = directa.
+    route: JumpRoute,
 }
 
 /// De dónde sale el stdin del comando remoto.
@@ -384,6 +407,32 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
             "--all" => selector.all = true,
             "--dry-run" => dry_run = true,
             "--accept-host-key" => opts.accept_host_key = true,
+            "--direct" => {
+                if matches!(opts.jump, CliJump::Via(_)) {
+                    return invalid("-J y --direct son excluyentes.");
+                }
+                opts.jump = CliJump::Direct;
+            }
+            "-J" | "--jump" => {
+                i += 1;
+                let raw = match value(&args, i, "-J") {
+                    Ok(v) => v.trim(),
+                    Err(e) => return invalid(e),
+                };
+                match opts.jump {
+                    CliJump::Direct => return invalid("-J y --direct son excluyentes."),
+                    CliJump::Via(_) => {
+                        return invalid(
+                            "Solo se admite un -J: para una cadena, dale al perfil del salto su propio bastion.",
+                        )
+                    }
+                    CliJump::Auto => {}
+                }
+                if raw.is_empty() {
+                    return invalid("-J necesita un valor.");
+                }
+                opts.jump = CliJump::Via(raw.to_string());
+            }
             "--host-key" => {
                 i += 1;
                 let raw = match value(&args, i, "--host-key") {
@@ -527,7 +576,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
         return CliCommand::Help;
     }
     if let Some(path) = import {
-        if list || query.is_some() || command.is_some() || script.is_some() || transfer.is_some() || selector.group.is_some() || selector.all || opts.ndjson || opts.recursive || opts.accept_host_key || opts.host_key.is_some() {
+        if list || query.is_some() || command.is_some() || script.is_some() || transfer.is_some() || selector.group.is_some() || selector.all || opts.ndjson || opts.recursive || opts.accept_host_key || opts.host_key.is_some() || opts.jump != CliJump::Auto {
             return invalid("--import solo se combina con --workspace, --dry-run, --json y -q.");
         }
         return CliCommand::Import {
@@ -548,6 +597,9 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
     }
     if list && (opts.accept_host_key || opts.host_key.is_some()) {
         return invalid("-l no conecta a nada: --accept-host-key y --host-key no pintan aqui.");
+    }
+    if list && opts.jump != CliJump::Auto {
+        return invalid("-l no conecta a nada: -J y --direct no pintan aqui.");
     }
     if opts.host_key.is_some() && query.is_none() {
         return invalid("--host-key solo vale con -c <perfil>: una huella es de un unico servidor.");
@@ -695,6 +747,8 @@ Uso:
   rustty -c <perfil> --get <remoto> <local>   Descarga un fichero por SFTP
   rustty -c <perfil> --put <local> <remoto>   Sube un fichero por SFTP
   rustty -c <perfil> -r --get <dir> <local>   ...o una carpeta entera con -r (tambien --put)
+  rustty -c <perfil> -J <salto>               Conecta a traves de un salto (perfil o [user@]host[:port])
+  rustty -c <perfil> --direct                 Conecta sin ningun salto (ni el activo ni el del perfil)
   rustty --workspace <w> --exec "cmd"         Ejecuta en todos los perfiles SSH del workspace
   rustty --group <g> --exec "cmd"             ...o de la carpeta (y subcarpetas); --all = todos
   rustty --import <fichero.json|->            Importa perfiles a un workspace NUEVO import_<fecha>
@@ -714,6 +768,10 @@ Opciones:
                       clave que haya CAMBIADO se sigue rechazando
   --host-key <huella> Solo acepta esa huella SHA256 del servidor (con -c); no consulta ni
                       escribe known_hosts, como plink -hostkey
+  -J, --jump <salto>  A traves de ese perfil SSH/SFTP (nombre o id exactos; su propio bastion va
+                      delante) o, si no es ningun perfil, de esa direccion [user@]host[:port] con
+                      las credenciales del destino, como ssh -J
+  --direct            Sin saltos: ni el salto activo de la app ni el bastion del perfil
 
 Codigos de salida: el del comando remoto; 255 si no conecta; 124 por --timeout; 2 por uso
 incorrecto. En multi-host, 0 si todos acabaron en 0 y 1 si alguno no; en una copia con -r,
@@ -727,7 +785,12 @@ tipo elegido, se usa el TERM local); los valores ${{ask:}} se preguntan por la t
 Host keys: una huella nueva se pregunta por la terminal; sin terminal (script, cron, tuberia)
 se rechaza, salvo con --accept-host-key, --host-key, o la confirmacion desactivada en
 Preferencias > Seguridad. La contrasena del perfil vale tambien en servidores que solo admiten
-keyboard-interactive (PAM); un segundo factor se pregunta por la terminal."#
+keyboard-interactive (PAM); un segundo factor se pregunta por la terminal.
+
+Saltos: sin -J ni --direct, la conexion sale por el salto activo de la app (si hay uno y el
+perfil no lo excluye) y despues por el bastion del perfil (de perfil o de texto). Cada salto se
+autentica con sus propias credenciales guardadas (keyring o credencial maestra; si faltan, se
+preguntan por la terminal) y su host key se verifica contra known_hosts."#
     );
 }
 
@@ -1014,6 +1077,7 @@ fn resolve_secrets(profile: &ConnectionProfile) -> Result<CliSecrets, String> {
         password,
         passphrase,
         launch: SessionLaunch::default(),
+        route: JumpRoute::default(),
     })
 }
 
@@ -1184,14 +1248,170 @@ fn client_config(profile: &ConnectionProfile) -> Arc<client::Config> {
     })
 }
 
-fn announce(profile: &ConnectionProfile, opts: &RunOptions) {
+fn announce(profile: &ConnectionProfile, route: &JumpRoute, opts: &RunOptions) {
     if opts.quiet || opts.machine() {
         return;
     }
-    eprintln!(
-        "Conectando a {} ({}@{}:{})...",
-        profile.name, profile.username, profile.host, profile.port
-    );
+    if route.is_empty() {
+        eprintln!(
+            "Conectando a {} ({}@{}:{})...",
+            profile.name, profile.username, profile.host, profile.port
+        );
+    } else {
+        eprintln!(
+            "Conectando a {} ({}@{}:{}) a traves de {}...",
+            profile.name,
+            profile.username,
+            profile.host,
+            profile.port,
+            route.describe()
+        );
+    }
+}
+
+// ─── Saltos ───────────────────────────────────────────────────────────────────
+
+/// Salto activo que dejó la app (`jump-settings.json`), si hay uno.
+fn active_jump() -> Option<String> {
+    crate::jump_pool::load_settings(&crate::resolve_data_dir())
+        .and_then(|settings| settings.active().map(str::to_string))
+}
+
+/// Perfil que nombra `-J`: por id o por nombre exactos (sin distinguir
+/// mayúsculas). Si no es ninguno, `-J` es una dirección de texto. Un nombre que
+/// comparten varios perfiles es un error, como en `-c`: elegir uno a ciegas
+/// sacaría la conexión por un salto que quizá no es el que se quería.
+fn jump_profile_named<'a>(
+    profiles: &'a [ConnectionProfile],
+    value: &str,
+) -> Result<Option<&'a ConnectionProfile>, String> {
+    if let Some(by_id) = profiles.iter().find(|p| p.id.eq_ignore_ascii_case(value)) {
+        return Ok(Some(by_id));
+    }
+    let named: Vec<&ConnectionProfile> = profiles
+        .iter()
+        .filter(|p| p.name.eq_ignore_ascii_case(value))
+        .collect();
+    match named.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(*one)),
+        many => {
+            let mut message = format!("-J '{value}' coincide con varias conexiones:\n");
+            for profile in many.iter().take(12) {
+                message.push_str(&format!(
+                    "  - {}  {}  {}@{}:{}\n",
+                    profile.id, profile.name, profile.username, profile.host, profile.port
+                ));
+            }
+            message.push_str("Indica el id del perfil del salto en lugar del nombre.");
+            Err(message)
+        }
+    }
+}
+
+/// Calcula la ruta de saltos de cada servidor de una invocación. Los secretos
+/// de un perfil-salto se resuelven (y, si faltan, se preguntan) **una** vez
+/// aunque lo usen varios servidores del multi-host.
+struct CliRouter<'a> {
+    profiles: &'a [ConnectionProfile],
+    jump: &'a CliJump,
+    active: Option<String>,
+    store: &'a CredentialStore,
+    cache: HashMap<String, HopSecrets>,
+}
+
+impl<'a> CliRouter<'a> {
+    fn new(profiles: &'a [ConnectionProfile], jump: &'a CliJump, store: &'a CredentialStore) -> Self {
+        let active = match jump {
+            CliJump::Auto => active_jump(),
+            CliJump::Direct | CliJump::Via(_) => None,
+        };
+        CliRouter {
+            profiles,
+            jump,
+            active,
+            store,
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Ruta de `profile` (ya preparado): las reglas de la app para el salto
+    /// activo y la ruta propia, o lo que diga `-J`/`--direct`. Un salto de texto
+    /// del destino (o el de `-J` con una dirección) usa sus credenciales.
+    fn route(&mut self, profile: &ConnectionProfile, secrets: &CliSecrets) -> Result<JumpRoute, String> {
+        let mut target = profile.clone();
+        let ids = match self.jump {
+            CliJump::Direct => {
+                target.proxy_jump = None;
+                jump_route::jump_ids(self.profiles, &target, RouteChoice::Direct)
+                    .map_err(|e| e.to_string())?
+            }
+            CliJump::Via(value) => match jump_profile_named(self.profiles, value)? {
+                Some(via) => jump_route::jump_ids(self.profiles, &target, RouteChoice::Via(&via.id))
+                    .map_err(|e| e.to_string())?,
+                None => {
+                    target.proxy_jump = Some(value.clone());
+                    target.proxy_jump_profile_id = None;
+                    Vec::new()
+                }
+            },
+            CliJump::Auto => jump_route::jump_ids(
+                self.profiles,
+                &target,
+                RouteChoice::Auto {
+                    active: self.active.as_deref(),
+                },
+            )
+            .map_err(|e| {
+                if self.active.is_some() {
+                    format!("{e} (salto activo de la app; usa --direct o -J para conectar de otra forma)")
+                } else {
+                    e.to_string()
+                }
+            })?,
+        };
+        let store = self.store;
+        let cache = &mut self.cache;
+        jump_route::route_with(
+            self.profiles,
+            &target,
+            HopSecrets {
+                password: secrets.password.clone(),
+                passphrase: secrets.passphrase.clone(),
+                unavailable: None,
+            },
+            Some(&ids),
+            &mut |p| prepare_profile(p, store),
+            &mut |p| {
+                cache
+                    .entry(p.id.clone())
+                    .or_insert_with(|| match resolve_secrets(p) {
+                        Ok(found) => HopSecrets {
+                            password: found.password,
+                            passphrase: found.passphrase,
+                            unavailable: None,
+                        },
+                        Err(err) => HopSecrets {
+                            unavailable: Some(err),
+                            ..HopSecrets::default()
+                        },
+                    })
+                    .clone()
+            },
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    /// Completa los secretos de un servidor con su ruta.
+    fn attach(
+        &mut self,
+        secrets: Result<CliSecrets, String>,
+        profile: &ConnectionProfile,
+    ) -> Result<CliSecrets, String> {
+        let mut secrets = secrets?;
+        secrets.route = self.route(profile, &secrets)?;
+        Ok(secrets)
+    }
 }
 
 fn build_runtime() -> Result<tokio::runtime::Runtime, String> {
@@ -1229,7 +1449,11 @@ async fn run_ssh_session(
     host_key: Option<String>,
 ) -> Result<(), String> {
     let config = client_config(&profile);
-    let mut handle = connect_handle(&profile, config, &secrets, host_key.as_deref()).await?;
+    // `_jump_lease`: la cadena de saltos vive lo que la sesión.
+    let RoutedHandle {
+        mut handle,
+        lease: _jump_lease,
+    } = connect_handle(&profile, config, &secrets, host_key.as_deref()).await?;
     authenticate_target(&mut handle, &profile, &secrets).await?;
 
     let mut channel = handle
@@ -1377,7 +1601,10 @@ async fn exec_remote(
     capture: bool,
 ) -> Result<ExecOutcome, ExecError> {
     let config = client_config(profile);
-    let mut handle = connect_handle(profile, config, secrets, opts.host_key.as_deref())
+    let RoutedHandle {
+        mut handle,
+        lease: _jump_lease,
+    } = connect_handle(profile, config, secrets, opts.host_key.as_deref())
         .await
         .map_err(ExecError::Connect)?;
     authenticate_target(&mut handle, profile, secrets)
@@ -1711,6 +1938,7 @@ fn connect_single(
         ));
     }
     let workspace = catalog.workspace_ref(&profile);
+    let mut router = CliRouter::new(&catalog.profiles, &opts.jump, &store);
     match remote_command {
         None => {
             if !is_ssh_profile(&profile) {
@@ -1721,7 +1949,8 @@ fn connect_single(
             }
             let mut secrets = resolve_secrets(&profile)?;
             secrets.launch = resolve_cli_launch(&profile, &store, true)?;
-            announce(&profile, &opts);
+            secrets.route = router.route(&profile, &secrets)?;
+            announce(&profile, &secrets.route, &opts);
             match block_on_cli(run_ssh_session(profile, secrets, opts.host_key.clone()))? {
                 Ok(()) => Ok(0),
                 Err(err) => {
@@ -1733,9 +1962,17 @@ fn connect_single(
         Some(remote) => {
             // `--exec`/`--script` sustituyen al comando del perfil; el entorno
             // y el TERM del perfil sí viajan.
-            let secrets = with_cli_launch(resolve_secrets(&profile), &profile, &store);
+            let secrets = router.attach(
+                with_cli_launch(resolve_secrets(&profile), &profile, &store),
+                &profile,
+            );
             let stdin = stdin_mode(&remote, &opts, false)?;
-            announce(&profile, &opts);
+            let direct = JumpRoute::default();
+            announce(
+                &profile,
+                secrets.as_ref().map_or(&direct, |s| &s.route),
+                &opts,
+            );
             let capture = opts.machine();
             let result = block_on_cli(run_host(
                 profile, secrets, remote, stdin, opts.clone(), capture, workspace,
@@ -1770,12 +2007,13 @@ fn run_many(
     // Los secretos se resuelven en serie ANTES de conectar: pueden preguntar por
     // el terminal, y varias preguntas a la vez serían ilegibles.
     let store = cli_credential_store();
+    let mut router = CliRouter::new(&catalog.profiles, &opts.jump, &store);
     let jobs: Vec<(ConnectionProfile, Result<CliSecrets, String>, WorkspaceRef)> = profiles
         .into_iter()
         .map(|p| {
             let ws = catalog.workspace_ref(&p);
             let p = prepare_profile(&p, &store);
-            let secrets = with_cli_launch(resolve_secrets(&p), &p, &store);
+            let secrets = router.attach(with_cli_launch(resolve_secrets(&p), &p, &store), &p);
             (p, secrets, ws)
         })
         .collect();
@@ -2003,9 +2241,11 @@ fn run_transfer_command(
 ) -> Result<i32, String> {
     let catalog = load_catalog()?;
     let candidates = select_profiles(&catalog, selector)?;
-    let profile = prepare_profile(find_profile(&candidates, query)?, &cli_credential_store());
-    let secrets = resolve_secrets(&profile)?;
-    announce(&profile, &opts);
+    let store = cli_credential_store();
+    let profile = prepare_profile(find_profile(&candidates, query)?, &store);
+    let mut secrets = resolve_secrets(&profile)?;
+    secrets.route = CliRouter::new(&catalog.profiles, &opts.jump, &store).route(&profile, &secrets)?;
+    announce(&profile, &secrets.route, &opts);
     let runtime = build_runtime()?;
     let started = Instant::now();
     let (op_name, local, remote) = match &op {
@@ -2107,7 +2347,10 @@ async fn transfer(
 ) -> Result<TransferStats, (i32, String)> {
     let connect = |e: String| (EXIT_CONNECT_FAILED, e);
     let config = client_config(profile);
-    let mut handle = connect_handle(profile, config, secrets, host_key)
+    let RoutedHandle {
+        mut handle,
+        lease: _jump_lease,
+    } = connect_handle(profile, config, secrets, host_key)
         .await
         .map_err(connect)?;
     authenticate_target(&mut handle, profile, secrets)
@@ -2440,100 +2683,35 @@ async fn ensure_remote_dir(
 
 // ─── Conexión ─────────────────────────────────────────────────────────────────
 
-/// Conecta (directo o a través del bastión del perfil). `host_key` es la
-/// huella de `--host-key`: se fija en el handler del **destino**; el bastión
-/// se verifica contra known_hosts como siempre, porque es otro servidor.
+/// Conecta, directo o por la ruta de saltos de `secrets` (cada salto con sus
+/// credenciales; sin pool: la cadena es de esta conexión). `host_key` es la
+/// huella de `--host-key`: se fija en el handler del **destino**; los saltos se
+/// verifican contra known_hosts como siempre, porque son otros servidores.
 async fn connect_handle(
     profile: &ConnectionProfile,
     config: Arc<client::Config>,
     secrets: &CliSecrets,
     host_key: Option<&str>,
-) -> Result<client::Handle<host_keys::KnownHostsClient>, String> {
-    let addr = format!("{}:{}", profile.host, profile.port);
-    let proxy_spec = profile
-        .proxy_jump
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-
-    if let Some(spec) = proxy_spec {
-        let (b_user, b_host, b_port) = parse_jump_spec(spec, &profile.username);
-        let bastion_addr = format!("{}:{}", b_host, b_port);
-        let (bastion_handler, bastion_failure) =
-            host_keys::client(b_host.clone(), b_port, false, false);
-        let mut bastion =
-            crate::ssh_manager::russh_connect_addr(config.clone(), &bastion_addr, bastion_handler)
-                .await
-                .map_err(|err| {
-                    host_keys::take_failure(&bastion_failure).unwrap_or_else(|| {
-                        format!("No se puede conectar al bastion {bastion_addr}: {err}")
-                    })
-                })?;
-
-        match authenticate_handle(
-            &mut bastion,
-            &profile.auth_type,
-            &b_user,
-            &b_host,
-            secrets.password.as_ref(),
-            secrets.passphrase.as_ref(),
-            profile.key_path.as_deref(),
-        )
-        .await
-        .map_err(|e| format!("Bastion: {e}"))?
-        {
-            AuthResult::Success => {}
-            AuthResult::Failure {
-                remaining_methods, ..
-            } => {
-                return Err(format!(
-                    "Autenticacion contra bastion fallida. Metodos restantes: {:?}",
-                    remaining_methods
-                ));
-            }
+) -> Result<RoutedHandle, String> {
+    let host_key_check = |hop: Hop, host: &str, port: u16| match hop {
+        Hop::Target => {
+            let (mut handler, failure) =
+                host_keys::client(host.to_string(), port, profile.agent_forwarding, false);
+            handler.expect_fingerprint(host_key.map(str::to_string));
+            (handler, failure)
         }
-
-        let channel = bastion
-            .channel_open_direct_tcpip(
-                profile.host.clone(),
-                profile.port as u32,
-                "127.0.0.1".to_string(),
-                0,
-            )
-            .await
-            .map_err(|e| {
-                format!("No se pudo abrir direct-tcpip hacia {addr} a traves del bastion: {e}")
-            })?;
-        let stream = channel.into_stream();
-        let (mut target_handler, target_failure) = host_keys::client(
-            profile.host.clone(),
-            profile.port,
-            profile.agent_forwarding,
-            false,
-        );
-        target_handler.expect_fingerprint(host_key.map(str::to_string));
-        client::connect_stream(config, stream, target_handler)
-            .await
-            .map_err(|err| {
-                host_keys::take_failure(&target_failure).unwrap_or_else(|| {
-                    format!("No se puede establecer SSH con {addr} a traves del bastion: {err}")
-                })
-            })
-    } else {
-        let (mut client_handler, host_key_failure) = host_keys::client(
-            profile.host.clone(),
-            profile.port,
-            profile.agent_forwarding,
-            false,
-        );
-        client_handler.expect_fingerprint(host_key.map(str::to_string));
-        crate::ssh_manager::russh_connect_addr(config, &addr, client_handler)
-            .await
-            .map_err(|err| {
-                host_keys::take_failure(&host_key_failure)
-                    .unwrap_or_else(|| format!("No se puede conectar a {addr}: {err}"))
-            })
-    }
+        Hop::Jump { .. } => crate::ssh_transport::default_host_key_check(hop, host, port),
+    };
+    crate::ssh_transport::connect_profile_handle(
+        profile,
+        &secrets.route,
+        None,
+        config,
+        &host_key_check,
+        &crate::ssh_transport::no_stage_log,
+    )
+    .await
+    .map_err(|err| err.message)
 }
 
 async fn authenticate_target(
@@ -2644,7 +2822,7 @@ mod tests {
         assert_eq!(ready.username, "deploy");
         let jump = ready.proxy_jump.as_deref().unwrap();
         assert_eq!(
-            parse_jump_spec(jump, &ready.username),
+            crate::ssh_manager::parse_jump_spec(jump, &ready.username),
             ("admin".to_string(), "bastion.corp.example".to_string(), 2222)
         );
         // El original no cambia: el listado y la búsqueda casan con lo guardado.
@@ -3002,6 +3180,155 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn el_salto_se_elige_con_j_o_se_quita_con_direct() {
+        match parse_cli_command(&args(&["-c", "web", "-J", "oficina", "--exec", "id"])) {
+            Some(CliCommand::Connect { opts, .. }) => {
+                assert_eq!(opts.jump, CliJump::Via("oficina".into()));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+        match parse_cli_command(&args(&["-c", "web", "--jump", "ops@10.0.0.1:2222"])) {
+            Some(CliCommand::Connect { opts, .. }) => {
+                assert_eq!(opts.jump, CliJump::Via("ops@10.0.0.1:2222".into()));
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+        // `--direct` vale también en multi-host y en --get/--put.
+        assert!(matches!(
+            parse_cli_command(&args(&["--all", "--direct", "--exec", "uptime"])),
+            Some(CliCommand::Run { opts, .. }) if opts.jump == CliJump::Direct
+        ));
+        assert!(matches!(
+            parse_cli_command(&args(&["-c", "nas", "--direct", "--get", "/a", "./b"])),
+            Some(CliCommand::Transfer { opts, .. }) if opts.jump == CliJump::Direct
+        ));
+        // Sin nada, el de siempre: salto activo y ruta propia.
+        assert!(matches!(
+            parse_cli_command(&args(&["-c", "web"])),
+            Some(CliCommand::Connect { opts, .. }) if opts.jump == CliJump::Auto
+        ));
+        for bad in [
+            vec!["-c", "web", "-J", "a", "--direct"],
+            vec!["-c", "web", "--direct", "-J", "a"],
+            vec!["-c", "web", "-J", "a", "-J", "b"],
+            vec!["-c", "web", "-J"],
+            vec!["-c", "web", "-J", "  "],
+            vec!["-l", "--direct"],
+            vec!["--import", "f.json", "-J", "a"],
+        ] {
+            assert!(
+                matches!(parse_cli_command(&args(&bad)), Some(CliCommand::Invalid(_))),
+                "{bad:?}"
+            );
+        }
+    }
+
+    /// Router de la CLI sin leer el `jump-settings.json` del usuario: el salto
+    /// activo se le da a mano.
+    fn router<'a>(
+        profiles: &'a [ConnectionProfile],
+        jump: &'a CliJump,
+        active: Option<&str>,
+        store: &'a CredentialStore,
+    ) -> CliRouter<'a> {
+        CliRouter {
+            profiles,
+            jump,
+            active: active.map(str::to_string),
+            store,
+            cache: HashMap::new(),
+        }
+    }
+
+    fn no_secrets() -> CliSecrets {
+        CliSecrets {
+            password: None,
+            passphrase: None,
+            launch: SessionLaunch::default(),
+            route: JumpRoute::default(),
+        }
+    }
+
+    #[test]
+    fn la_cli_sigue_las_reglas_del_salto_activo_y_de_j() {
+        let dir = std::env::temp_dir().join(format!("rustty-cli-jump-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = CredentialStore::new(dir.clone());
+        // Con agente no hay secreto que leer del keyring ni que preguntar.
+        let mut oficina = profile("oficina", "default", None, "ssh");
+        oficina.auth_type = AuthType::Agent;
+        let mut web = profile("web", "default", None, "ssh");
+        web.auth_type = AuthType::Agent;
+        let mut texted = profile("texto", "default", None, "ssh");
+        texted.auth_type = AuthType::Agent;
+        texted.proxy_jump = Some("gw.lan".into());
+        let mut ignorer = profile("aparte", "default", None, "ssh");
+        ignorer.auth_type = AuthType::Agent;
+        ignorer.ignore_active_jump = true;
+        let profiles = vec![oficina.clone(), web.clone(), texted.clone(), ignorer.clone()];
+        let secrets = no_secrets();
+
+        // Salto activo: delante del destino y de su bastión de texto.
+        let auto = CliJump::Auto;
+        let route = router(&profiles, &auto, Some("id-oficina"), &store)
+            .route(&web, &secrets)
+            .unwrap();
+        assert_eq!(route.describe(), "oficina");
+        let route = router(&profiles, &auto, Some("id-oficina"), &store)
+            .route(&texted, &secrets)
+            .unwrap();
+        assert_eq!(route.describe(), "oficina → gw.lan");
+        // Un perfil que lo excluye, y el propio salto, van por su ruta.
+        let mut r = router(&profiles, &auto, Some("id-oficina"), &store);
+        assert!(r.route(&ignorer, &secrets).unwrap().is_empty());
+        assert!(r.route(&oficina, &secrets).unwrap().is_empty());
+        // Un salto activo borrado es un error que dice cómo salir de él.
+        let err = router(&profiles, &auto, Some("borrado"), &store)
+            .route(&web, &secrets)
+            .unwrap_err();
+        assert!(err.contains("--direct"), "{err}");
+
+        // --direct quita también el bastión de texto del perfil.
+        let direct = CliJump::Direct;
+        assert!(router(&profiles, &direct, None, &store)
+            .route(&texted, &secrets)
+            .unwrap()
+            .is_empty());
+
+        // -J con el nombre de un perfil (sin distinguir mayúsculas)…
+        let via = CliJump::Via("OFICINA".into());
+        let route = router(&profiles, &via, None, &store)
+            .route(&web, &secrets)
+            .unwrap();
+        assert_eq!(route.hops[0].profile_id.as_deref(), Some("id-oficina"));
+        // Un nombre que comparten dos perfiles es ambiguo (como en -c); su id
+        // no.
+        let mut twin = oficina.clone();
+        twin.id = "id-oficina-2".into();
+        let twins = vec![oficina.clone(), twin, web.clone()];
+        let err = router(&twins, &via, None, &store)
+            .route(&web, &secrets)
+            .unwrap_err();
+        assert!(err.contains("varias conexiones") && err.contains("id-oficina-2"), "{err}");
+        let by_id = CliJump::Via("id-oficina-2".into());
+        let route = router(&twins, &by_id, None, &store)
+            .route(&web, &secrets)
+            .unwrap();
+        assert_eq!(route.hops[0].profile_id.as_deref(), Some("id-oficina-2"));
+        // …o una dirección, con las credenciales del destino, como ssh -J.
+        let via = CliJump::Via("ops@10.0.0.1:2222".into());
+        let route = router(&profiles, &via, None, &store)
+            .route(&texted, &secrets)
+            .unwrap();
+        assert_eq!(route.len(), 1, "la dirección sustituye al bastión del perfil");
+        let hop = &route.hops[0];
+        assert_eq!(hop.profile_id, None);
+        assert_eq!((hop.host.as_str(), hop.port, hop.username.as_str()), ("10.0.0.1", 2222, "ops"));
+        assert_eq!(hop.auth_type, AuthType::Agent);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

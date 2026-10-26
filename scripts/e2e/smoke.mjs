@@ -23,6 +23,15 @@
 //      de datos no se toca ni desde una descarga ni desde un borrado, tampoco
 //      borrando una carpeta que la contenga, y subir una clave privada abre el
 //      diálogo nativo de confirmación (cerrarlo cancela la subida).
+//   7. Salto activo y bastiones por la interfaz (`jump.mjs`), sin servidores:
+//      el formulario guarda el bastión elegido entre las conexiones guardadas,
+//      «Usar como salto activo» enciende la píldora de la barra lateral y su ✕
+//      la apaga, «Conectar a través de» ofrece lo que toca según el tipo,
+//      borrar un bastión lo avisa y la paleta trae las acciones del salto.
+//   8. Salto activo de verdad (`jump-real.mjs`, si hay `sshd`): dos servidores
+//      reales con claves distintas; por la interfaz, el destino conecta a
+//      través del salto activo, una segunda sesión reutiliza la conexión con el
+//      salto, «Sin saltos» no pasa por él y «Probar el salto» lo da por bueno.
 //
 // Requisitos (solo Linux): `tauri-driver` en el PATH (o en $TAURI_DRIVER),
 // `WebKitWebDriver` (paquete webkit2gtk-driver / webkitgtk), el binario debug
@@ -47,6 +56,8 @@ import { checkDialogs } from "./dialogs.mjs";
 import { checkTunnels } from "./tunnels.mjs";
 import { checkTerminalProtocols } from "./terminal-protocols.mjs";
 import { checkQuickSelect } from "./quick-select.mjs";
+import { checkJump } from "./jump.mjs";
+import { checkJumpReal } from "./jump-real.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const application = path.join(root, "src-tauri/target/debug/rustty");
@@ -497,6 +508,13 @@ async function main() {
     }
     await checkTunnels(app, check, artifactsDir);
     await checkQuickSelect(app, check, workDir);
+    await checkJump(app, check, artifactsDir);
+    const sshdBin = findSshd();
+    if (sshdBin) {
+      await checkJumpReal(app, check, { sshd: sshdBin, workDir, home, children });
+    } else {
+      console.log("  --   sin sshd en esta máquina: se salta el salto activo de verdad");
+    }
     if (process.env.E2E_SCREENSHOT) await app.screenshot(process.env.E2E_SCREENSHOT);
   } catch (err) {
     if (artifactsDir) await app.screenshot(path.join(artifactsDir, "failure.png")).catch(() => {});

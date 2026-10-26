@@ -284,6 +284,18 @@ pub struct ConnectionProfile {
     /// usan la misma clave en bastion y destino.
     #[serde(default)]
     pub proxy_jump: Option<String>,
+    /// Bastión como **perfil guardado** (`id` de otro perfil SSH/SFTP): el
+    /// salto usa el host, el puerto, el usuario, la autenticación, los secretos
+    /// y los algoritmos heredados de ese perfil, no los de este. Si está junto a
+    /// `proxy_jump`, manda este. El perfil del salto puede tener a su vez el
+    /// suyo: cadenas de hasta `jump_route::MAX_JUMP_HOPS` saltos, sin bucles.
+    /// `None`/vacío = sin bastión de perfil.
+    #[serde(default)]
+    pub proxy_jump_profile_id: Option<String>,
+    /// Si true, este perfil nunca sale por el **salto activo** global («todo
+    /// por aquí»): conecta por su propia ruta. Lo aplican la interfaz y la CLI.
+    #[serde(default)]
+    pub ignore_active_jump: bool,
     /// Wake On LAN opcional: MAC destino y parámetros UDP.
     #[serde(default)]
     pub mac_address: Option<String>,
@@ -546,6 +558,25 @@ mod tests {
         let serializado = serde_json::to_string(&perfil).expect("serializa");
         let de_vuelta: ConnectionProfile = serde_json::from_str(&serializado).expect("deserializa");
         assert!(de_vuelta.open_read_only);
+    }
+
+    #[test]
+    fn el_bastion_de_perfil_y_la_excepcion_del_salto_activo_viajan_con_el_perfil() {
+        // Un perfil (o un bundle de sync) anterior a los campos: sin bastión de
+        // perfil y sujeto al salto activo, como cualquier otro.
+        let mut perfil: ConnectionProfile =
+            serde_json::from_str(JSON_SIN_WORKSPACE).expect("JSON válido");
+        assert_eq!(perfil.proxy_jump_profile_id, None);
+        assert!(!perfil.ignore_active_jump);
+        // Los dos se guardan y se releen: la sync los lleva con el perfil.
+        perfil.proxy_jump_profile_id = Some("bastion-1".into());
+        perfil.ignore_active_jump = true;
+        let serializado = serde_json::to_value(&perfil).expect("serializa");
+        assert_eq!(serializado["proxy_jump_profile_id"], "bastion-1");
+        assert_eq!(serializado["ignore_active_jump"], true);
+        let de_vuelta: ConnectionProfile = serde_json::from_value(serializado).expect("deserializa");
+        assert_eq!(de_vuelta.proxy_jump_profile_id.as_deref(), Some("bastion-1"));
+        assert!(de_vuelta.ignore_active_jump);
     }
 
     #[test]

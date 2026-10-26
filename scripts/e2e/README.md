@@ -51,6 +51,16 @@ prefijos ambiguos), que una tecla ajena no llega al shell, que la letra copia,
 que Escape y el propio atajo la cierran y que la mayúscula pega en el prompt.
 Lee el portapapeles del sistema y deja al final lo que hubiera antes.
 
+El salto activo (`jump.mjs`) se prueba por la interfaz sin servidores: crea
+cuatro conexiones de prueba (SSH, SSH, RDP y FTP), elige en el formulario un
+bastión entre las conexiones guardadas y comprueba que se manda como
+`proxy_jump_profile_id`; enciende el salto activo desde el menú contextual,
+mira la píldora de la barra lateral, el submenú «Conectar a través de» de cada
+tipo, el aviso al borrar un bastión, el menú de la píldora, la ✕ que lo quita y
+la paleta con el selector «Elegir conexión…» manejado por teclado. Deja
+capturas en tema oscuro y claro en `E2E_ARTIFACT_DIR`. Las conexiones de verdad
+por un salto las prueba la integración del backend.
+
 En Linux hacen falta `cargo build --locked` en `src-tauri/`, `npm ci`,
 `tauri-driver` 2.1.0, WebKitWebDriver, `wmctrl` y un escritorio con gestor de
 ventanas. `TAURI_DRIVER` permite indicar la ruta del controlador. Con Rustty

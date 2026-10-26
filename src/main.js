@@ -83,6 +83,7 @@ import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { buildCheatsheet, filterCheatsheet } from "./modules/shortcuts/cheatsheet.js";
 import { formatAccelerator } from "./modules/platform.js";
 import { buildQuickProfile, findQuickTargetProfile, formatQuickTarget, paletteQuickTarget, parseQuickTarget } from "./modules/quick-connect.js";
+import { firstBlockPerAlias, linkSshConfigJumps, sshConfigJumpFields } from "./modules/ssh-config-jumps.js";
 import {
   MAX_ENV_VALUE_LEN, MAX_ENV_VARS, allowsOsc7Hook, applySshConfigLaunchKey, formatEnvVarsText, launchKind,
   launchFieldsChanged, launchFieldsFromBlock, normalizeRemoteCommand, normalizeTermType, parseEnvVarsText,
@@ -124,6 +125,12 @@ import { QUICK_SELECT_MAX_PATTERNS, QUICK_SELECT_MAX_PATTERN_LENGTH, quickSelect
 import { createQuickSelect } from "./modules/terminal/quick-select-ui.js";
 import { createPromptQueue } from "./modules/dialogs/prompt-queue.js";
 import { reconnectRoute, runReconnectOnce } from "./modules/sessions/reconnect.js";
+import {
+  MAX_JUMPS, allowsTextBastion, bastionChoices, bastionLinksOf, bastionReferrers, clampIdleSecs, relinkRestoredBastion,
+  withBastionOverride, describeRoute, detachDeletedBastions, filterJumpProfiles,
+  isJumpCapable, jumpCandidates, jumpChain, jumpSettingsPayload, pushRecentJump, resolveJumpRoute,
+  shouldShowRoutePill, supportsJump, validateJumpIds,
+} from "./modules/jump-route.js";
 import { commandDraftKey, isLocalShellReady, isLocalShellSession } from "./modules/sessions/local-shell.js";
 import { connectionTunnelOwners } from "./modules/tunnels/lifecycle.js";
 import { DEFAULT_PREFS, createDefaultPrefs } from "./modules/prefs/defaults.js";
@@ -1797,6 +1804,19 @@ function openSettingsModal() {
   if (rdpCertChangeEl) rdpCertChangeEl.checked = prefs.rdpCertChangePrompt !== false;
   const onWakeEl = document.getElementById("pref-on-wake");
   if (onWakeEl) onWakeEl.value = prefs.onWakeAction || "check";
+  // Saltos (locales de este equipo).
+  const jumpKeepEl = document.getElementById("pref-jump-keep");
+  if (jumpKeepEl) jumpKeepEl.checked = prefs.activeJumpKeep === true;
+  const jumpReuseEl = document.getElementById("pref-jump-reuse");
+  if (jumpReuseEl) jumpReuseEl.checked = prefs.jumpReuse !== false;
+  const jumpIdleEl = document.getElementById("pref-jump-idle");
+  if (jumpIdleEl) jumpIdleEl.value = String(clampIdleSecs(prefs.jumpIdleSecs));
+  syncJumpIdleControl();
+  const jumpUnsupportedEl = document.getElementById("pref-jump-unsupported");
+  if (jumpUnsupportedEl) jumpUnsupportedEl.value = prefs.jumpUnsupported === "block" ? "block" : "direct";
+  const routePillEl = document.getElementById("pref-route-pill");
+  if (routePillEl) routePillEl.value = ["always", "never"].includes(prefs.routePill) ? prefs.routePill : "auto";
+  renderJumpPrefsActive();
   const shareHistEl = document.getElementById("pref-share-command-history");
   if (shareHistEl) shareHistEl.checked = !!prefs.shareCommandHistory;
   const captureScreenEl = document.getElementById("pref-capture-screen");
@@ -3986,6 +4006,14 @@ function readPrefsFromModal() {
     strictFtpsCert:    document.getElementById("pref-strict-ftps-cert")?.checked ?? true,
     rdpCertChangePrompt: document.getElementById("pref-rdp-cert-change-prompt")?.checked ?? true,
     onWakeAction:      document.getElementById("pref-on-wake")?.value || "check",
+    activeJumpKeep:    !!document.getElementById("pref-jump-keep")?.checked,
+    jumpReuse:         document.getElementById("pref-jump-reuse")?.checked ?? true,
+    jumpIdleSecs:      clampIdleSecs(document.getElementById("pref-jump-idle")?.value),
+    jumpUnsupported:   document.getElementById("pref-jump-unsupported")?.value === "block" ? "block" : "direct",
+    routePill:         (() => {
+      const v = document.getElementById("pref-route-pill")?.value;
+      return v === "always" || v === "never" ? v : "auto";
+    })(),
     shareCommandHistory: !!document.getElementById("pref-share-command-history")?.checked,
     captureScreen: document.getElementById("pref-capture-screen")?.checked ?? true,
     pastePasswordBroadcast: normalizePastePasswordBroadcast(
@@ -4112,6 +4140,8 @@ function savePrefsFromModal() {
   applyFtpsCertPolicy();
   applyTransferRateLimits();
   applyTransferOptions();
+  // Conexión compartida con los saltos y salto activo: los conoce el backend.
+  pushJumpSettings();
   // Aplicar la preferencia de autostart al SO (enable/disable la entrada del SO).
   applyAutostartSetting(prefs.autostart, prefs.autostartMinimized)
     .catch((e) => console.error("[autostart] apply", e));
@@ -4151,6 +4181,8 @@ function savePrefsFromModal() {
       // `applyTranslations` reescribe el tooltip del botón de túneles desde su
       // clave, y con él se va la lista de túneles activos: se vuelve a pintar.
       refreshTunnelIndicators();
+      renderRoutePill();
+      refreshRouteIndicators();
     });
   }
   // Los snapshots ya no son relevantes: las prefs guardadas son la verdad.
@@ -4532,6 +4564,9 @@ async function initMain() {
 
   if (_connListBoot) _connListBoot.removeAttribute("aria-busy");
 
+  // Salto activo: no sobrevive al reinicio salvo que se pida; el backend (y la
+  // CLI, por su fichero) lo sabe desde ya.
+  initActiveJump();
   offerWorkLayoutRestore();
   initWorkLayoutCapture();
   renderConnectionList();
@@ -4907,6 +4942,7 @@ function renderConnectionList() {
   persistSidebarOpenFolders();
   scheduleTrayQuickLauncherUpdate();
   renderWorkspaceSwitcher();
+  renderRoutePill();
 
   const sidebarQuery = _sidebarSearchQuery.trim();
   if (sidebarQuery) {
@@ -7148,7 +7184,11 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   const canKeyAccess = !!ctxProfile
     && (ctxProfile.connection_type || "ssh") === "ssh"
     && (ctxProfile.auth_type || "password") === "password"
-    && !(ctxProfile.proxy_jump || "").trim();
+    && !(ctxProfile.proxy_jump || "").trim()
+    // Tampoco por un perfil-bastión ni con el salto activo: el asistente
+    // conecta directo y saltaría la ruta.
+    && resolveJumpRoute(ctxProfile, { profiles, activeJumpId: activeJumpId() }).jumps.length === 0
+    && !ctxProfile.proxy_jump_profile_id;
   menu.querySelectorAll(".ctx-keyaccess-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "connection" || !canKeyAccess)
   );
@@ -7202,6 +7242,23 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
       submenu.appendChild(item);
     }
     connectAsEl.classList.toggle("hidden", type !== "connection" || extras.length === 0);
+  }
+
+  // «Conectar a través de ▸» (tipos que admiten salto) y «Usar como salto
+  // activo» (perfiles SSH/SFTP): puntual el primero, global el segundo.
+  const viaEl = document.getElementById("ctx-connect-via");
+  const viaSubmenu = document.getElementById("ctx-connect-via-submenu");
+  const canVia = type === "connection" && !!ctxProfile && supportsJump(ctxProfile.connection_type);
+  if (viaEl && viaSubmenu) {
+    if (canVia) fillConnectViaSubmenu(viaSubmenu, ctxProfile);
+    else viaSubmenu.innerHTML = "";
+    viaEl.classList.toggle("hidden", !canVia);
+  }
+  const canBeJump = type === "connection" && isJumpCapable(ctxProfile);
+  document.getElementById("ctx-toggle-active-jump")?.classList.toggle("hidden", !canBeJump);
+  const activeJumpLabel = document.getElementById("ctx-active-jump-label");
+  if (activeJumpLabel && canBeJump) {
+    activeJumpLabel.textContent = activeJumpId() === id ? t("jump.ctx_stop_active") : t("jump.ctx_use_active");
   }
 
   // «Túneles»: los guardados de esta conexión —cada uno abre o para según su
@@ -7272,7 +7329,7 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   // arriba (anclados por abajo) para que no se corten contra el borde inferior.
   // Cada submenú se mide contra SU ítem: son varios y están a distinta altura.
   const openLeft = finalX + width + 190 > window.innerWidth;
-  for (const [item, sub] of [[connectAsEl, submenu], [tunnelsEl, tunnelsSubmenu]]) {
+  for (const [item, sub] of [[connectAsEl, submenu], [viaEl, viaSubmenu], [tunnelsEl, tunnelsSubmenu]]) {
     if (!sub) continue;
     sub.classList.toggle("open-left", openLeft);
     const itemRect = item && !item.classList.contains("hidden")
@@ -7300,7 +7357,7 @@ function hideContextMenu() {
 // anillo de foco solo se ve si la apertura fue por teclado, por la heurística de
 // `:focus-visible`); las flechas / Inicio / Fin recorren los ítems visibles; y
 // Tab o Escape cierran devolviendo el foco al elemento que abrió el menú.
-const FLOATING_MENU_IDS = ["context-menu", "tab-context-menu", "sftp-context-menu"];
+const FLOATING_MENU_IDS = ["context-menu", "tab-context-menu", "sftp-context-menu", "route-menu"];
 let menuReturnFocus = null;
 /**
  * Cuándo se cerró por última vez un menú visible. Un diálogo que se abre con
@@ -7343,6 +7400,7 @@ function closeFloatingMenus({ restoreFocus = false } = {}) {
   hideContextMenu();
   hideTabContextMenu();
   hideSftpContextMenu();
+  hideRouteMenu();
   if (restoreFocus && wasOpen && menuReturnFocus && document.contains(menuReturnFocus)) {
     menuReturnFocus.focus();
   }
@@ -7446,6 +7504,9 @@ function handleContextMenuAction(action) {
       break;
     case "key-access":
       if (id) setupKeyAccessForProfile(id);
+      break;
+    case "toggle-active-jump":
+      if (id) setActiveJump(activeJumpId() === id ? null : id);
       break;
     case "toggle-favorite":
       if (id) toggleFavoriteProfile(id);
@@ -8014,6 +8075,7 @@ function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiv
   });
   populateFolderSelect(preselectedFolder, workspaceId);
   populateWorkspaceFormSelect(workspaceId);
+  populateBastionSelect(null);
   // Las plantillas solo se ofrecen al crear (no al editar).
   document.getElementById("field-template")?.classList.remove("hidden");
   populateTemplateSelect();
@@ -8041,6 +8103,96 @@ function setConnectionModalPane(pane) {
   });
 }
 
+/** Valor del selector «Bastión»: "", "manual" o "profile:<id>". */
+function bastionMode() {
+  return document.getElementById("f-proxy-jump-mode")?.value || "";
+}
+
+/**
+ * Rellena el selector «Bastión» con las conexiones SSH guardadas (sin la que se
+ * edita ni las que ya pasan por ella: serían un bucle) y deja elegido el de
+ * `profile`. Un perfil-bastión que ya no existe se avisa en vez de callarse.
+ */
+function populateBastionSelect(profile = null) {
+  const sel = document.getElementById("f-proxy-jump-mode");
+  if (!sel) return;
+  for (const opt of [...sel.options]) if (opt.value.startsWith("profile:")) opt.remove();
+  // «Dirección manual» vuelve a estar para poder elegirla; `updateBastionFields`
+  // la retira luego en los tipos que no la admiten (salvo que ya venga puesta).
+  ensureManualBastionOption(true);
+  const choices = bastionChoices(profiles, editingProfileId);
+  for (const p of choices) {
+    const opt = document.createElement("option");
+    opt.value = `profile:${p.id}`;
+    opt.textContent = t("jump.choice_label", { name: jumpProfileName(p), target: jumpProfileTarget(p) });
+    sel.appendChild(opt);
+  }
+  const refId = profile?.proxy_jump_profile_id || null;
+  const text = (profile?.proxy_jump || "").trim();
+  const refOk = !!refId && choices.some((p) => p.id === refId);
+  sel.value = refOk ? `profile:${refId}` : (text ? "manual" : "");
+  const manual = document.getElementById("f-proxy-jump");
+  if (manual) manual.value = profile?.proxy_jump || "";
+  document.getElementById("f-proxy-jump-missing")?.classList.toggle("hidden", !refId || refOk);
+  const ignore = document.getElementById("f-ignore-active-jump");
+  if (ignore) ignore.checked = !!profile?.ignore_active_jump;
+  updateBastionFields();
+}
+
+/** La opción «Dirección manual…» del selector, guardada mientras no se ofrece. */
+let _manualBastionOption = null;
+
+/**
+ * Pone o quita «Dirección manual…» del selector (el desplegable de la app
+ * enseña todas las opciones, así que ocultarla no basta).
+ * @param {boolean} present
+ */
+function ensureManualBastionOption(present) {
+  const sel = document.getElementById("f-proxy-jump-mode");
+  if (!sel) return;
+  const current = sel.querySelector('option[value="manual"]');
+  if (current && !present) {
+    _manualBastionOption = current;
+    current.remove();
+  } else if (!current && present) {
+    let opt = _manualBastionOption;
+    if (!opt) {
+      opt = document.createElement("option");
+      opt.value = "manual";
+      opt.dataset.i18n = "jump.form_manual";
+    }
+    // Mientras estuvo fuera del documento no le llegó un cambio de idioma.
+    opt.textContent = t("jump.form_manual");
+    sel.insertBefore(opt, sel.options[1] || null);
+  }
+}
+
+/** Dirección manual visible solo en su modo; el selector, en los tipos que admiten salto. */
+function updateBastionFields() {
+  const connType = document.getElementById("f-conn-type")?.value || "ssh";
+  const canJump = supportsJump(connType);
+  // VNC y Telnet no tienen credenciales SSH con las que entrar en un bastión de
+  // texto: solo «Ninguno» y las conexiones guardadas. Si ya traen uno (por
+  // sync), se enseña para poder quitarlo; en cuanto se cambia, desaparece.
+  ensureManualBastionOption(allowsTextBastion(connType) || bastionMode() === "manual");
+  document.getElementById("field-bastion-select")?.classList.toggle("hidden", !canJump);
+  document.getElementById("field-proxy-jump-manual")?.classList.toggle("hidden", !canJump || bastionMode() !== "manual");
+  if (bastionMode() !== "manual") validateConnectionField("f-proxy-jump");
+}
+
+/** Campos del bastión tal como los guarda el perfil. */
+function readBastionFields(connType) {
+  const mode = bastionMode();
+  const text = (document.getElementById("f-proxy-jump")?.value || "").trim();
+  const canJump = supportsJump(connType);
+  return {
+    // En un tipo sin salto (FTP…) el texto que trajera el perfil se conserva tal cual.
+    proxy_jump: text && (!canJump || mode === "manual") ? text : null,
+    proxy_jump_profile_id: canJump && mode.startsWith("profile:") ? mode.slice(8) : null,
+    ignore_active_jump: !!document.getElementById("f-ignore-active-jump")?.checked,
+  };
+}
+
 /**
  * Validación inline de un campo concreto. Escribe (o limpia) un mensaje
  * bajo el input usando el contenedor .form-error con `data-error-for`.
@@ -8058,7 +8210,8 @@ function validateConnectionField(inputId) {
     const n = parseInt(value, 10);
     if (!Number.isFinite(n) || n < 1 || n > 65535) error = t("modal_conn.err_port_range");
   }
-  if (inputId === "f-proxy-jump" && value && !/^([^\s@]+@)?[^\s:]+(:\d{1,5})?$/.test(value)) {
+  if (inputId === "f-proxy-jump" && value && bastionMode() === "manual"
+      && !/^([^\s@]+@)?[^\s:]+(:\d{1,5})?$/.test(value)) {
     error = t("modal_conn.err_proxy_jump_format");
   }
   if (inputId === "f-mac-address" && value && !/^([0-9a-fA-F]{2}[:\-]){5}[0-9a-fA-F]{2}$/.test(value)) {
@@ -8114,9 +8267,6 @@ function renderConnectionSummary() {
     else if (authType === "agent") badges.push({ kind: "info", label: t("modal_conn.summary_auth_agent") });
     else if (authType === "keyboard_interactive") badges.push({ kind: "info", label: t("modal_conn.summary_auth_keyboard_interactive") });
 
-    const bastion = (document.getElementById("f-proxy-jump")?.value || "").trim();
-    if (bastion) badges.push({ kind: "info", label: t("modal_conn.summary_bastion", { host: bastion }) });
-
     const ka = parseInt(document.getElementById("f-keep-alive")?.value || "0", 10);
     if (Number.isFinite(ka) && ka > 0) badges.push({ kind: "info", label: t("modal_conn.summary_keepalive", { n: ka }) });
 
@@ -8131,6 +8281,19 @@ function renderConnectionSummary() {
     }
     if (document.getElementById("f-session-log")?.checked) badges.push({ kind: "info", label: t("modal_conn.summary_session_log") });
     if ((document.getElementById("f-mac-address")?.value || "").trim()) badges.push({ kind: "info", label: t("modal_conn.summary_wol") });
+  }
+
+  // Bastión: una conexión guardada o la dirección manual (RDP, VNC, Telnet y
+  // SFTP también pueden ir por un salto).
+  if (supportsJump(connType)) {
+    const mode = bastionMode();
+    if (mode.startsWith("profile:")) {
+      const bastionProfile = profiles.find((p) => p.id === mode.slice(8));
+      if (bastionProfile) badges.push({ kind: "info", label: t("jump.summary_bastion", { name: jumpProfileName(bastionProfile) }) });
+    } else if (mode === "manual") {
+      const bastion = (document.getElementById("f-proxy-jump")?.value || "").trim();
+      if (bastion) badges.push({ kind: "info", label: t("modal_conn.summary_bastion", { host: bastion }) });
+    }
   }
 
   if (badges.length === 0) {
@@ -8217,7 +8380,7 @@ function openEditConnectionModal(profileId) {
   document.getElementById("f-x11-forwarding").checked = !!profile.x11_forwarding;
   document.getElementById("f-auto-reconnect").value = profile.auto_reconnect ?? "";
   document.getElementById("f-session-log").checked = !!profile.session_log;
-  document.getElementById("f-proxy-jump").value = profile.proxy_jump || "";
+  populateBastionSelect(profile);
   document.getElementById("f-mac-address").value = profile.mac_address || "";
   document.getElementById("f-wol-broadcast").value = profile.wol_broadcast || "";
   document.getElementById("f-wol-port").value = profile.wol_port ?? "";
@@ -9152,12 +9315,13 @@ function updateConnTypeFields(type, adjustPort = false) {
   document.getElementById("field-passphrase").classList.add("hidden");
   document.getElementById("field-save-passphrase").classList.add("hidden");
   document.getElementById("field-advanced").classList.toggle("hidden", isPasswordOnly);
-  // Ocultar la pestaña "Avanzado" del modal cuando no aplique (RDP/FTP/FTPS).
+  // La pestaña «Avanzado» se queda para todos: el bastión (RDP, VNC, Telnet y
+  // SFTP también pueden ir por un salto) y «No usar nunca el salto activo»
+  // aplican a cualquier tipo; las opciones SSH se ocultan arriba.
   document.querySelectorAll('.modal-tab[data-modal-tab="advanced"]').forEach((tab) => {
-    tab.classList.toggle("hidden", isPasswordOnly);
-    // Si la tab activa quedó oculta, vuelve a "general".
-    if (isPasswordOnly && tab.classList.contains("active")) setConnectionModalPane("general");
+    tab.classList.remove("hidden");
   });
+  updateBastionFields();
 
   if (isPasswordOnly) {
     document.getElementById("f-auth-type").value = "password";
@@ -9717,7 +9881,7 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     x11_forwarding: document.getElementById("f-x11-forwarding").checked,
     auto_reconnect: autoReconnectFromInput(document.getElementById("f-auto-reconnect").value),
     session_log: document.getElementById("f-session-log").checked,
-    proxy_jump: (document.getElementById("f-proxy-jump").value || "").trim() || null,
+    ...readBastionFields(connType),
     mac_address: (document.getElementById("f-mac-address").value || "").trim() || null,
     wol_broadcast: (document.getElementById("f-wol-broadcast").value || "").trim() || null,
     wol_port: wolPortFromInput(document.getElementById("f-wol-port").value),
@@ -9782,6 +9946,30 @@ async function runConnectionTestFromModal() {
   if (btn) btn.disabled = true;
 
   try {
+    // La prueba va por la ruta efectiva: el bastión del formulario y, si lo
+    // hay, el salto activo. Sin backend que la entienda, se ignora.
+    const prepared = await prepareConnectionRoute(profile);
+    if (!prepared) {
+      setConnectionTestStatus(t("toast.test_error"), "error");
+      return;
+    }
+    const routeText = routeTextFor(prepared.route, profile);
+    if (routeText) {
+      appendConnectionTestLog({ stage: "preparing", status: "info", message: t("jump.route_via", { route: routeText }) });
+    }
+    // RDP, VNC, Telnet o SFTP por un salto: el puerto del destino no se puede
+    // tocar desde aquí; se prueba el salto y si deja abrir túneles.
+    if (profile.connection_type !== "ssh" && prepared.route.ids.length) {
+      const proto = jumpProtoLabel(profile);
+      appendConnectionTestLog({ stage: "connecting", status: "info", message: t("jump.test_external_via", { proto }) });
+      const report = await runJumpProbe(prepared.route.ids, prepared.jumps);
+      if (report?.ok) {
+        setConnectionTestStatus("OK", report.forwarding ? "ok" : "error");
+      } else {
+        setConnectionTestStatus(t("toast.test_error"), "error");
+      }
+      return;
+    }
     if (profile.connection_type === "rdp") {
       appendConnectionTestLog({
         stage: "connecting",
@@ -9837,6 +10025,7 @@ async function runConnectionTestFromModal() {
       password,
       passphrase,
       testId,
+      jumps: prepared.jumps,
     });
     setConnectionTestStatus("OK", "ok");
     toast(t("toast.test_done", { proto: "SSH" }), "success");
@@ -9947,7 +10136,7 @@ async function saveAndClose(shouldConnect) {
     x11_forwarding:      document.getElementById("f-x11-forwarding").checked,
     auto_reconnect:      autoReconnectFromInput(document.getElementById("f-auto-reconnect").value),
     session_log:         document.getElementById("f-session-log").checked,
-    proxy_jump:          (document.getElementById("f-proxy-jump").value || "").trim() || null,
+    ...readBastionFields(connType),
     mac_address:         (document.getElementById("f-mac-address").value || "").trim() || null,
     wol_broadcast:       (document.getElementById("f-wol-broadcast").value || "").trim() || null,
     wol_port:            wolPortFromInput(document.getElementById("f-wol-port").value),
@@ -9993,6 +10182,8 @@ async function saveAndClose(shouldConnect) {
     if (shouldConnect) {
       if (connType === "rdp") {
         await connectRdp(profile.id, { passwordOverride: password });
+      } else if (connType === "vnc" || connType === "telnet") {
+        await connectExternalNoAuth(profile.id, connType);
       } else if (isFileTransferConnectionType(connType)) {
         await connectFileTransferProfile(profile.id, { passwordOverride: password });
       } else {
@@ -10206,7 +10397,719 @@ async function resolvePasswordOnlyCredentials(profile, {
   return { password };
 }
 
-async function connectProfile(profileId, { force = false, credId = null, restore = false } = {}) {
+// ═══════════════════════════════════════════════════════════════
+// SALTO ACTIVO Y RUTA DE LAS CONEXIONES
+// ═══════════════════════════════════════════════════════════════
+// La ruta de una conexión nueva (qué saltos SSH hay antes del destino) la
+// calcula `modules/jump-route.js` con las mismas reglas que el backend; aquí
+// se avisa de lo que impide conectar, se recogen los secretos de cada salto y
+// se pinta por dónde va cada sesión. El salto activo es una preferencia LOCAL
+// (no se sincroniza) que el backend conoce por `jump_settings_set`, para que la
+// CLI lo lea también. Con un backend que aún no tenga estos comandos, todo
+// falla en silencio y las conexiones siguen como antes.
+
+/** `get_profiles` ya respondió: antes, un salto activo «inexistente» no lo es. */
+let _profilesLoaded = false;
+
+/** Id del salto activo (o null). */
+function activeJumpId() {
+  return prefs.activeJumpProfileId || null;
+}
+
+/** Perfil del salto activo, si existe. */
+function activeJumpProfile() {
+  const id = activeJumpId();
+  return id ? profiles.find((p) => p.id === id) || null : null;
+}
+
+/** Nombre visible de un perfil (o su host). */
+function jumpProfileName(profile) {
+  return profile?.name || profile?.host || "";
+}
+
+/** `usuario@host:puerto` de un perfil, para la segunda línea de los menús. */
+function jumpProfileTarget(profile) {
+  if (!profile) return "";
+  const user = profile.username ? `${profile.username}@` : "";
+  const port = profile.port && Number(profile.port) !== 22 ? `:${profile.port}` : "";
+  return `${user}${profile.host || ""}${port}`;
+}
+
+/**
+ * Pasa los ajustes del salto al backend (memoria + `jump-settings.json`, que lee
+ * la CLI). Se llama al arrancar y en cada cambio; un backend sin el comando lo
+ * rechaza y no pasa nada.
+ */
+function pushJumpSettings() {
+  invoke("jump_settings_set", { settings: jumpSettingsPayload(prefs) })
+    .catch((err) => console.debug("[jump] jump_settings_set", err));
+}
+
+/**
+ * Arranque: el salto activo no sobrevive al reinicio salvo que el usuario lo
+ * haya pedido; uno que ya no existe se quita. Después se informa al backend.
+ */
+function initActiveJump() {
+  _profilesLoaded = true;
+  if (prefs.activeJumpProfileId && !prefs.activeJumpKeep) {
+    prefs.activeJumpProfileId = null;
+    savePrefs();
+  }
+  reconcileActiveJump({ announce: false });
+  pushJumpSettings();
+}
+
+/**
+ * El salto activo puede desaparecer (borrado en otro equipo y llegado por sync)
+ * o dejar de ser SSH: entonces se quita y se dice, en vez de dejar que cada
+ * conexión nueva falle o, peor, salga directa sin avisar.
+ */
+function reconcileActiveJump({ announce = true } = {}) {
+  const id = activeJumpId();
+  if (!id || !_profilesLoaded) return;
+  if (isJumpCapable(profiles.find((p) => p.id === id))) return;
+  prefs.activeJumpProfileId = null;
+  savePrefs();
+  pushJumpSettings();
+  if (announce) toast(t("jump.toast_gone"), "warning", 9000);
+}
+
+/**
+ * Pone (o quita, con `null`) el salto activo. Avisa con «Deshacer», que vuelve
+ * al anterior sin otro aviso.
+ * @param {string|null} id
+ */
+function setActiveJump(id, { announce = true } = {}) {
+  const previous = activeJumpId();
+  const next = id || null;
+  if (previous === next) return;
+  prefs.activeJumpProfileId = next;
+  if (next) prefs.recentJumpProfileIds = pushRecentJump(prefs.recentJumpProfileIds, next);
+  savePrefs();
+  pushJumpSettings();
+  renderRoutePill();
+  renderJumpPrefsActive();
+  if (!announce) return;
+  const profile = next ? profiles.find((p) => p.id === next) : null;
+  toast(next ? t("jump.toast_set", { name: jumpProfileName(profile) }) : t("jump.toast_cleared"), "info", 8000, {
+    actionLabel: t("trash.undo"),
+    onAction: () => setActiveJump(previous, { announce: false }),
+  });
+}
+
+/** Píldora de ruta de la barra lateral: visible según `routePill`. */
+function renderRoutePill() {
+  reconcileActiveJump();
+  const wrap = document.getElementById("sidebar-route");
+  if (!wrap) return;
+  wrap.classList.toggle("hidden", !shouldShowRoutePill(prefs, profiles));
+  const active = activeJumpProfile();
+  wrap.classList.toggle("is-active", !!active);
+  const pill = document.getElementById("sidebar-route-pill");
+  const label = document.getElementById("sidebar-route-label");
+  const name = jumpProfileName(active);
+  if (label) label.textContent = active ? t("jump.pill_via", { name }) : t("jump.pill_direct");
+  if (pill) {
+    pill.title = active ? t("jump.pill_title_via", { name }) : t("jump.pill_title_direct");
+    pill.setAttribute("aria-label", pill.title);
+  }
+  document.getElementById("sidebar-route-clear")?.classList.toggle("hidden", !active);
+}
+
+/** Preferencias → Saltos: el salto activo de ahora y sus botones. */
+function renderJumpPrefsActive() {
+  const nameEl = document.getElementById("pref-jump-active-name");
+  if (!nameEl) return;
+  const active = activeJumpProfile();
+  nameEl.textContent = active
+    ? t("jump.choice_label", { name: jumpProfileName(active), target: jumpProfileTarget(active) })
+    : t("jump.prefs_active_none");
+  document.getElementById("btn-pref-jump-clear")?.classList.toggle("hidden", !active);
+}
+
+/** Abre Preferencias en la pestaña de los saltos. */
+function openJumpPreferences() {
+  closeFloatingMenus();
+  if (!document.getElementById("modal-prefs-overlay")?.classList.contains("hidden")) {
+    switchPrefsTab("jump");
+    return;
+  }
+  prefsActiveTab = "jump";
+  openSettingsModal();
+}
+
+// ─── Menú de la píldora ─────────────────────────────────────────
+
+function hideRouteMenu() {
+  noteFloatingMenuHidden("route-menu");
+  document.getElementById("route-menu")?.classList.add("hidden");
+  document.getElementById("sidebar-route-pill")?.setAttribute("aria-expanded", "false");
+}
+
+/**
+ * Ítem de menú con icono o marca de radio y, si se da, una segunda línea.
+ * @param {{ action: string, label: string, sub?: string, icon?: string, checked?: boolean|null, jumpId?: string }} item
+ */
+function routeMenuItem({ action, label, sub = "", icon = "", checked = null, jumpId = "" }) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ctx-item";
+  btn.dataset.routeAction = action;
+  if (jumpId) btn.dataset.jumpId = jumpId;
+  if (checked === null) {
+    btn.setAttribute("role", "menuitem");
+    const iconEl = document.createElement("span");
+    iconEl.className = "ctx-icon";
+    iconEl.innerHTML = `<svg class="ctx-icon-svg" aria-hidden="true"><use href="#${icon}"/></svg>`;
+    btn.appendChild(iconEl);
+  } else {
+    btn.setAttribute("role", "menuitemradio");
+    btn.setAttribute("aria-checked", checked ? "true" : "false");
+    const radio = document.createElement("span");
+    radio.className = "route-menu-radio";
+    radio.setAttribute("aria-hidden", "true");
+    btn.appendChild(radio);
+  }
+  const text = document.createElement("span");
+  text.className = "route-menu-text";
+  const main = document.createElement("span");
+  main.textContent = label;
+  text.appendChild(main);
+  if (sub) {
+    const subEl = document.createElement("span");
+    subEl.className = "route-menu-sub";
+    subEl.textContent = sub;
+    text.appendChild(subEl);
+  }
+  btn.appendChild(text);
+  return btn;
+}
+
+function menuSeparator() {
+  const sep = document.createElement("div");
+  sep.className = "ctx-sep";
+  return sep;
+}
+
+/** Menú de la píldora: directo, candidatos, elegir, probar y preferencias. */
+function openRouteMenu() {
+  const menu = document.getElementById("route-menu");
+  const pill = document.getElementById("sidebar-route-pill");
+  if (!menu || !pill) return;
+  closeFloatingMenus();
+  menu.innerHTML = "";
+  const activeId = activeJumpId();
+  menu.appendChild(routeMenuItem({ action: "direct", label: t("jump.menu_direct"), checked: !activeId }));
+  for (const c of jumpCandidates(profiles, prefs, null)) {
+    menu.appendChild(routeMenuItem({
+      action: "set", jumpId: c.id, label: jumpProfileName(c.profile), sub: jumpProfileTarget(c.profile), checked: c.id === activeId,
+    }));
+  }
+  menu.appendChild(menuSeparator());
+  menu.appendChild(routeMenuItem({ action: "pick", label: t("jump.menu_pick"), icon: "ci-search" }));
+  if (activeId) menu.appendChild(routeMenuItem({ action: "probe", label: t("jump.menu_probe"), icon: "ci-play" }));
+  menu.appendChild(routeMenuItem({ action: "prefs", label: t("jump.menu_prefs"), icon: "ci-sliders" }));
+  // Encima de la píldora, que vive al pie de la barra lateral.
+  const r = pill.getBoundingClientRect();
+  const { height } = positionFloatingMenu(menu, r.left, r.top);
+  menu.style.top = `${Math.max(6, r.top - height - 4)}px`;
+  pill.setAttribute("aria-expanded", "true");
+  onFloatingMenuOpened(menu);
+}
+
+/** @param {string} action @param {string} [jumpId] */
+function handleRouteMenuAction(action, jumpId = "") {
+  hideRouteMenu();
+  if (action === "direct") setActiveJump(null);
+  else if (action === "set" && jumpId) setActiveJump(jumpId);
+  else if (action === "pick") openJumpPicker({ mode: "active" });
+  else if (action === "probe") probeActiveJump();
+  else if (action === "prefs") openJumpPreferences();
+}
+
+// ─── Menú contextual de una conexión ────────────────────────────
+
+/**
+ * Submenú «Conectar a través de ▸»: sin saltos, el salto activo, los
+ * candidatos y el selector. Es puntual: el perfil no cambia.
+ */
+function fillConnectViaSubmenu(submenu, profile) {
+  submenu.innerHTML = "";
+  const item = (ctx, label, sub = "", via = "", icon = "ci-route") => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("role", "menuitem");
+    btn.className = "ctx-item";
+    btn.dataset.ctx = ctx;
+    if (via) btn.dataset.via = via;
+    const iconEl = document.createElement("span");
+    iconEl.className = "ctx-icon";
+    iconEl.innerHTML = `<svg class="ctx-icon-svg" aria-hidden="true"><use href="#${icon}"/></svg>`;
+    const text = document.createElement("span");
+    text.className = "route-menu-text";
+    const main = document.createElement("span");
+    main.textContent = label;
+    text.appendChild(main);
+    if (sub) {
+      const subEl = document.createElement("span");
+      subEl.className = "route-menu-sub";
+      subEl.textContent = sub;
+      text.appendChild(subEl);
+    }
+    btn.append(iconEl, text);
+    submenu.appendChild(btn);
+  };
+  item("connect-via", t("jump.ctx_direct"), "", "direct", "ci-arrow-right");
+  for (const c of jumpCandidates(profiles, prefs, profile.id)) {
+    const name = jumpProfileName(c.profile);
+    item("connect-via", c.active ? t("jump.ctx_active_item", { name }) : name, jumpProfileTarget(c.profile), c.id);
+  }
+  submenu.appendChild(menuSeparator());
+  item("connect-via-pick", t("jump.menu_pick"), "", "", "ci-search");
+}
+
+// ─── Selector «Elegir conexión…» ────────────────────────────────
+
+/** @type {{ mode: "active"|"via", targetId: string|null, items: any[], index: number } | null} */
+let _jumpPicker = null;
+
+/**
+ * Abre el selector. `mode: "active"` elige el salto activo; `mode: "via"`
+ * conecta `targetId` una vez a través del elegido.
+ * @param {{ mode: "active"|"via", targetId?: string|null }} options
+ */
+function openJumpPicker({ mode, targetId = null }) {
+  const overlay = document.getElementById("jump-picker-overlay");
+  if (!overlay) return;
+  closeFloatingMenus();
+  const target = targetId ? profiles.find((p) => p.id === targetId) : null;
+  if (mode === "via" && !target) return;
+  _jumpPicker = { mode, targetId: target?.id || null, items: [], index: 0 };
+  document.getElementById("jump-picker-title").textContent = mode === "via"
+    ? t("jump.picker_title_via", { name: jumpProfileName(target) })
+    : t("jump.picker_title_active");
+  document.getElementById("jump-picker-hint").textContent = mode === "via"
+    ? t("jump.picker_hint_via")
+    : t("jump.picker_hint_active");
+  const filter = document.getElementById("jump-picker-filter");
+  filter.value = "";
+  renderJumpPicker();
+  overlay.classList.remove("hidden");
+  setTimeout(() => filter.focus(), 0);
+}
+
+function closeJumpPicker() {
+  document.getElementById("jump-picker-overlay")?.classList.add("hidden");
+  _jumpPicker = null;
+}
+
+function renderJumpPicker() {
+  const list = document.getElementById("jump-picker-list");
+  const filter = document.getElementById("jump-picker-filter");
+  if (!list || !filter || !_jumpPicker) return;
+  const items = filterJumpProfiles(profiles, filter.value, { excludeId: _jumpPicker.targetId });
+  _jumpPicker.items = items;
+  if (_jumpPicker.index >= items.length) _jumpPicker.index = 0;
+  if (!items.length) {
+    const anyCapable = filterJumpProfiles(profiles, "", { excludeId: _jumpPicker.targetId }).length > 0;
+    list.innerHTML = `<div class="jump-picker-empty">${escHtml(t(anyCapable ? "jump.picker_no_match" : "jump.picker_empty"))}</div>`;
+    filter.removeAttribute("aria-activedescendant");
+    return;
+  }
+  const activeId = activeJumpId();
+  list.innerHTML = items.map((p, i) => `
+    <div class="jump-picker-item${i === _jumpPicker.index ? " active" : ""}" id="jump-picker-opt-${i}" role="option"
+         aria-selected="${i === _jumpPicker.index}" data-jump-idx="${i}">
+      <svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-route"/></svg>
+      <span class="jump-picker-body">
+        <span class="jump-picker-name">${escHtml(jumpProfileName(p))}</span>
+        <span class="jump-picker-sub">${escHtml(jumpProfileTarget(p))}</span>
+      </span>
+      ${p.id === activeId ? `<span class="jump-picker-badge">${escHtml(t("jump.badge_active"))}</span>` : ""}
+    </div>`).join("");
+  filter.setAttribute("aria-activedescendant", `jump-picker-opt-${_jumpPicker.index}`);
+  document.getElementById(`jump-picker-opt-${_jumpPicker.index}`)?.scrollIntoView({ block: "nearest" });
+}
+
+/** @param {number} index */
+function chooseJumpPickerItem(index) {
+  const state = _jumpPicker;
+  const profile = state?.items[index];
+  if (!state || !profile) return;
+  closeJumpPicker();
+  if (state.mode === "active") {
+    setActiveJump(profile.id);
+  } else if (state.targetId) {
+    connectProfile(state.targetId, { force: true, route: { viaProfileId: profile.id } });
+  }
+}
+
+function bindJumpUi() {
+  document.getElementById("sidebar-route-pill")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById("route-menu");
+    if (menu && !menu.classList.contains("hidden")) hideRouteMenu();
+    else openRouteMenu();
+  });
+  document.getElementById("sidebar-route-clear")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setActiveJump(null);
+  });
+  document.getElementById("route-menu")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-route-action]");
+    if (btn) handleRouteMenuAction(btn.dataset.routeAction, btn.dataset.jumpId || "");
+  });
+  const filter = document.getElementById("jump-picker-filter");
+  filter?.addEventListener("input", () => {
+    if (_jumpPicker) _jumpPicker.index = 0;
+    renderJumpPicker();
+  });
+  filter?.addEventListener("keydown", (e) => {
+    if (!_jumpPicker) return;
+    const n = _jumpPicker.items.length;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!n) return;
+      _jumpPicker.index = (_jumpPicker.index + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
+      renderJumpPicker();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      chooseJumpPickerItem(_jumpPicker.index);
+    }
+  });
+  document.getElementById("jump-picker-list")?.addEventListener("click", (e) => {
+    const row = e.target.closest("[data-jump-idx]");
+    if (row) chooseJumpPickerItem(Number(row.dataset.jumpIdx));
+  });
+  document.getElementById("btn-jump-picker-close")?.addEventListener("click", closeJumpPicker);
+  document.getElementById("jump-picker-overlay")?.addEventListener("mousedown", (e) => {
+    if (e.target.id === "jump-picker-overlay") closeJumpPicker();
+  });
+  document.getElementById("btn-pref-jump-pick")?.addEventListener("click", () => openJumpPicker({ mode: "active" }));
+  document.getElementById("btn-pref-jump-clear")?.addEventListener("click", () => setActiveJump(null));
+  const reuse = document.getElementById("pref-jump-reuse");
+  reuse?.addEventListener("change", () => syncJumpIdleControl());
+}
+
+/** El tiempo de inactividad solo pinta algo si se comparte la conexión. */
+function syncJumpIdleControl() {
+  const reuse = document.getElementById("pref-jump-reuse");
+  const idle = document.getElementById("pref-jump-idle");
+  if (idle && reuse) idle.disabled = !reuse.checked;
+}
+
+// ─── Ruta de una conexión nueva ─────────────────────────────────
+
+/** Avisa de por qué no se conecta, con la acción que lo arregla. */
+function notifyRouteError(error, profile) {
+  const name = error.profileName || jumpProfileName(profile);
+  const jump = error.jumpName || error.jumpId || "";
+  let message;
+  if (error.kind === "missing") {
+    if (error.via === "active") message = t("jump.err_missing_active");
+    else if (error.via === "override") message = t("jump.err_missing_override");
+    else if (error.via === "route") message = t("jump.err_missing_route");
+    else message = t("jump.err_missing_own", { name });
+  } else if (error.kind === "loop") {
+    message = t("jump.err_loop", { name, jump });
+  } else if (error.kind === "not_ssh") {
+    message = t("jump.err_not_ssh", { jump });
+  } else {
+    message = t("jump.err_too_long", { count: error.count ?? "", max: error.max ?? MAX_JUMPS });
+  }
+  const editId = error.profileId && profiles.some((p) => p.id === error.profileId) ? error.profileId : null;
+  let action;
+  if (editId) action = { actionLabel: t("ctx.edit"), onAction: () => openEditConnectionModal(editId) };
+  else if (error.via === "active") action = { actionLabel: t("jump.pill_clear"), onAction: () => setActiveJump(null) };
+  toast(message, "error", 10000, action);
+}
+
+/** Etiqueta del protocolo para los avisos (SFTP, FTP, RDP…). */
+function jumpProtoLabel(profile) {
+  return String(profile?.connection_type || "ssh").toUpperCase();
+}
+
+/**
+ * Ruta de una conexión nueva a `profile`, ya validada: `{ ids, source,
+ * clearTextBastion }`, o `null` si no hay que conectar (el aviso ya está
+ * dado). `override`: `{ direct: true }` o `{ viaProfileId }`.
+ * @returns {{ ids: string[], source: string, clearTextBastion: boolean } | null}
+ */
+function planConnectionRoute(profile, override = null) {
+  const result = resolveJumpRoute(profile, { profiles, activeJumpId: activeJumpId(), override });
+  if (result.error) {
+    notifyRouteError(result.error, profile);
+    return null;
+  }
+  if (result.unsupported) {
+    const proto = jumpProtoLabel(profile);
+    if (result.source === "active" && prefs.jumpUnsupported === "block") {
+      toast(t("jump.unsupported_block", { proto }), "error", 9000, {
+        actionLabel: t("jump.menu_prefs"),
+        onAction: () => openJumpPreferences(),
+      });
+      return null;
+    }
+    toast(t("jump.unsupported_direct", { proto, name: jumpProfileName(profile) }), "warning", 7000);
+  }
+  // El salto elegido (a mano o el activo) pasa al frente de los recientes.
+  const chosen = override?.viaProfileId || (result.source === "active" ? activeJumpId() : null);
+  if (chosen && result.jumps.length) {
+    const next = pushRecentJump(prefs.recentJumpProfileIds, chosen);
+    if (JSON.stringify(next) !== JSON.stringify(prefs.recentJumpProfileIds)) {
+      prefs.recentJumpProfileIds = next;
+      savePrefs();
+      renderRoutePill();
+    }
+  }
+  return { ids: result.jumps, source: result.source, clearTextBastion: result.clearTextBastion };
+}
+
+/**
+ * Ruta ya usada por una sesión (reconexión, panel SFTP): se revalida tal cual.
+ * Sin ruta guardada se calcula de nuevo. `null` si no hay que conectar.
+ */
+function replayConnectionRoute(profile, route) {
+  if (!route) return planConnectionRoute(profile);
+  const error = validateJumpIds(route.ids, profile, profiles, { clearTextBastion: !!route.clearTextBastion });
+  if (error) {
+    notifyRouteError(error, profile);
+    return null;
+  }
+  return { ids: [...route.ids], source: route.source || "none", clearTextBastion: !!route.clearTextBastion };
+}
+
+/**
+ * Secretos de cada salto, en el formato del backend (`JumpRequest`). Si la
+ * conexión con esa secuencia de saltos ya está viva en el pool, van sin
+ * secretos; si no, cada salto se resuelve como su propio perfil (KeePass,
+ * credencial maestra, keyring o pregunta) y con sus `${ask:}`. `null` si el
+ * usuario cancela: entonces no se conecta.
+ * @param {string[]} ids
+ */
+async function collectJumpRequests(ids) {
+  if (!ids?.length) return [];
+  if (prefs.jumpReuse !== false) {
+    let ready = false;
+    try {
+      ready = (await invoke("jump_pool_ready", { profileIds: ids })) === true;
+    } catch (err) {
+      console.debug("[jump] jump_pool_ready", err);
+    }
+    if (ready) return ids.map((id) => ({ profile_id: id, password: null, passphrase: null, ask_answers: null }));
+  }
+  const out = [];
+  for (const id of ids) {
+    const jump = profiles.find((p) => p.id === id);
+    if (!jump) return null;
+    if (jump.keepass_entry_uuid) touchKeepass();
+    const creds = await resolveSshCredentials(jump);
+    if (!creds) return null;
+    const asks = await askProfileAnswers(id);
+    if (asks === null) return null;
+    out.push({
+      profile_id: id,
+      password: creds.password || null,
+      passphrase: creds.passphrase || null,
+      ask_answers: asks && Object.keys(asks).length ? asks : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Calcula la ruta y recoge sus secretos: `{ route, jumps }` o `null`.
+ * @param {any} profile
+ * @param {{ override?: any, replay?: any }} [options]
+ */
+async function prepareConnectionRoute(profile, { override = null, replay = undefined } = {}) {
+  const plan = replay !== undefined ? replayConnectionRoute(profile, replay) : planConnectionRoute(profile, override);
+  if (!plan) return null;
+  const jumps = await collectJumpRequests(plan.ids);
+  if (!jumps) return null;
+  return { route: plan, jumps };
+}
+
+/**
+ * `overrides` de `ssh_connect` con la ruta aplicada: «Sin saltos» quita también
+ * el bastión de texto del destino.
+ */
+function overridesWithRoute(overrides, route) {
+  if (!route?.clearTextBastion) return overrides || null;
+  return { ...(overrides || {}), proxy_jump: "" };
+}
+
+/**
+ * «Conectar con cambios» de la conexión de `s` (la propia sesión, su raíz o la
+ * que guarda la ruta), o `null`. Una shell hija lo hereda al nacer.
+ */
+function sessionOverridesOf(s) {
+  return s?._overrides ?? routeOwnerOf(s)?._overrides ?? null;
+}
+
+/**
+ * `overrides` del panel de archivos (y de su modo elevado) de una sesión: el
+ * bastión de texto puntual de «Conectar con cambios», si lo hubo, y «Sin
+ * saltos». Sin el bastión puntual, el backend vería el perfil con su bastión
+ * guardado y una lista de saltos sin él, y el panel saldría directo.
+ */
+function fileTransferOverridesFor(s, route) {
+  const ov = sessionOverridesOf(s);
+  const base = ov && ov.proxy_jump !== undefined && ov.proxy_jump !== null ? { proxy_jump: ov.proxy_jump } : null;
+  return overridesWithRoute(base, route);
+}
+
+/** Línea del registro de conexión que dice por dónde va. */
+function logConnectionRoute(sessionId, profile, route) {
+  const text = routeTextFor(route, profile);
+  if (!text) return;
+  appendConnectionLog(sessionId, {
+    stage: "preparing",
+    status: "info",
+    message: t("jump.route_via", { route: text }),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+// ─── Probar el salto activo ─────────────────────────────────────
+
+/** Conecta la cadena del salto activo y dice si deja abrir túneles. */
+async function probeActiveJump() {
+  const active = activeJumpProfile();
+  if (!active) {
+    toast(t("jump.probe_none"), "info");
+    return;
+  }
+  const chain = jumpChain(active, profiles);
+  if (chain.error) {
+    notifyRouteError({ ...chain.error, via: "active" }, active);
+    return;
+  }
+  const ids = [...chain.ids, active.id];
+  await runJumpProbe(ids);
+}
+
+/**
+ * @param {string[]} ids
+ * @param {any[]|null} [collected] Secretos ya recogidos (la prueba del formulario).
+ * @returns {Promise<{ ok: boolean, forwarding: boolean } | null>}
+ */
+async function runJumpProbe(ids, collected = null) {
+  const jumps = collected || await collectJumpRequests(ids);
+  if (!jumps) return null;
+  const last = profiles.find((p) => p.id === ids[ids.length - 1]);
+  toast(t("jump.probe_running", { name: jumpProfileName(last) }), "info", 4000);
+  try {
+    const report = await invoke("jump_probe", { jumps });
+    const route = Array.isArray(report?.hops) && report.hops.length
+      ? report.hops.join(" → ")
+      : describeRoute(ids, profiles);
+    const detail = typeof report?.message === "string" ? report.message.trim() : "";
+    if (!report?.ok) {
+      toast(t("jump.probe_failed", { err: detail || route }), "error", 12000);
+    } else if (report.forwarding) {
+      toast(t("jump.probe_ok", { route }), "success", 9000);
+    } else {
+      toast([t("jump.probe_no_forwarding", { route }), detail].filter(Boolean).join("\n"), "warning", 15000);
+    }
+    return { ok: !!report?.ok, forwarding: !!report?.forwarding };
+  } catch (err) {
+    toast(t("jump.probe_failed", { err: ipcErrorText(err) }), "error", 12000);
+    return null;
+  }
+}
+
+// ─── Por dónde va cada sesión ───────────────────────────────────
+
+/** Ruta legible de `route` hacia `profile` (incluye bastiones de texto). */
+function routeTextFor(route, profile) {
+  if (!route) return "";
+  return describeRoute(route.ids || [], profiles, { target: profile, clearTextBastion: !!route.clearTextBastion });
+}
+
+/** Sesión que guarda la ruta: la propia, su raíz (shell hija) o la de tmux. */
+function routeOwnerOf(s) {
+  if (!s) return null;
+  if (s.route) return s;
+  if (s._parentSessionId && sessions.get(s._parentSessionId)?.route) return sessions.get(s._parentSessionId);
+  if (s._tmux?.conn && sessions.get(s._tmux.conn)?.route) return sessions.get(s._tmux.conn);
+  return null;
+}
+
+/** «A → B» de la sesión, o "" si va directa. */
+function sessionRouteText(s) {
+  const owner = routeOwnerOf(s);
+  if (!owner) return "";
+  const profile = profiles.find((p) => p.id === owner.profileId);
+  return routeTextFor(owner.route, profile);
+}
+
+/** Icono de ruta en la pestaña, con la ruta en su tooltip. */
+function updateTabRoute(sessionId) {
+  const tab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
+  if (!tab) return;
+  const text = sessionRouteText(sessions.get(sessionId));
+  let badge = tab.querySelector(".tab-route-badge");
+  if (!text) {
+    badge?.remove();
+    tab.removeAttribute("aria-describedby");
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement("span");
+    badge.className = "tab-route-badge";
+    badge.id = `tab-route-${sessionId}`;
+    badge.setAttribute("role", "img");
+    badge.innerHTML = '<svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-route"/></svg>';
+    tab.insertBefore(badge, tab.querySelector(".tab-name"));
+  }
+  const label = t("jump.route_via", { route: text });
+  badge.title = label;
+  badge.setAttribute("aria-label", label);
+  tab.setAttribute("aria-describedby", badge.id);
+}
+
+/** Repinta los distintivos de ruta (cambio de idioma, perfiles renombrados). */
+function refreshRouteIndicators() {
+  for (const sid of sessions.keys()) updateTabRoute(sid);
+  updateStatusBar();
+}
+
+/** Segmento de la barra inferior con la ruta de la sesión activa. */
+function renderStatusRoute(s) {
+  const wrap = document.getElementById("status-route");
+  const textEl = document.getElementById("status-route-text");
+  if (!wrap || !textEl) return;
+  const text = sessionRouteText(s);
+  wrap.classList.toggle("hidden", !text);
+  textEl.textContent = text;
+  wrap.title = text ? t("jump.route_via", { route: text }) : "";
+}
+
+/**
+ * Rutas de los destinos de un script (`scripts_run`): id → saltos en orden.
+ * `null` si alguna no se puede usar (ya avisado).
+ * @param {string[]} profileIds
+ */
+function scriptRoutesFor(profileIds) {
+  /** @type {Record<string, string[]>} */
+  const routes = {};
+  for (const id of profileIds) {
+    const profile = profiles.find((p) => p.id === id);
+    if (!profile) continue;
+    const plan = planConnectionRoute(profile);
+    if (!plan) return null;
+    routes[id] = plan.ids;
+  }
+  return routes;
+}
+
+/**
+ * Conecta un perfil por el camino de su tipo. `route` es la ruta puntual de
+ * «Conectar a través de»: `{ direct: true }` (sin saltos) o `{ viaProfileId }`;
+ * sin ella manda el salto activo y el bastión del propio perfil.
+ */
+async function connectProfile(profileId, { force = false, credId = null, restore = false, route = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
@@ -10218,19 +11121,19 @@ async function connectProfile(profileId, { force = false, credId = null, restore
   }
 
   if (profile.connection_type === "rdp") {
-    return connectRdp(profileId, { credId });
+    return connectRdp(profileId, { credId, routeOverride: route });
   }
 
   if (profile.connection_type === "vnc") {
-    return connectVnc(profileId, { credId });
+    return connectVnc(profileId, { credId, routeOverride: route });
   }
 
   if (profile.connection_type === "telnet") {
-    return connectTelnet(profileId, { credId });
+    return connectTelnet(profileId, { credId, routeOverride: route });
   }
 
   if (isFileTransferConnectionType(profile.connection_type)) {
-    return connectFileTransferProfile(profileId, { force, credId });
+    return connectFileTransferProfile(profileId, { force, credId, routeOverride: route });
   }
 
   // Con una identidad alternativa abrimos siempre una sesión nueva; solo
@@ -10244,10 +11147,14 @@ async function connectProfile(profileId, { force = false, credId = null, restore
     }
   }
 
+  // La ruta va primero: si no se puede conectar no se pregunta nada, y los
+  // saltos se autentican antes que el destino, como en el orden real.
+  const prepared = await prepareConnectionRoute(profile, { override: route });
+  if (!prepared) return;
   const cred = getProfileCredential(profile, credId);
   const creds = await resolveSshCredentials(profile, cred);
   if (!creds) return;
-  await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false, { credId, restore });
+  await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false, { credId, restore, prepared });
 }
 
 /**
@@ -10281,9 +11188,11 @@ async function connectPrivateProfile(profileId) {
     return connectProfile(profileId);
   }
 
+  const prepared = await prepareConnectionRoute(profile);
+  if (!prepared) return;
   const creds = await resolveSshCredentials(profile);
   if (!creds) return;
-  await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false, { private: true });
+  await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false, { private: true, prepared });
 }
 
 async function wakeProfile(profileId) {
@@ -10415,7 +11324,16 @@ function promptSessionOverrides(profile) {
   document.getElementById("dup-ov-username").value = profile.username || "";
   document.getElementById("dup-ov-port").value = profile.port || 22;
   document.getElementById("dup-ov-dir").value = "";
-  document.getElementById("dup-ov-bastion").value = profile.proxy_jump || "";
+  // Con un bastión guardado, el campo arranca vacío y lo nombra: escribir una
+  // dirección lo sustituye solo en esta sesión; dejarlo vacío lo conserva.
+  const bastionInput = document.getElementById("dup-ov-bastion");
+  const savedBastion = profile.proxy_jump_profile_id
+    ? profiles.find((p) => p.id === profile.proxy_jump_profile_id)
+    : null;
+  bastionInput.value = savedBastion ? "" : (profile.proxy_jump || "");
+  bastionInput.placeholder = savedBastion
+    ? t("modal_dup.bastion_saved_ph", { name: jumpProfileName(savedBastion) })
+    : t("templates.bastion_proxy_example");
   document.getElementById("dup-ov-auth").value = "same";
   document.getElementById("dup-ov-key").value = profile.key_path || "";
   document.getElementById("dup-ov-key-row").classList.add("hidden");
@@ -10462,7 +11380,12 @@ async function duplicateSessionWithOverrides(profileId) {
     overrides.port = port;
   }
   const bastion = form.bastion.trim();
-  if (bastion !== (profile.proxy_jump || "").trim()) overrides.proxy_jump = bastion;
+  if (profile.proxy_jump_profile_id) {
+    // Bastión guardado: solo una dirección escrita lo sustituye.
+    if (bastion) overrides.proxy_jump = bastion;
+  } else if (bastion !== (profile.proxy_jump || "").trim()) {
+    overrides.proxy_jump = bastion;
+  }
   if (form.auth !== "same") {
     overrides.auth_type = form.auth;
     if (form.auth === "public_key") {
@@ -10475,12 +11398,18 @@ async function duplicateSessionWithOverrides(profileId) {
     }
   }
 
+  // Un bastión puntual sustituye la ruta propia del perfil (el salto activo,
+  // si lo hay, sigue delante); el backend hace lo mismo con la copia del perfil.
+  const routeProfile = withBastionOverride(profile, overrides);
+  const prepared = await prepareConnectionRoute(routeProfile);
+  if (!prepared) return;
   const creds = await resolveOverrideAuthCredentials(profile, overrides);
   if (!creds) return;
 
   await connectProfileWithCredentials(profileId, creds.password, creds.passphrase, false, {
     overrides: Object.keys(overrides).length ? overrides : null,
     initialDir: form.initialDir.trim() || null,
+    prepared,
   });
 }
 
@@ -10516,7 +11445,7 @@ async function resolveOverrideAuthCredentials(profile, overrides) {
   return { password: null, passphrase: null };
 }
 
-async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase, { private: isPrivate = false, credId = null, restore = false, overrides = null, initialDir = null } = {}) {
+async function connectProfileWithCredentials(profileId, password, passphrase, _savePassphrase, { private: isPrivate = false, credId = null, restore = false, overrides = null, initialDir = null, prepared = null, routeOverride = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
@@ -10529,6 +11458,9 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   // cancela, abortamos sin dejar nada a medias.
   const askAnswers = await askProfileAnswers(profileId);
   if (askAnswers === null) return;
+  // Ruta y secretos de los saltos (si no los trae ya quien llama).
+  const routed = prepared || await prepareConnectionRoute(profile, { override: routeOverride });
+  if (!routed) return;
 
   const sessionId = `ssh-${crypto.randomUUID()}`;
   // Con override de usuario, la pestaña lo muestra para distinguir la sesión.
@@ -10541,6 +11473,10 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   // para reaplicarlos al reconectar (manual o tras caída).
   session._overrides = overrides || null;
   session._initialDir = initialDir || null;
+  // Ruta por la que va: la reutilizan la reconexión, el panel SFTP y las
+  // pestañas nuevas de la misma conexión; la pinta el distintivo de la pestaña.
+  session.route = routed.route;
+  updateTabRoute(sessionId);
   // Estado de keepalive de la sesión (para el toggle rápido de la pestaña):
   // parte del valor del perfil (por defecto desactivado).
   session._keepAliveSecs = profile.keep_alive_secs || 0;
@@ -10556,6 +11492,7 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
     message: t("terminal.log_preparing", { name: profile.name }),
     timestamp: new Date().toISOString(),
   });
+  logConnectionRoute(sessionId, profile, routed.route);
 
   try {
     const dataChannel = new Channel();
@@ -10583,7 +11520,9 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
       // En sesión privada, desactivar la grabación a fichero aunque el perfil
       // lo tenga habilitado (el backend aplica el override sobre su copia local).
       sessionLogOverride: isPrivate ? false : null,
-      overrides: overrides || null,
+      overrides: overridesWithRoute(overrides, routed.route),
+      // Saltos de la ruta, en orden, con sus secretos (`JumpRequest`).
+      jumps: routed.jumps,
       // Tamaño real ya medido por el fitAddon.fit() de createTerminalTab: pide
       // el PTY con este tamaño desde el principio (si no, el remoto formatea
       // lo que imprima nada más abrir la shell para un 80x24 fijo).
@@ -10645,6 +11584,11 @@ async function openShellInConnection(fromSessionId) {
   createTerminalTab(sessionId, tabProfile, "connecting", { private: from.private, credId: from.credentialId || null });
   const session = sessions.get(sessionId);
   session._parentSessionId = rootId;
+  // Misma conexión, misma ruta y mismos cambios puntuales: si la raíz cae y esta
+  // se promociona al reconectar, debe ir por donde iba, no directa.
+  if (root.route) session.route = root.route;
+  session._overrides = root._overrides || null;
+  updateTabRoute(sessionId);
 
   try {
     const dataChannel = new Channel();
@@ -10745,14 +11689,15 @@ async function handleRdpCertChanged(sessionId, profile, info) {
   await reconnectExternalSession(sessionId);
 }
 
-async function connectRdp(profileId, { passwordOverride = null, credId = null, reuse = null } = {}) {
+async function connectRdp(profileId, { passwordOverride = null, credId = null, reuse = null, routeOverride = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
   // Si ya hay una sesión activa para este perfil con la misma identidad,
   // traerla al frente. Al reconectar en la propia pestaña no aplica: la sesión
-  // que buscaríamos es justo la que estamos relanzando.
-  if (!reuse) {
+  // que buscaríamos es justo la que estamos relanzando; con una ruta puntual
+  // («Conectar a través de») tampoco: es otra conexión.
+  if (!reuse && !routeOverride) {
     for (const [sid, s] of sessions) {
       if (s.profileId === profileId && s.type === "rdp" && s.status !== "closed"
           && (s.credentialId || null) === (credId || null)) {
@@ -10790,6 +11735,13 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null, r
     }
   }
 
+  // Ruta: al reconectar, la misma de la primera vez; si no, la que toque.
+  // El backend abre un túnel local por los saltos y lanza el cliente contra él.
+  const prepared = await prepareConnectionRoute(profile, reuse
+    ? { replay: sessions.get(reuse)?.route ?? null }
+    : { override: routeOverride });
+  if (!prepared) return;
+
   // Preasignamos el sessionId (como SFTP) para registrar el listener de cierre
   // ANTES de lanzar el proceso: si xfreerdp/mstsc muere en los primeros ms, el
   // evento `rdp-closed-*` no se pierde (si no, la pestaña quedaría «conectada»).
@@ -10817,6 +11769,8 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null, r
     sessions.set(sessionId, sessionObj);
     createRdpTab(sessionId, profile, "connecting");
   }
+  sessionObj.route = prepared.route;
+  updateTabRoute(sessionId);
 
   // Escuchar el cierre del proceso externo (antes del invoke).
   const unlisten = await listen(eventName("rdpClosed", sessionId), (event) => {
@@ -10853,6 +11807,8 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null, r
       // Solo el valor global: el del perfil lo lee el backend, que es quien
       // decide cuál manda.
       display: prefs.rdpDisplay || null,
+      jumps: prepared.jumps,
+      overrides: overridesWithRoute(null, prepared.route),
     });
 
     // Si el proceso ya se cerró durante el lanzamiento, no lo marcamos conectado.
@@ -10892,13 +11848,14 @@ async function connectRdp(profileId, { passwordOverride = null, credId = null, r
  * @param {string} profileId
  * @param {"vnc"|"telnet"} kind
  */
-async function connectExternalNoAuth(profileId, kind, { credId = null, reuse = null } = {}) {
+async function connectExternalNoAuth(profileId, kind, { credId = null, reuse = null, routeOverride = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
   // Reusar una sesión activa del mismo perfil, tipo e identidad. Al reconectar
-  // en la propia pestaña no aplica: la que encontraríamos es la que relanzamos.
-  if (!reuse) {
+  // en la propia pestaña no aplica: la que encontraríamos es la que relanzamos;
+  // con una ruta puntual («Conectar a través de») tampoco.
+  if (!reuse && !routeOverride) {
     for (const [sid, s] of sessions) {
       if (s.profileId === profileId && s.type === kind && s.status !== "closed"
           && (s.credentialId || null) === (credId || null)) {
@@ -10911,6 +11868,12 @@ async function connectExternalNoAuth(profileId, kind, { credId = null, reuse = n
   const meta = connectionProtocolMeta(kind);
   const connectCmd = kind === "vnc" ? "vnc_connect" : "telnet_connect";
   const closedEvent = kind === "vnc" ? "vncClosed" : "telnetClosed";
+
+  // Ruta (túnel local por los saltos): la misma al reconectar en la pestaña.
+  const prepared = await prepareConnectionRoute(profile, reuse
+    ? { replay: sessions.get(reuse)?.route ?? null }
+    : { override: routeOverride });
+  if (!prepared) return;
 
   // sessionId preasignado + listener de cierre antes del invoke (como SFTP/RDP):
   // así un `*-closed-*` inmediato no deja la pestaña colgada en «conectada».
@@ -10937,6 +11900,8 @@ async function connectExternalNoAuth(profileId, kind, { credId = null, reuse = n
     sessions.set(sessionId, sessionObj);
     createExternalTab(sessionId, profile, "connecting", kind);
   }
+  sessionObj.route = prepared.route;
+  updateTabRoute(sessionId);
 
   const unlisten = await listen(eventName(closedEvent, sessionId), () => {
     sessionObj.status = "closed";
@@ -10952,6 +11917,8 @@ async function connectExternalNoAuth(profileId, kind, { credId = null, reuse = n
       sessionId,
       profileId,
       credentialId: credId || null,
+      jumps: prepared.jumps,
+      overrides: overridesWithRoute(null, prepared.route),
     });
 
     if (sessionObj.status === "closed") {
@@ -11008,7 +11975,7 @@ async function closeRdpSession(sessionId) {
   return closeExternalSession(sessionId, "rdp");
 }
 
-async function connectFileTransferProfile(profileId, { passwordOverride = null, force = false, credId = null } = {}) {
+async function connectFileTransferProfile(profileId, { passwordOverride = null, force = false, credId = null, routeOverride = null } = {}) {
   const profile = profiles.find((p) => p.id === profileId);
   if (!profile) return;
 
@@ -11016,6 +11983,8 @@ async function connectFileTransferProfile(profileId, { passwordOverride = null, 
     if (s.profileId === profileId && isFileTransferConnectionType(s.type) && s.status !== "closed"
         && (s.credentialId || null) === (credId || null)) {
       if (!force) {
+        // «Conectar a través de»: una sesión aparte, sin tocar la abierta.
+        if (routeOverride) continue;
         setActiveTab(sid);
         return;
       }
@@ -11023,6 +11992,10 @@ async function connectFileTransferProfile(profileId, { passwordOverride = null, 
     }
   }
 
+  // SFTP puede ir por un salto; FTP/FTPS/WebDAV conectan directo (con aviso,
+  // o no conectan, según Preferencias → Saltos).
+  const prepared = await prepareConnectionRoute(profile, { override: routeOverride });
+  if (!prepared) return;
   const cred = getProfileCredential(profile, credId);
   const creds = await resolvePasswordOnlyCredentials(profile, {
     passwordOverride,
@@ -11046,12 +12019,14 @@ async function connectFileTransferProfile(profileId, { passwordOverride = null, 
     credentialId: credId,
     tunnels: new Map(),
     tunnelPanel: null,
+    route: prepared.route,
   };
   sessions.set(sessionId, sessionObj);
   createFileTransferTab(sessionId, profile, "connecting");
+  updateTabRoute(sessionId);
 
   try {
-    await openSftpPanel(sessionId, { passwordOverride: password, passphraseOverride: null });
+    await openSftpPanel(sessionId, { passwordOverride: password, passphraseOverride: null, jumps: prepared.jumps });
     // El panel puede volver sin conectar y sin error (KeePass bloqueada, diálogo
     // cancelado): no dejar una pestaña «conectada» vacía.
     if (!sessionObj.sftp) {
@@ -11315,6 +12290,7 @@ function upsertTmuxWindow(root, payload) {
     const name = payload.name || `${profile?.name || "tmux"} · ${windowId}`;
     createTab(tabId, { name, connection_type: "ssh" }, "connected", { sftp: false, private: root.private });
     updateTabReadOnly(tabId);
+    updateTabRoute(tabId);
     info = { tabId, name, layout: null, panes: new Map() };
     wins.set(windowId, info);
     const showNow = viewSelection.length === 0 || viewSelection.includes(root.id);
@@ -12914,6 +13890,8 @@ async function reconnectSshInPlace(s) {
 
   // Con auth puntual («Duplicar con cambios») se vuelve a preguntar lo
   // necesario; con la del perfil se reutiliza el flujo normal.
+  const sessionOverrides = sessionOverridesOf(s);
+  if (!s._overrides && sessionOverrides) s._overrides = sessionOverrides;
   const creds = s._overrides?.auth_type
     ? await resolveOverrideAuthCredentials(profile, s._overrides)
     : await resolveSshCredentials(profile);
@@ -12922,6 +13900,10 @@ async function reconnectSshInPlace(s) {
   // preguntar: sin respuesta, el servidor recibiría el marcador literal.
   const askAnswers = await askProfileAnswers(profile.id);
   if (askAnswers === null) return;
+  // La misma ruta que la primera vez (la que enseña la pestaña), revalidada.
+  // Una shell hija que se promociona hereda la de su raíz.
+  const routed = await prepareConnectionRoute(withBastionOverride(profile, s._overrides), { replay: routeOwnerOf(s)?.route ?? null });
+  if (!routed) return;
   // Mientras se pedían las credenciales pudo cerrarse la pestaña (Ctrl+W) o
   // cambiar su estado: no se abre una conexión sin pestaña. De aquí a
   // «conectando» todo es síncrono.
@@ -12934,6 +13916,8 @@ async function reconnectSshInPlace(s) {
   // conexión propia: `ssh_connect` con su mismo id abre una sesión completa,
   // así que deja de ser hija a todos los efectos (guards, cierre, monitor).
   delete s._parentSessionId;
+  s.route = routed.route;
+  updateTabRoute(oldSessionId);
   updateTabStatus(oldSessionId, "connecting");
   appendConnectionLog(oldSessionId, {
     stage: "reconnecting",
@@ -12964,7 +13948,8 @@ async function reconnectSshInPlace(s) {
       // Conserva el modo privado al reconectar: no reactivar la grabación de
       // sesión aunque el perfil la tenga habilitada.
       sessionLogOverride: s.private ? false : null,
-      overrides: s._overrides || null,
+      overrides: overridesWithRoute(s._overrides, routed.route),
+      jumps: routed.jumps,
       cols: s.terminal.cols,
       rows: s.terminal.rows,
     });
@@ -13764,6 +14749,8 @@ function updateStatusBar() {
     envEl.textContent = valid ? env.toUpperCase() : "";
   }
 
+  renderStatusRoute(s);
+
   const dot = document.getElementById("status-dot");
   if (dot) {
     dot.classList.remove("connected", "error", "reconnecting");
@@ -13856,6 +14843,9 @@ function updateStatusBar() {
   };
   // Cachear sessionId en la propia sesión (no estaba)
   s.sessionId = activeSessionId;
+  // Por un salto no hay latencia que medir desde aquí: el ping iría directo al
+  // host, por fuera de la ruta (y con un salto activo, saltándoselo).
+  if (sessionRouteText(s)) return;
   probe();
   _statusLatencyTimer = setInterval(probe, 10000);
 
@@ -15478,8 +16468,15 @@ function trashPurgeExpired() {
   if (kept.length !== entries.length) trashSave(kept);
 }
 
-function trashAdd(kind, label, payload) {
-  const entry = { id: crypto.randomUUID(), kind, label, deletedAt: Date.now(), payload };
+/**
+ * @param {string} kind
+ * @param {string} label
+ * @param {any} payload
+ * @param {Record<string, any>} [extra] Datos de la entrada que no son del perfil
+ *   (p. ej. `bastionOf`, `wasActiveJump`): se guardan al lado del payload.
+ */
+function trashAdd(kind, label, payload, extra = {}) {
+  const entry = { ...extra, id: crypto.randomUUID(), kind, label, deletedAt: Date.now(), payload };
   const entries = trashLoad();
   entries.unshift(entry);
   if (entries.length > TRASH_MAX_ENTRIES) entries.length = TRASH_MAX_ENTRIES;
@@ -15502,11 +16499,16 @@ async function restoreTrashEntries(entryIds) {
   const updatedAt = new Date().toISOString();
 
   const profilesToSave = [];
+  /** Bastiones restaurados con quién los usaba y si eran el salto activo. */
+  const restoredBastions = [];
   for (const entry of targets) {
     if (entry.kind === "profile") {
       const p = entry.payload;
       if (!p?.id || profiles.some((x) => x.id === p.id)) { restored++; continue; }
       profilesToSave.push({ ...p, updated_at: updatedAt });
+      if (entry.bastionOf || entry.wasActiveJump) {
+        restoredBastions.push({ id: p.id, links: entry.bastionOf || [], wasActive: !!entry.wasActiveJump });
+      }
       // Su tombstone de sync se retira (como `clearNoteTombstone`): si viajara
       // junto al perfil restaurado, la siguiente sync lo volvería a borrar.
       if (prefs.tombstones?.profiles?.[p.id]) {
@@ -15540,6 +16542,16 @@ async function restoreTrashEntries(entryIds) {
     }
   }
 
+  // Quienes usaban de bastión un perfil restaurado vuelven a apuntarle, si
+  // siguen sin otro (el borrado les quitó la referencia).
+  for (const { id, links } of restoredBastions) {
+    for (const relinked of relinkRestoredBastion(profiles, id, links, updatedAt)) {
+      const pending = profilesToSave.findIndex((x) => x.id === relinked.id);
+      if (pending >= 0) profilesToSave[pending] = { ...profilesToSave[pending], proxy_jump_profile_id: id };
+      else profilesToSave.push(relinked);
+    }
+  }
+
   if (profilesToSave.length) {
     await invoke("save_profiles", { profiles: profilesToSave });
     for (const p of profilesToSave) {
@@ -15559,6 +16571,11 @@ async function restoreTrashEntries(entryIds) {
   }
 
   if (prefsDirty) savePrefs();
+  // Era el salto activo y no se ha puesto otro entre medias: vuelve a serlo.
+  const backAsActive = restoredBastions.find((b) => b.wasActive);
+  if (backAsActive && !activeJumpId() && profiles.some((p) => p.id === backAsActive.id)) {
+    setActiveJump(backAsActive.id, { announce: false });
+  }
   trashSave(trashLoad().filter((e) => !wanted.has(e.id)));
   renderConnectionList();
   scheduleProfileAutoSync();
@@ -15782,13 +16799,71 @@ async function deleteProfilesData(profileIds) {
     sync.recordTombstone(prefs, "profiles", profile.id);
   }
 
+  // Quién se queda sin bastión y si era el salto activo: la entrada de la
+  // papelera lo apunta para que «Deshacer» lo reponga.
+  const bastionLinks = bastionLinksOf(profiles, targets.map((p) => p.id));
+  const activeBefore = activeJumpId();
   lastDeletionTrashIds = targets.map((p) =>
-    trashAdd("profile", `${p.name} (${p.username}@${p.host})`, p)
+    trashAdd("profile", `${p.name} (${p.username}@${p.host})`, p, {
+      ...(bastionLinks[p.id] ? { bastionOf: bastionLinks[p.id] } : {}),
+      ...(activeBefore === p.id ? { wasActiveJump: true } : {}),
+    })
   );
 
   const borrados = new Set(targets.map((p) => p.id));
   profiles = profiles.filter((p) => !borrados.has(p.id));
+  await detachBastionReferences([...borrados]);
   return targets.length;
+}
+
+/**
+ * Tras borrar perfiles: los que los usaban como bastión se quedan sin él (se
+ * guardan por el camino normal, así que la sync lo lleva a los demás equipos),
+ * el salto activo borrado se quita y los recientes se limpian. Sin esto, la
+ * siguiente conexión de esos perfiles fallaría con «el bastión ya no existe».
+ * @param {string[]} deletedIds
+ */
+async function detachBastionReferences(deletedIds) {
+  const updated = detachDeletedBastions(profiles, deletedIds);
+  if (updated.length) {
+    try {
+      await invoke("save_profiles", { profiles: updated });
+      for (const u of updated) {
+        const idx = profiles.findIndex((p) => p.id === u.id);
+        if (idx >= 0) profiles[idx] = u;
+      }
+    } catch (err) {
+      console.warn("[jump] save_profiles (bastiones huérfanos)", err);
+    }
+  }
+  const gone = new Set(deletedIds);
+  const recent = (prefs.recentJumpProfileIds || []).filter((id) => !gone.has(id));
+  if (recent.length !== (prefs.recentJumpProfileIds || []).length) {
+    prefs.recentJumpProfileIds = recent;
+    savePrefs();
+  }
+  if (activeJumpId() && gone.has(activeJumpId())) setActiveJump(null, { announce: false });
+}
+
+/**
+ * Frases que añade la confirmación de un borrado cuando alguno de los perfiles
+ * es el bastión de otros o el salto activo.
+ * @param {string[]} ids
+ */
+function bastionDeleteWarnings(ids) {
+  const set = new Set(ids);
+  const referrers = new Set();
+  for (const id of ids) {
+    for (const p of bastionReferrers(profiles, id)) if (!set.has(p.id)) referrers.add(p.id);
+  }
+  const multi = ids.length > 1;
+  const lines = [];
+  if (referrers.size) {
+    if (multi) lines.push(t("jump.delete_referrers_multi", { n: referrers.size }));
+    else lines.push(referrers.size === 1 ? t("jump.delete_referrers_one") : t("jump.delete_referrers_many", { n: referrers.size }));
+  }
+  if (activeJumpId() && set.has(activeJumpId())) lines.push(multi ? t("jump.delete_active_multi") : t("jump.delete_active"));
+  return lines;
 }
 
 async function deleteProfile(profileId) {
@@ -15796,7 +16871,7 @@ async function deleteProfile(profileId) {
   if (!profile) return;
   const confirmed = await confirmThemed({
     title: t("toast.del_conn_title"),
-    message: t("toast.del_conn_confirm", { name: profile.name }),
+    message: [t("toast.del_conn_confirm", { name: profile.name }), ...bastionDeleteWarnings([profileId])].join("\n\n"),
     submitLabel: t("toast.del_conn_submit"),
     danger: true,
   });
@@ -15841,7 +16916,7 @@ async function deleteSelectedProfiles(targetId) {
 
   const confirmed = await confirmThemed({
     title: t("toast.del_conn_multi_title"),
-    message: t("toast.del_conn_multi_confirm", { n: ids.length }),
+    message: [t("toast.del_conn_multi_confirm", { n: ids.length }), ...bastionDeleteWarnings(ids)].join("\n\n"),
     submitLabel: t("toast.del_conn_submit"),
     danger: true,
   });
@@ -17094,6 +18169,10 @@ async function launchScriptRun() {
  */
 async function startScriptRun(script, profileIds, options) {
   if (scriptRunState) return;
+  // Ruta de cada destino (salto activo y bastiones): la recorre el backend con
+  // los secretos guardados de cada salto. Si alguna no vale, no se lanza nada.
+  const routes = scriptRoutesFor(profileIds);
+  if (!routes) return;
   const runId = crypto.randomUUID?.() || `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
   const hosts = new Map();
@@ -17246,6 +18325,7 @@ async function startScriptRun(script, profileIds, options) {
       runId,
       profileIds,
       options,
+      routes,
     });
   } catch (err) {
     unlistenScriptRun(run);
@@ -18808,7 +19888,7 @@ async function toggleSftpPanel(sessionId) {
   await openSftpPanel(sessionId);
 }
 
-async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOverride = null } = {}) {
+async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOverride = null, jumps = null } = {}) {
   const s = sessions.get(sessionId);
   if (!s) return;
   const profile = profiles.find((p) => p.id === s.profileId);
@@ -18843,6 +19923,17 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
     }
   } else if (view.authType === "public_key" && !passphrase) {
     passphrase = await getStoredSecret(view.ppKey);
+  }
+
+  // Ruta: LA MISMA que la sesión (la del terminal o la del perfil de
+  // transferencia); con el pool, los saltos ya están autenticados.
+  const sftpRoute = routeOwnerOf(s)?.route ?? null;
+  const sftpOverrides = fileTransferOverridesFor(s, sftpRoute);
+  let sftpJumps = jumps;
+  if (!sftpJumps) {
+    const prepared = await prepareConnectionRoute(withBastionOverride(profile, sftpOverrides), { replay: sftpRoute });
+    if (!prepared) return;
+    sftpJumps = prepared.jumps;
   }
 
   // Construir panel primero con estado "conectando"
@@ -18881,6 +19972,7 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
     transferProcessing: false,
     follow: false,
     elevated: false,
+    route: sftpRoute,
   };
 
   setSftpStatus(panel, t("external.session_connecting", { proto: isFileTransfer ? profile.connection_type.toUpperCase() : "SFTP" }));
@@ -18915,6 +20007,8 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
       sessionId: sftpSessionId,
       maxConcurrent: sftpMaxConcurrent(),
       credentialId: s.credentialId || null,
+      jumps: sftpJumps,
+      overrides: sftpOverrides,
     });
     s.sftp.sftpSessionId = sftpSessionId;
     appendSftpActivity(panel, {
@@ -18999,6 +20093,12 @@ async function toggleSftpElevated(sessionId) {
     passphrase = await getStoredSecret(view.ppKey);
   }
 
+  // La misma ruta que la sesión de archivos que se reabre.
+  const elevRoute = s.sftp.route ?? routeOwnerOf(s)?.route ?? null;
+  const elevOverrides = fileTransferOverridesFor(s, elevRoute);
+  const elevPrepared = await prepareConnectionRoute(withBastionOverride(profile, elevOverrides), { replay: elevRoute });
+  if (!elevPrepared) return;
+
   const wasElevated = s.sftp.elevated;
   const targetElevated = !wasElevated;
   const prevCwd = s.sftp.cwd;
@@ -19034,6 +20134,8 @@ async function toggleSftpElevated(sessionId) {
       sessionId: newSftpSessionId,
       maxConcurrent: sftpMaxConcurrent(),
       credentialId: s.credentialId || null,
+      jumps: elevPrepared.jumps,
+      overrides: elevOverrides,
     });
     s.sftp.sftpSessionId = newSftpSessionId;
     s.sftp.elevated = targetElevated;
@@ -19068,6 +20170,8 @@ async function toggleSftpElevated(sessionId) {
         sessionId: fallbackSftpSessionId,
         maxConcurrent: sftpMaxConcurrent(),
         credentialId: s.credentialId || null,
+        jumps: elevPrepared.jumps,
+        overrides: elevOverrides,
       });
       s.sftp.sftpSessionId = fallbackSftpSessionId;
       s.sftp.elevated = wasElevated;
@@ -22931,7 +24035,10 @@ async function importFromSshConfig() {
     toast(t("import_ssh.read_failed", { path: file.path, err: fileErrorText(err) }), "error");
     return;
   }
-  const { blocks, unsupported } = parsed;
+  // Un `Host` repetido cuenta una vez (el primero, como `ssh`): dos bloques con
+  // el mismo alias acababan con el mismo id en dos perfiles.
+  const { unsupported } = parsed;
+  const { blocks, duplicates } = firstBlockPerAlias(parsed.blocks);
 
   if (blocks.length === 0) {
     toast(t("import_ssh.no_hosts"), "info");
@@ -22948,6 +24055,11 @@ async function importFromSshConfig() {
       .map((p) => [p.name, p])
   );
 
+  // Id final de cada alias (el del perfil existente o uno nuevo), para que un
+  // `ProxyJump` que nombra otro Host del fichero apunte a su perfil.
+  const aliasIds = new Map(blocks.map((b) => [b.alias, existingByName.get(b.alias)?.id ?? crypto.randomUUID()]));
+  const jumpLinks = linkSshConfigJumps(blocks, aliasIds);
+
   // Mapea un bloque del config a los campos de un perfil Rustty.
   const blockToFields = (b) => {
     const hasKey = !!b.identityFile;
@@ -22958,7 +24070,7 @@ async function importFromSshConfig() {
       auth_type: hasKey ? "public_key" : "password",
       key_path: hasKey ? b.identityFile : null,
       keep_alive_secs: Number.isFinite(b.keepAliveSecs) ? b.keepAliveSecs : null,
-      proxy_jump: b.proxyJump || null,
+      ...sshConfigJumpFields(b, jumpLinks),
       ssh_tunnels: b.tunnels || [],
       // Solo los que el bloque declara (`remote_command`, `env_vars`, `term_type`).
       ...launchFieldsFromBlock(b),
@@ -22982,6 +24094,7 @@ async function importFromSshConfig() {
     if (fields.username !== (prof.username || "")) changed.push("user");
     if ((fields.key_path || null) !== (prof.key_path || null)) changed.push("key_path");
     if ((fields.proxy_jump || null) !== (prof.proxy_jump || null)) changed.push("proxy_jump");
+    if ("proxy_jump_profile_id" in fields && (fields.proxy_jump_profile_id || null) !== (prof.proxy_jump_profile_id || null)) changed.push("proxy_jump_profile_id");
     if ((fields.keep_alive_secs ?? null) !== (prof.keep_alive_secs ?? null)) changed.push("keep_alive_secs");
     if (tunnelKey(fields.ssh_tunnels) !== tunnelKey(prof.ssh_tunnels)) changed.push("ssh_tunnels");
     changed.push(...launchFieldsChanged(fields, prof));
@@ -23017,6 +24130,9 @@ async function importFromSshConfig() {
   if (unsupported.length) {
     lines.push("", t("import_ssh.unsupported_label", { items: unsupported.join(", ") }));
   }
+  if (duplicates.length) {
+    lines.push("", t("import_ssh.duplicates_label", { items: duplicates.join(", ") }));
+  }
 
   if (toCreate.length === 0 && toUpdate.length === 0) {
     toast(t("import_ssh.nothing"), "info");
@@ -23034,7 +24150,7 @@ async function importFromSshConfig() {
 
   // Construye un perfil completo nuevo a partir de los campos mapeados.
   const buildNewProfile = (alias, fields, now) => ({
-    id: crypto.randomUUID(),
+    id: aliasIds.get(alias) ?? crypto.randomUUID(),
     name: alias,
     host: fields.host,
     port: fields.port,
@@ -23059,6 +24175,7 @@ async function importFromSshConfig() {
     session_log: false,
     session_log_dir: null,
     proxy_jump: fields.proxy_jump,
+    proxy_jump_profile_id: fields.proxy_jump_profile_id ?? null,
     mac_address: null,
     wol_broadcast: null,
     wol_port: null,
@@ -23083,6 +24200,7 @@ async function importFromSshConfig() {
     key_path: fields.key_path,
     keep_alive_secs: fields.keep_alive_secs,
     proxy_jump: fields.proxy_jump,
+    ...("proxy_jump_profile_id" in fields ? { proxy_jump_profile_id: fields.proxy_jump_profile_id } : {}),
     ssh_tunnels: fields.ssh_tunnels,
     ...("remote_command" in fields ? { remote_command: fields.remote_command } : {}),
     ...("env_vars" in fields ? { env_vars: fields.env_vars } : {}),
@@ -23741,6 +24859,7 @@ async function importWizardRun() {
 // ═══════════════════════════════════════════════════════════════
 
 function bindUIEvents() {
+  bindJumpUi();
   // Bloquear el menú contextual nativo del WebView (Atrás, Recargar, Inspeccionar…).
   // Los menús de la app llaman a showContextMenu() y no dependen del default.
   window.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -23772,6 +24891,11 @@ function bindUIEvents() {
       // Las variables solo se validan en perfiles SSH: cambiar el tipo
       // retira (o vuelve a poner) el aviso.
       if (e.target?.id === "f-conn-type") validateRemoteLaunchFields();
+      if (e.target?.id === "f-proxy-jump-mode") {
+        document.getElementById("f-proxy-jump-missing")?.classList.add("hidden");
+        updateBastionFields();
+        if (bastionMode() === "manual") document.getElementById("f-proxy-jump")?.focus();
+      }
       renderConnectionSummary();
     });
   }
@@ -24731,6 +25855,21 @@ function bindUIEvents() {
       if (profileId && credId) connectProfileAs(profileId, credId);
       return;
     }
+    if (btn.dataset.ctx === "connect-via") {
+      const via = btn.dataset.via;
+      const profileId = ctxTarget.id;
+      hideContextMenu();
+      if (profileId && via) {
+        connectProfile(profileId, { force: true, route: via === "direct" ? { direct: true } : { viaProfileId: via } });
+      }
+      return;
+    }
+    if (btn.dataset.ctx === "connect-via-pick") {
+      const profileId = ctxTarget.id;
+      hideContextMenu();
+      if (profileId) openJumpPicker({ mode: "via", targetId: profileId });
+      return;
+    }
     if (btn.dataset.ctx === "toggle-saved-tunnel") {
       const tunnelId = btn.dataset.tunnelId;
       const profileId = ctxTarget.id;
@@ -24786,6 +25925,11 @@ function bindUIEvents() {
     const sftpMenu = document.getElementById("sftp-context-menu");
     if (sftpMenu && !sftpMenu.classList.contains("hidden") && !sftpMenu.contains(e.target)) {
       hideSftpContextMenu();
+    }
+    const routeMenu = document.getElementById("route-menu");
+    if (routeMenu && !routeMenu.classList.contains("hidden") && !routeMenu.contains(e.target)
+        && !e.target.closest?.("#sidebar-route-pill")) {
+      hideRouteMenu();
     }
   });
 
@@ -25024,6 +26168,8 @@ function profileToTemplateDefaults(p) {
     domain: p.domain || "",
     auth_type: p.auth_type || "password",
     proxy_jump: p.proxy_jump || "",
+    proxy_jump_profile_id: p.proxy_jump_profile_id || null,
+    ignore_active_jump: !!p.ignore_active_jump,
     keep_alive_secs: p.keep_alive_secs,
     auto_reconnect: p.auto_reconnect,
     allow_legacy: !!p.allow_legacy_algorithms,
@@ -25050,7 +26196,9 @@ function applyTemplateDefaultsToForm(d) {
     const at = document.getElementById("f-auth-type");
     if (at) { at.value = d.auth_type; updateAuthFields(d.auth_type); }
   }
-  if (d.proxy_jump != null) setVal("f-proxy-jump", d.proxy_jump);
+  if (d.proxy_jump != null || d.proxy_jump_profile_id != null) {
+    populateBastionSelect({ proxy_jump: d.proxy_jump || "", proxy_jump_profile_id: d.proxy_jump_profile_id || null, ignore_active_jump: !!d.ignore_active_jump });
+  }
   if (d.keep_alive_secs != null) setVal("f-keep-alive", d.keep_alive_secs);
   if (d.auto_reconnect != null) setVal("f-auto-reconnect", d.auto_reconnect);
   setChk("f-allow-legacy", d.allow_legacy);
@@ -25453,6 +26601,7 @@ const PALETTE_ICONS = {
   script: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v4h4"/><path d="M10 12l4 2.5-4 2.5z"/></svg>',
   note: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4a1 1 0 0 1 1-1h9l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1z"/><path d="M9 10h6M9 14h6"/></svg>',
   health: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5-6 4 12 2.5-6h5"/></svg>',
+  route: '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="3.4" cy="12.6" r="1.5"/><circle cx="12.6" cy="3.4" r="1.5"/><path d="M5 12.6h5a2 2 0 0 0 0-4H6a2 2 0 0 1 0-4h5"/></svg>',
 };
 
 let _paletteItems = [];
@@ -25475,6 +26624,7 @@ const PALETTE_ACTION_SHORTCUT = {
   "action:copy-block-markdown": "copy_block_markdown",
   "action:export-block-markdown": "export_block_markdown",
   "action:diff-block": "diff_block_previous",
+  "action:jump-pick": "pick_active_jump",
 };
 
 /* Frecuencia + recencia de uso de la paleta, persistidas en localStorage.
@@ -25545,6 +26695,12 @@ function buildPaletteSources() {
     add("action:diff-block", { kind: "action", title: t("palette.action_diff_block"), icon: PALETTE_ICONS.action, run: () => openBlockDiff(-1) });
   }
   add("action:tunnels", { kind: "action", title: t("palette.action_tunnels"), icon: PALETTE_ICONS.tunnel, run: () => openGlobalTunnelsModal() });
+  // Salto activo: elegir siempre; desactivar y probar, solo con uno puesto.
+  add("action:jump-pick", { kind: "action", title: t("jump.palette_pick"), icon: PALETTE_ICONS.route, run: () => openJumpPicker({ mode: "active" }) });
+  if (activeJumpId()) {
+    add("action:jump-clear", { kind: "action", title: t("jump.palette_clear"), icon: PALETTE_ICONS.route, run: () => setActiveJump(null) });
+    add("action:jump-probe", { kind: "action", title: t("jump.palette_probe"), icon: PALETTE_ICONS.route, run: () => probeActiveJump() });
+  }
   add("action:scripts", { kind: "action", title: t("palette.action_scripts"), icon: PALETTE_ICONS.script, run: () => openScriptsModal() });
   const healthFavs = profiles.filter((p) => isFavoriteProfile(p.id) && p.host);
   if (healthFavs.length) {
@@ -26469,6 +27625,12 @@ function registerDialogs() {
   // La paleta y el editor de comandos ya gestionan su foco y su Escape; aquí
   // ganan el fondo inerte, la trampa de Tab y la vuelta del foco.
   dialogs.register("palette", { overlay: "command-palette-overlay", close: closeCommandPalette });
+  // Selector «Elegir conexión…» (salto activo y «Conectar a través de»): el
+  // filtro lleva el teclado; Escape y la vuelta del foco, los comunes.
+  dialogs.register("jump_picker", {
+    overlay: "jump-picker-overlay", close: closeJumpPicker,
+    initialFocus: () => document.getElementById("jump-picker-filter"),
+  });
   dialogs.register("cmd_editor", { overlay: "cmd-editor-overlay", close: () => closeCommandEditor(false) });
   dialogs.bind();
 }
@@ -26544,6 +27706,7 @@ const shortcuts = createShortcutController({
     command_palette: () => openCommandPalette(),
     show_shortcuts: () => toggleShortcutsHelp(),
     clear_prompt_line: () => clearActivePromptLine(),
+    pick_active_jump: () => openJumpPicker({ mode: "active" }),
   },
 });
 

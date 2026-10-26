@@ -20,6 +20,24 @@ pub struct ExternalHandle {
     pub cleanup_path: Option<PathBuf>,
     #[allow(dead_code)]
     pub profile_id: String,
+    /// Reenvío local por la ruta de saltos, si la conexión va por un salto.
+    forward: Option<crate::jump_forward::LocalForward>,
+    /// Cuándo se lanzó: un proceso que muere enseguida era un lanzador
+    /// (`cmd /c start`, `open`, el emulador de terminal; ver `jump_forward`).
+    launched_at: std::time::Instant,
+}
+
+/// Destino de un cliente externo: el `host:port` del perfil o, por un salto,
+/// el reenvío local que lleva hasta él.
+fn launch_target<'a>(
+    host: &'a str,
+    port: u16,
+    forward: Option<&'a crate::jump_forward::LocalForward>,
+) -> (&'a str, u16) {
+    match forward {
+        Some(fwd) => (fwd.host(), fwd.port()),
+        None => (host, port),
+    }
 }
 
 /// Resultado de lanzar el cliente: el proceso y un fichero temporal a limpiar.
@@ -48,6 +66,7 @@ impl ExternalClientManager {
         closed_event: EventKind,
         spawned: SpawnedExternalClient,
         app_handle: AppHandle,
+        forward: Option<crate::jump_forward::LocalForward>,
     ) -> Result<(), String> {
         self.sessions.lock_recover().insert(
             session_id.clone(),
@@ -55,6 +74,8 @@ impl ExternalClientManager {
                 child: spawned.child,
                 cleanup_path: spawned.cleanup_path,
                 profile_id,
+                forward,
+                launched_at: std::time::Instant::now(),
             },
         );
 
@@ -69,9 +90,13 @@ impl ExternalClientManager {
                 if let Some(handle) = map.get_mut(&sid) {
                     match handle.child.try_wait() {
                         Ok(Some(_)) | Err(_) => {
-                            let handle = map.remove(&sid);
-                            if let Some(path) = handle.and_then(|h| h.cleanup_path) {
-                                let _ = std::fs::remove_file(path);
+                            if let Some(mut handle) = map.remove(&sid) {
+                                if let Some(path) = handle.cleanup_path.take() {
+                                    let _ = std::fs::remove_file(path);
+                                }
+                                if let Some(forward) = handle.forward.take() {
+                                    forward.release_after_exit(handle.launched_at.elapsed());
+                                }
                             }
                             true
                         }
@@ -133,7 +158,9 @@ impl VncManager {
         host: &str,
         port: u16,
         app_handle: AppHandle,
+        forward: Option<crate::jump_forward::LocalForward>,
     ) -> Result<(), String> {
+        let (host, port) = launch_target(host, port, forward.as_ref());
         check_launch_host(host)?;
         let spawned = spawn_vnc_client(host, port)?;
         self.0.launch(
@@ -142,6 +169,7 @@ impl VncManager {
             EventKind::VncClosed,
             spawned,
             app_handle,
+            forward,
         )
     }
 
@@ -172,7 +200,9 @@ impl TelnetManager {
         host: &str,
         port: u16,
         app_handle: AppHandle,
+        forward: Option<crate::jump_forward::LocalForward>,
     ) -> Result<(), String> {
+        let (host, port) = launch_target(host, port, forward.as_ref());
         check_launch_host(host)?;
         let spawned = spawn_telnet_client(host, port)?;
         self.0.launch(
@@ -181,6 +211,7 @@ impl TelnetManager {
             EventKind::TelnetClosed,
             spawned,
             app_handle,
+            forward,
         )
     }
 

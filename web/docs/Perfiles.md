@@ -178,7 +178,7 @@ En el formulario de perfil, la sección **Opciones avanzadas** expone toggles SS
 - **Permitir cifrados / kex / MAC antiguos**: extiende la negociación con algoritmos legacy (`aes-cbc`, `3des-cbc`, `dh-sha1`, `hmac-sha1`, `ssh-rsa`) para conectar con servidores antiguos. Al activarlo se despliega una lista de casillas, agrupadas por categoría (Cifrados, Intercambio de claves, MAC y Claves de host), para elegir exactamente qué algoritmos ofrecer; por defecto se ofrecen todos. ⚠️ Reduce la seguridad: úsalo sólo cuando lo necesites.
 - **Reenviar agente SSH**: reusa `$SSH_AUTH_SOCK` (sólo Unix) para autenticar saltos desde el host remoto sin copiar las claves. ⚠️ Al activarlo Rustty pide confirmación: un host comprometido podría usar tu agente para saltar a otros equipos, así que habilítalo solo en hosts de confianza.
 - **Reenviar X11**: solicita el canal X11 con cookie sintética `MIT-MAGIC-COOKIE-1` y lo redirige a `localhost:6000+display`. Requiere un X server local.
-- **Bastion / Jump host**: conecta primero a un host bastión y abre el destino real a través de un canal `direct-tcpip`, equivalente a `ProxyJump`.
+- **Bastión**: conecta primero a un servidor intermedio y abre el destino real a través de él (equivalente a `ProxyJump`). Puede ser **otra conexión guardada**, que entra con sus propias credenciales, o una dirección manual. La casilla **No usar nunca el salto activo** deja la conexión fuera del salto activo. Todo en [Saltos y bastiones](?page=Saltos).
 - **Desactivar confirmación de pegado peligroso**: la confirmación al pegar texto multilínea, muy largo o con caracteres de control está activa de forma global; este toggle del perfil la **desactiva** solo para esta conexión.
 - **Reanudar sesión persistente (tmux/screen)**: ver la sección siguiente.
 
@@ -212,7 +212,7 @@ Para abrir una sesión puntual sin tocar el perfil guardado, usa **Conectar con 
 
 - **Usuario** y **puerto**.
 - **Carpeta inicial**: al abrir el shell, Rustty entra automáticamente en ese directorio.
-- **Bastion / Jump host**: cámbialo o déjalo vacío para conectar en directo aunque el perfil tenga uno.
+- **Bastión**: escribe una dirección para usar otro bastión solo en esa sesión (sustituye también al bastión guardado), o vacía la dirección manual para conectar sin él. Para ir sin ningún salto, usa **Conectar a través de → Sin saltos** (ver [Saltos y bastiones](?page=Saltos)).
 - **Autenticación**: igual que el perfil, preguntar contraseña, clave privada (con su ruta y passphrase opcional) o agente SSH.
 
 Los cambios solo aplican a esa sesión: el perfil no se modifica y nada se guarda en el keyring. Si la sesión se cae y se reconecta, los cambios se reaplican (con autenticación puntual se vuelve a pedir el secreto). Cuando cambias el usuario, la pestaña lo muestra como `Nombre (usuario)`.
