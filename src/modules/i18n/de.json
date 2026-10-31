@@ -470,7 +470,12 @@
     "filter_all": "Alle",
     "filter_connection": "Verbindungen",
     "filter_update": "Hinweise",
-    "connect": "Verbinden"
+    "connect": "Verbinden",
+    "close": "Aktivitätszentrum schließen",
+    "filters_label": "Aktivität filtern",
+    "filter_sync": "Sync",
+    "clear": "Leeren",
+    "clear_title": "Aktivitätsverlauf leeren"
   },
   "sidebar": {
     "prefs_title": "Einstellungen",
@@ -1858,7 +1863,8 @@
     "action_command_palette": "Befehlspalette",
     "action_show_shortcuts": "Tastenkürzel-Übersicht",
     "action_clear_prompt_line": "Eingabezeile löschen",
-    "action_pick_active_jump": "Aktiven Jump-Host wählen"
+    "action_pick_active_jump": "Aktiven Jump-Host wählen",
+    "action_focus_last_toast": "Zur letzten Benachrichtigung"
   },
   "cmd_editor": {
     "title": "Befehlseditor",
@@ -2078,7 +2084,8 @@
     "transfer_skipped": "Übersprungen: {name}",
     "transfers_pause_all_failed": "Die allgemeine Pause ließ sich nicht ändern: {err}",
     "file_grant_invalid": "Die Berechtigung für diese Datei ist nicht mehr gültig (abgelaufen, schon benutzt oder der Pfad hat sich geändert). Wähle sie erneut aus.",
-    "import_failed": "Import fehlgeschlagen: {err}"
+    "import_failed": "Import fehlgeschlagen: {err}",
+    "overflow_open": "{n} weitere Benachrichtigungen: Aktivitätszentrum öffnen"
   },
   "time": {
     "now": "gerade eben",
@@ -2199,7 +2206,8 @@
     "protected_path": "Dieser Pfad liegt im Datenordner von Rustty (oder enthält ihn) und kann im Dateibereich nicht geändert werden.",
     "upload_not_confirmed": "„{name}“ wurde nicht hochgeladen: Es wurde nicht bestätigt.",
     "invalid_path": "Ungültiger Pfad: {path}",
-    "op_failed": "Fehler: {err}"
+    "op_failed": "Fehler: {err}",
+    "col_perms": "Rechte"
   },
   "sftp_nav": {
     "back": "Zurück",

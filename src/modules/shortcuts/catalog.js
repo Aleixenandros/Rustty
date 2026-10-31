@@ -57,6 +57,9 @@ export const SHORTCUT_ACTIONS = {
   // Elegir el salto activo («todo por aquí»). Sin combinación de fábrica:
   // la paleta y la píldora de la barra lateral son su camino de serie.
   pick_active_jump: { default: null },
+  // Llevar el foco al último aviso con acción («Copiar error», «Ver log»…) y
+  // devolverlo al salir. Sin combinación de fábrica: el usuario la elige.
+  focus_last_toast: { default: null },
 };
 
 export const SHORTCUT_IDS = Object.keys(SHORTCUT_ACTIONS);

@@ -24,8 +24,10 @@
  * los que no actúan sobre nada de lo que queda detrás (el zoom de la
  * interfaz agranda también el diálogo). Ctrl+W, Ctrl+Tab, Ctrl+P o Ctrl+1…9
  * cerrarían, cambiarían o escribirían en una sesión oculta tras el velo.
+ * «Ir al último aviso» también pasa: los avisos se pintan por encima de los
+ * modales y su acción («Copiar error») tiene que poder alcanzarse desde uno.
  */
-export const MODAL_SAFE_SHORTCUTS = Object.freeze(["ui_zoom_in", "ui_zoom_out", "ui_zoom_reset"]);
+export const MODAL_SAFE_SHORTCUTS = Object.freeze(["ui_zoom_in", "ui_zoom_out", "ui_zoom_reset", "focus_last_toast"]);
 
 /**
  * Abre (o sube a la cima) un diálogo. Reabrir un id que ya estaba en la pila

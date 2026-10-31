@@ -18,6 +18,7 @@ export const SHORTCUT_GROUPS = [
     "command_palette", "show_shortcuts", "search_connections", "clear_sidebar_search",
     "new_connection", "open_preferences", "toggle_zen_mode",
     "ui_zoom_in", "ui_zoom_out", "ui_zoom_reset", "disconnect_all", "pick_active_jump",
+    "focus_last_toast",
   ] },
   { id: "tabs", actions: [
     "new_local_shell", "close_tab", "next_tab", "prev_tab", "next_pane", "prev_pane", "reconnect_session",

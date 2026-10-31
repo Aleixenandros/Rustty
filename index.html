@@ -1366,22 +1366,24 @@
       </div>
     </div>
 
+    <!-- Centro de actividad: diálogo del controlador común (`registerDialogs`),
+         titulado por su encabezado; los filtros son conmutadores (`aria-pressed`). -->
     <div id="activity-center-overlay" class="hidden">
-      <aside id="activity-center-panel" aria-label="Centro de actividad" data-i18n-aria-label="activity.panel_label">
+      <aside id="activity-center-panel" role="dialog" aria-modal="true" aria-labelledby="activity-center-title" aria-describedby="activity-center-subtitle">
         <div class="activity-center-head">
           <div>
-            <h2 data-i18n="activity.title">Actividad</h2>
-            <p data-i18n="activity.subtitle">Transferencias, conexiones, sync y avisos guardados</p>
+            <h2 id="activity-center-title" data-i18n="activity.title">Actividad</h2>
+            <p id="activity-center-subtitle" data-i18n="activity.subtitle">Transferencias, conexiones, sync y avisos guardados</p>
           </div>
-          <button type="button" class="btn-icon" id="btn-activity-close" aria-label="Cerrar" data-i18n-aria-label="toast.close"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+          <button type="button" class="btn-icon" id="btn-activity-close" aria-label="Cerrar" data-i18n-aria-label="activity.close"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
-        <div class="activity-center-toolbar">
-          <button type="button" class="activity-filter active" data-activity-filter="all" data-i18n="activity.filter_all">Todo</button>
-          <button type="button" class="activity-filter" data-activity-filter="connection" data-i18n="activity.filter_connection">Conexiones</button>
-          <button type="button" class="activity-filter" data-activity-filter="sftp">SFTP</button>
-          <button type="button" class="activity-filter" data-activity-filter="sync" data-i18n="rail.sync">Sync</button>
-          <button type="button" class="activity-filter" data-activity-filter="update" data-i18n="activity.filter_update">Avisos</button>
-          <button type="button" class="activity-clear" id="btn-activity-clear" data-i18n="sftp.clear">Limpiar</button>
+        <div class="activity-center-toolbar" role="group" aria-label="Filtrar la actividad" data-i18n-aria-label="activity.filters_label">
+          <button type="button" class="activity-filter active" data-activity-filter="all" aria-pressed="true" data-i18n="activity.filter_all">Todo</button>
+          <button type="button" class="activity-filter" data-activity-filter="connection" aria-pressed="false" data-i18n="activity.filter_connection">Conexiones</button>
+          <button type="button" class="activity-filter" data-activity-filter="sftp" aria-pressed="false" translate="no">SFTP</button>
+          <button type="button" class="activity-filter" data-activity-filter="sync" aria-pressed="false" data-i18n="activity.filter_sync">Sincronización</button>
+          <button type="button" class="activity-filter" data-activity-filter="update" aria-pressed="false" data-i18n="activity.filter_update">Avisos</button>
+          <button type="button" class="activity-clear" id="btn-activity-clear" data-i18n="activity.clear" data-i18n-title="activity.clear_title" title="Vaciar el historial de actividad">Limpiar</button>
         </div>
         <div id="activity-center-list" class="activity-center-list"></div>
       </aside>
@@ -4002,15 +4004,19 @@
       </div>
     </div>
 
-    <!-- ── Toast de notificaciones ── -->
-    <div id="toast-container" role="region" aria-live="polite" aria-atomic="false" data-i18n-aria-label="toast.region_label" aria-label="Notificaciones"></div>
-
-    <!-- Indicador discreto de la sincronización de arranque (esquina inferior) -->
-    <div id="sync-boot-indicator" class="sync-boot-indicator hidden" aria-live="polite">
-      <svg class="sync-boot-spinner" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-        <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="28" stroke-dashoffset="20" />
-      </svg>
-      <span id="sync-boot-indicator-text"></span>
+    <!-- ── Pila de avisos (toasts) ──
+         Una sola región viva: el contenedor anuncia con cortesía lo que entra
+         (existe desde la carga, que es lo que los lectores de pantalla exigen
+         para anunciar) y solo los errores llevan además `role="alert"`. Ningún
+         aviso lleva `role="status"`: duplicaba el anuncio. El indicador de la
+         sincronización de arranque vive dentro, al final de la pila. -->
+    <div id="toast-container" role="region" aria-live="polite" aria-atomic="false" data-i18n-aria-label="toast.region_label" aria-label="Notificaciones">
+      <div id="sync-boot-indicator" class="sync-boot-indicator hidden">
+        <svg class="sync-boot-spinner" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="28" stroke-dashoffset="20" />
+        </svg>
+        <span id="sync-boot-indicator-text"></span>
+      </div>
     </div>
 
     <!-- ── Botón flotante para salir del modo zen ── -->

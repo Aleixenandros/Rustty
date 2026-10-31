@@ -470,7 +470,12 @@
     "filter_all": "All",
     "filter_connection": "Connections",
     "filter_update": "Notices",
-    "connect": "Connect"
+    "connect": "Connect",
+    "close": "Close the activity center",
+    "filters_label": "Filter the activity",
+    "filter_sync": "Sync",
+    "clear": "Clear",
+    "clear_title": "Empty the activity history"
   },
   "sidebar": {
     "prefs_title": "Preferences",
@@ -1858,7 +1863,8 @@
     "action_command_palette": "Command palette",
     "action_show_shortcuts": "Shortcut cheat sheet",
     "action_clear_prompt_line": "Clear prompt line",
-    "action_pick_active_jump": "Choose the active jump host"
+    "action_pick_active_jump": "Choose the active jump host",
+    "action_focus_last_toast": "Go to the latest notification"
   },
   "cmd_editor": {
     "title": "Command editor",
@@ -2078,7 +2084,8 @@
     "transfer_skipped": "Skipped: {name}",
     "transfers_pause_all_failed": "Could not change the global pause: {err}",
     "file_grant_invalid": "The permission for that file is no longer valid (it expired, was already used or the path changed). Choose it again.",
-    "import_failed": "Import failed: {err}"
+    "import_failed": "Import failed: {err}",
+    "overflow_open": "{n} more notifications: open the activity center"
   },
   "time": {
     "now": "just now",
@@ -2199,7 +2206,8 @@
     "protected_path": "That path is inside Rustty's data folder (or contains it), and the file panel can't modify it.",
     "upload_not_confirmed": "“{name}” was not uploaded: it wasn't confirmed.",
     "invalid_path": "Invalid path: {path}",
-    "op_failed": "Error: {err}"
+    "op_failed": "Error: {err}",
+    "col_perms": "Permissions"
   },
   "sftp_nav": {
     "back": "Back",

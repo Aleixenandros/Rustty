@@ -50,6 +50,21 @@ vuelven al padre y un segundo Escape cierra el menú; y en la barra de pestañas
 →, Inicio y Fin mueven el foco con tabindex itinerante y cada pestaña describe
 su estado en palabras para el lector de pantalla.
 
+La sección de avisos (`toasts.mjs`) asigna en Preferencias una combinación a
+«Ir al último aviso» (sin combinación de fábrica), provoca un aviso de error con
+acción interceptando en la página la llamada al opener del sistema y comprueba
+que el atajo lleva el foco a la acción —también con Preferencias abierto—, que
+Escape y Tab fuera del aviso devuelven el foco sin cerrar el diálogo, que la
+pila queda por encima de la barra de estado con el icono de severidad visible
+y que el centro de actividad es un diálogo titulado con filtros conmutables que
+Escape cierra devolviendo el foco. Sin red ni ventanas nativas.
+
+Las capas del área del terminal (`terminal-layers.mjs`) se muestran a la vez
+sobre una consola local —barra de disposición, panel de bloques, búsqueda,
+aviso de reconexión y diagnóstico— en sus cinco combinaciones y se mide que
+sus rectángulos no se solapen ni salgan del área; es una comprobación de la
+hoja de estilos, sin conexiones.
+
 El panel de túneles se comprueba en claro, oscuro y una ventana de 800 px:
 controles de cabecera juntos, contenido sin desbordar, minimizar/reabrir,
 cerrar y confirmar/cancelar el borrado de un túnel guardado. Las capturas se

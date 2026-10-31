@@ -94,6 +94,7 @@ import { createListboxState, listboxKey } from "./modules/listbox-nav.js";
 import { menuKey } from "./modules/menu-nav.js";
 import { tabStateFromClasses, tabStateKeys } from "./modules/tab-state.js";
 import { TOAST_DURATIONS, createPausableTimer, toastDurationMs } from "./modules/toast-timer.js";
+import { isToastExitKey, pickToastToFocus, shouldReturnToastFocus } from "./modules/toast-focus.js";
 import {
   blockAt,
   createBlockTracker,
@@ -3906,7 +3907,11 @@ function renderActivityCenter() {
   const overlay = document.getElementById("activity-center-overlay");
   if (overlay && overlay.classList.contains("hidden")) return;
   document.querySelectorAll(".activity-filter").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.activityFilter === _activityFilter);
+    const active = btn.dataset.activityFilter === _activityFilter;
+    btn.classList.toggle("active", active);
+    // Los filtros son conmutadores excluyentes: el lector de pantalla sabe
+    // cuál está puesto sin depender del color.
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
   });
   const visible = _activityFilter === "all"
     ? activityItems
@@ -20902,6 +20907,7 @@ function buildSftpPanel(sessionId) {
       <div class="sftp-columns" data-side="local">
         <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="local" data-sftp-sort="type">${escHtml(t("sftp.col_type"))}</button>
         <button type="button" class="sftp-sort-btn sftp-sort-name" data-side="local" data-sftp-sort="name">${escHtml(t("sftp.col_name"))}</button>
+        <span class="sftp-col-title sftp-col-perms">${escHtml(t("sftp.col_perms"))}</span>
         <button type="button" class="sftp-sort-btn sftp-sort-size" data-side="local" data-sftp-sort="size">${escHtml(t("sftp.col_size"))}</button>
         <button type="button" class="sftp-sort-btn sftp-sort-modified" data-side="local" data-sftp-sort="modified">${escHtml(t("sftp.col_modified"))}</button>
         <span></span>
@@ -20950,6 +20956,7 @@ function buildSftpPanel(sessionId) {
       <div class="sftp-columns" data-side="remote">
         <button type="button" class="sftp-sort-btn sftp-sort-type" data-side="remote" data-sftp-sort="type">${escHtml(t("sftp.col_type"))}</button>
         <button type="button" class="sftp-sort-btn sftp-sort-name" data-side="remote" data-sftp-sort="name">${escHtml(t("sftp.col_name"))}</button>
+        <span class="sftp-col-title sftp-col-perms">${escHtml(t("sftp.col_perms"))}</span>
         <button type="button" class="sftp-sort-btn sftp-sort-size" data-side="remote" data-sftp-sort="size">${escHtml(t("sftp.col_size"))}</button>
         <button type="button" class="sftp-sort-btn sftp-sort-modified" data-side="remote" data-sftp-sort="modified">${escHtml(t("sftp.col_modified"))}</button>
         <span></span>
@@ -27850,9 +27857,9 @@ function registerDialogs() {
   dialogs.register("cred_edit", { overlay: "cred-edit-overlay", close: closeCredEditModal });
   dialogs.register("import", { overlay: "import-wizard-overlay", close: closeImportWizard });
   dialogs.register("trash", { overlay: "trash-modal-overlay", close: click("trash-close") });
-  const activityPanel = document.getElementById("activity-center-panel");
-  activityPanel?.setAttribute("role", "dialog");
-  activityPanel?.setAttribute("aria-modal", "true");
+  // Centro de actividad: `role="dialog"`, `aria-modal` y el título que lo
+  // nombra (`aria-labelledby`) van en el HTML; aquí solo el foco inicial (el
+  // filtro puesto) y el cierre. Escape y la vuelta del foco, los comunes.
   dialogs.register("activity", {
     overlay: "activity-center-overlay", dialog: "activity-center-panel", close: closeActivityCenter,
     initialFocus: () => document.querySelector("#activity-center-panel .activity-filter.active"),
@@ -27958,6 +27965,7 @@ const shortcuts = createShortcutController({
     show_shortcuts: () => toggleShortcutsHelp(),
     clear_prompt_line: () => clearActivePromptLine(),
     pick_active_jump: () => openJumpPicker({ mode: "active" }),
+    focus_last_toast: () => focusLastToast(),
   },
 });
 
@@ -30496,9 +30504,12 @@ function toast(message, type = "info", ms = 3500, options = {}) {
  */
 function updateToastContent(el, message, type, options, extra) {
   el.className = `toast ${type}`;
-  // Lectores de pantalla: los errores se anuncian de inmediato (assertive);
-  // el resto, de forma cortés a través del contenedor `aria-live="polite"`.
-  el.setAttribute("role", type === "error" ? "alert" : "status");
+  // Una sola región viva: el contenedor (`aria-live="polite"`, en el HTML
+  // desde la carga) anuncia lo que entra; solo los errores llevan además
+  // `role="alert"` para anunciarse de inmediato. Un `role="status"` por aviso
+  // duplicaba el anuncio (la región del contenedor y la propia del aviso).
+  if (type === "error") el.setAttribute("role", "alert");
+  else el.removeAttribute("role");
   if (el.dataset.category) el.classList.add(`toast-cat-${el.dataset.category}`);
   // Si el foco estaba en un botón del aviso, retirarlo del DOM no siempre
   // emite `focusout`: sin reanudar aquí, la pausa por foco no se quitaría
@@ -30549,8 +30560,79 @@ function dismissToast(el, category) {
   const tracked = category && activeCategoryToasts.get(category);
   toastTimers.get(el)?.stop();
   if (tracked && tracked.el === el) activeCategoryToasts.delete(category);
+  // Si el foco había llegado al aviso con «Ir al último aviso», retirarlo
+  // del DOM lo dejaría en el documento: vuelve a donde estaba.
+  const hadFocus = el.contains(document.activeElement);
   el.remove();
+  if (hadFocus) returnToastFocus();
   refreshToastOverflowCounter();
+}
+
+/**
+ * «Ir al último aviso» (acción configurable, sin combinación de fábrica):
+ * lleva el foco a la acción del último aviso visible con acción —o al botón
+ * de cerrar del último aviso— y recuerda quién tenía el foco para
+ * devolvérselo al salir con Escape, al salir del aviso con Tab o al cerrarse
+ * el aviso. La elección y las reglas de salida viven en
+ * `modules/toast-focus.js`.
+ */
+/** @type {{ el: HTMLElement, opener: Element|null, onKey: (e: KeyboardEvent) => void }|null} */
+let _toastFocusState = null;
+
+function focusLastToast() {
+  const container = document.getElementById("toast-container");
+  if (!container) return false;
+  const toasts = [...container.querySelectorAll(".toast:not(.toast-overflow)")];
+  const index = pickToastToFocus(toasts.map((el) => ({
+    hidden: el.classList.contains("toast-hidden"),
+    hasAction: !!el.querySelector(".toast-action"),
+  })));
+  if (index < 0) return false;
+  const el = /** @type {HTMLElement} */ (toasts[index]);
+  const target = el.querySelector(".toast-action") || el.querySelector(".toast-close");
+  if (!(target instanceof HTMLElement)) return false;
+  if (_toastFocusState && _toastFocusState.el !== el) detachToastFocus();
+  if (!_toastFocusState) {
+    const opener = document.activeElement;
+    const onKey = (e) => {
+      const controls = [...el.querySelectorAll("button:not([disabled])")];
+      const current = controls.indexOf(/** @type {HTMLButtonElement} */ (document.activeElement));
+      if (!isToastExitKey(e, current, controls.length)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      returnToastFocus();
+    };
+    el.addEventListener("keydown", onKey);
+    _toastFocusState = { el, opener, onKey };
+  }
+  target.focus();
+  return true;
+}
+
+function detachToastFocus() {
+  if (!_toastFocusState) return null;
+  const state = _toastFocusState;
+  _toastFocusState = null;
+  state.el.removeEventListener("keydown", state.onKey);
+  return state;
+}
+
+/** Devuelve el foco a quien lo tenía antes de «Ir al último aviso». */
+function returnToastFocus() {
+  const state = detachToastFocus();
+  if (!state) return;
+  const active = document.activeElement;
+  if (!shouldReturnToastFocus({
+    activeInsideToast: !!active && state.el.contains(active),
+    activeIsBody: !active || active === document.body,
+  })) return;
+  const opener = state.opener;
+  if (opener instanceof HTMLElement && opener.isConnected && opener !== document.body) {
+    opener.focus();
+    return;
+  }
+  // Sin disparador (el atajo llegó desde el documento): el terminal activo.
+  sessions.get(activeSessionId)?.terminal?.focus();
 }
 
 /**
@@ -30574,6 +30656,9 @@ function refreshToastOverflowCounter() {
       counter = document.createElement("button");
       counter.type = "button";
       counter.className = "toast toast-overflow";
+      // El contador cambia con cada aviso: no se anuncia (el aviso ya se
+      // anunció); su etiqueta dice a dónde lleva.
+      counter.setAttribute("aria-live", "off");
       counter.addEventListener("click", () => {
         openActivityCenter();
         all.forEach((t) => t.remove());
@@ -30583,6 +30668,7 @@ function refreshToastOverflowCounter() {
       container.prepend(counter);
     }
     counter.textContent = t("toast.more", { n: overflow });
+    counter.setAttribute("aria-label", t("toast.overflow_open", { n: overflow }));
   } else if (counter) {
     counter.remove();
   }

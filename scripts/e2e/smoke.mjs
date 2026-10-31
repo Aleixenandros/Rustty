@@ -60,6 +60,8 @@ import { checkSyncFeedback } from "./sync-feedback.mjs";
 import { checkShortcuts } from "./shortcuts.mjs";
 import { checkDialogs } from "./dialogs.mjs";
 import { checkKeyboard } from "./keyboard.mjs";
+import { checkToasts } from "./toasts.mjs";
+import { checkTerminalLayers } from "./terminal-layers.mjs";
 import { checkTunnels } from "./tunnels.mjs";
 import { checkTerminalProtocols } from "./terminal-protocols.mjs";
 import { checkQuickSelect } from "./quick-select.mjs";
@@ -506,6 +508,8 @@ async function main() {
     await checkShortcuts(app, check);
     await checkDialogs(app, check);
     await checkKeyboard(app, check);
+    await checkToasts(app, check);
+    await checkTerminalLayers(app, check);
     await checkIpcLeastPrivilege(app, home);
     const sftpServer = await prepareSftpServer(home);
     if (sftpServer) {

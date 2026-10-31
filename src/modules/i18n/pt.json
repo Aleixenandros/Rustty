@@ -470,7 +470,12 @@
     "filter_all": "Tudo",
     "filter_connection": "Ligações",
     "filter_update": "Avisos",
-    "connect": "Ligar"
+    "connect": "Ligar",
+    "close": "Fechar o centro de atividade",
+    "filters_label": "Filtrar a atividade",
+    "filter_sync": "Sincronização",
+    "clear": "Limpar",
+    "clear_title": "Esvaziar o histórico de atividade"
   },
   "sidebar": {
     "prefs_title": "Preferências",
@@ -1864,7 +1869,8 @@
     "action_command_palette": "Paleta de comandos",
     "action_show_shortcuts": "Resumo dos atalhos",
     "action_clear_prompt_line": "Limpar a linha do prompt",
-    "action_pick_active_jump": "Escolher o salto ativo"
+    "action_pick_active_jump": "Escolher o salto ativo",
+    "action_focus_last_toast": "Ir ao último aviso"
   },
   "cmd_editor": {
     "title": "Editor de comandos",
@@ -2084,7 +2090,8 @@
     "transfer_skipped": "Omitido: {name}",
     "transfers_pause_all_failed": "Não foi possível mudar a pausa geral: {err}",
     "file_grant_invalid": "A permissão para esse ficheiro já não é válida (expirou, já foi usada ou o caminho mudou). Escolha-o de novo.",
-    "import_failed": "Erro ao importar: {err}"
+    "import_failed": "Erro ao importar: {err}",
+    "overflow_open": "{n} avisos mais: abrir o centro de atividade"
   },
   "sftp": {
     "symlinks_skipped": "{n} ligações simbólicas ignoradas (não são copiadas)",
@@ -2199,7 +2206,8 @@
     "protected_path": "Esse caminho está dentro da pasta de dados do Rustty (ou contém-na), e o painel de ficheiros não o pode alterar.",
     "upload_not_confirmed": "«{name}» não foi enviado: não foi confirmado.",
     "invalid_path": "Caminho inválido: {path}",
-    "op_failed": "Erro: {err}"
+    "op_failed": "Erro: {err}",
+    "col_perms": "Permissões"
   },
   "sftp_nav": {
     "back": "Anterior",

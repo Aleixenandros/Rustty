@@ -140,7 +140,6 @@
   --z-tooltip: 300;
   --z-zen-exit: 400;
   --z-drag-overlay: 600;
-  --z-boot-indicator: 900;
   --z-modal: 1000;            /* conexión, Preferencias, papelera */
   --z-script-bar: 1200;
   --z-drawer: 1600;           /* centro de actividad */
@@ -158,6 +157,26 @@
   --z-hud: 12500;             /* indicador de zoom */
   --z-flash: 20000;           /* destello de la campana visual */
   --z-boot: 30000;            /* pantalla de arranque */
+
+  /* Capas del área del terminal (`#terminals-container` y cada pane): apilan
+     dentro de su contexto, por eso son pequeñas. De abajo arriba: separadores
+     de un split, insignias (BROADCAST, tirador del monitor), barra de estado,
+     panel de bloques, barras flotantes (disposición, búsqueda Ctrl+F),
+     diagnóstico de la conexión, aviso de reconexión, superposiciones de
+     arrastre/campana y el desplegable de la barra de estado. */
+  --z-terminal-resizer: 1;
+  --z-terminal-badge: 5;
+  --z-terminal-status: 5;
+  --z-terminal-panel: 6;
+  --z-terminal-toolbar: 10;
+  --z-terminal-popover: 11;
+  --z-terminal-notice: 12;
+  --z-terminal-overlay: 50;
+  --z-terminal-status-popover: 60;
+
+  /* Barra de estado del terminal: la leen el área del terminal y la pila de
+     avisos, que se apila por encima de ella. */
+  --status-bar-height: 24px;
 
   /* Anillo de foco accesible (keyboard-only) */
   /* Sólido: al 70 % no llegaba a 3:1 con el fondo en Claro, los Solarized y
@@ -1969,7 +1988,32 @@ body.reduce-motion .tab-progress[data-state="indeterminate"] .tab-progress-fill 
   flex: 1;
   position: relative;
   overflow: hidden;
-  --status-bar-height: 24px;
+  /* Medidas de las capas flotantes que las demás usan para apartarse. */
+  --blocks-panel-width: min(440px, 60%);
+  --terminal-notice-height: 42px;
+}
+
+/* Capas flotantes del área del terminal que no se pisan. La barra de
+   disposición (vista múltiple) y la búsqueda Ctrl+F nacen en la esquina
+   superior derecha, igual que el panel de bloques: con el panel abierto, la
+   barra se corre a su izquierda y la búsqueda pasa a la esquina izquierda de
+   su pane; con una búsqueda a la vista, la barra baja por debajo de ella. */
+#terminals-container:has(#blocks-panel:not(.hidden)) #view-layout-bar {
+  right: calc(var(--blocks-panel-width) + 16px);
+}
+
+#terminals-container:has(.terminal-search:not(.hidden)) #view-layout-bar {
+  top: 52px;
+}
+
+#terminals-container:has(#blocks-panel:not(.hidden)) .terminal-search {
+  right: auto;
+  left: 14px;
+}
+
+/* …y por debajo de la insignia BROADCAST si la pane replica la entrada. */
+#terminals-container:has(#blocks-panel:not(.hidden)) .pane-broadcasting .terminal-search {
+  top: 26px;
 }
 
 /* ─── Vista múltiple (split por selección de pestañas) ───────── */
@@ -2014,7 +2058,7 @@ body.reduce-motion .tab-progress[data-state="indeterminate"] .tab-progress-fill 
   background: transparent;
   transition: background 0.12s;
   position: relative;
-  z-index: 1;
+  z-index: var(--z-terminal-resizer);
 }
 .view-resizer:hover { background: var(--blue); opacity: 0.35; }
 .resizer-horizontal { width: 5px; cursor: col-resize; }
@@ -2074,8 +2118,15 @@ body.reduce-motion .tab-progress[data-state="indeterminate"] .tab-progress-fill 
   position: absolute;
   right: 14px;
   bottom: 14px;
-  z-index: 12;
+  z-index: var(--z-terminal-notice);
   pointer-events: none;
+}
+
+/* Con el diagnóstico de la conexión abierto en la misma esquina, el aviso de
+   reconexión se queda abajo y el diagnóstico se apila encima de él. */
+.terminal-pane:has(.terminal-reconnect-overlay:not(.hidden)) .connection-log-panel {
+  bottom: calc(14px + var(--terminal-notice-height) + 8px);
+  max-height: min(360px, calc(100% - 70px - var(--terminal-notice-height) - 8px));
 }
 
 .terminal-reconnect-box {
@@ -2156,7 +2207,7 @@ body.reduce-motion .tab-progress[data-state="indeterminate"] .tab-progress-fill 
   top: auto;
   bottom: 10px;
   right: 12px;
-  z-index: 11;
+  z-index: var(--z-terminal-popover);
   width: min(440px, calc(100% - 24px));
   max-height: min(360px, calc(100% - 70px));
   display: flex;
@@ -2291,7 +2342,7 @@ body.terminal-bell-visual::after {
   background: color-mix(in srgb, var(--blue) 26%, transparent);
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--blue) 70%, transparent);
   animation: terminal-bell-flash 240ms ease-out;
-  z-index: 50;
+  z-index: var(--z-terminal-overlay);
 }
 
 #modal-prefs.terminal-bell-visual {
@@ -2398,7 +2449,7 @@ body.reduce-motion.terminal-bell-visual::after {
   right: 0;
   height: var(--status-bar-height);
   box-sizing: border-box;
-  z-index: 5;
+  z-index: var(--z-terminal-status);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -2690,7 +2741,7 @@ body.reduce-motion.terminal-bell-visual::after {
   position: absolute;
   right: 8px;
   bottom: calc(100% + 6px);
-  z-index: 60;
+  z-index: var(--z-terminal-status-popover);
   min-width: 200px;
   max-width: min(80vw, 360px);
   background: var(--surface0);
@@ -2726,7 +2777,7 @@ body.reduce-motion.terminal-bell-visual::after {
   position: absolute;
   top: 8px;
   right: 8px;
-  z-index: 10;
+  z-index: var(--z-terminal-toolbar);
   display: flex;
   gap: 2px;
   padding: 3px;
@@ -2799,7 +2850,7 @@ body.reduce-motion.terminal-bell-visual::after {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 5;
+  z-index: var(--z-terminal-badge);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: var(--font-weight-semibold);
@@ -2841,7 +2892,7 @@ body.reduce-motion.terminal-bell-visual::after {
    izquierda en split vertical. Es una franja fina sobre el borde del panel. */
 .metrics-resize-handle {
   position: absolute;
-  z-index: 5;
+  z-index: var(--z-terminal-badge);
   top: 0;
   left: 0;
   right: 0;
@@ -2958,7 +3009,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   position: absolute;
   top: 6px;
   right: 14px;
-  z-index: 10;
+  z-index: var(--z-terminal-toolbar);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -4970,23 +5021,38 @@ input[type="checkbox"] {
 }
 
 /* ─── Toasts ─────────────────────────────────────────────────── */
+/* La pila vive por encima de la barra de estado (no la tapa) y aloja también
+   el indicador de la sincronización de arranque, que antes se pintaba aparte
+   en la misma esquina y se pisaba con el primer aviso. */
 #toast-container {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
+  bottom: calc(var(--status-bar-height) + 12px);
+  right: 16px;
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 8px;
   z-index: var(--z-toast);
   pointer-events: none;
 }
 
+/* Un aviso es un panel con el borde izquierdo y el icono del color de su
+   severidad; el texto va en la tinta normal sobre `--surface-panel`, que es
+   el par que `check:contrast` garantiza en los temas claros (la tinta
+   `--crust` sobre el relleno de acento de antes no llegaba a AA). El icono
+   se ve siempre, no solo en el modo daltónico: el color por sí solo no
+   distingue éxito de error para todo el mundo. */
 .toast {
-  padding: 10px 16px;
+  --toast-accent: var(--blue);
+  padding: 10px 14px 10px 12px;
   border-radius: var(--border-radius);
+  border: 1px solid var(--border-subtle);
+  border-inline-start: 3px solid var(--toast-accent);
+  background: var(--surface-panel);
+  color: var(--text);
   font-size: 13px;
-  max-width: 320px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  max-width: 340px;
+  box-shadow: var(--shadow-2);
   animation: slide-in 0.2s ease;
   pointer-events: auto;
   display: flex;
@@ -4994,10 +5060,37 @@ input[type="checkbox"] {
   gap: 10px;
 }
 
-.toast.success { background: var(--green);  color: var(--on-green); }
-.toast.error   { background: var(--red);    color: var(--on-red); }
-.toast.info    { background: var(--blue);   color: var(--on-blue); }
-.toast.warning { background: var(--yellow); color: var(--on-yellow); }
+.toast.success { --toast-accent: var(--green); }
+.toast.error   { --toast-accent: var(--red); }
+.toast.info    { --toast-accent: var(--blue); }
+.toast.warning { --toast-accent: var(--yellow); }
+
+/* Icono de severidad: trazos SVG monocromos pintados con `mask` y el color
+   de acento (solo cuenta su canal alfa). Sin emoji. */
+.toast.success {
+  --toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 12.5l5 5 11-12' fill='none' stroke='%23000' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.toast.error {
+  --toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 6l12 12M18 6L6 18' fill='none' stroke='%23000' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+.toast.info {
+  --toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='none' stroke='%23000' stroke-width='2'/%3E%3Cpath d='M12 11v5.5' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='7.6' r='1.5' fill='%23000'/%3E%3C/svg%3E");
+}
+.toast.warning {
+  --toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3.5l9.5 16.5H2.5z' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M12 9.5v5' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='17.4' r='1.4' fill='%23000'/%3E%3C/svg%3E");
+}
+.toast.success::before,
+.toast.error::before,
+.toast.info::before,
+.toast.warning::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  background-color: var(--toast-accent);
+  -webkit-mask: var(--toast-icon) center / contain no-repeat;
+  mask: var(--toast-icon) center / contain no-repeat;
+}
 
 .toast-message {
   flex: 1;
@@ -5005,9 +5098,9 @@ input[type="checkbox"] {
 }
 
 .toast-action {
-  border: 1px solid currentColor;
-  background: transparent;
-  color: inherit;
+  border: 1px solid var(--toast-accent);
+  background: color-mix(in srgb, var(--toast-accent) 10%, transparent);
+  color: var(--text);
   border-radius: var(--radius-xs);
   padding: 3px 7px;
   font: inherit;
@@ -5018,7 +5111,7 @@ input[type="checkbox"] {
 }
 
 .toast-action:hover {
-  background: rgba(0, 0, 0, 0.12);
+  background: color-mix(in srgb, var(--toast-accent) 22%, transparent);
 }
 
 .toast-close {
@@ -5049,7 +5142,7 @@ input[type="checkbox"] {
   padding: 1px 8px;
   font-size: 11px;
   font-weight: 700;
-  background: rgba(0, 0, 0, 0.18);
+  background: color-mix(in srgb, var(--toast-accent) 16%, transparent);
   color: inherit;
   white-space: nowrap;
 }
@@ -6491,12 +6584,13 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 }
 .sync-journal-empty { color: var(--overlay1, var(--subtext0)); font-style: italic; }
 
-/* Indicador discreto de la sincronización de arranque (esquina inferior) */
+/* Indicador discreto de la sincronización de arranque: último de la pila de
+   avisos (`#toast-container`), para que un aviso temprano no se le ponga
+   encima. */
 .sync-boot-indicator {
-  position: fixed;
-  right: 14px;
-  bottom: 14px;
-  z-index: var(--z-boot-indicator);
+  order: 1;
+  flex: 0 0 auto;
+  align-self: flex-end;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -7691,12 +7785,51 @@ body.sftp-panel-resizing {
   user-select: none;
 }
 
+/* Cada lado es un contenedor de consulta (`@container`): la barra de
+   herramientas y las columnas se adaptan al ancho del propio lado, no al de
+   la ventana (con el panel partido en dos, cada lado mide la mitad). */
 .sftp-side {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--border-subtle);
+  container-type: inline-size;
+}
+
+/* Plantilla de columnas compartida por la cabecera y las filas (también las
+   de la lista virtualizada, que la heredan de `.sftp-files`): icono, nombre,
+   permisos, tamaño, fecha y acciones. Antes la cabecera tenía una columna
+   menos y sus títulos no caían sobre sus datos. */
+.sftp-columns,
+.sftp-files {
+  --sftp-columns: 48px minmax(0, 1fr) 84px 80px 130px auto;
+}
+
+/* Lado estrecho: la ruta baja a su propia línea en vez de encogerse a 0 px
+   detrás de los botones, y las columnas de permisos y fecha se retiran. */
+@container (max-width: 560px) {
+  .sftp-toolbar {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .sftp-path-wrap {
+    flex: 1 1 100%;
+    order: 1;
+  }
+}
+
+@container (max-width: 480px) {
+  .sftp-columns,
+  .sftp-files {
+    --sftp-columns: 40px minmax(0, 1fr) 70px auto;
+  }
+  .sftp-perms,
+  .sftp-col-perms,
+  .sftp-modified,
+  .sftp-sort-modified {
+    display: none;
+  }
 }
 
 .sftp-side-local { border-right: none; }
@@ -7852,7 +7985,7 @@ body.sftp-panel-resizing {
    se alternan (Ctrl+L o clic en el fondo de la barra). */
 .sftp-path-wrap {
   flex: 1;
-  min-width: 0;
+  min-width: 96px;
   display: flex;
 }
 
@@ -8055,14 +8188,35 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
   background: color-mix(in srgb, var(--blue) 22%, transparent);
 }
 
+/* La cabecera lleva el relleno horizontal de la lista (4 px) más el de cada
+   fila (8 px) para que sus títulos queden en vertical con los datos. */
 .sftp-columns {
   display: grid;
-  grid-template-columns: 48px 1fr 90px 150px auto;
+  grid-template-columns: var(--sftp-columns);
   align-items: center;
   gap: 8px;
-  padding: 3px 8px;
+  padding: 3px 12px;
   border-bottom: 1px solid var(--border-subtle);
   background: color-mix(in srgb, var(--crust) 78%, var(--mantle));
+}
+
+/* Título de una columna sin orden (Permisos): mismo aspecto que los botones
+   de ordenar, sin ser pulsable. */
+.sftp-col-title {
+  min-width: 0;
+  padding: 2px 0;
+  color: var(--overlay1);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-col-perms {
+  text-align: right;
 }
 
 .sftp-sort-btn {
@@ -8136,7 +8290,7 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
   background: var(--drag-bg-soft);
   outline: var(--drag-outline-width) dashed var(--drag-color);
   outline-offset: calc(-1 * var(--drag-outline-width));
-  z-index: 50;
+  z-index: var(--z-terminal-overlay);
 }
 
 .sftp-empty {
@@ -8150,7 +8304,7 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
 
 .sftp-row {
   display: grid;
-  grid-template-columns: 48px 1fr 84px 80px 130px auto;
+  grid-template-columns: var(--sftp-columns);
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
@@ -8168,14 +8322,6 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
   letter-spacing: 0.04em;
   text-align: right;
   white-space: nowrap;
-}
-
-@media (max-width: 760px) {
-  .sftp-row {
-    grid-template-columns: 40px 1fr 70px auto;
-  }
-  .sftp-perms,
-  .sftp-modified { display: none; }
 }
 
 .sftp-row:hover {
@@ -8213,6 +8359,9 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
   gap: 2px;
   opacity: 0;
   transition: opacity 120ms;
+  /* Por debajo de la mini barra de progreso de la fila, que es posicionada. */
+  position: relative;
+  z-index: 0;
 }
 
 .sftp-row:hover .sftp-row-actions {
@@ -8374,13 +8523,16 @@ body.sftp-log-resizing {
   flex: 1;
 }
 
+/* Nombre · progreso en texto · acciones en la primera fila; la barra y el
+   detalle debajo, a todo el ancho. Las acciones ocupan su propia columna:
+   antes flotaban en la esquina y tapaban la barra y el texto. */
 .sftp-transfer {
   position: relative;
-  padding: 6px 24px 6px 10px;
+  padding: 6px 8px 6px 10px;
   border-bottom: 1px solid var(--border-subtle);
   display: grid;
-  grid-template-columns: 1fr 120px;
-  gap: 3px 10px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 3px 8px;
   align-items: center;
 }
 
@@ -8416,10 +8568,12 @@ body.sftp-log-resizing {
 }
 
 .sftp-transfer-text {
+  grid-column: 2;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--subtext0);
   text-align: right;
+  white-space: nowrap;
 }
 
 .sftp-transfer-bar {
@@ -8452,9 +8606,8 @@ body.sftp-log-resizing {
 }
 
 .sftp-transfer-actions {
-  position: absolute;
-  top: 4px;
-  right: 4px;
+  grid-column: 3;
+  grid-row: 1;
   display: flex;
   gap: 2px;
 }
@@ -9843,6 +9996,7 @@ body.zen-mode #zen-exit-btn {
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: var(--z-terminal-resizer);
   height: 2px;
   background: var(--surface0);
   opacity: 0;
@@ -10129,36 +10283,11 @@ body.color-blind-safe .sync-dot.busy {
 }
 
 /* ─── Modo daltónico ampliado — toasts ─────────────────────────
-   Los toasts se distinguen solo por el color de fondo (verde éxito /
-   rojo error / azul info / amarillo aviso), justo la confusión más
-   habitual (deuteranopia/protanopia). Con el modo daltónico se antepone
-   un icono SVG monocromo distinto por severidad: se pinta con `mask` +
-   `background-color: currentColor`, que en el toast es `--crust` (su color
-   de texto), de modo que el significado deja de depender solo del color.
-   No usa emoji: son trazos SVG (solo cuenta su canal alfa para la máscara). */
-body.color-blind-safe .toast.success {
-  --cb-toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 12.5l5 5 11-12' fill='none' stroke='%23000' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-}
-body.color-blind-safe .toast.error {
-  --cb-toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 6l12 12M18 6L6 18' fill='none' stroke='%23000' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E");
-}
-body.color-blind-safe .toast.info {
-  --cb-toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='none' stroke='%23000' stroke-width='2'/%3E%3Cpath d='M12 11v5.5' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='7.6' r='1.5' fill='%23000'/%3E%3C/svg%3E");
-}
-body.color-blind-safe .toast.warning {
-  --cb-toast-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3.5l9.5 16.5H2.5z' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M12 9.5v5' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='17.4' r='1.4' fill='%23000'/%3E%3C/svg%3E");
-}
-body.color-blind-safe .toast.success::before,
-body.color-blind-safe .toast.error::before,
-body.color-blind-safe .toast.info::before,
-body.color-blind-safe .toast.warning::before {
-  content: "";
-  flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
-  background-color: currentColor;
-  -webkit-mask: var(--cb-toast-icon) center / contain no-repeat;
-  mask: var(--cb-toast-icon) center / contain no-repeat;
+   El icono de severidad de los avisos se ve siempre (ver «Toasts»); con el
+   modo daltónico, además, el borde de acento se ensancha para que la
+   severidad no dependa de distinguir el tono del borde fino. */
+body.color-blind-safe .toast {
+  border-inline-start-width: 5px;
 }
 
 /* ─── Modo daltónico ampliado — transferencias SFTP ────────────
@@ -10874,12 +11003,6 @@ body.color-blind-safe .modal-summary-badge.warn::before {
 }
 
 @media (max-width: 760px) {
-  /* Toolbars del panel SFTP: envolver a segunda línea antes que solapar. */
-  .sftp-toolbar {
-    flex-wrap: wrap;
-    row-gap: 4px;
-  }
-
   /* Dimensiones del terminal: informativas; ceden ante la latencia. */
   #status-bar .status-dims,
   #status-bar #status-dims-wrap {
@@ -10932,14 +11055,14 @@ html.uitext-xlarge {
   top: 8px;
   right: 8px;
   bottom: 34px;
-  width: min(440px, 60%);
+  width: var(--blocks-panel-width);
   display: flex;
   flex-direction: column;
   background: var(--surface-popover);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-2);
-  z-index: 6;
+  z-index: var(--z-terminal-panel);
   overflow: hidden;
 }
 

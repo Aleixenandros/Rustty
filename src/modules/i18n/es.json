@@ -470,7 +470,12 @@
     "filter_all": "Todo",
     "filter_connection": "Conexiones",
     "filter_update": "Avisos",
-    "connect": "Conectar"
+    "connect": "Conectar",
+    "close": "Cerrar el centro de actividad",
+    "filters_label": "Filtrar la actividad",
+    "filter_sync": "Sincronización",
+    "clear": "Limpiar",
+    "clear_title": "Vaciar el historial de actividad"
   },
   "sidebar": {
     "prefs_title": "Preferencias",
@@ -1858,7 +1863,8 @@
     "action_command_palette": "Paleta de comandos",
     "action_show_shortcuts": "Chuleta de atajos",
     "action_clear_prompt_line": "Limpiar línea del prompt",
-    "action_pick_active_jump": "Elegir el salto activo"
+    "action_pick_active_jump": "Elegir el salto activo",
+    "action_focus_last_toast": "Ir al último aviso"
   },
   "cmd_editor": {
     "title": "Editor de comandos",
@@ -2078,7 +2084,8 @@
     "transfer_skipped": "Omitido: {name}",
     "transfers_pause_all_failed": "No se pudo cambiar la pausa general: {err}",
     "file_grant_invalid": "El permiso para ese fichero ya no es válido (caducó, ya se usó o la ruta cambió). Vuelve a elegirlo.",
-    "import_failed": "Error al importar: {err}"
+    "import_failed": "Error al importar: {err}",
+    "overflow_open": "{n} avisos más: abrir el centro de actividad"
   },
   "time": {
     "now": "ahora",
@@ -2199,7 +2206,8 @@
     "protected_path": "Esa ruta está dentro de la carpeta de datos de Rustty (o la contiene), y el panel de archivos no puede modificarla.",
     "upload_not_confirmed": "No se ha subido «{name}»: no se confirmó.",
     "invalid_path": "Ruta no válida: {path}",
-    "op_failed": "Error: {err}"
+    "op_failed": "Error: {err}",
+    "col_perms": "Permisos"
   },
   "sftp_nav": {
     "back": "Atrás",

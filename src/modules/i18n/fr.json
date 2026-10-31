@@ -470,7 +470,12 @@
     "filter_all": "Tout",
     "filter_connection": "Connexions",
     "filter_update": "Avis",
-    "connect": "Connecter"
+    "connect": "Connecter",
+    "close": "Fermer le centre d'activité",
+    "filters_label": "Filtrer l'activité",
+    "filter_sync": "Synchronisation",
+    "clear": "Effacer",
+    "clear_title": "Vider l'historique d'activité"
   },
   "sidebar": {
     "prefs_title": "Préférences",
@@ -1864,7 +1869,8 @@
     "action_command_palette": "Palette de commandes",
     "action_show_shortcuts": "Aide-mémoire des raccourcis",
     "action_clear_prompt_line": "Effacer la ligne de saisie",
-    "action_pick_active_jump": "Choisir le rebond actif"
+    "action_pick_active_jump": "Choisir le rebond actif",
+    "action_focus_last_toast": "Aller au dernier avis"
   },
   "cmd_editor": {
     "title": "Éditeur de commandes",
@@ -2084,7 +2090,8 @@
     "transfer_skipped": "Ignoré : {name}",
     "transfers_pause_all_failed": "Impossible de changer la pause générale : {err}",
     "file_grant_invalid": "L'autorisation pour ce fichier n'est plus valable (elle a expiré, a déjà servi ou le chemin a changé). Choisissez-le à nouveau.",
-    "import_failed": "Échec de l'importation : {err}"
+    "import_failed": "Échec de l'importation : {err}",
+    "overflow_open": "{n} avis de plus : ouvrir le centre d'activité"
   },
   "sftp": {
     "symlinks_skipped": "{n} liens symboliques ignorés (non copiés)",
@@ -2199,7 +2206,8 @@
     "protected_path": "Ce chemin se trouve dans le dossier de données de Rustty (ou le contient), et le panneau de fichiers ne peut pas le modifier.",
     "upload_not_confirmed": "« {name} » n'a pas été envoyé : l'envoi n'a pas été confirmé.",
     "invalid_path": "Chemin non valide : {path}",
-    "op_failed": "Erreur : {err}"
+    "op_failed": "Erreur : {err}",
+    "col_perms": "Permissions"
   },
   "sftp_nav": {
     "back": "Précédent",
