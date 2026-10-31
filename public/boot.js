@@ -10,7 +10,10 @@
 //    documento como "booting"; el CSS oculta #app mientras esa clase esté
 //    presente. init() (main.js) la retira cuando los temas bundled ya están
 //    registrados y aplicados; el setTimeout es una salvaguarda por si init()
-//    fallara antes de revelar la app.
+//    fallara antes de revelar la app. Pone también el tono del tema
+//    (`data-tone`, claro u oscuro), del que cuelgan `color-scheme` y las
+//    sombras: el que applyTheme() midió y guardó para ESE tema o, si no lo
+//    hay (primer arranque, tema elegido en otro equipo), el que diga su id.
 // 2. Pantalla de carga (#boot-screen, en index.html): si el usuario la apagó
 //    en Preferencias («Pantalla de carga al arrancar»), marca `no-boot-screen`
 //    y el CSS no la pinta; la ventana entonces espera a que la interfaz esté
@@ -41,6 +44,15 @@
       t = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
     }
     if (t && t !== "dark") html.classList.add("theme-" + t);
+    // Copia de LIGHT_THEME_ID en src/modules/themes/tone.js (este script no
+    // puede importar módulos); un test comprueba que siguen siendo iguales.
+    var LIGHT_THEME_ID = /light|latte|day|dawn|lotus/;
+    var tone = null;
+    try {
+      var saved = JSON.parse(localStorage.getItem("rustty-theme-tone") || "null");
+      if (saved && saved.theme === t && (saved.tone === "light" || saved.tone === "dark")) tone = saved.tone;
+    } catch (e2) {}
+    html.dataset.tone = tone || (LIGHT_THEME_ID.test(String(t).toLowerCase()) ? "light" : "dark");
   } catch (e) {}
   setTimeout(function () {
     html.classList.remove("booting");

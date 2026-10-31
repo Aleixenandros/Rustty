@@ -16,6 +16,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { INK_FILLS, INK_MIN_RATIO, RING_MIN_RATIO, inkTokens, ringColor } from "../src/modules/themes/ink.js";
+import { toneFor } from "../src/modules/themes/tone.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cssPath = resolve(root, "src", "styles.css");
@@ -41,10 +42,14 @@ const FILL_CHECKS = INK_FILLS.map((fill) => ({
 }));
 CHECKS.push(...FILL_CHECKS);
 
-/** Anillo de foco contra el fondo de la ventana y el de paneles y modales. */
+/**
+ * Anillo de foco contra el fondo de la ventana y el de paneles y modales
+ * (`--surface-panel`, el semántico que consumen sidebar, paneles y modales;
+ * se resuelve por su cadena de `var()`). WCAG 1.4.11: mínimo 3:1.
+ */
 const RING_CHECKS = [
   { fg: "--focus-ring-color", bg: "--base", min: RING_MIN_RATIO, label: "Anillo de foco / ventana" },
-  { fg: "--focus-ring-color", bg: "--mantle", min: RING_MIN_RATIO, label: "Anillo de foco / paneles" },
+  { fg: "--focus-ring-color", bg: "--surface-panel", min: RING_MIN_RATIO, label: "Anillo de foco / paneles" },
 ];
 CHECKS.push(...RING_CHECKS);
 
@@ -177,7 +182,9 @@ async function main() {
       );
     }
     const head = themeFails === 0 ? "OK " : `${themeFails} fallo(s)`;
-    console.log(`\n${themeFails === 0 ? "✓" : "✗"} ${name} — ${head}`);
+    // El tono que applyTheme() le pondrá en `data-tone` (color-scheme, sombras).
+    const tone = toneFor(resolveToken("--base", tokens, base), name, resolveToken("--text", tokens, base));
+    console.log(`\n${themeFails === 0 ? "✓" : "✗"} ${name} — ${head} · tono ${tone === "light" ? "claro" : "oscuro"}`);
     for (const l of lines) console.log(l);
   }
 
@@ -207,6 +214,7 @@ async function main() {
       }
     }
 
+    // `mantle` es `--surface-panel` (paneles y modales) en los temas runtime.
     const ring = ringColor(theme.ui || {});
     for (const back of ["base", "mantle"]) {
       if (!theme.ui?.[back]) continue;
@@ -249,10 +257,14 @@ async function main() {
   }
 
   failures += bundledFailures.length;
+  const bundledTones = { light: 0, dark: 0 };
+  for (const theme of bundledPack.themes || []) {
+    bundledTones[toneFor(theme.ui?.base, theme.id, theme.ui?.text)]++;
+  }
   console.log(
     `\n${bundledFailures.length === 0 ? "✓" : "✗"} bundled themes — ` +
-    `${bundledPack.themes?.length || 0} temas, ${bundledChecked} comprobaciones, ` +
-    `${bundledFailures.length} por debajo de AA.`
+    `${bundledPack.themes?.length || 0} temas (${bundledTones.light} claros, ${bundledTones.dark} oscuros), ` +
+    `${bundledChecked} comprobaciones, ${bundledFailures.length} por debajo de AA.`
   );
   for (const failure of bundledFailures.slice(0, 30)) {
     const ratio = failure.ratio == null ? "valor no hex" : `${fmtRatio(failure.ratio)}:1`;

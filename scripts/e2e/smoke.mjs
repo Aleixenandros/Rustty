@@ -63,6 +63,7 @@ import { checkKeyboard } from "./keyboard.mjs";
 import { checkToasts } from "./toasts.mjs";
 import { checkTerminalLayers } from "./terminal-layers.mjs";
 import { checkTunnels } from "./tunnels.mjs";
+import { checkThemeTone } from "./theme-tone.mjs";
 import { checkTerminalProtocols } from "./terminal-protocols.mjs";
 import { checkQuickSelect } from "./quick-select.mjs";
 import { checkJump } from "./jump.mjs";
@@ -520,6 +521,7 @@ async function main() {
       console.log("  --   sin sshd en esta máquina: se salta la sección del panel SFTP");
     }
     await checkTunnels(app, check, artifactsDir);
+    await checkThemeTone(app, check, artifactsDir);
     await checkQuickSelect(app, check, workDir);
     await checkJump(app, check, artifactsDir);
     await checkBulkEdit(app, check);

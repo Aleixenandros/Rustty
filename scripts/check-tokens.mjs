@@ -1,13 +1,18 @@
-// Guardián del sistema de tokens de color: cuenta los literales `#hex` de
-// `src/styles.css` que NO son una definición de paleta ni una excepción
-// declarada, y falla si crecen por encima del baseline.
+// Guardián del sistema de tokens de color de `src/styles.css`: falla si los
+// hallazgos fuera del sistema crecen por encima del baseline.
 //
-// Dos reglas más, también con baseline 0:
+// Qué caza (el detector vive en `tokens-css.mjs`, con tests):
+// - Colores: un `#hex` suelto, un `rgb()`/`hsl()` que NO es neutro (una sombra
+//   o un velo negro translúcido vale igual en los 233 temas y no avisa; un
+//   azul al 28 % es un color congelado y sí) y un color con nombre (`red`,
+//   `white`, `orange`…; `transparent`, `currentColor` e `inherit` se permiten).
 // - Capas: un `z-index` de capa (≥ 100) va por la escala `var(--z-*)` de
 //   `:root`. Con números sueltos, los avisos acabaron por debajo de los modales.
 // - Tokens inexistentes: un `var(--x)` sin definición en la hoja (ni entre las
 //   variables que pone el código en runtime) cae en silencio a su valor
 //   inicial: así la muestra «Rosa» salía gris y el contador del rail a 400.
+// - Movimiento: una `transition` con duración literal (`0.15s`, `120ms`) o con
+//   `all` va por los tokens `--motion-*` y enumera lo que cambia.
 //
 // El problema que resuelve: un color de chrome escrito a mano se ve bien en el
 // tema en el que se escribió y se rompe —o se queda congelado— en los otros
@@ -25,6 +30,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { scanTokens } from "./tokens-css.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cssPath = resolve(root, "src", "styles.css");
@@ -60,62 +66,24 @@ const Z_LAYER_MIN = 100;
 
 const strict = process.argv.includes("--strict");
 const css = await readFile(cssPath, "utf8");
-const lines = css.split("\n");
 
-const findings = [];
-let currentSelector = "";
-
-for (const [index, rawLine] of lines.entries()) {
-  const line = rawLine.trim();
-  if (line.startsWith("/*") || line.startsWith("*")) continue;
-
-  // Selector en curso: la última línea que abre un bloque.
-  if (line.includes("{")) currentSelector = line.slice(0, line.indexOf("{")).trim();
-
-  const matches = rawLine.match(/#[0-9a-fA-F]{3,8}\b/g);
-  if (!matches) continue;
-
-  // Definición de token de paleta (`--algo: #hex;`): es la fuente del sistema.
-  if (/^--[a-z0-9-]+:\s*#/.test(line)) continue;
-  if (EXEMPT_SELECTOR.test(currentSelector)) continue;
-
-  for (const hex of matches) {
-    findings.push({ line: index + 1, hex, text: line.slice(0, 100) });
-  }
-}
-
-// Capas fuera de la escala `--z-*`.
-for (const [index, rawLine] of lines.entries()) {
-  if (rawLine.trim().startsWith("/*") || rawLine.trim().startsWith("*")) continue;
-  for (const m of rawLine.matchAll(/(?:^|[\s;{])z-index:\s*(-?\d+)/g)) {
-    if (Math.abs(Number(m[1])) < Z_LAYER_MIN) continue;
-    findings.push({ line: index + 1, hex: `z-index ${m[1]}`, text: "usa la escala var(--z-*) de :root" });
-  }
-}
-
-// `var(--x)` sin definición.
-const defined = new Set([...css.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((m) => m[1]));
-for (const [index, rawLine] of lines.entries()) {
-  if (rawLine.trim().startsWith("/*") || rawLine.trim().startsWith("*")) continue;
-  for (const m of rawLine.matchAll(/var\((--[a-zA-Z0-9-]+)/g)) {
-    if (defined.has(m[1]) || RUNTIME_VARS.has(m[1])) continue;
-    findings.push({ line: index + 1, hex: m[1], text: "variable sin definir" });
-  }
-}
+const findings = scanTokens(css, { exemptSelector: EXEMPT_SELECTOR, runtimeVars: RUNTIME_VARS, zLayerMin: Z_LAYER_MIN });
 
 const total = findings.length;
 console.log(`Hallazgos fuera del sistema de tokens: ${total} (baseline ${BASELINE})`);
 for (const f of findings) {
-  console.log(`  styles.css:${f.line}  ${f.hex}  ${f.text}`);
+  console.log(`  styles.css:${f.line}  [${f.kind}] ${f.value}  ${f.text}`);
 }
 
 if (total > BASELINE) {
   console.error(
     `\n✗ tokens — ${total - BASELINE} hallazgo(s) nuevo(s) fuera del sistema de tokens.\n`
-      + "  Colores: enrútalos por una variable CSS (`var(--…)`) o, si describen un\n"
-      + "  tema ajeno al activo, decláralos exentos en scripts/check-tokens.mjs.\n"
+      + "  Colores (hex, rgb/hsl con tinte, nombres): enrútalos por una variable CSS\n"
+      + "  (`var(--…)`) o, si describen un tema ajeno al activo, decláralos exentos en\n"
+      + "  scripts/check-tokens.mjs. Un gris/negro/blanco translúcido es neutro y no avisa.\n"
       + "  Capas: usa un token `--z-*` (o añade uno a la escala de :root).\n"
-      + "  Variables: defínela en la hoja o, si la pone el código, en RUNTIME_VARS.",
+      + "  Variables: defínela en la hoja o, si la pone el código, en RUNTIME_VARS.\n"
+      + "  Transiciones: duración por `var(--motion-fast|normal|slow)` y sin `all`.",
   );
   if (strict) process.exit(1);
 } else if (total < BASELINE) {

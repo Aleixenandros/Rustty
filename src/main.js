@@ -123,6 +123,7 @@ import { opensReadOnly, readOnlyInputDecision, readOnlyKeyAction } from "./modul
 import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts } from "./modules/metrics-view.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { inkTokens, ringColor } from "./modules/themes/ink.js";
+import { colorLuminance, isHighContrastThemeId, toneFor } from "./modules/themes/tone.js";
 import { compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
 import { createChunkDecoder } from "./modules/terminal/chunk-decoder.js";
 import { createShellCloseGate } from "./modules/terminal/shell-close.js";
@@ -785,7 +786,35 @@ function applyTheme(theme) {
   // El nivel de contraste reasigna tokens a valores de la paleta del tema; al
   // cambiar de tema hay que recalcularlos sobre la paleta nueva.
   applyUiContrast(prefs.uiContrast);
+  applyThemeTone(effective);
   applyPrefsToAllTerminals();
+}
+
+/** Donde `applyThemeTone()` deja el tono medido para que `boot.js` lo ponga antes del primer pintado. */
+const THEME_TONE_STORAGE_KEY = "rustty-theme-tone";
+
+/**
+ * Tono del tema activo como dato en `<html>`: `data-tone="light|dark"` (de él
+ * cuelgan en la hoja `color-scheme` de los controles nativos y las sombras
+ * suaves) y `data-tone-hc` si el id anuncia alto contraste. Se mide sobre los
+ * tokens ya aplicados (`--base` y `--text`), así vale igual para los doce temas
+ * de la hoja, los del bundle y los personalizados; la decisión vive en
+ * `modules/themes/tone.js`. Va después de `applyUiContrast()`, que es quien
+ * limpia el `--text` en línea del tema anterior. El resultado se guarda para
+ * que `boot.js` lo ponga en el próximo arranque, cuando aún no hay CSS de temas
+ * ni JSON que medir.
+ */
+function applyThemeTone(effective) {
+  const root = document.documentElement;
+  const cs = getComputedStyle(root);
+  const tone = toneFor(cs.getPropertyValue("--base"), effective, cs.getPropertyValue("--text"));
+  root.dataset.tone = tone;
+  root.toggleAttribute("data-tone-hc", isHighContrastThemeId(effective));
+  try {
+    localStorage.setItem(THEME_TONE_STORAGE_KEY, JSON.stringify({ theme: effective, tone }));
+  } catch {
+    // Sin almacenamiento, boot.js decide por el id del tema.
+  }
 }
 
 /**
@@ -1142,33 +1171,16 @@ function filterThemePickerOptions(root) {
 function detectThemeOptionTone(option) {
   const id = (option.dataset.theme || "").toLowerCase();
   const label = (option.querySelector(".theme-label")?.textContent || "").toLowerCase();
-  if (/(^|-)hc($|-)|high[-_ ]?contrast|alto[-_ ]?contraste/.test(id + " " + label)) return "hc";
+  if (isHighContrastThemeId(id + " " + label)) return "hc";
+  // Filtro de la galería: un fondo de tono medio cuenta aquí como oscuro (el
+  // umbral es más alto que el de `toneFor`, que decide el esquema de color).
   const preview = option.querySelector(".theme-preview-main") || option.querySelector(".theme-preview");
   if (preview) {
-    const bg = getComputedStyle(preview).backgroundColor;
-    const lum = relativeLuminanceFromColor(bg);
+    const lum = colorLuminance(getComputedStyle(preview).backgroundColor);
     if (Number.isFinite(lum)) return lum > 0.55 ? "light" : "dark";
   }
   if (/light|day|lotus|latte|dawn|gruvbox-light|solarized-light/.test(id)) return "light";
   return "dark";
-}
-
-/**
- * Devuelve la luminancia relativa [0..1] de un color CSS `rgb(r,g,b)`.
- * Acepta rgb / rgba. Si no se puede parsear, devuelve NaN.
- */
-function relativeLuminanceFromColor(css) {
-  if (!css) return NaN;
-  const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(css);
-  if (!m) return NaN;
-  const toLin = (c) => {
-    const s = +c / 255;
-    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  };
-  const r = toLin(m[1]);
-  const g = toLin(m[2]);
-  const b = toLin(m[3]);
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
 function setThemePickerOpen(root, open) {
