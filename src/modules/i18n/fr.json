@@ -667,6 +667,18 @@
     "open_folder": "Ouvrir",
     "no_folder": "Sans dossier"
   },
+  "tab_state": {
+    "connected": "connectée",
+    "connecting": "connexion en cours",
+    "reconnecting": "reconnexion en cours",
+    "disconnected": "déconnectée",
+    "activity": "nouvelle activité",
+    "important": "avec un avis",
+    "read_only": "lecture seule",
+    "broadcast": "reçoit la saisie diffusée",
+    "private": "session privée",
+    "pinned": "épinglée"
+  },
   "tabctx": {
     "duplicate": "Dupliquer l'onglet",
     "duplicate_overrides": "Dupliquer avec des changements…",
@@ -1224,6 +1236,8 @@
     "boot_screen_hint": "Affiche le logo et « Démarrage… » dès l'ouverture de la fenêtre, pendant que l'application finit de démarrer. Désactivé, la fenêtre n'apparaît que lorsque l'interface est prête.",
     "strong_focus": "Focus visible renforcé",
     "strong_focus_hint": "Augmente l'épaisseur et le contraste de l'anneau de focus lors de la navigation au clavier.",
+    "native_selects": "Utiliser les listes déroulantes du système",
+    "native_selects_hint": "Conserve les listes déroulantes natives du système au lieu de celles de Rustty ; certains lecteurs d'écran les gèrent mieux. Celles de Rustty se manient aussi au clavier : flèches, Début/Fin et saisie du début d'une option.",
     "toast_duration": "Durée des notifications",
     "toast_duration_normal": "Normale",
     "toast_duration_long": "Longue",

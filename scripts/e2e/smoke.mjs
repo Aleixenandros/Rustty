@@ -23,6 +23,12 @@
 //      de datos no se toca ni desde una descarga ni desde un borrado, tampoco
 //      borrando una carpeta que la contenga, y subir una clave privada abre el
 //      diálogo nativo de confirmación (cerrarlo cancela la subida).
+//   6b. Accesibilidad de controles por teclado (`keyboard.mjs`): el
+//      desplegable de Idioma se abre y elige con las flechas y Enter, y su
+//      Escape no cierra Preferencias; la preferencia de desplegables del
+//      sistema deshace y rehace el control en vivo; en el menú contextual de
+//      una conexión → abre el submenú y Escape vuelve al padre; y en la barra
+//      de pestañas las flechas mueven el foco con tabindex itinerante.
 //   7. Salto activo y bastiones por la interfaz (`jump.mjs`), sin servidores:
 //      el formulario guarda el bastión elegido entre las conexiones guardadas,
 //      «Usar como salto activo» enciende la píldora de la barra lateral y su ✕
@@ -53,6 +59,7 @@ import { checkPrefsSync } from "./prefs-sync.mjs";
 import { checkSyncFeedback } from "./sync-feedback.mjs";
 import { checkShortcuts } from "./shortcuts.mjs";
 import { checkDialogs } from "./dialogs.mjs";
+import { checkKeyboard } from "./keyboard.mjs";
 import { checkTunnels } from "./tunnels.mjs";
 import { checkTerminalProtocols } from "./terminal-protocols.mjs";
 import { checkQuickSelect } from "./quick-select.mjs";
@@ -498,6 +505,7 @@ async function main() {
     await checkSyncFeedback(app, check);
     await checkShortcuts(app, check);
     await checkDialogs(app, check);
+    await checkKeyboard(app, check);
     await checkIpcLeastPrivilege(app, home);
     const sftpServer = await prepareSftpServer(home);
     if (sftpServer) {

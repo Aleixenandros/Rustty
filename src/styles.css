@@ -1824,6 +1824,20 @@ body.has-session-tabs .tab-home .tab-name {
 .tab-dot.error     { background: var(--red); }
 .tab-dot.connecting { background: var(--yellow); animation: pulse 1s infinite; }
 
+/* Texto solo para lectores de pantalla (el estado de la pestaña en palabras). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
@@ -4852,6 +4866,29 @@ select {
   background: var(--blue);
   color: var(--on-blue);
 }
+/* Opción resaltada con el teclado (aria-activedescendant): el foco real sigue
+   en el botón, así que el anillo se pinta aquí a mano. */
+.custom-select-item.is-focused {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+.custom-select-item[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+.custom-select-item[aria-disabled="true"]:hover {
+  background: transparent;
+  color: var(--text);
+}
+/* Cabecera de un <optgroup> dentro de la lista. */
+.custom-select-group {
+  padding: 6px 10px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--overlay1);
+  user-select: none;
+}
 
 input[type="text"]:focus,
 input[type="password"]:focus,
@@ -5788,7 +5825,12 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   display: none;
   z-index: var(--z-submenu);
 }
-.ctx-has-submenu:hover > .ctx-submenu {
+/* Se despliega con el puntero encima, con el foco dentro (teclado) y cuando
+   el código lo declara abierto (aria-expanded, que el teclado mantiene: en
+   WebKit :focus-within no se aplica si la ventana no tiene el foco del SO). */
+.ctx-has-submenu:hover > .ctx-submenu,
+.ctx-has-submenu:focus-within:not(.ctx-sub-collapsed) > .ctx-submenu,
+.ctx-has-submenu[aria-expanded="true"] > .ctx-submenu {
   display: block;
 }
 /* Apertura hacia la izquierda cuando no cabe a la derecha */
@@ -5804,6 +5846,19 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   top: auto;
   bottom: -5px;
 }
+
+/* Resaltado del ítem al que el teclado ha llevado el foco (y del padre cuyo
+   submenú recorre), con el mismo aspecto que el :hover del puntero. */
+.ctx-item.is-active {
+  background: var(--blue);
+  color: var(--on-blue);
+}
+.ctx-item.is-active .ctx-icon { color: var(--on-blue); }
+.ctx-item.danger.is-active {
+  background: var(--red);
+  color: var(--on-red);
+}
+.ctx-item.danger.is-active .ctx-icon { color: var(--on-red); }
 
 .ctx-item.active {
   color: var(--blue);

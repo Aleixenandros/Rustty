@@ -90,6 +90,9 @@ import {
   launchFieldsChanged, launchFieldsFromBlock, normalizeRemoteCommand, normalizeTermType, parseEnvVarsText,
 } from "./modules/remote-launch.js";
 import { tabIndexForKey } from "./modules/tab-navigation.js";
+import { createListboxState, listboxKey } from "./modules/listbox-nav.js";
+import { menuKey } from "./modules/menu-nav.js";
+import { tabStateFromClasses, tabStateKeys } from "./modules/tab-state.js";
 import { TOAST_DURATIONS, createPausableTimer, toastDurationMs } from "./modules/toast-timer.js";
 import {
   blockAt,
@@ -1866,6 +1869,8 @@ function openSettingsModal() {
   if (_reduceMotion) _reduceMotion.checked = !!prefs.reduceMotion;
   const _strongFocus = document.getElementById("pref-strong-focus");
   if (_strongFocus) _strongFocus.checked = !!prefs.strongFocus;
+  const _nativeSelects = document.getElementById("pref-native-selects");
+  if (_nativeSelects) _nativeSelects.checked = !!prefs.nativeSelects;
   const _toastDuration = document.getElementById("pref-toast-duration");
   if (_toastDuration) _toastDuration.value = TOAST_DURATIONS.includes(prefs.toastDuration) ? prefs.toastDuration : "normal";
   const _viewFade = document.getElementById("pref-view-fade");
@@ -4099,6 +4104,7 @@ function readPrefsFromModal() {
     })(),
     reduceMotion:    !!document.getElementById("pref-reduce-motion")?.checked,
     strongFocus:     !!document.getElementById("pref-strong-focus")?.checked,
+    nativeSelects:   !!document.getElementById("pref-native-selects")?.checked,
     toastDuration:   (() => {
       const v = document.getElementById("pref-toast-duration")?.value;
       return TOAST_DURATIONS.includes(v) ? v : "normal";
@@ -4201,10 +4207,12 @@ function savePrefsFromModal() {
   applyUiContrast(prefs.uiContrast);
   applyReduceMotion(prefs.reduceMotion);
   applyStrongFocus(prefs.strongFocus);
+  applyNativeSelects(prefs.nativeSelects);
   applyViewFade(prefs.viewFade !== false);
   applyScrollbarStyle();
   applyPrefsToAllTerminals();
   renderConnectionList();
+  updateAllTabStates();
   closeSettingsModal();
   toast(t("toast.prefs_saved"), "success");
 }
@@ -7386,15 +7394,93 @@ function openFloatingMenuEl() {
   return null;
 }
 
-function floatingMenuItems(menu) {
-  return [...menu.querySelectorAll("button")].filter(
-    (b) => !b.disabled && !b.classList.contains("hidden") && b.offsetParent !== null
-  );
+const MENU_ENTRY_SELECTOR = 'button, [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], .ctx-sep';
+
+/** Nivel (el menú o uno de sus submenús) al que pertenece un elemento. */
+function floatingMenuLevel(menu, el) {
+  const level = el instanceof Element ? el.closest('[role="menu"]') : null;
+  return level && menu.contains(level) ? level : menu;
+}
+
+/**
+ * Entradas visibles de UN nivel, en orden del DOM: ítems, padres con submenú
+ * y separadores. Lo que cuelga de un submenú pertenece a su propio nivel.
+ */
+function floatingMenuEntries(level) {
+  return [...level.querySelectorAll(MENU_ENTRY_SELECTOR)].filter((el) =>
+    el.closest('[role="menu"]') === level && !el.classList.contains("hidden") && el.offsetParent !== null);
+}
+
+/** Ítems enfocables de un nivel (sin separadores ni desactivados). */
+function floatingMenuItems(level) {
+  return floatingMenuEntries(level).filter((el) =>
+    !el.classList.contains("ctx-sep") && el.disabled !== true && el.getAttribute("aria-disabled") !== "true");
+}
+
+/**
+ * Resaltado del teclado: la clase `is-active` va al ítem enfocado y a los
+ * padres con submenú que lo contienen (como el :hover, que también alcanza al
+ * padre mientras el puntero está en su submenú). El puntero la quita.
+ */
+function markMenuKeyboardFocus(menu, el) {
+  menu.querySelectorAll(".ctx-item.is-active").forEach((it) => it.classList.remove("is-active"));
+  for (let node = el; node && node !== menu; node = node.parentElement) {
+    if (node.classList.contains("ctx-item")) node.classList.add("is-active");
+  }
+}
+
+function focusMenuEntry(menu, el) {
+  if (!(el instanceof HTMLElement)) return;
+  el.focus();
+  markMenuKeyboardFocus(menu, el);
+}
+
+/**
+ * `aria-expanded` de cada padre con submenú según dónde esté el foco. El
+ * submenú se ve con el foco dentro del padre (`:focus-within`) salvo que
+ * Escape o ← lo hayan plegado (`ctx-sub-collapsed`); al salir del padre, el
+ * pliegue se olvida.
+ */
+function syncSubmenuExpansion(menu) {
+  const active = document.activeElement;
+  menu.querySelectorAll(".ctx-has-submenu").forEach((parent) => {
+    const inside = parent.contains(active);
+    if (!inside) parent.classList.remove("ctx-sub-collapsed");
+    parent.setAttribute("aria-expanded", inside && !parent.classList.contains("ctx-sub-collapsed") ? "true" : "false");
+  });
+}
+
+function resetMenuKeyboardState(menu) {
+  menu.querySelectorAll(".ctx-item.is-active").forEach((it) => it.classList.remove("is-active"));
+  menu.querySelectorAll(".ctx-has-submenu").forEach((parent) => {
+    parent.classList.remove("ctx-sub-collapsed");
+    parent.setAttribute("aria-expanded", "false");
+  });
+}
+
+/** Despliega el submenú de un padre y enfoca su primer ítem. */
+function openSubmenuByKeyboard(menu, parent) {
+  if (!(parent instanceof HTMLElement)) return;
+  parent.classList.remove("ctx-sub-collapsed");
+  parent.setAttribute("aria-expanded", "true");
+  const sub = parent.querySelector('[role="menu"]');
+  const first = sub ? floatingMenuItems(sub)[0] : null;
+  if (first) focusMenuEntry(menu, first);
+}
+
+/** Pliega el submenú en el que está el foco y devuelve el foco a su padre. */
+function closeSubmenuByKeyboard(menu, level) {
+  const parent = level.closest(".ctx-has-submenu");
+  if (!parent) return;
+  parent.classList.add("ctx-sub-collapsed");
+  parent.setAttribute("aria-expanded", "false");
+  focusMenuEntry(menu, parent);
 }
 
 /** Tras abrir un menú flotante: recuerda el disparador y enfoca el primer ítem. */
 function onFloatingMenuOpened(menu) {
   menuReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  resetMenuKeyboardState(menu);
   floatingMenuItems(menu)[0]?.focus();
 }
 
@@ -7411,27 +7497,56 @@ function closeFloatingMenus({ restoreFocus = false } = {}) {
   menuReturnFocus = null;
 }
 
+/**
+ * Teclado de los menús flotantes (`modules/menu-nav.js`): ↑/↓/Inicio/Fin en
+ * el nivel actual, → abre el submenú del ítem, ← y Escape vuelven al padre
+ * desde un submenú, Escape en el primer nivel y Tab cierran el menú
+ * devolviendo el foco. Escape se consume aquí para que el controlador de
+ * diálogos no cierre además el diálogo de debajo.
+ */
 function handleFloatingMenuKeydown(e) {
   const menu = openFloatingMenuEl();
-  if (!menu) return;
-  if (e.key === "Tab") {
-    e.preventDefault();
-    closeFloatingMenus({ restoreFocus: true });
-    return;
+  if (!menu || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+  const active = document.activeElement;
+  const level = floatingMenuLevel(menu, active);
+  const entries = floatingMenuEntries(level);
+  const index = entries.indexOf(active);
+  const result = menuKey(e.key, {
+    entries: entries.map((el) => ({
+      separator: el.classList.contains("ctx-sep"),
+      disabled: el.disabled === true || el.getAttribute("aria-disabled") === "true",
+      submenu: el.getAttribute("aria-haspopup") === "menu",
+    })),
+    index,
+    inSubmenu: level !== menu,
+  });
+  switch (result.action) {
+    case "focus":
+      e.preventDefault();
+      focusMenuEntry(menu, entries[result.index]);
+      break;
+    case "open":
+      e.preventDefault();
+      openSubmenuByKeyboard(menu, entries[index]);
+      break;
+    case "parent":
+      e.preventDefault();
+      closeSubmenuByKeyboard(menu, level);
+      break;
+    case "activate":
+      // Un <button> ya se activa solo con Enter/Espacio; los demás ítems, aquí.
+      if (!(active instanceof HTMLButtonElement) && active instanceof HTMLElement) {
+        e.preventDefault();
+        active.click();
+      }
+      break;
+    case "close":
+      e.preventDefault();
+      closeFloatingMenus({ restoreFocus: true });
+      break;
+    default:
+      break;
   }
-  const step = { ArrowDown: 1, ArrowUp: -1, Home: "first", End: "last" };
-  if (!(e.key in step)) return;
-  const items = floatingMenuItems(menu);
-  if (items.length === 0) return;
-  e.preventDefault();
-  const cur = items.indexOf(document.activeElement);
-  const move = step[e.key];
-  let next;
-  if (move === "first") next = 0;
-  else if (move === "last") next = items.length - 1;
-  else if (cur < 0) next = move === 1 ? 0 : items.length - 1;
-  else next = (cur + move + items.length) % items.length;
-  items[next].focus();
 }
 
 function handleContextMenuAction(action) {
@@ -12691,10 +12806,16 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
   if (sessionAlias) tab.classList.add("has-alias");
   if (isPrivate) tab.classList.add("is-private");
   tab.draggable = true;
-  tab.tabIndex = 0;
+  // Tabindex itinerante: solo la pestaña activa entra con Tab; las demás se
+  // alcanzan con las flechas (`updateTabSelectionClasses` lo mantiene).
+  tab.tabIndex = sessionId === activeSessionId ? 0 : -1;
   tab.setAttribute("aria-label", tabLabel);
   tab.setAttribute("role", "tab");
   tab.setAttribute("aria-selected", sessionId === activeSessionId ? "true" : "false");
+  // El estado (conectada, caída, actividad, solo lectura…) solo se ve por el
+  // color: aquí va en palabras, como descripción de la pestaña.
+  const stateId = `tab-state-${++_tabStateSeq}`;
+  tab.setAttribute("aria-describedby", stateId);
   const sftpBtn = sftp ? `<button class="tab-sftp" title="${escHtml(t("sftp.panel"))}" aria-label="${escHtml(t("sftp.panel"))}">${TAB_SFTP_ICON_SVG}</button>` : "";
   const tunnelBtn = sftp ? `<button class="tab-tunnels" title="${escHtml(t("tunnels.panel"))}" aria-label="${escHtml(t("tunnels.panel"))}">${TAB_TUNNELS_ICON_SVG}</button>` : "";
   // Botón de nota/runbook solo para sesiones de un perfil guardado real
@@ -12718,7 +12839,9 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
     ${sftpBtn}
     ${tunnelBtn}
     ${runbookBtn}
-    <button class="tab-close" title="${t("toast.close")}" aria-label="${t("toast.close")}">${TAB_CLOSE_ICON_SVG}</button>`;
+    <button class="tab-close" title="${t("toast.close")}" aria-label="${t("toast.close")}">${TAB_CLOSE_ICON_SVG}</button>
+    <span class="sr-only tab-state" id="${stateId}"></span>`;
+  updateTabStateText(tab);
   tab.addEventListener("click", (e) => {
     if (e.target.classList.contains("tab-close")) return;
     if (e.target.classList.contains("tab-sftp")) return;
@@ -12906,9 +13029,51 @@ function updateBroadcastClasses() {
     const eligible = !!s && !!s.terminal && s.type !== "rdp" && viewSelection.includes(sid)
       && !isSessionReadOnly(s);
     p.classList.toggle("pane-broadcasting", on && eligible);
+    // La pestaña también lo sabe (solo para la descripción accesible).
+    const tab = document.querySelector(`.tab[data-session="${CSS.escape(sid)}"]`);
+    if (tab && tab.classList.contains("is-broadcasting") !== (on && eligible)) {
+      tab.classList.toggle("is-broadcasting", on && eligible);
+      updateTabStateText(tab);
+    }
   });
   const btn = document.querySelector('#view-layout-bar button[data-action="broadcast"]');
   if (btn) btn.classList.toggle("active", on);
+}
+
+let _tabStateSeq = 0;
+
+/**
+ * Pone en palabras el estado de una pestaña (`modules/tab-state.js`) en su
+ * descripción accesible, a partir de las mismas clases que pintan el color.
+ */
+function updateTabStateText(tab) {
+  if (!(tab instanceof HTMLElement)) return;
+  const stateEl = tab.querySelector(".tab-state");
+  if (!stateEl) return;
+  const dot = tab.querySelector(".tab-dot");
+  const keys = tabStateKeys(tabStateFromClasses(tab.classList, dot ? dot.classList : []));
+  stateEl.textContent = keys.map((k) => t(k)).join(", ");
+}
+
+/** Tras cambiar de idioma: el estado de cada pestaña, en el idioma nuevo. */
+function updateAllTabStates() {
+  document.querySelectorAll("#tabs-container .tab").forEach(updateTabStateText);
+}
+
+/**
+ * Flechas en la barra de pestañas (patrón tablist): ←/→ y Inicio/Fin mueven
+ * el foco entre pestañas sin activarlas; Enter o Espacio activan (ya en cada
+ * pestaña). El tabindex itinerante sigue al foco.
+ */
+function handleTabListKeydown(e) {
+  if (!(e.target instanceof HTMLElement) || !e.target.classList.contains("tab")) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const tabs = [...document.querySelectorAll("#tabs-container .tab")];
+  const next = tabIndexForKey(tabs.indexOf(e.target), tabs.length, e.key);
+  if (next === null) return;
+  e.preventDefault();
+  tabs.forEach((tab, i) => tab.setAttribute("tabindex", i === next ? "0" : "-1"));
+  tabs[next].focus();
 }
 
 // Niveles de aviso en la pestaña, de menor a mayor severidad:
@@ -12928,6 +13093,7 @@ function markTabActivity(sessionId, { important = false, kind = null } = {}) {
   } else if (important && !tab.classList.contains("has-unread-disconnect")) {
     tab.classList.add("has-unread-important");
   }
+  updateTabStateText(tab);
 }
 
 function clearTabActivity(sessionId) {
@@ -12938,6 +13104,7 @@ function clearTabActivity(sessionId) {
     "has-unread-important",
     "has-unread-disconnect",
   );
+  updateTabStateText(tab);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -13019,6 +13186,7 @@ function updateTabReadOnly(sessionId) {
   if (!tab) return;
   const on = !!sessions.get(sessionId)?.readOnly;
   tab.classList.toggle("is-read-only", on);
+  updateTabStateText(tab);
   let badge = tab.querySelector(".tab-readonly-badge");
   if (!on) {
     badge?.remove();
@@ -15017,12 +15185,22 @@ function updateLayoutBarActive() {
 function updateTabSelectionClasses() {
   const hasSessionTabs = document.querySelector("#tabs-container .tab") !== null;
   document.body.classList.toggle("has-session-tabs", hasSessionTabs);
+  // Tabindex itinerante: la pestaña activa (o la que tiene el foco, si el
+  // usuario está recorriendo la barra con las flechas) es la única que entra
+  // con Tab. Sin sesión activa, la primera.
+  const sessionTabs = [...document.querySelectorAll("#tabs-container .tab")];
+  const focusedTab = sessionTabs.find((t) => t === document.activeElement) ?? null;
+  const rovingTab = focusedTab
+    ?? sessionTabs.find((t) => t.dataset.session === activeSessionId)
+    ?? sessionTabs[0]
+    ?? null;
   document.querySelectorAll(".tab").forEach((t) => {
     const sid = t.dataset.session;
     t.classList.toggle("in-view",  viewSelection.includes(sid));
     const active = sid === activeSessionId;
     t.classList.toggle("active",   active);
     t.setAttribute("aria-selected", active ? "true" : "false");
+    if (t.dataset.session) t.setAttribute("tabindex", t === rovingTab ? "0" : "-1");
   });
   document.getElementById("home-tab")
     ?.classList.toggle("active", viewSelection.length === 0);
@@ -16156,6 +16334,7 @@ function setActiveTab(sessionId) {
 function updateTabStatus(sessionId, status) {
   document.querySelector(`.tab[data-session="${sessionId}"] .tab-dot`)
     ?.setAttribute("class", `tab-dot ${status}`);
+  updateTabStateText(document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`));
   // Una sesión caída no sigue enseñando el progreso que dejó a medias.
   if (status === "closed" || status === "error") clearTabProgress(sessionId);
   if (sessionId === activeSessionId) updateStatusBar();
@@ -25951,6 +26130,9 @@ function bindUIEvents() {
     if (activeSessionId) toggleTunnelPanel(activeSessionId);
   });
 
+  // Flechas / Inicio / Fin entre pestañas
+  document.getElementById("tabs-container").addEventListener("keydown", handleTabListKeydown);
+
   // Clic derecho en una pestaña
   document.getElementById("tabs-container").addEventListener("contextmenu", (e) => {
     const tab = e.target.closest(".tab");
@@ -26004,14 +26186,24 @@ function bindUIEvents() {
   // closeSettingsModal(): un Escape en un desplegable cerraba también Nueva
   // conexión (perdiendo lo escrito) o Preferencias por debajo de un hijo.
   registerDialogs();
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape" || e.defaultPrevented || !openFloatingMenuEl()) return;
-    closeFloatingMenus({ restoreFocus: true });
-    e.preventDefault();
-  });
-
-  // Navegación por teclado de los menús flotantes (flechas / Inicio / Fin / Tab).
+  // Navegación por teclado de los menús flotantes (flechas / Inicio / Fin / → y
+  // ← en los submenús / Escape / Tab). Escape lo consume el propio menú.
   document.addEventListener("keydown", handleFloatingMenuKeydown);
+  for (const menuId of FLOATING_MENU_IDS) {
+    const menu = document.getElementById(menuId);
+    if (!menu) continue;
+    menu.addEventListener("focusin", () => syncSubmenuExpansion(menu));
+    // El puntero manda: en cuanto se mueve por el menú se quita el resaltado
+    // que dejó el teclado.
+    menu.addEventListener("mouseover", () =>
+      menu.querySelectorAll(".ctx-item.is-active").forEach((it) => it.classList.remove("is-active")));
+    menu.querySelectorAll(".ctx-has-submenu").forEach((parent) => {
+      parent.addEventListener("mouseenter", () => parent.setAttribute("aria-expanded", "true"));
+      parent.addEventListener("mouseleave", () => {
+        if (!parent.contains(document.activeElement)) parent.setAttribute("aria-expanded", "false");
+      });
+    });
+  }
 
   // Atajos de teclado globales (capture phase para preempt a xterm)
   document.addEventListener("keydown", handleGlobalShortcut, { capture: true });
@@ -29515,12 +29707,24 @@ function getStepPrecision(stepValue) {
 // ═══════════════════════════════════════════════════════════════
 // DROPDOWN PERSONALIZADO
 // Sustituye los <select> nativos (que en WebKitGTK ignoran el tema
-// de la app) por un control con los colores del tema Catppuccin.
+// de la app) por un control con los colores del tema. Patrón APG
+// «select-only combobox»: el botón es el combobox y conserva el foco
+// siempre (la lista vive en <body>, fuera del diálogo, y así no choca
+// con la trampa de foco ni con el `inert` del controlador de diálogos);
+// la lista es un listbox cuya opción resaltada se anuncia con
+// aria-activedescendant. Las teclas las resuelve `modules/listbox-nav.js`.
+// Con la preferencia «Usar los desplegables del sistema» no se toca nada
+// y queda el <select> nativo (`applyNativeSelects`).
 // ═══════════════════════════════════════════════════════════════
+
+let _customSelectSeq = 0;
 
 function enhanceSelect(selectEl) {
   if (selectEl.dataset.enhanced === "1") return;
+  if (prefs?.nativeSelects) return;
   selectEl.dataset.enhanced = "1";
+
+  const uid = selectEl.id || `custom-select-${++_customSelectSeq}`;
 
   const wrapper = document.createElement("div");
   wrapper.className = "custom-select";
@@ -29530,31 +29734,120 @@ function enhanceSelect(selectEl) {
   const display = document.createElement("button");
   display.type = "button";
   display.className = "custom-select-display";
+  display.id = `${uid}-combobox`;
+  display.setAttribute("role", "combobox");
+  display.setAttribute("aria-haspopup", "listbox");
+  display.setAttribute("aria-expanded", "false");
   wrapper.appendChild(display);
 
   const list = document.createElement("div");
   list.className = "custom-select-list hidden";
+  list.id = `${uid}-listbox`;
+  list.setAttribute("role", "listbox");
+  list.tabIndex = -1;
+  // Dueño de la lista: si el <select> desaparece del DOM sin pasar por
+  // `_destroyEnhanced` (un formulario repintado con innerHTML), la lista
+  // queda huérfana en <body> y así se puede barrer.
+  list._ownerSelect = selectEl;
   document.body.appendChild(list);
+  display.setAttribute("aria-controls", list.id);
+
+  // Etiqueta accesible: el <label for> del select (o el <label> que lo
+  // envuelve) más el propio botón, cuyo texto es el valor elegido.
+  const label = (selectEl.id && document.querySelector(`label[for="${CSS.escape(selectEl.id)}"]`))
+    || selectEl.closest("label");
+  if (label) {
+    if (!label.id) label.id = `${uid}-label`;
+    display.setAttribute("aria-labelledby", `${label.id} ${display.id}`);
+    list.setAttribute("aria-labelledby", label.id);
+  } else if (selectEl.getAttribute("aria-label")) {
+    display.setAttribute("aria-label", selectEl.getAttribute("aria-label"));
+    list.setAttribute("aria-label", selectEl.getAttribute("aria-label"));
+  }
+  if (selectEl.disabled) display.disabled = true;
+
+  let state = createListboxState(selectEl.selectedIndex);
+  /** Elementos `role=option`, en el orden de `selectEl.options`. */
+  let items = [];
+
+  function isOpen() {
+    return !list.classList.contains("hidden");
+  }
+
+  function highlight(index) {
+    state = { ...state, index };
+    items.forEach((el, i) => el.classList.toggle("is-focused", i === index));
+    const current = items[index];
+    if (current) {
+      display.setAttribute("aria-activedescendant", current.id);
+      current.scrollIntoView({ block: "nearest" });
+    } else {
+      display.removeAttribute("aria-activedescendant");
+    }
+  }
+
+  function commit(index) {
+    const opt = selectEl.options[index];
+    if (!opt || opt.disabled) return;
+    if (selectEl.value !== opt.value) {
+      selectEl.value = opt.value;
+      selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  }
+
+  function buildOption(o, index) {
+    const item = document.createElement("div");
+    item.className = "custom-select-item";
+    item.id = `${list.id}-opt-${index}`;
+    item.setAttribute("role", "option");
+    const selected = index === selectEl.selectedIndex;
+    item.setAttribute("aria-selected", selected ? "true" : "false");
+    if (selected) item.classList.add("active");
+    if (o.disabled) item.setAttribute("aria-disabled", "true");
+    item.textContent = o.textContent;
+    // mousedown y no click: con preventDefault el foco no sale del botón.
+    item.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      if (o.disabled) return;
+      commit(index);
+      close();
+    });
+    return item;
+  }
 
   function refresh() {
     const opt = selectEl.options[selectEl.selectedIndex];
     display.textContent = opt ? opt.textContent : "";
+    display.disabled = selectEl.disabled;
     list.innerHTML = "";
-    [...selectEl.options].forEach((o, i) => {
-      const item = document.createElement("div");
-      item.className = "custom-select-item";
-      if (i === selectEl.selectedIndex) item.classList.add("active");
-      item.textContent = o.textContent;
-      item.addEventListener("mousedown", (ev) => {
-        ev.preventDefault();
-        if (selectEl.value !== o.value) {
-          selectEl.value = o.value;
-          selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+    items = [];
+    let index = 0;
+    for (const child of selectEl.children) {
+      if (child instanceof HTMLOptGroupElement) {
+        const group = document.createElement("div");
+        group.setAttribute("role", "group");
+        const heading = document.createElement("div");
+        heading.className = "custom-select-group";
+        heading.id = `${list.id}-group-${index}`;
+        heading.setAttribute("role", "presentation");
+        heading.textContent = child.label;
+        group.setAttribute("aria-labelledby", heading.id);
+        group.appendChild(heading);
+        for (const o of child.children) {
+          if (!(o instanceof HTMLOptionElement)) continue;
+          const item = buildOption(o, index++);
+          items.push(item);
+          group.appendChild(item);
         }
-        close();
-      });
-      list.appendChild(item);
-    });
+        list.appendChild(group);
+      } else if (child instanceof HTMLOptionElement) {
+        const item = buildOption(child, index++);
+        items.push(item);
+        list.appendChild(item);
+      }
+    }
+    if (isOpen()) highlight(Math.min(state.index, items.length - 1));
+    else state = { ...state, index: selectEl.selectedIndex };
   }
 
   function position() {
@@ -29577,20 +29870,28 @@ function enhanceSelect(selectEl) {
     }
   }
 
-  function open() {
+  /** Despliega la lista resaltando `index` (la elegida si no se indica). */
+  function open(index = selectEl.selectedIndex) {
     refresh();
+    state = { ...state, open: true, search: "", searchAt: 0 };
     wrapper.classList.add("open");
     list.classList.remove("hidden");
+    display.setAttribute("aria-expanded", "true");
     position();
+    highlight(index);
   }
 
   function close() {
+    state = { ...state, open: false, index: selectEl.selectedIndex, search: "", searchAt: 0 };
     wrapper.classList.remove("open");
     list.classList.add("hidden");
+    display.setAttribute("aria-expanded", "false");
+    display.removeAttribute("aria-activedescendant");
+    items.forEach((el) => el.classList.remove("is-focused"));
   }
 
   function toggle() {
-    list.classList.contains("hidden") ? open() : close();
+    isOpen() ? close() : open();
   }
 
   display.addEventListener("click", (e) => {
@@ -29599,16 +29900,64 @@ function enhanceSelect(selectEl) {
     toggle();
   });
 
+  display.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.isComposing) return;
+    const options = [...selectEl.options];
+    const res = listboxKey(state, e.key, {
+      labels: options.map((o) => o.textContent),
+      disabled: options.map((o) => o.disabled),
+      now: performance.now(),
+      altKey: e.altKey,
+      selected: selectEl.selectedIndex,
+    });
+    state = res.state;
+    if (res.prevent) {
+      // Escape, flechas y letras son del desplegable: ni el diálogo de
+      // debajo ni los atajos globales deben verlos.
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    switch (res.action) {
+      case "open":
+        open(state.index);
+        break;
+      case "move":
+        highlight(state.index);
+        break;
+      case "commit":
+        commit(state.index);
+        close();
+        break;
+      case "close":
+        close();
+        break;
+      default:
+        break;
+    }
+  });
+
+  // El foco se va del botón con la lista abierta (Tab ya eligió, o alguien
+  // enfocó otra cosa por código): la lista no se queda huérfana.
+  display.addEventListener("blur", () => {
+    if (isOpen()) close();
+  });
+
   const onDocMouseDown = (e) => {
-    if (list.classList.contains("hidden")) return;
+    if (!isOpen()) return;
     if (wrapper.contains(e.target) || list.contains(e.target)) return;
     close();
   };
   const onResize = () => {
-    if (!list.classList.contains("hidden")) position();
+    if (isOpen()) position();
   };
+  // Escape con la lista abierta y el foco fuera del botón (no debería pasar;
+  // red de seguridad): cierra la lista, no el diálogo.
   const onKeyDown = (e) => {
-    if (e.key === "Escape" && !list.classList.contains("hidden")) { e.preventDefault(); close(); }
+    if (e.key === "Escape" && isOpen() && e.target !== display) {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    }
   };
   document.addEventListener("mousedown", onDocMouseDown);
   window.addEventListener("resize", onResize);
@@ -29620,18 +29969,8 @@ function enhanceSelect(selectEl) {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["selected", "disabled", "value"],
+    attributeFilter: ["selected", "disabled", "value", "label"],
   });
-
-  // Limpieza para los <select> dinámicos (filas de usuarios extra): al quitar la
-  // fila se invoca para no dejar la lista flotante ni los listeners colgando.
-  selectEl._destroyEnhanced = () => {
-    observer.disconnect();
-    list.remove();
-    document.removeEventListener("mousedown", onDocMouseDown);
-    window.removeEventListener("resize", onResize);
-    document.removeEventListener("keydown", onKeyDown);
-  };
 
   // Interceptar asignaciones `selectEl.value = X` para actualizar el display
   const proto = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
@@ -29641,7 +29980,45 @@ function enhanceSelect(selectEl) {
     set(v) { proto.set.call(selectEl, v); refresh(); },
   });
 
+  // Limpieza: deshace el control y deja el <select> nativo tal como estaba.
+  // Se invoca al quitar una fila dinámica (usuarios extra) y al activar la
+  // preferencia de desplegables del sistema.
+  selectEl._destroyEnhanced = () => {
+    observer.disconnect();
+    list.remove();
+    document.removeEventListener("mousedown", onDocMouseDown);
+    window.removeEventListener("resize", onResize);
+    document.removeEventListener("keydown", onKeyDown);
+    delete selectEl.value;
+    if (wrapper.parentNode) wrapper.parentNode.insertBefore(selectEl, wrapper);
+    wrapper.remove();
+    delete selectEl.dataset.enhanced;
+    delete selectEl._destroyEnhanced;
+  };
+
   refresh();
+}
+
+/** Quita de <body> las listas cuyo <select> ya no está en el documento. */
+function sweepOrphanSelectLists() {
+  document.querySelectorAll(".custom-select-list").forEach((list) => {
+    if (!list._ownerSelect?.isConnected) list.remove();
+  });
+}
+
+/**
+ * Aplica la preferencia «Usar los desplegables del sistema» a todos los
+ * <select> del documento, en vivo: activarla deshace el control propio y
+ * desactivarla lo vuelve a montar. Los que se creen después la consultan
+ * en `enhanceSelect`.
+ */
+function applyNativeSelects(enabled) {
+  sweepOrphanSelectLists();
+  if (enabled) {
+    document.querySelectorAll('select[data-enhanced="1"]').forEach((s) => s._destroyEnhanced?.());
+  } else {
+    document.querySelectorAll("select:not([data-enhanced])").forEach(enhanceSelect);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -29750,6 +30127,7 @@ async function handleTabContextAction(action) {
     const tab = document.querySelector(`.tab[data-session="${CSS.escape(targetId)}"]`);
     if (tab) {
       tab.classList.toggle("is-pinned");
+      updateTabStateText(tab);
       // Movemos las pestañas ancladas al principio para mantenerlas
       // siempre visibles. Estado solo en runtime; no persiste entre sesiones.
       const container = document.getElementById("tabs-container");

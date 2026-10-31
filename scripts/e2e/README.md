@@ -40,6 +40,16 @@ confirmación destructiva es `alertdialog` con el foco en «Cancelar». Como
 WebKitWebDriver no mueve el foco con eventos sintéticos, solo prueba lo que el
 controlador hace de forma explícita.
 
+La sección de teclado (`keyboard.mjs`) recorre los controles accesibles: el
+desplegable de Idioma de Preferencias es un combobox que se abre con ↓, elige
+con Enter, busca tecleando y cuyo Escape cierra la lista sin cerrar
+Preferencias; la preferencia «Usar los desplegables del sistema» deshace y
+rehace el control en vivo; en el menú contextual de una conexión las flechas
+recorren solo el primer nivel, → entra en el submenú («Túneles»), Escape y ←
+vuelven al padre y un segundo Escape cierra el menú; y en la barra de pestañas
+→, Inicio y Fin mueven el foco con tabindex itinerante y cada pestaña describe
+su estado en palabras para el lector de pantalla.
+
 El panel de túneles se comprueba en claro, oscuro y una ventana de 800 px:
 controles de cabecera juntos, contenido sin desbordar, minimizar/reabrir,
 cerrar y confirmar/cancelar el borrado de un túnel guardado. Las capturas se

@@ -667,6 +667,18 @@
     "open_folder": "Öffnen",
     "no_folder": "Ohne Ordner"
   },
+  "tab_state": {
+    "connected": "verbunden",
+    "connecting": "verbindet",
+    "reconnecting": "verbindet neu",
+    "disconnected": "getrennt",
+    "activity": "neue Aktivität",
+    "important": "mit einem Hinweis",
+    "read_only": "schreibgeschützt",
+    "broadcast": "empfängt die verteilte Eingabe",
+    "private": "private Sitzung",
+    "pinned": "angeheftet"
+  },
   "tabctx": {
     "duplicate": "Tab duplizieren",
     "duplicate_overrides": "Mit Änderungen duplizieren…",
@@ -1224,6 +1236,8 @@
     "boot_screen_hint": "Zeigt das Logo und „Wird gestartet…“, sobald sich das Fenster öffnet, während die Anwendung fertig startet. Deaktiviert erscheint das Fenster erst, wenn die Oberfläche bereit ist.",
     "strong_focus": "Verstärkter Fokusrahmen",
     "strong_focus_hint": "Erhöht Dicke und Kontrast des Fokusrahmens bei der Tastaturnavigation.",
+    "native_selects": "Auswahlfelder des Systems verwenden",
+    "native_selects_hint": "Behält die nativen Auswahlfelder des Systems statt der von Rustty; manche Screenreader kommen damit besser zurecht. Die von Rustty lassen sich ebenfalls per Tastatur bedienen: Pfeile, Pos1/Ende und Eintippen des Anfangs einer Option.",
     "toast_duration": "Anzeigedauer der Hinweise",
     "toast_duration_normal": "Normal",
     "toast_duration_long": "Lang",

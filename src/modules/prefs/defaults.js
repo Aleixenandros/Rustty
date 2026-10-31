@@ -253,6 +253,11 @@ export const DEFAULT_PREFS = {
   reduceMotion:    false,
   // Refuerza el anillo de foco (grosor y contraste) en la navegación por teclado.
   strongFocus:     false,
+  // Deja los <select> nativos del sistema en vez del desplegable propio
+  // (`enhanceSelect`): hay lectores de pantalla que manejan mejor el control
+  // nativo de WebKitGTK/WebView2. Off = el desplegable de Rustty, que también
+  // se maneja con el teclado (patrón combobox de solo selección).
+  nativeSelects:   false,
   // Duración de los avisos: "normal" (la de cada aviso, como siempre), "long"
   // (el doble, mínimo 10 s) o "sticky" (hasta cerrarlos). Con el ratón encima
   // o el foco dentro no caduca ninguno (`modules/toast-timer.js`).

@@ -667,6 +667,18 @@
     "open_folder": "Abrir",
     "no_folder": "Sem pasta"
   },
+  "tab_state": {
+    "connected": "ligada",
+    "connecting": "a ligar",
+    "reconnecting": "a religar",
+    "disconnected": "desligada",
+    "activity": "com actividade nova",
+    "important": "com um aviso",
+    "read_only": "só de leitura",
+    "broadcast": "recebe a entrada difundida",
+    "private": "sessão privada",
+    "pinned": "fixada"
+  },
   "tabctx": {
     "duplicate": "Duplicar separador",
     "duplicate_overrides": "Duplicar com alterações…",
@@ -1224,6 +1236,8 @@
     "boot_screen_hint": "Mostra o logótipo e «A iniciar…» assim que a janela abre, enquanto a aplicação acaba de arrancar. Desativado, a janela só aparece quando a interface está pronta.",
     "strong_focus": "Foco visível reforçado",
     "strong_focus_hint": "Aumenta a espessura e o contraste do anel de foco na navegação por teclado.",
+    "native_selects": "Usar as listas pendentes do sistema",
+    "native_selects_hint": "Mantém as listas pendentes nativas do sistema em vez das do Rustty; alguns leitores de ecrã lidam melhor com elas. As do Rustty também se usam com o teclado: setas, Início/Fim e escrevendo o início de uma opção.",
     "toast_duration": "Duração dos avisos",
     "toast_duration_normal": "Normal",
     "toast_duration_long": "Longa",

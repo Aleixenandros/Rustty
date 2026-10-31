@@ -667,6 +667,18 @@
     "open_folder": "Open",
     "no_folder": "No folder"
   },
+  "tab_state": {
+    "connected": "connected",
+    "connecting": "connecting",
+    "reconnecting": "reconnecting",
+    "disconnected": "disconnected",
+    "activity": "new activity",
+    "important": "has a notice",
+    "read_only": "read-only",
+    "broadcast": "receives the broadcast input",
+    "private": "private session",
+    "pinned": "pinned"
+  },
   "tabctx": {
     "duplicate": "Duplicate tab",
     "duplicate_overrides": "Duplicate with changes…",
@@ -1224,6 +1236,8 @@
     "boot_screen_hint": "Shows the logo and \"Starting…\" as soon as the window opens, while the application finishes starting up. When off, the window does not appear until the interface is ready.",
     "strong_focus": "Reinforced focus ring",
     "strong_focus_hint": "Increases the thickness and contrast of the focus ring during keyboard navigation.",
+    "native_selects": "Use the system drop-downs",
+    "native_selects_hint": "Keeps the system's native drop-downs instead of Rustty's; some screen readers handle them better. Rustty's also work with the keyboard: arrows, Home/End and typing the start of an option.",
     "toast_duration": "Notification duration",
     "toast_duration_normal": "Normal",
     "toast_duration_long": "Long",

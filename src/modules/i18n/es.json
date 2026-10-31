@@ -667,6 +667,18 @@
     "open_folder": "Abrir",
     "no_folder": "Sin carpeta"
   },
+  "tab_state": {
+    "connected": "conectada",
+    "connecting": "conectando",
+    "reconnecting": "reconectando",
+    "disconnected": "desconectada",
+    "activity": "con actividad nueva",
+    "important": "con un aviso",
+    "read_only": "solo lectura",
+    "broadcast": "recibe la entrada difundida",
+    "private": "sesión privada",
+    "pinned": "anclada"
+  },
   "tabctx": {
     "duplicate": "Duplicar pestaña",
     "duplicate_overrides": "Duplicar con cambios…",
@@ -1224,6 +1236,8 @@
     "boot_screen_hint": "Muestra el logotipo e «Iniciando…» en cuanto se abre la ventana, mientras la aplicación termina de arrancar. Desactivada, la ventana no aparece hasta que la interfaz está lista.",
     "strong_focus": "Foco visible reforzado",
     "strong_focus_hint": "Aumenta el grosor y el contraste del anillo de foco en la navegación por teclado.",
+    "native_selects": "Usar los desplegables del sistema",
+    "native_selects_hint": "Deja los desplegables nativos del sistema en lugar de los de Rustty; algunos lectores de pantalla los manejan mejor. Los de Rustty también se manejan con el teclado: flechas, Inicio/Fin y tecleando el principio de una opción.",
     "toast_duration": "Duración de los avisos",
     "toast_duration_normal": "Normal",
     "toast_duration_long": "Larga",

@@ -565,10 +565,10 @@
           </svg>
         </span><span data-i18n="ctx.connect_private">Abrir en privado</span>
       </button>
-      <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-connect-as-only hidden" id="ctx-connect-as" aria-haspopup="menu">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span data-i18n="ctx.connect_as">Conectar con otro usuario</span>
-        <span class="ctx-submenu-arrow">▸</span>
-        <div class="ctx-submenu" id="ctx-connect-as-submenu" role="menu"></div>
+      <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-connect-as-only hidden" id="ctx-connect-as" role="menuitem" tabindex="-1" aria-haspopup="menu" aria-expanded="false" aria-labelledby="ctx-connect-as-label">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span id="ctx-connect-as-label" data-i18n="ctx.connect_as">Conectar con otro usuario</span>
+        <span class="ctx-submenu-arrow" aria-hidden="true">▸</span>
+        <div class="ctx-submenu" id="ctx-connect-as-submenu" role="menu" aria-labelledby="ctx-connect-as-label"></div>
       </div>
       <button class="ctx-item ctx-conn-only ctx-restore-only hidden" data-ctx="connect-restore" id="ctx-connect-restore">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-restore"/></svg></span><span data-i18n="ctx.connect_restore">Conectar y restaurar pantalla anterior</span>
@@ -576,10 +576,10 @@
       <button class="ctx-item ctx-conn-only hidden" data-ctx="connect-overrides">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span data-i18n="ctx.connect_overrides">Conectar con cambios…</span>
       </button>
-      <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-jump-via-only hidden" id="ctx-connect-via" aria-haspopup="menu">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-route"/></svg></span><span data-i18n="jump.ctx_connect_via">Conectar a través de</span>
-        <span class="ctx-submenu-arrow">▸</span>
-        <div class="ctx-submenu" id="ctx-connect-via-submenu" role="menu"></div>
+      <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-jump-via-only hidden" id="ctx-connect-via" role="menuitem" tabindex="-1" aria-haspopup="menu" aria-expanded="false" aria-labelledby="ctx-connect-via-label">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-route"/></svg></span><span id="ctx-connect-via-label" data-i18n="jump.ctx_connect_via">Conectar a través de</span>
+        <span class="ctx-submenu-arrow" aria-hidden="true">▸</span>
+        <div class="ctx-submenu" id="ctx-connect-via-submenu" role="menu" aria-labelledby="ctx-connect-via-label"></div>
       </div>
 
       <!-- Grupo 2 · Editar y organizar -->
@@ -632,10 +632,10 @@
       <button class="ctx-item ctx-conn-only ctx-jump-active-only hidden" data-ctx="toggle-active-jump" id="ctx-toggle-active-jump">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-route"/></svg></span><span id="ctx-active-jump-label" data-i18n="jump.ctx_use_active">Usar como salto activo</span>
       </button>
-      <div class="ctx-item ctx-has-submenu ctx-conn-only hidden" id="ctx-tunnels" aria-haspopup="menu">
-        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span><span data-i18n="ctx.tunnels">Túneles</span>
-        <span class="ctx-submenu-arrow">▸</span>
-        <div class="ctx-submenu" id="ctx-tunnels-submenu" role="menu"></div>
+      <div class="ctx-item ctx-has-submenu ctx-conn-only hidden" id="ctx-tunnels" role="menuitem" tabindex="-1" aria-haspopup="menu" aria-expanded="false" aria-labelledby="ctx-tunnels-label">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span><span id="ctx-tunnels-label" data-i18n="ctx.tunnels">Túneles</span>
+        <span class="ctx-submenu-arrow" aria-hidden="true">▸</span>
+        <div class="ctx-submenu" id="ctx-tunnels-submenu" role="menu" aria-labelledby="ctx-tunnels-label"></div>
       </div>
       <button class="ctx-item ctx-conn-only ctx-script-only hidden" data-ctx="run-script-conn">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-script"/></svg></span><span data-i18n="scripts.ctx_run">Ejecutar script…</span>
@@ -2751,6 +2751,14 @@
                   <span data-i18n="prefs_appearance.strong_focus">Foco visible reforzado</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_appearance.strong_focus_hint">Aumenta el grosor y el contraste del anillo de foco en la navegación por teclado.</p>
+              </div>
+
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-native-selects" />
+                  <span data-i18n="prefs_appearance.native_selects">Usar los desplegables del sistema</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_appearance.native_selects_hint">Deja los desplegables nativos del sistema en lugar de los de Rustty; algunos lectores de pantalla los manejan mejor. Los de Rustty también se manejan con el teclado: flechas, Inicio/Fin y tecleando el principio de una opción.</p>
               </div>
 
               <div class="settings-row">
