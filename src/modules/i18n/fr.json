@@ -2180,6 +2180,7 @@
     "state_skipped_short": "ignoré",
     "state_canceled_short": "annulé",
     "conflict_title": "Conflit de transfert",
+    "connection_lost": "Connexion perdue : {err}. Reconnectez-vous pour continuer.",
     "conflict_msg_file": "Le fichier \"{name}\" existe déjà dans {where}. Renommer créera automatiquement une copie avec un suffixe numérique.",
     "conflict_msg_dir": "Le dossier \"{name}\" existe déjà dans {where}. Renommer créera automatiquement une copie avec un suffixe numérique.",
     "conflict_overwrite": "Écraser",

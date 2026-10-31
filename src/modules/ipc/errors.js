@@ -103,6 +103,51 @@ export function keyringFailureDetail(err) {
 }
 
 /**
+ * Marcador estable de «el destino de la transferencia ya existe y no se pidió
+ * sobrescribir». Espejo de `sftp_manager::TRANSFER_EXISTS_MARKER`; un test de
+ * Rust comprueba que este literal sigue aquí. El backend no toca nada: el
+ * panel pregunta con su diálogo de conflictos y repite con `overwrite`.
+ */
+export const TRANSFER_EXISTS_MARKER = "transfer-exists:";
+
+/**
+ * Marcador estable de «la conexión de ficheros se ha perdido» (plazo agotado
+ * o fallo del socket): nada más va a funcionar hasta reconectar. Espejo de
+ * `sftp_manager::TRANSFER_CONNECTION_LOST_MARKER`.
+ */
+export const TRANSFER_CONNECTION_LOST_MARKER = "transfer-connection-lost:";
+
+/**
+ * `true` si el backend rechazó una transferencia porque el destino ya existe.
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isTransferExistsError(err) {
+  return ipcErrorText(err).includes(TRANSFER_EXISTS_MARKER);
+}
+
+/**
+ * `true` si el fallo es que la conexión de ficheros se ha perdido.
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isTransferConnectionLostError(err) {
+  return ipcErrorText(err).includes(TRANSFER_CONNECTION_LOST_MARKER);
+}
+
+/**
+ * Por qué se perdió la conexión, sin el marcador. Si no hay marcador, el
+ * texto entero.
+ * @param {unknown} err
+ * @returns {string}
+ */
+export function transferConnectionLostDetail(err) {
+  const text = ipcErrorText(err);
+  const at = text.indexOf(TRANSFER_CONNECTION_LOST_MARKER);
+  return at < 0 ? text : text.slice(at + TRANSFER_CONNECTION_LOST_MARKER.length).trim();
+}
+
+/**
  * `true` si reintentar con las mismas credenciales tiene sentido (la causa es
  * la red, no el usuario ni el servidor).
  * @param {unknown} err

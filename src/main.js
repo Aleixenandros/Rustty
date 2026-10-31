@@ -61,12 +61,15 @@ import {
   serializableActivityItem,
 } from "./modules/activity.js";
 import {
+  TRANSFER_EXISTS_RETRIES,
   createTransferConflictState,
+  namesWithExisting,
   nextAvailableTransferName,
   normalizeSftpConflictPolicy,
   recursiveConflictPolicyForTransfer as recursiveConflictPolicy,
   transferNameKey,
   transferNameSet,
+  transferOverwriteFlag,
   transferTarget,
 } from "./modules/sftp-conflicts.js";
 import { passwordPlan } from "./modules/credential-plan.js";
@@ -151,7 +154,14 @@ import { hasLocalSyncData } from "./modules/prefs/first-sync.js";
 import { resolveActiveWorkspaceId, workspaceNameMap, workspacesForExport } from "./modules/workspaces.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
-import { ipcErrorText, isHostKeyError, isKeyringUnavailableError } from "./modules/ipc/errors.js";
+import {
+  ipcErrorText,
+  isHostKeyError,
+  isKeyringUnavailableError,
+  isTransferConnectionLostError,
+  isTransferExistsError,
+  transferConnectionLostDetail,
+} from "./modules/ipc/errors.js";
 import {
   OAUTH_ACCOUNT_STATE,
   oauthDisconnectFeedback,
@@ -524,6 +534,11 @@ function fileErrorText(err) {
  * @param {unknown} err
  */
 function sftpErrorText(err) {
+  // La conexión de ficheros se ha perdido (plazo agotado, servidor parado):
+  // nada va a funcionar hasta reconectar, y eso es lo que hay que decir.
+  if (isTransferConnectionLostError(err)) {
+    return t("sftp.connection_lost", { err: transferConnectionLostDetail(err) });
+  }
   const guard = localFsError(err);
   if (!guard) return ipcErrorText(err);
   if (guard.code === "protected") return t("sftp.protected_path");
@@ -21854,12 +21869,12 @@ async function navigateSftpRemote(sessionId, path, { record = true } = {}) {
     clearSftpStatus(panel);
   } catch (err) {
     if (!isCurrentSftpNavigation(s, "remote", nav)) return;
-    const msg = String(err);
+    const msg = sftpErrorText(err);
     const isPerm = /permission|denied|13/i.test(msg);
     if (isPerm) {
       toast(t("sftp.perm_denied", { path }), "warning", 8000);
     } else {
-      toast(t("sftp.list_error", { err }), "error");
+      toast(t("sftp.list_error", { err: msg }), "error");
     }
     appendSftpActivity(panel, {
       status: "error",
@@ -23352,6 +23367,30 @@ async function resolveTransferConflict(target, names, name, isDir, conflictState
   return { action: "transfer", name, overwrite: true };
 }
 
+/** Etiqueta de la fila de una transferencia: el nombre y, si cambió, el destino. */
+function transferLabel(name, targetName) {
+  return targetName === name ? name : `${name} → ${targetName}`;
+}
+
+/**
+ * El backend dice que el destino ya existe aunque el listado con el que se
+ * decidió no lo tenía. Se vuelve a listar la carpeta de destino —para que
+ * «renombrar» elija un nombre libre de verdad— y se resuelve con el mismo
+ * diálogo y la misma política (recordada o de preferencias) de siempre. Sin
+ * listado, basta con saber que ese nombre está ocupado.
+ */
+async function resolveExistingTransferTarget(sessionId, target, name, isDir, conflictState) {
+  let names = new Set();
+  try {
+    conflictState.listedNames?.delete(`${target.side}:${target.dir}`);
+    names = await transferTargetNames(sessionId, { ...target, visible: false }, conflictState);
+  } catch {
+    // Sin listado también se puede preguntar.
+  }
+  const known = namesWithExisting(names, name, sftpNameKeyOptions(target.side));
+  return resolveTransferConflict(target, known, name, isDir, conflictState);
+}
+
 async function transferOne(sessionId, direction, srcPath, name, isDir, conflictState = null, job = null) {
   const s = sessions.get(sessionId);
   if (!s?.sftp?.sftpSessionId) {
@@ -23390,13 +23429,8 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
     });
     return "error";
   }
-  const resolved = await resolveTransferConflict(
-    target,
-    names,
-    name,
-    isDir,
-    conflictState || createTransferConflictState(),
-  );
+  const conflicts = conflictState || createTransferConflictState();
+  const resolved = await resolveTransferConflict(target, names, name, isDir, conflicts);
   if (resolved.action === "cancel") return "cancel";
   if (resolved.action === "skip") {
     if (job?.transferEl) {
@@ -23414,8 +23448,7 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
 
   const panel = s.sftp.panel;
   const transferId = job?.id || crypto.randomUUID();
-  const targetName = resolved.name;
-  const label = targetName === name ? name : `${name} → ${targetName}`;
+  let label = transferLabel(name, resolved.name);
   const transferEl = job?.transferEl || addTransfer(panel, label, transferId);
   transferEl.dataset.direction = direction;
   setTransferPhase(transferEl, "running", "preparing");
@@ -23423,7 +23456,7 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
   transferEl.querySelector(".sftp-transfer-label").textContent = label;
   if (job) job.status = "running";
   const startedAt = Date.now();
-  const resultStatus = resolved.renamed ? "renamed" : (resolved.overwrite ? "overwritten" : "ok");
+  let resultStatus = "ok";
   let finalTargetPath = "";
   // Lado de la fila a marcar con la mini barra: para upload, la fila
   // origen vive en local (el panel local muestra el fichero que se sube);
@@ -23453,76 +23486,92 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
     }
   });
 
+  // Lo que se manda en cada intento. Si el backend contesta que el destino ya
+  // existe —el listado con el que se decidió estaba desfasado: otro cliente,
+  // otra pestaña—, se vuelve a preguntar con el diálogo de conflictos de
+  // siempre y se repite con la respuesta: sobrescribir con permiso explícito,
+  // otro nombre, omitir o cancelar. Solo en ficheros sueltos: una carpeta ya
+  // lleva su política y el backend la aplica hijo a hijo.
+  let attempt = resolved;
   try {
+    for (let tries = 0; ; tries += 1) {
+      const targetName = attempt.name;
+      label = transferLabel(name, targetName);
+      transferEl.dataset.label = label;
+      transferEl.querySelector(".sftp-transfer-label").textContent = label;
+      resultStatus = attempt.renamed ? "renamed" : (attempt.overwrite ? "overwritten" : "ok");
+      const invokeArgs = {
+        sessionId: s.sftp.sftpSessionId,
+        transferId,
+        verifySize: !!prefs.sftpVerifySize,
+      };
+      let cmd;
+      if (direction === "upload") {
+        finalTargetPath = joinRemote(target.dir, targetName);
+        invokeArgs.localPath = srcPath;
+        invokeArgs.remotePath = finalTargetPath;
+        // El idioma viaja para el diálogo nativo que pide confirmar una subida
+        // sensible (una clave privada, ~/.ssh…).
+        invokeArgs.lang = getLanguage();
+        cmd = isDir ? "sftp_upload_dir" : "sftp_upload";
+      } else {
+        finalTargetPath = await invoke("local_path_join", { base: target.dir, name: targetName });
+        invokeArgs.remotePath = srcPath;
+        invokeArgs.localPath = finalTargetPath;
+        cmd = isDir ? "sftp_download_dir" : "sftp_download";
+      }
+      if (isDir) invokeArgs.conflictPolicy = recursiveConflictPolicyForTransfer(attempt);
+      else invokeArgs.overwrite = transferOverwriteFlag(attempt);
+      if (tries === 0) {
+        appendSftpActivity(panel, {
+          status: "running",
+          label: `${transferDirectionLabel(direction)} ${label}`,
+          detail: `${srcPath} → ${finalTargetPath}`,
+          startedAt,
+        });
+        await revealTransferBeforeInvoke(panel, transferEl);
+      }
+      try {
+        await invoke(cmd, { request: invokeArgs });
+        break;
+      } catch (err) {
+        if (isDir || !isTransferExistsError(err) || tries >= TRANSFER_EXISTS_RETRIES) throw err;
+        attempt = await resolveExistingTransferTarget(sessionId, target, name, isDir, conflicts);
+        if (attempt.action === "cancel") {
+          markTransferCanceled(transferEl);
+          if (job) job.status = "canceled";
+          return "cancel";
+        }
+        if (attempt.action === "skip") {
+          markTransferSkipped(transferEl, t("sftp.state_skipped_policy"));
+          if (job) job.status = "skipped";
+          appendSftpActivity(panel, {
+            status: "skipped",
+            label: `${transferDirectionLabel(direction)} ${name}`,
+            detail: t("sftp.state_skipped_policy"),
+          });
+          toast(t("toast.transfer_skipped", { name }), "info");
+          return "skip";
+        }
+      }
+    }
+    const doneKey = direction === "upload" ? "sftp.uploaded_to" : "sftp.saved_to";
+    markTransferSuccess(transferEl, t(doneKey, { path: finalTargetPath }));
+    if (job) job.status = "done";
+    appendSftpActivity(panel, {
+      status: resultStatus,
+      label: `${transferDirectionLabel(direction)} ${label}`,
+      detail: `${srcPath} → ${finalTargetPath}${symlinkSuffix(skippedSymlinks)}`,
+      bytes: parseInt(transferEl.dataset.lastTotal || "0", 10),
+      startedAt,
+    });
+    notifySkippedSymlinks(panel, skippedSymlinks);
+    // Solo se refresca si el panel sigue en esa carpeta: si el usuario navegó,
+    // recargar le devolvería a la de antes.
     if (direction === "upload") {
-      const remotePath = joinRemote(target.dir, targetName);
-      finalTargetPath = remotePath;
-      const invokeArgs = {
-        sessionId: s.sftp.sftpSessionId,
-        localPath: srcPath,
-        remotePath,
-        transferId,
-        verifySize: !!prefs.sftpVerifySize,
-      };
-      if (isDir) invokeArgs.conflictPolicy = recursiveConflictPolicyForTransfer(resolved);
-      appendSftpActivity(panel, {
-        status: "running",
-        label: `${transferDirectionLabel(direction)} ${label}`,
-        detail: `${srcPath} → ${remotePath}`,
-        startedAt,
-      });
-      await revealTransferBeforeInvoke(panel, transferEl);
-      const cmd = isDir ? "sftp_upload_dir" : "sftp_upload";
-      // El idioma viaja para el diálogo nativo que pide confirmar una subida
-      // sensible (una clave privada, ~/.ssh…).
-      await invoke(cmd, { request: { ...invokeArgs, lang: getLanguage() } });
-      markTransferSuccess(transferEl, t("sftp.uploaded_to", { path: remotePath }));
-      if (job) job.status = "done";
-      appendSftpActivity(panel, {
-        status: resultStatus,
-        label: `${transferDirectionLabel(direction)} ${label}`,
-        detail: `${srcPath} → ${remotePath}${symlinkSuffix(skippedSymlinks)}`,
-        bytes: parseInt(transferEl.dataset.lastTotal || "0", 10),
-        startedAt,
-      });
-      notifySkippedSymlinks(panel, skippedSymlinks);
-      // Solo se refresca si el panel sigue en esa carpeta: si el usuario navegó,
-      // recargar le devolvería a la de antes.
       if (s.sftp.cwd === target.dir) await navigateSftpRemote(sessionId, target.dir);
-    } else {
-      const localPath = await invoke("local_path_join", {
-        base: target.dir,
-        name: targetName,
-      });
-      finalTargetPath = localPath;
-      const invokeArgs = {
-        sessionId: s.sftp.sftpSessionId,
-        remotePath: srcPath,
-        localPath,
-        transferId,
-        verifySize: !!prefs.sftpVerifySize,
-      };
-      if (isDir) invokeArgs.conflictPolicy = recursiveConflictPolicyForTransfer(resolved);
-      appendSftpActivity(panel, {
-        status: "running",
-        label: `${transferDirectionLabel(direction)} ${label}`,
-        detail: `${srcPath} → ${localPath}`,
-        startedAt,
-      });
-      await revealTransferBeforeInvoke(panel, transferEl);
-      const cmd = isDir ? "sftp_download_dir" : "sftp_download";
-      await invoke(cmd, { request: invokeArgs });
-      markTransferSuccess(transferEl, t("sftp.saved_to", { path: localPath }));
-      if (job) job.status = "done";
-      appendSftpActivity(panel, {
-        status: resultStatus,
-        label: `${transferDirectionLabel(direction)} ${label}`,
-        detail: `${srcPath} → ${localPath}${symlinkSuffix(skippedSymlinks)}`,
-        bytes: parseInt(transferEl.dataset.lastTotal || "0", 10),
-        startedAt,
-      });
-      notifySkippedSymlinks(panel, skippedSymlinks);
-      if (s.sftp.localCwd === target.dir) await navigateSftpLocal(sessionId, target.dir);
+    } else if (s.sftp.localCwd === target.dir) {
+      await navigateSftpLocal(sessionId, target.dir);
     }
   } catch (err) {
     // Una subida sensible que el usuario no confirmó en el diálogo nativo es una

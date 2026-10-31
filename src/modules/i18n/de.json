@@ -2180,6 +2180,7 @@
     "state_skipped_short": "übersprungen",
     "state_canceled_short": "abgebrochen",
     "conflict_title": "Übertragungskonflikt",
+    "connection_lost": "Verbindung verloren: {err}. Zum Fortfahren neu verbinden.",
     "conflict_msg_file": "Die Datei \"{name}\" existiert bereits in {where}. Umbenennen erstellt automatisch eine Kopie mit numerischem Suffix.",
     "conflict_msg_dir": "Der Ordner \"{name}\" existiert bereits in {where}. Umbenennen erstellt automatisch eine Kopie mit numerischem Suffix.",
     "conflict_overwrite": "Überschreiben",

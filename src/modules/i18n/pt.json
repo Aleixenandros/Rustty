@@ -2180,6 +2180,7 @@
     "state_skipped_short": "omitido",
     "state_canceled_short": "cancelado",
     "conflict_title": "Conflito de transferência",
+    "connection_lost": "Ligação perdida: {err}. Volte a ligar para continuar.",
     "conflict_msg_file": "O ficheiro \"{name}\" já existe em {where}. Renomear criará automaticamente uma cópia com sufixo numérico.",
     "conflict_msg_dir": "A pasta \"{name}\" já existe em {where}. Renomear criará automaticamente uma cópia com sufixo numérico.",
     "conflict_overwrite": "Substituir",

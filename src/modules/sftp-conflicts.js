@@ -41,6 +41,43 @@ export function recursiveConflictPolicyForTransfer(resolved, preferredPolicy) {
 }
 
 /**
+ * Veces que una transferencia de fichero suelto vuelve a intentarlo cuando el
+ * backend contesta que el destino ya existe (cada vuelta pregunta al usuario o
+ * aplica su política) antes de darla por fallida.
+ */
+export const TRANSFER_EXISTS_RETRIES = 3;
+
+/**
+ * El permiso `overwrite` que viaja al backend con una transferencia de fichero
+ * suelto: solo cuando el usuario —o la política recordada— decidió sobrescribir
+ * **ese** nombre. Un destino que no existía, o un nombre nuevo tras renombrar,
+ * van sin permiso: si al llegar resulta que sí existe, el backend lo dice y se
+ * pregunta, en vez de pisarlo.
+ *
+ * @param {{ overwrite?: boolean }|null|undefined} resolved
+ * @returns {boolean}
+ */
+export function transferOverwriteFlag(resolved) {
+  return resolved?.overwrite === true;
+}
+
+/**
+ * Nombres con los que volver a resolver un conflicto cuando el backend ha
+ * contestado que el destino existe: el listado que decía lo contrario estaba
+ * desfasado, así que el nombre se da por ocupado pase lo que pase.
+ *
+ * @param {Iterable<string>|null|undefined} names
+ * @param {string} name
+ * @param {{ foldCase?: boolean }} [options]
+ * @returns {Set<string>}
+ */
+export function namesWithExisting(names, name, options = {}) {
+  const out = new Set(names ?? []);
+  out.add(transferNameKey(name, options));
+  return out;
+}
+
+/**
  * Elige el primer nombre `base (n).ext` que no esté ocupado. En directorios,
  * los puntos forman parte del nombre; en ficheros se conserva la extensión.
  *

@@ -1699,6 +1699,11 @@ pub struct TransferRequest {
     transfer_id: String,
     /// Solo en las de carpeta: `overwrite` (por defecto), `skip` o `rename`.
     conflict_policy: Option<String>,
+    /// Solo en las de fichero suelto: permiso explícito para pisar un destino
+    /// que ya exista. Sin él (el defecto), el backend no reemplaza nada y
+    /// devuelve `sftp_manager::TRANSFER_EXISTS_MARKER` para que el panel
+    /// pregunte.
+    overwrite: Option<bool>,
     verify_size: Option<bool>,
     /// Idioma de la interfaz, para el diálogo de subida sensible.
     lang: Option<String>,
@@ -1707,6 +1712,11 @@ pub struct TransferRequest {
 impl TransferRequest {
     fn conflict_policy(&self) -> TransferConflictPolicy {
         TransferConflictPolicy::from_str(self.conflict_policy.as_deref().unwrap_or("overwrite"))
+    }
+
+    /// Nunca se sobrescribe sin decirlo expresamente.
+    fn overwrite(&self) -> bool {
+        self.overwrite.unwrap_or(false)
     }
 }
 
@@ -1781,6 +1791,7 @@ pub async fn sftp_download(
 ) -> Result<(), String> {
     guard.check_write(Path::new(&request.local_path))?;
     let verify = request.verify_size.unwrap_or(false);
+    let overwrite = request.overwrite();
     sftp_state
         .download(
             &request.session_id,
@@ -1788,6 +1799,7 @@ pub async fn sftp_download(
             PathBuf::from(request.local_path),
             request.transfer_id,
             verify,
+            overwrite,
         )
         .await
 }
@@ -1802,6 +1814,7 @@ pub async fn sftp_upload(
 ) -> Result<(), String> {
     confirm_upload_off_thread(&app, &guard, &request, false).await?;
     let verify = request.verify_size.unwrap_or(false);
+    let overwrite = request.overwrite();
     sftp_state
         .upload(
             &request.session_id,
@@ -1809,6 +1822,7 @@ pub async fn sftp_upload(
             request.remote_path,
             request.transfer_id,
             verify,
+            overwrite,
         )
         .await
 }

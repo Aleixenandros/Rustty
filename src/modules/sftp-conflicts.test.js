@@ -1,14 +1,43 @@
 // @ts-check
 import { describe, expect, it } from "vitest";
 import {
+  TRANSFER_EXISTS_RETRIES,
   createTransferConflictState,
+  namesWithExisting,
   nextAvailableTransferName,
   normalizeSftpConflictPolicy,
   recursiveConflictPolicyForTransfer,
   transferNameKey,
   transferNameSet,
+  transferOverwriteFlag,
   transferTarget,
 } from "./sftp-conflicts.js";
+
+describe("permiso de sobrescritura de un fichero suelto", () => {
+  it("solo viaja cuando se decidió sobrescribir ese nombre", () => {
+    expect(transferOverwriteFlag({ action: "transfer", name: "a.txt", overwrite: true })).toBe(true);
+  });
+
+  it("un destino nuevo o un nombre renombrado van sin permiso", () => {
+    expect(transferOverwriteFlag({ action: "transfer", name: "a.txt" })).toBe(false);
+    expect(transferOverwriteFlag({ action: "transfer", name: "a (1).txt", renamed: true })).toBe(false);
+    expect(transferOverwriteFlag(null)).toBe(false);
+    expect(transferOverwriteFlag({ overwrite: "sí" })).toBe(false);
+  });
+
+  it("tras un «ya existe» del backend el nombre cuenta como ocupado", () => {
+    const names = namesWithExisting(new Set(["otro.txt"]), "Informe.PDF", { foldCase: true });
+    expect(names.has("informe.pdf")).toBe(true);
+    expect(names.has("otro.txt")).toBe(true);
+    expect(namesWithExisting(null, "a.txt").has("a.txt")).toBe(true);
+    expect(namesWithExisting(["x"], "a.txt").size).toBe(2);
+  });
+
+  it("los reintentos por «ya existe» están acotados", () => {
+    expect(TRANSFER_EXISTS_RETRIES).toBeGreaterThan(0);
+    expect(TRANSFER_EXISTS_RETRIES).toBeLessThan(10);
+  });
+});
 
 describe("políticas de conflicto SFTP", () => {
   it("sanea preferencias desconocidas", () => {

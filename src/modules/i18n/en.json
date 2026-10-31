@@ -2180,6 +2180,7 @@
     "state_skipped_short": "skipped",
     "state_canceled_short": "cancelled",
     "conflict_title": "Transfer conflict",
+    "connection_lost": "Connection lost: {err}. Reconnect to continue.",
     "conflict_msg_file": "The file \"{name}\" already exists in {where}. Rename will automatically create a copy with a numeric suffix.",
     "conflict_msg_dir": "The folder \"{name}\" already exists in {where}. Rename will automatically create a copy with a numeric suffix.",
     "conflict_overwrite": "Overwrite",

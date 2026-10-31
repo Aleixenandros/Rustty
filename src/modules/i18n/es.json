@@ -2180,6 +2180,7 @@
     "state_skipped_short": "omitido",
     "state_canceled_short": "cancelado",
     "conflict_title": "Conflicto de transferencia",
+    "connection_lost": "Conexión perdida: {err}. Vuelve a conectar para seguir.",
     "conflict_msg_file": "Ya existe el fichero \"{name}\" en {where}. Renombrar creará automáticamente una copia con sufijo numérico.",
     "conflict_msg_dir": "Ya existe la carpeta \"{name}\" en {where}. Renombrar creará automáticamente una copia con sufijo numérico.",
     "conflict_overwrite": "Sobrescribir",

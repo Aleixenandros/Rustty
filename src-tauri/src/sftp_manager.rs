@@ -263,6 +263,8 @@ enum SftpCommand {
         local: PathBuf,
         transfer_id: String,
         verify_size: bool,
+        /// Permiso explícito para pisar un destino que ya exista.
+        overwrite: bool,
         reply: Reply<()>,
     },
     Upload {
@@ -270,6 +272,7 @@ enum SftpCommand {
         remote: String,
         transfer_id: String,
         verify_size: bool,
+        overwrite: bool,
         reply: Reply<()>,
     },
     DownloadDir {
@@ -604,6 +607,7 @@ impl SftpManager {
         local: PathBuf,
         transfer_id: String,
         verify_size: bool,
+        overwrite: bool,
     ) -> Result<(), String> {
         let _slot = self.wait_for_turn(session_id, &transfer_id).await?;
         self.send(session_id, move |reply| SftpCommand::Download {
@@ -611,6 +615,7 @@ impl SftpManager {
             local,
             transfer_id,
             verify_size,
+            overwrite,
             reply,
         })
         .await
@@ -623,6 +628,7 @@ impl SftpManager {
         remote: String,
         transfer_id: String,
         verify_size: bool,
+        overwrite: bool,
     ) -> Result<(), String> {
         let _slot = self.wait_for_turn(session_id, &transfer_id).await?;
         self.send(session_id, move |reply| SftpCommand::Upload {
@@ -630,6 +636,7 @@ impl SftpManager {
             remote,
             transfer_id,
             verify_size,
+            overwrite,
             reply,
         })
         .await
@@ -790,6 +797,7 @@ async fn run_sftp_worker(
                 local,
                 transfer_id,
                 verify_size,
+                overwrite,
                 reply,
             } => {
                 let ctx = TransferCtx {
@@ -799,7 +807,12 @@ async fn run_sftp_worker(
                     controls: &controls,
                     verify_size,
                 };
-                let res = backend.download(&remote, &local, ctx).await;
+                // El destino se mira antes de pedir nada al servidor: sin
+                // permiso para sobrescribir, lo que ya existe no se toca.
+                let res = match check_download_target(&local, overwrite).await {
+                    Ok(()) => backend.download(&remote, &local, ctx).await,
+                    Err(e) => Err(e),
+                };
                 let _ = reply.send(res);
             }
             SftpCommand::Upload {
@@ -807,6 +820,7 @@ async fn run_sftp_worker(
                 remote,
                 transfer_id,
                 verify_size,
+                overwrite,
                 reply,
             } => {
                 let ctx = TransferCtx {
@@ -816,7 +830,10 @@ async fn run_sftp_worker(
                     controls: &controls,
                     verify_size,
                 };
-                let res = backend.upload(&local, &remote, ctx).await;
+                let res = match check_upload_target(backend.as_mut(), &remote, overwrite).await {
+                    Ok(()) => backend.upload(&local, &remote, ctx).await,
+                    Err(e) => Err(e),
+                };
                 let _ = reply.send(res);
             }
             SftpCommand::DownloadDir {
@@ -1438,9 +1455,121 @@ impl FileTransfer for SftpBackend {
     }
 }
 
-enum FtpConnection {
+/// El cliente suppaftp de una conexión: plano o con TLS explícito. Los dos
+/// tipos exponen la misma API, así que [`on_stream!`] aplica un mismo cuerpo
+/// al que haya.
+enum FtpStreamKind {
     Plain(FtpStream),
     ExplicitTls(RustlsFtpStream),
+}
+
+/// Ejecuta `$body` con `$ftp` ligado al cliente que haya dentro de un
+/// [`FtpStreamKind`], sea plano o TLS: el cuerpo se escribe una sola vez.
+macro_rules! on_stream {
+    ($stream:expr, |$ftp:ident| $body:expr) => {
+        match $stream {
+            FtpStreamKind::Plain($ftp) => $body,
+            FtpStreamKind::ExplicitTls($ftp) => $body,
+        }
+    };
+}
+
+/// Plazos de E/S por socket de una conexión FTP/FTPS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FtpTimeouts {
+    /// Canal de control (PWD, MKD, DELE, SIZE…).
+    control: Duration,
+    /// Canal de datos (LIST, RETR, STOR) y, mientras dura uno de esos comandos,
+    /// también el de control: el 150 inicial y el 226 final son parte de la
+    /// misma transferencia.
+    data: Duration,
+}
+
+impl FtpTimeouts {
+    /// El mismo plazo para todo (lo usan los tests).
+    #[cfg(test)]
+    const fn uniform(plazo: Duration) -> Self {
+        Self {
+            control: plazo,
+            data: plazo,
+        }
+    }
+}
+
+/// Fallo de una operación FTP: el texto para el usuario y, si deja la
+/// conexión inservible, por qué (ver [`FtpConnection`]). Mensaje y razón
+/// pueden no coincidir: una cancelación que coincide con el plazo se informa
+/// como cancelación, pero la conexión queda rota igual.
+struct FtpFailure {
+    message: String,
+    broken: Option<String>,
+}
+
+impl FtpFailure {
+    /// Un error que no afecta a la conexión (un 550, el fichero local).
+    fn plain(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            broken: None,
+        }
+    }
+
+    /// La conexión se ha perdido: el mensaje lleva el marcador que el panel
+    /// traduce a «conexión perdida».
+    fn lost(reason: String) -> Self {
+        Self {
+            message: format!("{TRANSFER_CONNECTION_LOST_MARKER} {reason}"),
+            broken: Some(reason),
+        }
+    }
+
+    /// El usuario canceló. Sin el marcador: el panel clasifica por «cancel».
+    /// `broken`: si además la conexión se perdió por el camino.
+    fn canceled(broken: Option<String>) -> Self {
+        Self {
+            message: "transferencia cancelada".to_string(),
+            broken,
+        }
+    }
+
+    /// Un error de suppaftp. Solo el de conexión (E/S del socket, plazo
+    /// incluido) rompe la conexión; un rechazo del servidor (550…) no.
+    fn from_ftp(error: suppaftp::FtpError, plazo: Duration) -> Self {
+        match error {
+            suppaftp::FtpError::ConnectionError(io) => Self::lost(ftp_io_error(&io, plazo)),
+            other => Self::plain(other.to_string()),
+        }
+    }
+}
+
+/// Por qué paró una copia FTP ([`transfer_copy_blocking`]) antes de tiempo.
+enum FtpCopyError {
+    /// El usuario canceló; el evento de progreso «cancelada» ya salió.
+    Canceled,
+    /// Plazo agotado en el socket de datos: el servidor dejó de responder.
+    /// `canceled`: había una cancelación pendiente, y eso es lo que se informa.
+    Timeout { canceled: bool },
+    /// Otro fallo de E/S (el fichero local, un socket de datos cerrado).
+    Io {
+        error: std::io::Error,
+        canceled: bool,
+    },
+}
+
+/// Una conexión FTP/FTPS del panel, con su estado de salud.
+///
+/// Cuando una operación agota su plazo o el socket de control falla, la
+/// conexión queda **rota** (`broken`): sus respuestas ya no casan con las
+/// peticiones (el 226 de la transferencia parada llegaría como respuesta del
+/// PWD siguiente), así que cada operación posterior falla al instante con
+/// [`TRANSFER_CONNECTION_LOST_MARKER`], sin tocar la red, en vez de esperar
+/// otro plazo o fallar con un error desconcertante. El panel lo enseña como
+/// «conexión perdida»; reconectar es abrir la conexión de nuevo.
+struct FtpConnection {
+    stream: FtpStreamKind,
+    timeouts: FtpTimeouts,
+    /// Por qué se dio por perdida, si ya lo está.
+    broken: Option<String>,
 }
 
 impl FtpConnection {
@@ -1449,16 +1578,16 @@ impl FtpConnection {
         password: Option<&str>,
         ftps_cert_store: PathBuf,
     ) -> Result<Self, String> {
-        Self::connect_with_io_timeout(profile, password, ftps_cert_store, FTP_IO_TIMEOUT)
+        Self::connect_with_timeouts(profile, password, ftps_cert_store, FTP_TIMEOUTS)
     }
 
-    /// [`Self::connect`] con el plazo de E/S explícito: los tests lo bajan a
-    /// segundos para no tener que esperar el de producción.
-    fn connect_with_io_timeout(
+    /// [`Self::connect`] con los plazos explícitos: los tests los bajan a
+    /// segundos para no tener que esperar los de producción.
+    fn connect_with_timeouts(
         profile: &ConnectionProfile,
         password: Option<&str>,
         ftps_cert_store: PathBuf,
-        io: Duration,
+        timeouts: FtpTimeouts,
     ) -> Result<Self, String> {
         let addr = format!("{}:{}", profile.host, profile.port);
         let username = if profile.username.trim().is_empty() {
@@ -1471,8 +1600,9 @@ impl FtpConnection {
         } else {
             ""
         });
+        let data_timeout = timeouts.data;
 
-        if profile.connection_type == "ftps" {
+        let stream = if profile.connection_type == "ftps" {
             // Verificación TOFU por huella (NAS/servidor interno con certificado
             // autofirmado), en vez de exigir una cadena hasta una CA raíz: el
             // certificado se recuerda por host y un cambio se rechaza. La firma
@@ -1496,14 +1626,14 @@ impl FtpConnection {
             .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth();
             let connector = RustlsConnector::from(Arc::new(config));
-            let control = ftp_control_socket(profile, io)
+            let control = ftp_control_socket(profile, timeouts.control)
                 .map_err(|e| format!("No se puede conectar FTPS a {addr}: {e}"))?;
             // `into_secure` conserva el constructor de sockets de datos: también
-            // los canales de datos TLS heredan los plazos.
+            // los canales de datos TLS heredan su plazo.
             let mut ftp = RustlsFtpStream::connect_with_stream(control)
                 .map_err(|e| format!("No se puede conectar FTPS a {addr}: {e}"))?
                 .passive_stream_builder(move |a| {
-                    ftp_socket(a, io).map_err(suppaftp::FtpError::ConnectionError)
+                    ftp_socket(a, data_timeout).map_err(suppaftp::FtpError::ConnectionError)
                 })
                 .into_secure(connector, profile.host.as_str())
                 .map_err(|e| format!("No se pudo iniciar TLS explícito: {e}"))?;
@@ -1511,114 +1641,159 @@ impl FtpConnection {
                 .map_err(|e| format!("Error de autenticación FTPS: {e}"))?;
             ftp.transfer_type(FtpTransferType::Binary)
                 .map_err(|e| format!("No se pudo activar modo binario FTPS: {e}"))?;
-            Ok(Self::ExplicitTls(ftp))
+            FtpStreamKind::ExplicitTls(ftp)
         } else {
-            let control = ftp_control_socket(profile, io)
+            let control = ftp_control_socket(profile, timeouts.control)
                 .map_err(|e| format!("No se puede conectar FTP a {addr}: {e}"))?;
             let mut ftp = FtpStream::connect_with_stream(control)
                 .map_err(|e| format!("No se puede conectar FTP a {addr}: {e}"))?
                 .passive_stream_builder(move |a| {
-                    ftp_socket(a, io).map_err(suppaftp::FtpError::ConnectionError)
+                    ftp_socket(a, data_timeout).map_err(suppaftp::FtpError::ConnectionError)
                 });
             ftp.login(username, pass)
                 .map_err(|e| format!("Error de autenticación FTP: {e}"))?;
             ftp.transfer_type(FtpTransferType::Binary)
                 .map_err(|e| format!("No se pudo activar modo binario FTP: {e}"))?;
-            Ok(Self::Plain(ftp))
+            FtpStreamKind::Plain(ftp)
+        };
+        Ok(Self {
+            stream,
+            timeouts,
+            broken: None,
+        })
+    }
+
+    /// Por qué la conexión ya no sirve, si es que no sirve.
+    #[cfg(test)]
+    fn broken_reason(&self) -> Option<&str> {
+        self.broken.as_deref()
+    }
+
+    /// Falla al instante, sin tocar la red, si la conexión está rota.
+    fn check(&self) -> Result<(), String> {
+        match &self.broken {
+            Some(reason) => Err(format!("{TRANSFER_CONNECTION_LOST_MARKER} {reason}")),
+            None => Ok(()),
         }
+    }
+
+    /// Da la conexión por perdida. Cierra el socket de control: cualquier
+    /// lectura pendiente (el acuse de un stream que se está soltando, un QUIT)
+    /// falla al momento en vez de esperar su plazo.
+    fn mark_broken(&mut self, reason: String) {
+        if self.broken.is_some() {
+            return;
+        }
+        on_stream!(&mut self.stream, |ftp| {
+            let _ = ftp.get_ref().shutdown(std::net::Shutdown::Both);
+        });
+        self.broken = Some(reason);
+    }
+
+    /// Aplica el resultado de una operación: marca la conexión rota si hace
+    /// falta y deja el texto para el usuario.
+    fn settle<T>(&mut self, result: Result<T, FtpFailure>) -> Result<T, String> {
+        result.map_err(|failure| {
+            if let Some(reason) = failure.broken {
+                self.mark_broken(reason);
+            }
+            failure.message
+        })
+    }
+
+    /// Un comando del canal de control (PWD, MKD, DELE…), con su plazo.
+    fn run<T>(
+        &mut self,
+        op: impl FnOnce(&mut FtpStreamKind) -> Result<T, suppaftp::FtpError>,
+    ) -> Result<T, String> {
+        self.check()?;
+        let plazo = self.timeouts.control;
+        let result = op(&mut self.stream).map_err(|e| FtpFailure::from_ftp(e, plazo));
+        self.settle(result)
+    }
+
+    /// Un comando con canal de datos (LIST, MLSD, RETR, STOR). Mientras dura,
+    /// también el canal de control lee con el plazo corto: el 150 inicial y el
+    /// 226 final son parte de la misma transferencia, y era en ese acuse —que
+    /// suppaftp lee al soltar el stream— donde «Cancelar» con el servidor
+    /// parado se quedaba esperando los dos minutos del control.
+    fn run_data<T>(
+        &mut self,
+        op: impl FnOnce(&mut FtpStreamKind, Duration) -> Result<T, FtpFailure>,
+    ) -> Result<T, String> {
+        self.check()?;
+        let FtpTimeouts { control, data } = self.timeouts;
+        self.set_control_read_timeout(data);
+        let result = op(&mut self.stream, data);
+        self.set_control_read_timeout(control);
+        self.settle(result)
+    }
+
+    fn set_control_read_timeout(&mut self, plazo: Duration) {
+        on_stream!(&mut self.stream, |ftp| {
+            let _ = ftp.get_ref().set_read_timeout(Some(plazo));
+        });
     }
 
     fn pwd(&mut self) -> Result<String, String> {
-        match self {
-            Self::Plain(ftp) => ftp.pwd(),
-            Self::ExplicitTls(ftp) => ftp.pwd(),
-        }
-        .map_err(|e| e.to_string())
+        self.run(|s| on_stream!(s, |ftp| ftp.pwd()))
     }
 
     fn mkdir(&mut self, path: &str) -> Result<(), String> {
-        match self {
-            Self::Plain(ftp) => ftp.mkdir(path),
-            Self::ExplicitTls(ftp) => ftp.mkdir(path),
-        }
-        .map_err(|e| e.to_string())
+        self.run(|s| on_stream!(s, |ftp| ftp.mkdir(path)))
     }
 
     fn create_file(&mut self, path: &str) -> Result<(), String> {
+        self.check()?;
         // No sobrescribir si existe.
-        let exists = match self {
-            Self::Plain(ftp) => ftp.size(path).is_ok(),
-            Self::ExplicitTls(ftp) => ftp.size(path).is_ok(),
-        };
-        if exists {
+        if self.size(path).is_ok() {
             return Err("ya existe".to_string());
         }
-        let mut empty: &[u8] = &[];
-        match self {
-            Self::Plain(ftp) => ftp.put_file(path, &mut empty),
-            Self::ExplicitTls(ftp) => ftp.put_file(path, &mut empty),
-        }
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        self.run_data(|s, plazo| {
+            let mut empty: &[u8] = &[];
+            on_stream!(s, |ftp| ftp.put_file(path, &mut empty))
+                .map(|_| ())
+                .map_err(|e| FtpFailure::from_ftp(e, plazo))
+        })
     }
 
     fn remove(&mut self, path: &str, is_dir: bool) -> Result<(), String> {
-        match (self, is_dir) {
-            (Self::Plain(ftp), true) => ftp.rmdir(path),
-            (Self::Plain(ftp), false) => ftp.rm(path),
-            (Self::ExplicitTls(ftp), true) => ftp.rmdir(path),
-            (Self::ExplicitTls(ftp), false) => ftp.rm(path),
-        }
-        .map_err(|e| e.to_string())
+        self.run(|s| {
+            on_stream!(s, |ftp| if is_dir {
+                ftp.rmdir(path)
+            } else {
+                ftp.rm(path)
+            })
+        })
     }
 
     fn rename(&mut self, from: &str, to: &str) -> Result<(), String> {
-        match self {
-            Self::Plain(ftp) => ftp.rename(from, to),
-            Self::ExplicitTls(ftp) => ftp.rename(from, to),
-        }
-        .map_err(|e| e.to_string())
+        self.run(|s| on_stream!(s, |ftp| ftp.rename(from, to)))
     }
 
     fn mlsd(&mut self, path: &str) -> Result<Vec<String>, String> {
-        match self {
-            Self::Plain(ftp) => ftp.mlsd(Some(path)),
-            Self::ExplicitTls(ftp) => ftp.mlsd(Some(path)),
-        }
-        .map_err(|e| e.to_string())
+        self.run_data(|s, plazo| {
+            on_stream!(s, |ftp| ftp.mlsd(Some(path))).map_err(|e| FtpFailure::from_ftp(e, plazo))
+        })
     }
 
     fn list(&mut self, path: &str) -> Result<Vec<String>, String> {
-        match self {
-            Self::Plain(ftp) => ftp.list(Some(path)),
-            Self::ExplicitTls(ftp) => ftp.list(Some(path)),
-        }
-        .map_err(|e| e.to_string())
+        self.run_data(|s, plazo| {
+            on_stream!(s, |ftp| ftp.list(Some(path))).map_err(|e| FtpFailure::from_ftp(e, plazo))
+        })
     }
 
     fn mlst(&mut self, path: &str) -> Result<String, String> {
-        match self {
-            Self::Plain(ftp) => ftp.mlst(Some(path)),
-            Self::ExplicitTls(ftp) => ftp.mlst(Some(path)),
-        }
-        .map_err(|e| e.to_string())
+        self.run(|s| on_stream!(s, |ftp| ftp.mlst(Some(path))))
     }
 
     fn size(&mut self, path: &str) -> Result<u64, String> {
-        match self {
-            Self::Plain(ftp) => ftp.size(path),
-            Self::ExplicitTls(ftp) => ftp.size(path),
-        }
-        .map(|n| n as u64)
-        .map_err(|e| e.to_string())
+        self.run(|s| on_stream!(s, |ftp| ftp.size(path)))
+            .map(|n| n as u64)
     }
 
     fn mdtm(&mut self, path: &str) -> Result<u64, String> {
-        let dt = match self {
-            Self::Plain(ftp) => ftp.mdtm(path),
-            Self::ExplicitTls(ftp) => ftp.mdtm(path),
-        }
-        .map_err(|e| e.to_string())?;
+        let dt = self.run(|s| on_stream!(s, |ftp| ftp.mdtm(path)))?;
         Ok(dt.and_utc().timestamp().max(0) as u64)
     }
 
@@ -1629,26 +1804,21 @@ impl FtpConnection {
         total: u64,
         ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
+        self.check()?;
         if let Some(parent) = local.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let mut local_file = std::fs::File::create(local).map_err(|e| e.to_string())?;
-
-        match self {
-            Self::Plain(ftp) => {
-                let mut remote_file = ftp.retr_as_stream(remote).map_err(|e| e.to_string())?;
-                transfer_copy_blocking(&mut remote_file, &mut local_file, total, ctx, false)?;
-                remote_file.finish()
-                    .map_err(|e| e.to_string())?;
-            }
-            Self::ExplicitTls(ftp) => {
-                let mut remote_file = ftp.retr_as_stream(remote).map_err(|e| e.to_string())?;
-                transfer_copy_blocking(&mut remote_file, &mut local_file, total, ctx, false)?;
-                remote_file.finish()
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-        Ok(())
+        self.run_data(|s, plazo| {
+            on_stream!(s, |ftp| {
+                let mut remote_file = ftp
+                    .retr_as_stream(remote)
+                    .map_err(|e| FtpFailure::from_ftp(e, plazo))?;
+                let copied =
+                    transfer_copy_blocking(&mut remote_file, &mut local_file, total, ctx, false);
+                finish_ftp_transfer(ftp, remote_file, copied, plazo)
+            })
+        })
     }
 
     fn upload_from(
@@ -1658,6 +1828,7 @@ impl FtpConnection {
         total: u64,
         ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
+        self.check()?;
         // El STOR vacía el destino en cuanto el servidor lo acepta: una subida
         // cancelada antes de empezar no debe llegar a mandarlo.
         if ctx.cancel_requested() {
@@ -1670,28 +1841,70 @@ impl FtpConnection {
             return Err("transferencia cancelada".to_string());
         }
         let mut local_file = std::fs::File::open(local).map_err(|e| e.to_string())?;
-        match self {
-            Self::Plain(ftp) => {
-                let mut remote_file = ftp.put_with_stream(remote).map_err(|e| e.to_string())?;
-                transfer_copy_blocking(&mut local_file, &mut remote_file, total, ctx, true)?;
-                remote_file.finish()
-                    .map_err(|e| e.to_string())?;
-            }
-            Self::ExplicitTls(ftp) => {
-                let mut remote_file = ftp.put_with_stream(remote).map_err(|e| e.to_string())?;
-                transfer_copy_blocking(&mut local_file, &mut remote_file, total, ctx, true)?;
-                remote_file.finish()
-                    .map_err(|e| e.to_string())?;
-            }
-        }
-        Ok(())
+        self.run_data(|s, plazo| {
+            on_stream!(s, |ftp| {
+                let mut remote_file = ftp
+                    .put_with_stream(remote)
+                    .map_err(|e| FtpFailure::from_ftp(e, plazo))?;
+                let copied =
+                    transfer_copy_blocking(&mut local_file, &mut remote_file, total, ctx, true);
+                finish_ftp_transfer(ftp, remote_file, copied, plazo)
+            })
+        })
     }
 
+    /// Despedida ordenada. Una conexión rota no se despide: el QUIT esperaría
+    /// una respuesta que no va a llegar (y su socket ya está cerrado).
     fn quit(&mut self) {
-        let _ = match self {
-            Self::Plain(ftp) => ftp.quit(),
-            Self::ExplicitTls(ftp) => ftp.quit(),
-        };
+        if self.broken.is_some() {
+            return;
+        }
+        on_stream!(&mut self.stream, |ftp| {
+            let _ = ftp.quit();
+        });
+    }
+}
+
+/// Cierra el stream de datos de una transferencia, lee su acuse (226) y decide
+/// qué se informa. Con el plazo de datos agotado el servidor no responde: se
+/// corta el socket de control **antes** de soltar el stream, para que la
+/// lectura del acuse falle al instante en vez de esperar otro plazo, y la
+/// conexión queda perdida. En los demás fallos, leer el acuse (426 o 226) deja
+/// el canal de control en orden; si tampoco llega, es la conexión la que se
+/// perdió.
+fn finish_ftp_transfer<T: suppaftp::TlsStream>(
+    ftp: &suppaftp::ImplFtpStream<T>,
+    stream: suppaftp::TransferStream<T>,
+    copied: Result<(), FtpCopyError>,
+    plazo: Duration,
+) -> Result<(), FtpFailure> {
+    let lost_on_finish = |finished: Result<(), suppaftp::FtpError>| match finished {
+        Err(suppaftp::FtpError::ConnectionError(io)) => Some(ftp_io_error(&io, plazo)),
+        _ => None,
+    };
+    match copied {
+        Ok(()) => stream
+            .finish()
+            .map_err(|e| FtpFailure::from_ftp(e, plazo)),
+        Err(FtpCopyError::Timeout { canceled }) => {
+            let _ = ftp.get_ref().shutdown(std::net::Shutdown::Both);
+            let _ = stream.finish();
+            let reason = ftp_timeout_text(plazo);
+            Err(if canceled {
+                FtpFailure::canceled(Some(reason))
+            } else {
+                FtpFailure::lost(reason)
+            })
+        }
+        Err(FtpCopyError::Canceled) => Err(FtpFailure::canceled(lost_on_finish(stream.finish()))),
+        Err(FtpCopyError::Io { error, canceled }) => {
+            let lost = lost_on_finish(stream.finish());
+            Err(match (canceled, lost) {
+                (true, lost) => FtpFailure::canceled(lost),
+                (false, Some(reason)) => FtpFailure::lost(reason),
+                (false, None) => FtpFailure::plain(error.to_string()),
+            })
+        }
     }
 }
 
@@ -1703,12 +1916,28 @@ fn connect_ftp(
     FtpConnection::connect(profile, password, ftps_cert_store)
 }
 
-/// Plazo de E/S de cada socket FTP/FTPS (control y datos), el mismo que el de
-/// una petición SFTP. suppaftp no pone ninguno: un servidor que deja de
-/// contestar sin cerrar (suspensión, cambio de red, proceso parado) dejaba la
-/// lectura bloqueada para siempre, y con ella el worker de la sesión, su
-/// «Cancelar» y el hueco del techo de transferencias simultáneas.
+/// Plazo de E/S del canal de **control** FTP/FTPS (PWD, MKD, DELE, SIZE…), el
+/// mismo que el de una petición SFTP. suppaftp no pone ninguno: un servidor
+/// que deja de contestar sin cerrar (suspensión, cambio de red, proceso
+/// parado) dejaba la lectura bloqueada para siempre, y con ella el worker de
+/// la sesión, su «Cancelar» y el hueco del techo de transferencias simultáneas.
 const FTP_IO_TIMEOUT: Duration = Duration::from_secs(SFTP_REQUEST_TIMEOUT_SECS);
+
+/// Plazo de cada lectura o escritura del canal de **datos** (LIST, RETR, STOR),
+/// y del de control mientras dura uno de esos comandos. Mucho más corto que el
+/// de control: en una transferencia los bytes fluyen sin parar, así que veinte
+/// segundos sin ninguno es un servidor parado, y es lo que tarda como mucho
+/// «Cancelar» en responder cuando lo está (antes, los dos minutos del control).
+/// No acota la transferencia entera —un fichero puede tardar horas—, solo cada
+/// operación de socket. Es una constante y no una preferencia: el panel no
+/// tiene ningún otro plazo configurable al que arrimarla.
+const FTP_DATA_IO_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Los plazos de producción.
+const FTP_TIMEOUTS: FtpTimeouts = FtpTimeouts {
+    control: FTP_IO_TIMEOUT,
+    data: FTP_DATA_IO_TIMEOUT,
+};
 
 /// Abre un socket FTP (de control o de datos) con plazo de conexión, plazos de
 /// lectura y escritura y keepalive TCP. El keepalive no sobra: sin él, el canal
@@ -1756,16 +1985,41 @@ fn ftp_control_socket(
     }))
 }
 
-/// Texto de un error de E/S de una copia FTP. Un plazo agotado (`WouldBlock`
-/// en Unix, `TimedOut` en Windows) se cuenta como lo que es. Sin la palabra
-/// «cancel»: el panel clasifica por ella las transferencias canceladas.
-fn ftp_io_error(e: &std::io::Error) -> String {
-    match e.kind() {
-        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => format!(
-            "el servidor FTP dejó de responder ({} s sin datos)",
-            FTP_IO_TIMEOUT.as_secs()
-        ),
-        _ => e.to_string(),
+/// `true` si el fallo de E/S es un plazo agotado (`WouldBlock` en Unix,
+/// `TimedOut` en Windows).
+fn is_io_timeout(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
+}
+
+/// Texto de un plazo agotado en un socket FTP. Sin la palabra «cancel»: el
+/// panel clasifica por ella las transferencias canceladas.
+fn ftp_timeout_text(plazo: Duration) -> String {
+    format!(
+        "el servidor FTP dejó de responder ({} s sin datos)",
+        plazo.as_secs()
+    )
+}
+
+/// Texto de un error de E/S de un socket FTP: un plazo agotado se cuenta como
+/// lo que es; el resto, tal cual lo dice el sistema.
+fn ftp_io_error(e: &std::io::Error, plazo: Duration) -> String {
+    if is_io_timeout(e) {
+        ftp_timeout_text(plazo)
+    } else {
+        e.to_string()
+    }
+}
+
+/// Clasifica un fallo de E/S de la copia: el plazo agotado va aparte porque
+/// deja la conexión perdida (ver [`finish_ftp_transfer`]).
+fn ftp_copy_error(error: std::io::Error, canceled: bool) -> FtpCopyError {
+    if is_io_timeout(&error) {
+        FtpCopyError::Timeout { canceled }
+    } else {
+        FtpCopyError::Io { error, canceled }
     }
 }
 
@@ -1810,6 +2064,7 @@ impl FileTransfer for FtpBackend {
         ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
         let entry = ftp_stat(&mut self.ftp, remote)?;
+        check_file_source(entry.is_dir, remote)?;
         let total = entry.size;
         // Mismo contrato que SFTP: el fichero se materializa en un `.part` y solo
         // ocupa su nombre definitivo si la transferencia y la verificación van
@@ -1848,9 +2103,10 @@ impl FileTransfer for FtpBackend {
         remote: &str,
         ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
-        let total = std::fs::metadata(local).map_err(|e| e.to_string())?.len();
-        self.ftp
-            .upload_from(local, remote, total, ctx)?;
+        let meta = std::fs::metadata(local).map_err(|e| e.to_string())?;
+        check_file_source(meta.is_dir(), &local.display().to_string())?;
+        let total = meta.len();
+        self.ftp.upload_from(local, remote, total, ctx)?;
         if ctx.verify_size {
             let written = self
                 .ftp
@@ -2029,6 +2285,65 @@ const SFTP_READAHEAD_FACTOR: u64 = 2;
 /// ocupar su nombre definitivo.
 const PART_SUFFIX: &str = ".rustty-part";
 
+// ─── Reglas de las transferencias de fichero suelto ─────────────────────────
+
+/// Marcador estable: el destino de una transferencia de fichero ya existe y
+/// no se pidió sobrescribir (`overwrite`). El backend no toca nada; el panel
+/// lo lee para preguntar con su diálogo de conflictos. Espejo en
+/// `src/modules/ipc/errors.js`.
+pub const TRANSFER_EXISTS_MARKER: &str = "transfer-exists:";
+
+/// Marcador estable: la conexión de ficheros se dio por perdida (plazo agotado
+/// o fallo del socket) y nada más va a funcionar hasta reconectar. Espejo en
+/// `src/modules/ipc/errors.js`.
+pub const TRANSFER_CONNECTION_LOST_MARKER: &str = "transfer-connection-lost:";
+
+/// El origen de una transferencia de fichero tiene que ser un fichero. Una
+/// carpeta pasada por aquí abría igualmente el destino —y lo dejaba creado y
+/// vacío en el remoto— antes de fallar al leerla; se rechaza antes de abrir
+/// nada. Las carpetas van por `sftp_download_dir`/`sftp_upload_dir`.
+fn check_file_source(is_dir: bool, path: &str) -> Result<(), String> {
+    if is_dir {
+        Err(format!(
+            "{path} es una carpeta, no un fichero: usa la transferencia de carpetas"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+/// Destino local de una descarga de fichero suelto, antes de bajar nada. Sin
+/// `overwrite`, un destino que ya existe (también un enlace roto) se rechaza
+/// con [`TRANSFER_EXISTS_MARKER`]; una carpeta, siempre: un fichero no puede
+/// sustituirla. Las transferencias de carpeta no pasan por aquí: resuelven
+/// cada hijo con su `conflict_policy`.
+async fn check_download_target(local: &Path, overwrite: bool) -> Result<(), String> {
+    match tokio::fs::symlink_metadata(local).await {
+        Ok(meta) if meta.is_dir() => Err(format!(
+            "el destino {} es una carpeta",
+            local.display()
+        )),
+        Ok(_) if !overwrite => Err(format!("{TRANSFER_EXISTS_MARKER} {}", local.display())),
+        _ => Ok(()),
+    }
+}
+
+/// Destino remoto de una subida de fichero suelto, antes de abrirlo (abrirlo
+/// ya lo vacía). Mismas reglas que [`check_download_target`]. Si el `stat`
+/// falla por otra cosa (permisos, conexión), se deja pasar: la subida fallará
+/// con su propio error.
+async fn check_upload_target(
+    backend: &mut dyn FileTransfer,
+    remote: &str,
+    overwrite: bool,
+) -> Result<(), String> {
+    match backend.stat(remote).await {
+        Ok(entry) if entry.is_dir => Err(format!("el destino {remote} es una carpeta")),
+        Ok(_) if !overwrite => Err(format!("{TRANSFER_EXISTS_MARKER} {remote}")),
+        _ => Ok(()),
+    }
+}
+
 /// Ruta del temporal de descarga que corresponde a un destino final.
 ///
 /// Escribir directo sobre el nombre definitivo deja, ante cualquier fallo a
@@ -2056,6 +2371,7 @@ async fn do_download(
         .metadata(remote.to_string())
         .await
         .map_err(|e| e.to_string())?;
+    check_file_source(meta.file_type().is_dir(), remote)?;
     let total = meta.len();
     let remote_mtime = meta.mtime.map(u64::from);
 
@@ -2167,6 +2483,7 @@ async fn do_upload(
     let meta = tokio::fs::metadata(local)
         .await
         .map_err(|e| e.to_string())?;
+    check_file_source(meta.is_dir(), &local.display().to_string())?;
     let total = meta.len();
 
     pipelined_upload(sftp, local, remote, total, ctx, max_parallelism).await?;
@@ -2627,7 +2944,7 @@ fn transfer_copy_blocking<R, W>(
     ctx: TransferCtx<'_>,
     // `upload`: `true` si los bytes salen. Decide contra qué techo se cuentan.
     upload: bool,
-) -> Result<(), String>
+) -> Result<(), FtpCopyError>
 where
     R: Read,
     W: Write,
@@ -2657,7 +2974,7 @@ where
                     "transferred": transferred, "total": total, "done": true, "canceled": true,
                 }),
             );
-            return Err("transferencia cancelada".to_string());
+            return Err(FtpCopyError::Canceled);
         }
 
         // En FTP/FTPS el copy es serie sobre un stream síncrono. Pausamos
@@ -2690,18 +3007,19 @@ where
         // Un fallo de E/S (también el plazo agotado de un servidor mudo) con una
         // cancelación pendiente es esa cancelación: se informa como tal y se
         // consume, para que «Reintentar», que reutiliza el id, no salga
-        // cancelado nada más empezar.
+        // cancelado nada más empezar. El plazo agotado se distingue igualmente:
+        // deja la conexión perdida (ver `finish_ftp_transfer`).
         let io_failed = |e: std::io::Error| {
-            if ctx.cancel_requested() {
+            let canceled = ctx.cancel_requested();
+            if canceled {
                 let _ = app.emit(
                     &event,
                     serde_json::json!({
                         "transferred": transferred, "total": total, "done": true, "canceled": true,
                     }),
                 );
-                return "transferencia cancelada".to_string();
             }
-            ftp_io_error(&e)
+            ftp_copy_error(e, canceled)
         };
         let n = src.read(&mut buf).map_err(io_failed)?;
         if n == 0 {
@@ -2724,7 +3042,7 @@ where
         }
     }
 
-    dst.flush().map_err(|e| ftp_io_error(&e))?;
+    dst.flush().map_err(|e| ftp_copy_error(e, false))?;
     let _ = app.emit(
         &event,
         serde_json::json!({
@@ -3641,9 +3959,9 @@ mod tests {
             assert_eq!(ftp.pwd().expect("PWD tras RETR"), "/");
             ftp.rm("stream.bin").expect("limpiar fichero remoto");
         }
-        match conn {
-            FtpConnection::Plain(ftp) => roundtrip(ftp),
-            FtpConnection::ExplicitTls(ftp) => roundtrip(ftp),
+        match &mut conn.stream {
+            FtpStreamKind::Plain(ftp) => roundtrip(ftp),
+            FtpStreamKind::ExplicitTls(ftp) => roundtrip(ftp),
         }
     }
 
@@ -3666,12 +3984,12 @@ mod tests {
             connect_ftp(&profile, None, cert_store).expect("conectar y autenticar FTP anónimo");
 
         // El canal de control lleva el plazo de E/S: un servidor mudo no cuelga.
-        let FtpConnection::Plain(ftp) = &conn else {
+        let FtpStreamKind::Plain(ftp) = &conn.stream else {
             panic!("un perfil FTP plano debe dar una conexión plana");
         };
         assert_eq!(
             ftp.get_ref().read_timeout().expect("leer el plazo del socket"),
-            Some(FTP_IO_TIMEOUT)
+            Some(FTP_TIMEOUTS.control)
         );
 
         // Recién conectados, el directorio de trabajo es la raíz.
@@ -3693,6 +4011,16 @@ mod tests {
             "el listado debía incluir el fichero, salió:\n{listado}"
         );
         assert_eq!(conn.size("carpeta/hola.txt").expect("size"), 0);
+        // Mientras dura un comando con datos (el LIST) el control lee con el
+        // plazo corto; al terminar recupera el suyo, y la conexión sigue sana.
+        if let FtpStreamKind::Plain(ftp) = &conn.stream {
+            assert_eq!(
+                ftp.get_ref().read_timeout().expect("leer el plazo del socket"),
+                Some(FTP_TIMEOUTS.control),
+                "tras un comando con datos, el control recupera su plazo"
+            );
+        }
+        assert!(conn.broken_reason().is_none(), "una sesión sana no está rota");
 
         // RNFR/RNTO y DELE, cruzados otra vez contra el disco del servidor.
         conn.rename("carpeta/hola.txt", "carpeta/adios.txt")
@@ -3982,6 +4310,8 @@ mod tests {
         TrasElSaludo,
         /// Empieza a mandar un fichero y se queda callado a mitad, sin el 226.
         EnLosDatos,
+        /// Empieza a mandar un listado y se queda callado a mitad de línea.
+        EnElListado,
     }
 
     /// Servidor FTP mínimo, a mano, que deja de contestar sin cerrar nada: lo
@@ -4027,6 +4357,12 @@ mod tests {
                     let _ = d.write_all(b"hola");
                     retenidos.push(d);
                     None
+                } else if cmd.starts_with("LIST") || cmd.starts_with("MLSD") {
+                    let Some(Ok((mut d, _))) = datos.take().map(|l| l.accept()) else { return };
+                    let _ = w.write_all(b"150 ahi va\r\n");
+                    let _ = d.write_all(b"-rw-r--r-- 1 u g 4 Jan 01 00:00 ho");
+                    retenidos.push(d);
+                    None
                 } else {
                     Some("502 no".to_string())
                 };
@@ -4059,11 +4395,11 @@ mod tests {
         for modo in [Mudo::SinSaludo, Mudo::TrasElSaludo] {
             let port = ftp_mudo(modo);
             let res = vuelve_antes_de(Duration::from_secs(20), move || {
-                FtpConnection::connect_with_io_timeout(
+                FtpConnection::connect_with_timeouts(
                     &ftp_profile(port),
                     None,
                     PathBuf::from("/nonexistent/ftps_certs.json"),
-                    Duration::from_secs(1),
+                    FtpTimeouts::uniform(Duration::from_secs(1)),
                 )
                 .map(|_| ())
             });
@@ -4076,14 +4412,14 @@ mod tests {
     fn ftp_una_descarga_atascada_falla_por_plazo() {
         let port = ftp_mudo(Mudo::EnLosDatos);
         let (recibido, error) = vuelve_antes_de(Duration::from_secs(20), move || {
-            let conn = FtpConnection::connect_with_io_timeout(
+            let conn = FtpConnection::connect_with_timeouts(
                 &ftp_profile(port),
                 None,
                 PathBuf::from("/nonexistent/ftps_certs.json"),
-                Duration::from_secs(1),
+                FtpTimeouts::uniform(Duration::from_secs(1)),
             )
             .expect("conectar con el servidor de mentira");
-            let FtpConnection::Plain(mut ftp) = conn else {
+            let FtpStreamKind::Plain(mut ftp) = conn.stream else {
                 panic!("un perfil FTP plano debe dar una conexión plana");
             };
             let mut stream = ftp.retr_as_stream("x").expect("abrir RETR");
@@ -4093,11 +4429,214 @@ mod tests {
                 .expect_err("el canal de datos se calla: la lectura tiene que caducar");
             // Soltar el stream lee el 226, que tampoco llega: también caduca.
             drop(stream);
-            (recibido, ftp_io_error(&err))
+            (recibido, ftp_io_error(&err, Duration::from_secs(1)))
         });
         assert_eq!(recibido, b"hola", "lo que sí llegó se ha leído");
         assert!(error.contains("dejó de responder"), "{error}");
         assert!(!error.contains("cancel"), "no puede parecer una cancelación: {error}");
+    }
+
+    /// Un plazo agotado en el canal de datos (el servidor se para a mitad de
+    /// un listado, como un `kill -STOP`) tiene que (a) fallar en el plazo
+    /// **corto** de datos, aunque el de control sea largo —y eso incluye el
+    /// acuse que suppaftp lee al soltar el stream—, y (b) dejar la conexión
+    /// marcada como rota: lo siguiente falla al instante y con el marcador de
+    /// «conexión perdida», en vez de esperar otro plazo o leer respuestas
+    /// desincronizadas. Cerrarla tampoco espera al servidor.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ftp_un_plazo_agotado_deja_la_conexion_rota() {
+        let port = ftp_mudo(Mudo::EnElListado);
+        vuelve_antes_de(Duration::from_secs(20), move || {
+            let timeouts = FtpTimeouts {
+                control: Duration::from_secs(10),
+                data: Duration::from_secs(1),
+            };
+            let mut conn = FtpConnection::connect_with_timeouts(
+                &ftp_profile(port),
+                None,
+                PathBuf::from("/nonexistent/ftps_certs.json"),
+                timeouts,
+            )
+            .expect("conectar con el servidor de mentira");
+            assert!(conn.broken_reason().is_none());
+
+            let t0 = std::time::Instant::now();
+            let err = conn
+                .list("/")
+                .expect_err("el listado se queda a medias: tiene que caducar");
+            assert!(
+                t0.elapsed() < Duration::from_secs(5),
+                "debía caducar por el plazo de datos, tardó {:?}",
+                t0.elapsed()
+            );
+            assert!(err.contains(TRANSFER_CONNECTION_LOST_MARKER), "{err}");
+            assert!(err.contains("dejó de responder"), "{err}");
+            assert!(!err.contains("cancel"), "{err}");
+
+            assert!(conn.broken_reason().is_some(), "la conexión queda rota");
+            let t1 = std::time::Instant::now();
+            let err2 = conn.pwd().expect_err("una conexión rota no atiende nada");
+            assert!(t1.elapsed() < Duration::from_millis(200), "{:?}", t1.elapsed());
+            assert!(err2.contains(TRANSFER_CONNECTION_LOST_MARKER), "{err2}");
+            assert!(conn.size("x").is_err() && conn.mkdir("y").is_err());
+            assert!(conn.list("/").is_err() && conn.create_file("z").is_err());
+
+            let t2 = std::time::Instant::now();
+            conn.quit();
+            assert!(t2.elapsed() < Duration::from_millis(200), "{:?}", t2.elapsed());
+        });
+    }
+
+    /// Un rechazo del servidor (un 550) es un error normal: la conexión sigue
+    /// sana y se puede seguir usando.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor FTP efímero; se corre con --ignored"]
+    #[test]
+    fn ftp_un_550_no_rompe_la_conexion() {
+        let server = crate::ftp_fixture::start().expect("arrancar el servidor FTP");
+        let mut conn = connect_ftp(&ftp_profile(server.port), None, server.root.join("c.json"))
+            .expect("conectar");
+        let err = conn.size("no-existe.bin").expect_err("SIZE de algo que no existe");
+        assert!(!err.contains(TRANSFER_CONNECTION_LOST_MARKER), "{err}");
+        assert!(conn.broken_reason().is_none());
+        assert_eq!(conn.pwd().expect("la conexión sigue viva"), "/");
+        conn.quit();
+    }
+
+    /// Backend de mentira para las reglas del worker: solo sabe qué rutas
+    /// existen y de qué tipo son.
+    struct FakeBackend {
+        entries: Vec<FileEntry>,
+    }
+
+    fn fake_entry(path: &str, is_dir: bool) -> FileEntry {
+        FileEntry {
+            name: remote_name(path),
+            path: path.to_string(),
+            is_dir,
+            is_symlink: false,
+            size: 0,
+            modified: None,
+            permissions: None,
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl FileTransfer for FakeBackend {
+        async fn list_dir(&mut self, _: &str) -> Result<Vec<FileEntry>, String> {
+            Err("no en el mock".into())
+        }
+        async fn stat(&mut self, path: &str) -> Result<FileEntry, String> {
+            self.entries
+                .iter()
+                .find(|e| e.path == path)
+                .cloned()
+                .ok_or_else(|| format!("No such file: {path}"))
+        }
+        async fn home_dir(&mut self) -> Result<String, String> {
+            Err("no en el mock".into())
+        }
+        async fn mkdir(&mut self, _: &str) -> Result<(), String> {
+            Err("no en el mock".into())
+        }
+        async fn create_file(&mut self, _: &str) -> Result<(), String> {
+            Err("no en el mock".into())
+        }
+        async fn remove(&mut self, _: &str, _: bool) -> Result<(), String> {
+            Err("no en el mock".into())
+        }
+        async fn rename(&mut self, _: &str, _: &str) -> Result<(), String> {
+            Err("no en el mock".into())
+        }
+        async fn chmod(&mut self, _: &str, _: u32) -> Result<(), String> {
+            Err("no en el mock".into())
+        }
+        async fn download(&mut self, _: &str, _: &Path, _: TransferCtx<'_>) -> Result<(), String> {
+            Err("no en el mock".into())
+        }
+        async fn upload(&mut self, _: &Path, _: &str, _: TransferCtx<'_>) -> Result<(), String> {
+            Err("no en el mock".into())
+        }
+        async fn close(&mut self) {}
+    }
+
+    #[tokio::test]
+    async fn una_subida_no_pisa_un_destino_existente_sin_permiso() {
+        let mut backend = FakeBackend {
+            entries: vec![fake_entry("/srv/informe.pdf", false), fake_entry("/srv/docs", true)],
+        };
+        let err = check_upload_target(&mut backend, "/srv/informe.pdf", false)
+            .await
+            .expect_err("sin permiso no se pisa");
+        assert!(err.starts_with(TRANSFER_EXISTS_MARKER), "{err}");
+        assert!(err.contains("/srv/informe.pdf"), "{err}");
+        check_upload_target(&mut backend, "/srv/informe.pdf", true)
+            .await
+            .expect("con permiso explícito sí");
+        check_upload_target(&mut backend, "/srv/nuevo.pdf", false)
+            .await
+            .expect("si no existe no hay conflicto");
+        // Una carpeta no se sustituye por un fichero ni con permiso, y no es un
+        // «ya existe» que el panel deba preguntar.
+        let err = check_upload_target(&mut backend, "/srv/docs", true)
+            .await
+            .expect_err("un fichero no sustituye a una carpeta");
+        assert!(!err.contains(TRANSFER_EXISTS_MARKER) && err.contains("carpeta"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn una_descarga_no_pisa_un_destino_existente_sin_permiso() {
+        let dir = std::env::temp_dir().join(format!("rustty-exists-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("informe.pdf"), b"viejo").unwrap();
+
+        let err = check_download_target(&dir.join("informe.pdf"), false)
+            .await
+            .expect_err("sin permiso no se pisa");
+        assert!(err.starts_with(TRANSFER_EXISTS_MARKER), "{err}");
+        assert!(err.contains("informe.pdf"), "{err}");
+        assert_eq!(std::fs::read(dir.join("informe.pdf")).unwrap(), b"viejo", "no se tocó");
+        check_download_target(&dir.join("informe.pdf"), true)
+            .await
+            .expect("con permiso explícito sí");
+        check_download_target(&dir.join("nuevo.pdf"), false)
+            .await
+            .expect("si no existe no hay conflicto");
+        let err = check_download_target(&dir.join("docs"), true)
+            .await
+            .expect_err("un fichero no sustituye a una carpeta");
+        assert!(!err.contains(TRANSFER_EXISTS_MARKER) && err.contains("carpeta"), "{err}");
+        #[cfg(unix)]
+        {
+            // Un enlace roto también ocupa el nombre: el rename lo pisaría.
+            std::os::unix::fs::symlink(dir.join("no-existe"), dir.join("roto")).unwrap();
+            let err = check_download_target(&dir.join("roto"), false)
+                .await
+                .expect_err("el enlace roto cuenta como existente");
+            assert!(err.starts_with(TRANSFER_EXISTS_MARKER), "{err}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn una_carpeta_no_vale_como_origen_de_una_transferencia_de_fichero() {
+        check_file_source(false, "/x/a.txt").expect("un fichero sí");
+        let err = check_file_source(true, "/x/carpeta").expect_err("una carpeta no");
+        assert!(err.contains("/x/carpeta") && err.contains("carpeta"), "{err}");
+    }
+
+    #[test]
+    fn los_marcadores_de_transferencia_siguen_espejados_en_el_frontend() {
+        let mirror = Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/modules/ipc/errors.js");
+        let js = std::fs::read_to_string(&mirror).expect("espejo del frontend");
+        for marker in [TRANSFER_EXISTS_MARKER, TRANSFER_CONNECTION_LOST_MARKER] {
+            assert!(
+                js.contains(&format!("\"{marker}\"")),
+                "{} debe declarar el marcador {marker}",
+                mirror.display()
+            );
+        }
     }
 
     /// Una IPv6 entre corchetes (como se escribe para SSH) vuelve a conectar por

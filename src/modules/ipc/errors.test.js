@@ -3,13 +3,40 @@ import { describe, it, expect } from "vitest";
 import {
   IPC_ERROR_KIND,
   KEYRING_UNAVAILABLE_MARKER,
+  TRANSFER_CONNECTION_LOST_MARKER,
+  TRANSFER_EXISTS_MARKER,
   ipcErrorKind,
   ipcErrorText,
   isHostKeyError,
   isKeyringUnavailableError,
   isRetryableIpcError,
+  isTransferConnectionLostError,
+  isTransferExistsError,
   keyringFailureDetail,
+  transferConnectionLostDetail,
 } from "./errors.js";
+
+describe("marcadores de las transferencias", () => {
+  it("espejan los literales de sftp_manager.rs", () => {
+    expect(TRANSFER_EXISTS_MARKER).toBe("transfer-exists:");
+    expect(TRANSFER_CONNECTION_LOST_MARKER).toBe("transfer-connection-lost:");
+  });
+
+  it("reconoce el «ya existe» del backend, venga como cadena o estructurado", () => {
+    expect(isTransferExistsError("transfer-exists: /srv/informe.pdf")).toBe(true);
+    expect(isTransferExistsError({ kind: "internal", message: "transfer-exists: x" })).toBe(true);
+    expect(isTransferExistsError("No such file")).toBe(false);
+    expect(isTransferExistsError(null)).toBe(false);
+  });
+
+  it("reconoce la conexión perdida y da el motivo sin el marcador", () => {
+    const err = "transfer-connection-lost: el servidor FTP dejó de responder (20 s sin datos)";
+    expect(isTransferConnectionLostError(err)).toBe(true);
+    expect(transferConnectionLostDetail(err)).toBe("el servidor FTP dejó de responder (20 s sin datos)");
+    expect(isTransferConnectionLostError("transferencia cancelada")).toBe(false);
+    expect(transferConnectionLostDetail("otro fallo")).toBe("otro fallo");
+  });
+});
 
 describe("contrato de kinds", () => {
   it("cubre exactamente los discriminantes de ipc_error.rs", () => {
