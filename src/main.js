@@ -136,6 +136,10 @@ import {
   isJumpCapable, jumpCandidates, jumpChain, jumpSettingsPayload, pushRecentJump, resolveJumpRoute,
   shouldShowRoutePill, supportsJump, validateJumpIds,
 } from "./modules/jump-route.js";
+import {
+  BULK_FIELD_KEYS, applyBulkEdit, applyUndo as applyBulkUndo, buildUndo as buildBulkUndo,
+  fieldAdmits as bulkFieldAdmits, summarizeBulkEdit, validateBulkPatch,
+} from "./modules/profiles/bulk-edit.js";
 import { commandDraftKey, isLocalShellReady, isLocalShellSession } from "./modules/sessions/local-shell.js";
 import { connectionTunnelOwners } from "./modules/tunnels/lifecycle.js";
 import { DEFAULT_PREFS, createDefaultPrefs } from "./modules/prefs/defaults.js";
@@ -7340,6 +7344,8 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
     restoreEl.classList.toggle("hidden", !hasSnapshot);
   }
 
+  updateBulkEditMenuEntries(type, id, folderPath, ctxTarget.workspaceId, isRealFolder);
+
   const { left: finalX, width } = positionFloatingMenu(menu, x, y);
   // Si el menú queda en la mitad derecha, abrir los submenús hacia la izquierda;
   // y si el ítem que los abre cae en la mitad baja de la ventana, abrirlos hacia
@@ -7649,6 +7655,15 @@ function handleContextMenuAction(action) {
       break;
     case "delete-conn":
       deleteSelectedProfiles(id);
+      break;
+    case "bulk-edit-selection":
+      openBulkEditForSelection(id);
+      break;
+    case "bulk-edit-folder":
+      if (folderPath) openBulkEditForFolder(folderPath, targetWs);
+      break;
+    case "bulk-edit-ws":
+      if (ctxTarget.workspaceId) openBulkEditForWorkspace(ctxTarget.workspaceId);
       break;
     case "rename-ws":
       renameWorkspaceById(ctxTarget.workspaceId);
@@ -16890,6 +16905,349 @@ function openTrashModal() {
   overlay.classList.remove("hidden");
 }
 
+// ─── Edición en lote de conexiones ───────────────────────────────────────────
+// Varias conexiones (selección múltiple, una carpeta o un workspace) cambian a
+// la vez los campos que el usuario marca como «Cambiar»; lo demás no se toca.
+// La lógica vive en `modules/profiles/bulk-edit.js`; aquí solo el modal, la
+// persistencia (UN `save_profiles`: una transacción, una escritura, como pide
+// el invariante de lote) y el «Deshacer» del aviso. Nunca se escriben secretos:
+// las contraseñas se cambian asignando una credencial maestra del keyring.
+
+/** Ids de los perfiles que edita el modal abierto. */
+let bulkEditTargetIds = [];
+/** Último resumen calculado (para saber si «Aplicar» tiene algo que hacer). */
+let bulkEditLastSummary = null;
+
+function bulkEditTargets() {
+  const wanted = new Set(bulkEditTargetIds);
+  return profiles.filter((p) => wanted.has(p.id));
+}
+
+/** Perfiles de una carpeta (con sus subcarpetas) de un workspace. */
+function profilesInFolder(folderPath, workspaceId) {
+  return profiles.filter((p) => profileWorkspaceId(p) === workspaceId && folderContainsPath(p.group, folderPath));
+}
+
+function profilesInWorkspace(workspaceId) {
+  return profiles.filter((p) => profileWorkspaceId(p) === workspaceId);
+}
+
+/** Ids seleccionados en la barra lateral que siguen existiendo. */
+function selectedExistingProfileIds() {
+  return [...sidebarSelectedConnectionIds].filter((id) => profiles.some((p) => p.id === id));
+}
+
+function openBulkEditForSelection(targetId = null) {
+  const ids = selectedExistingProfileIds();
+  if (targetId && !ids.includes(targetId) && profiles.some((p) => p.id === targetId)) ids.push(targetId);
+  openBulkEditModal(ids, t("bulk_edit.scope_selection", { n: ids.length }));
+}
+
+function openBulkEditForFolder(folderPath, workspaceId) {
+  const ids = profilesInFolder(folderPath, workspaceId).map((p) => p.id);
+  openBulkEditModal(ids, t("bulk_edit.scope_folder", { name: folderPath, n: ids.length }));
+}
+
+function openBulkEditForWorkspace(workspaceId) {
+  const ids = profilesInWorkspace(workspaceId).map((p) => p.id);
+  const name = prefs.workspaces.find((w) => w.id === workspaceId)?.name || workspaceId;
+  openBulkEditModal(ids, t("bulk_edit.scope_workspace", { name, n: ids.length }));
+}
+
+/**
+ * Etiquetas y visibilidad de las tres entradas «Editar N conexiones…» del menú
+ * contextual: selección múltiple (sobre una conexión seleccionada), carpeta y
+ * workspace. Una carpeta o workspace sin conexiones no la ofrece.
+ */
+function updateBulkEditMenuEntries(type, id, folderPath, workspaceId, isRealFolder) {
+  const setEntry = (elId, labelId, visible, labelKey, n) => {
+    document.getElementById(elId)?.classList.toggle("hidden", !visible);
+    const label = document.getElementById(labelId);
+    if (label && visible) label.textContent = t(labelKey, { n });
+  };
+  const selected = selectedExistingProfileIds();
+  const multi = type === "connection" && !!id && selected.includes(id) && selected.length > 1;
+  setEntry("ctx-bulk-edit-selection", "ctx-bulk-edit-selection-label", multi, "bulk_edit.ctx_selection", selected.length);
+  const nFolder = isRealFolder ? profilesInFolder(folderPath, workspaceId || getActiveWorkspaceId()).length : 0;
+  setEntry("ctx-bulk-edit-folder", "ctx-bulk-edit-folder-label", isRealFolder && nFolder > 0, "bulk_edit.ctx_folder", nFolder);
+  const nWs = type === "workspace" && workspaceId ? profilesInWorkspace(workspaceId).length : 0;
+  setEntry("ctx-bulk-edit-ws", "ctx-bulk-edit-ws-label", type === "workspace" && nWs > 0, "bulk_edit.ctx_workspace", nWs);
+}
+
+function openBulkEditModal(ids, scopeText) {
+  const overlay = document.getElementById("bulk-edit-overlay");
+  if (!overlay) return;
+  bulkEditTargetIds = [...new Set(ids)].filter((id) => profiles.some((p) => p.id === id));
+  if (!bulkEditTargetIds.length) {
+    toast(t("bulk_edit.none_selected"), "warning");
+    return;
+  }
+  const scope = document.getElementById("bulk-edit-scope");
+  if (scope) scope.textContent = scopeText;
+  resetBulkEditForm();
+  populateBulkEditOptions();
+  updateBulkEditSummary();
+  overlay.classList.remove("hidden");
+}
+
+function closeBulkEditModal() {
+  document.getElementById("bulk-edit-overlay")?.classList.add("hidden");
+  bulkEditTargetIds = [];
+  bulkEditLastSummary = null;
+}
+
+/** Activa o desactiva los controles de un campo (también el desplegable propio). */
+function setBulkFieldEnabled(key, on) {
+  const row = document.querySelector(`.bulk-field[data-bulk-field="${key}"]`);
+  if (!row) return;
+  row.classList.toggle("is-on", on);
+  row.querySelectorAll(".bulk-control input, .bulk-control select, .bulk-control .custom-select-display")
+    .forEach((el) => { el.disabled = !on; });
+}
+
+function resetBulkEditForm() {
+  const form = document.getElementById("bulk-edit-form");
+  form?.reset();
+  for (const key of BULK_FIELD_KEYS) {
+    const cb = document.getElementById(`bulk-on-${key}`);
+    if (cb) cb.checked = false;
+    setBulkFieldEnabled(key, false);
+  }
+  updateBulkEditSubRows();
+  const preview = document.getElementById("bulk-host-preview");
+  if (preview) { preview.textContent = ""; preview.classList.add("hidden"); }
+  document.getElementById("bulk-edit-error")?.classList.add("hidden");
+}
+
+/** Filas dependientes: ruta de clave, dirección manual del bastión y carpeta nueva. */
+function updateBulkEditSubRows() {
+  document.getElementById("bulk-key-path-row")?.classList.toggle("hidden", document.getElementById("bulk-auth")?.value !== "public_key");
+  document.getElementById("bulk-proxy-jump-row")?.classList.toggle("hidden", document.getElementById("bulk-bastion")?.value !== "manual");
+  document.getElementById("bulk-folder-new-row")?.classList.toggle("hidden", document.getElementById("bulk-folder")?.value !== "__new__");
+}
+
+/** Opciones que dependen del catálogo: credenciales maestras, bastiones y carpetas. */
+function populateBulkEditOptions() {
+  const targets = bulkEditTargets();
+  const targetIds = new Set(bulkEditTargetIds);
+
+  const bastion = document.getElementById("bulk-bastion");
+  if (bastion) {
+    for (const opt of [...bastion.options]) if (opt.value.startsWith("profile:")) opt.remove();
+    for (const p of bastionChoices(profiles, null)) {
+      if (targetIds.has(p.id)) continue; // a sí misma, nunca
+      const opt = document.createElement("option");
+      opt.value = `profile:${p.id}`;
+      opt.textContent = t("jump.choice_label", { name: jumpProfileName(p), target: jumpProfileTarget(p) });
+      bastion.appendChild(opt);
+    }
+    bastion.value = "";
+  }
+
+  const folder = document.getElementById("bulk-folder");
+  if (folder) {
+    for (const opt of [...folder.options]) if (opt.value && opt.value !== "__new__") opt.remove();
+    const folders = new Set();
+    for (const ws of new Set(targets.map(profileWorkspaceId))) for (const f of getWorkspaceFolders(ws)) folders.add(f);
+    for (const p of targets) if (p.group) folders.add(p.group);
+    const newOpt = folder.querySelector('option[value="__new__"]');
+    for (const f of [...folders].sort((a, b) => a.localeCompare(b))) {
+      const opt = document.createElement("option");
+      opt.value = f;
+      opt.textContent = f;
+      folder.insertBefore(opt, newOpt);
+    }
+    folder.value = "";
+  }
+
+  const master = document.getElementById("bulk-master-cred");
+  if (master) {
+    for (const opt of [...master.options]) if (opt.value) opt.remove();
+    invoke("master_cred_list").then((all) => {
+      if (!document.getElementById("bulk-edit-overlay") || bulkEditTargetIds.length === 0) return;
+      for (const cred of (all || []).filter((c) => c.kind === "master")) {
+        const opt = document.createElement("option");
+        opt.value = cred.id;
+        opt.textContent = cred.name;
+        master.appendChild(opt);
+      }
+    }).catch(() => {});
+  }
+
+  // Cuántas de las seleccionadas no admiten cada campo, antes de elegir valor.
+  for (const key of BULK_FIELD_KEYS) {
+    const n = targets.filter((p) => !bulkFieldAdmits(key, p)).length;
+    const el = document.querySelector(`[data-bulk-skip="${key}"]`);
+    if (!el) continue;
+    el.textContent = n ? t("bulk_edit.skip_count", { n }) : "";
+    el.classList.toggle("hidden", n === 0);
+  }
+}
+
+/** El parche con solo los campos marcados, leído de los controles. */
+function readBulkPatch() {
+  const on = (key) => !!document.getElementById(`bulk-on-${key}`)?.checked;
+  const val = (id) => document.getElementById(id)?.value ?? "";
+  const patch = {};
+  if (on("username")) patch.username = val("bulk-username").trim();
+  if (on("port")) patch.port = parseInt(val("bulk-port"), 10);
+  if (on("auth")) patch.auth = { auth_type: val("bulk-auth"), key_path: val("bulk-key-path").trim() || null };
+  if (on("master_credential")) patch.master_credential = val("bulk-master-cred") || null;
+  if (on("bastion")) {
+    const mode = val("bulk-bastion");
+    patch.bastion = mode === "" ? null : mode === "manual" ? { text: val("bulk-proxy-jump").trim() } : { profile_id: mode.slice(8) };
+  }
+  if (on("keep_alive_secs")) patch.keep_alive_secs = keepAliveFromInput(val("bulk-keep-alive"));
+  if (on("auto_reconnect")) patch.auto_reconnect = autoReconnectFromInput(val("bulk-auto-reconnect"));
+  if (on("environment")) patch.environment = val("bulk-environment") || null;
+  if (on("legacy")) patch.legacy = val("bulk-legacy") === "on";
+  if (on("session_log")) patch.session_log = val("bulk-session-log") === "on";
+  if (on("open_read_only")) patch.open_read_only = val("bulk-open-read-only") === "on";
+  if (on("group")) {
+    const f = val("bulk-folder");
+    patch.group = f === "__new__" ? (val("bulk-folder-new").trim() || null) : (f || null);
+  }
+  if (on("host_replace")) patch.host_replace = { from: val("bulk-host-from"), to: val("bulk-host-to") };
+  return patch;
+}
+
+/** Resumen en vivo («Se cambiarán N campos en M conexiones»), saltos por campo y vista previa del host. */
+function updateBulkEditSummary() {
+  const targets = bulkEditTargets();
+  const patch = readBulkPatch();
+  const invalid = validateBulkPatch(patch);
+  const summary = summarizeBulkEdit(targets, patch, { catalog: profiles });
+  bulkEditLastSummary = summary;
+
+  const text = document.getElementById("bulk-edit-summary");
+  if (text) {
+    if (summary.fields === 0) text.textContent = t("bulk_edit.summary_none", { n: targets.length });
+    else if (summary.changed === 0 && !invalid.length) text.textContent = t("bulk_edit.summary_nochange");
+    else {
+      const parts = [t("bulk_edit.summary", { fields: summary.fields, n: summary.changed, total: targets.length })];
+      if (summary.skippedProfiles) parts.push(t("bulk_edit.summary_skipped", { n: summary.skippedProfiles }));
+      text.textContent = parts.join(" ");
+    }
+  }
+  // En los campos marcados, el salto real (incluye bucles de bastión).
+  for (const key of Object.keys(summary.skipped)) {
+    const el = document.querySelector(`[data-bulk-skip="${key}"]`);
+    if (!el) continue;
+    const n = summary.skipped[key];
+    el.textContent = n ? t("bulk_edit.skip_count", { n }) : "";
+    el.classList.toggle("hidden", n === 0);
+  }
+  const preview = document.getElementById("bulk-host-preview");
+  if (preview) {
+    preview.textContent = "";
+    const rows = summary.hostPreview;
+    preview.classList.toggle("hidden", rows.length === 0);
+    for (const row of rows.slice(0, 8)) {
+      const li = document.createElement("li");
+      li.textContent = `${row.before} → ${row.after}`;
+      preview.appendChild(li);
+    }
+    if (rows.length > 8) {
+      const li = document.createElement("li");
+      li.textContent = t("bulk_edit.host_preview_more", { n: rows.length - 8 });
+      preview.appendChild(li);
+    }
+  }
+  const error = document.getElementById("bulk-edit-error");
+  if (error) {
+    if (invalid.length) {
+      const field = document.getElementById(`bulk-lbl-${invalid[0]}`)?.textContent || invalid[0];
+      error.textContent = t("bulk_edit.invalid_field", { field });
+    }
+    error.classList.toggle("hidden", invalid.length === 0);
+  }
+  const apply = document.getElementById("bulk-edit-apply");
+  if (apply) apply.disabled = summary.fields === 0 || invalid.length > 0 || summary.changed === 0;
+}
+
+/** Aplica el lote: un solo `save_profiles`, carpetas nuevas registradas y aviso con «Deshacer». */
+async function applyBulkEditFromModal() {
+  const targets = bulkEditTargets();
+  const patch = readBulkPatch();
+  if (validateBulkPatch(patch).length) { updateBulkEditSummary(); return; }
+  const now = new Date().toISOString();
+  const result = applyBulkEdit(targets, patch, { now, catalog: profiles });
+  if (!result.changed) { updateBulkEditSummary(); return; }
+  const undo = buildBulkUndo(targets, result);
+  try {
+    await invoke("save_profiles", { profiles: result.profiles });
+  } catch (err) {
+    toast(t("bulk_edit.save_error", { err }), "error");
+    return;
+  }
+  for (const p of result.profiles) {
+    const idx = profiles.findIndex((x) => x.id === p.id);
+    if (idx >= 0) profiles[idx] = p;
+  }
+  // Una carpeta nueva se da de alta en cada workspace afectado (como el formulario).
+  if (Object.prototype.hasOwnProperty.call(patch, "group")) {
+    for (const p of result.profiles) {
+      if (!p.group) continue;
+      const ws = profileWorkspaceId(p);
+      const current = getWorkspaceFolders(ws);
+      if (!current.includes(p.group)) saveWorkspaceFolders(ws, [...current, p.group]);
+    }
+  }
+  renderConnectionList();
+  renderDashboard();
+  scheduleProfileAutoSync();
+  closeBulkEditModal();
+  toast(t("bulk_edit.applied", { fields: result.summary.fields, n: result.changed }), "success", 8000, {
+    actionLabel: t("trash.undo"),
+    onAction: () => undoBulkEdit(undo),
+  });
+}
+
+/** Devuelve la foto anterior (con fecha nueva, para que la sync la tome por la última edición). */
+async function undoBulkEdit(undo) {
+  const restore = applyBulkUndo(undo, { now: new Date().toISOString(), existingIds: profiles.map((p) => p.id) });
+  if (!restore.length) { toast(t("bulk_edit.undo_nothing"), "info"); return; }
+  try {
+    await invoke("save_profiles", { profiles: restore });
+  } catch (err) {
+    toast(t("bulk_edit.save_error", { err }), "error");
+    return;
+  }
+  for (const p of restore) {
+    const idx = profiles.findIndex((x) => x.id === p.id);
+    if (idx >= 0) profiles[idx] = p;
+  }
+  renderConnectionList();
+  renderDashboard();
+  scheduleProfileAutoSync();
+  toast(t("bulk_edit.undone", { n: restore.length }), "success");
+}
+
+function bindBulkEditModal() {
+  const form = document.getElementById("bulk-edit-form");
+  if (!form) return;
+  form.addEventListener("change", (e) => {
+    const target = e.target;
+    if (target instanceof HTMLInputElement && target.classList.contains("bulk-on")) {
+      const key = target.dataset.bulkField;
+      setBulkFieldEnabled(key, target.checked);
+      if (target.checked) {
+        const first = document.querySelector(`.bulk-field[data-bulk-field="${key}"] .bulk-control input:not([disabled]), .bulk-field[data-bulk-field="${key}"] .bulk-control select:not([disabled])`);
+        first?.focus();
+      }
+    }
+    updateBulkEditSubRows();
+    updateBulkEditSummary();
+  });
+  form.addEventListener("input", () => updateBulkEditSummary());
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    applyBulkEditFromModal();
+  });
+  document.getElementById("bulk-edit-close")?.addEventListener("click", closeBulkEditModal);
+  document.getElementById("bulk-edit-cancel")?.addEventListener("click", closeBulkEditModal);
+}
+
 /**
  * Conexión rápida a `[usuario@]host[:puerto]`, común al primer inicio y a la
  * paleta: si ya hay un perfil SSH con ese mismo destino conecta a él (repetir
@@ -25179,6 +25537,8 @@ function bindUIEvents() {
     });
   }
 
+  bindBulkEditModal();
+
   // Reemplazar todos los <select> nativos por el dropdown personalizado
   document.querySelectorAll("select").forEach(enhanceSelect);
   enhanceNumberSteppers();
@@ -26960,6 +27320,11 @@ function buildPaletteSources() {
     add("action:jump-probe", { kind: "action", title: t("jump.palette_probe"), icon: PALETTE_ICONS.route, run: () => probeActiveJump() });
   }
   add("action:scripts", { kind: "action", title: t("palette.action_scripts"), icon: PALETTE_ICONS.script, run: () => openScriptsModal() });
+  // Edición en lote: solo con varias conexiones seleccionadas en la barra lateral.
+  const bulkSelected = selectedExistingProfileIds().length;
+  if (bulkSelected > 1) {
+    add("action:bulk-edit-selection", { kind: "action", title: t("bulk_edit.palette_selection", { n: bulkSelected }), icon: PALETTE_ICONS.action, run: () => openBulkEditForSelection() });
+  }
   const healthFavs = profiles.filter((p) => isFavoriteProfile(p.id) && p.host);
   if (healthFavs.length) {
     add("action:health-favorites", { kind: "action", title: t("palette.action_health_favorites"), icon: PALETTE_ICONS.health, run: () => runHealthCheck(healthFavs, t("health.scope_favorites")) });
@@ -27857,6 +28222,10 @@ function registerDialogs() {
   dialogs.register("cred_edit", { overlay: "cred-edit-overlay", close: closeCredEditModal });
   dialogs.register("import", { overlay: "import-wizard-overlay", close: closeImportWizard });
   dialogs.register("trash", { overlay: "trash-modal-overlay", close: click("trash-close") });
+  dialogs.register("bulk_edit", {
+    overlay: "bulk-edit-overlay", close: closeBulkEditModal,
+    initialFocus: () => document.querySelector("#bulk-edit-modal .bulk-on"),
+  });
   // Centro de actividad: `role="dialog"`, `aria-modal` y el título que lo
   // nombra (`aria-labelledby`) van en el HTML; aquí solo el foco inicial (el
   // filtro puesto) y el cierre. Escape y la vuelta del foco, los comunes.

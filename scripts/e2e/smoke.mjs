@@ -66,6 +66,7 @@ import { checkTunnels } from "./tunnels.mjs";
 import { checkTerminalProtocols } from "./terminal-protocols.mjs";
 import { checkQuickSelect } from "./quick-select.mjs";
 import { checkJump } from "./jump.mjs";
+import { checkBulkEdit } from "./bulk-edit.mjs";
 import { checkJumpReal } from "./jump-real.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -521,6 +522,7 @@ async function main() {
     await checkTunnels(app, check, artifactsDir);
     await checkQuickSelect(app, check, workDir);
     await checkJump(app, check, artifactsDir);
+    await checkBulkEdit(app, check);
     const sshdBin = findSshd();
     if (sshdBin) {
       await checkJumpReal(app, check, { sshd: sshdBin, workDir, home, children });

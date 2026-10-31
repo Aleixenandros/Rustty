@@ -11836,3 +11836,154 @@ body.sidebar-mode-rail .sidebar-route-pill {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Edición en lote de conexiones (#bulk-edit-modal) ──
+   Cada campo lleva su casilla «Cambiar»: los controles nacen desactivados y
+   solo cobran color al marcarla, para que se vea de un vistazo qué se va a
+   tocar. Las reglas son propias (ids/clases bulk-*) para no pisar las de
+   otros modales. */
+#bulk-edit-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+  backdrop-filter: blur(4px);
+}
+
+#bulk-edit-modal {
+  width: 680px;
+  max-width: calc(100vw - 40px);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+}
+
+#bulk-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 20px 18px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.bulk-scope {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.bulk-hint {
+  color: var(--subtext0);
+}
+
+.bulk-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bulk-field {
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr);
+  gap: 4px 14px;
+  align-items: start;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.bulk-field.is-on {
+  border-color: var(--blue);
+}
+
+.bulk-toggle {
+  padding-top: 6px;
+  align-items: flex-start;
+}
+
+.bulk-toggle input {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.bulk-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bulk-field:not(.is-on) .bulk-control {
+  opacity: 0.55;
+}
+
+.bulk-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bulk-sub label {
+  font-size: 11.5px;
+  color: var(--subtext1);
+}
+
+.bulk-split {
+  display: flex;
+  gap: 8px;
+}
+
+.bulk-split > * {
+  flex: 1;
+}
+
+.bulk-skip {
+  grid-column: 2;
+  font-size: 11.5px;
+  color: var(--subtext0);
+}
+
+.bulk-summary {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text);
+}
+
+.bulk-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--red);
+}
+
+.bulk-host-preview {
+  margin: 0;
+  padding: 6px 8px;
+  list-style: none;
+  font-family: var(--terminal-font, monospace);
+  font-size: 11.5px;
+  color: var(--subtext1);
+  max-height: 110px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 640px) {
+  .bulk-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .bulk-skip {
+    grid-column: 1;
+  }
+}

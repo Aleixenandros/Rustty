@@ -86,6 +86,13 @@ la paleta con el selector «Elegir conexión…» manejado por teclado. Deja
 capturas en tema oscuro y claro en `E2E_ARTIFACT_DIR`. Las conexiones de verdad
 por un salto las prueba la integración del backend.
 
+La edición en lote (`bulk-edit.mjs`) crea tres conexiones SSH, las selecciona
+con clic y Ctrl+clic, abre «Editar 3 conexiones…» desde el menú contextual y
+comprueba que el modal nace con los campos desactivados y el foco dentro; marca
+«Usuario», lo cambia, mira el resumen, aplica y comprueba en los perfiles que
+solo cambió ese campo (y la fecha); después pulsa «Deshacer» en el aviso y
+comprueba que los tres vuelven a estar como antes. Sin conexiones reales.
+
 En Linux hacen falta `cargo build --locked` en `src-tauri/`, `npm ci`,
 `tauri-driver` 2.1.0, WebKitWebDriver, `wmctrl` y un escritorio con gestor de
 ventanas. `TAURI_DRIVER` permite indicar la ruta del controlador. Con Rustty

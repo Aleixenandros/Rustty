@@ -1,0 +1,5 @@
+PING 10.0.0.9 (10.0.0.9) 56(84) bytes de datos.
+
+--- 10.0.0.9 estadísticas ping ---
+1 paquetes transmitidos, 0 recibidos, 100% packet loss, time 0ms
+

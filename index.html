@@ -530,6 +530,9 @@
       <button class="ctx-item ctx-folder-only hidden" data-ctx="export-folder">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-export"/></svg></span><span data-i18n="ctx.export_folder">Exportar conexiones de la carpeta…</span>
       </button>
+      <button class="ctx-item ctx-folder-only hidden" data-ctx="bulk-edit-folder" id="ctx-bulk-edit-folder">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-sliders"/></svg></span><span id="ctx-bulk-edit-folder-label" data-i18n="bulk_edit.ctx_folder_static">Editar las conexiones de esta carpeta…</span>
+      </button>
       <button class="ctx-item ctx-folder-only hidden" data-ctx="run-script-folder">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-script"/></svg></span><span data-i18n="scripts.ctx_run">Ejecutar script…</span>
       </button>
@@ -589,6 +592,9 @@
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="edit-conn">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="ctx.edit">Editar</span>
+      </button>
+      <button class="ctx-item ctx-conn-only hidden" data-ctx="bulk-edit-selection" id="ctx-bulk-edit-selection">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-sliders"/></svg></span><span id="ctx-bulk-edit-selection-label" data-i18n="bulk_edit.ctx_selection_static">Editar las conexiones seleccionadas…</span>
       </button>
       <button class="ctx-item ctx-conn-only hidden" data-ctx="duplicate-conn">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></span><span data-i18n="ctx.duplicate">Duplicar</span>
@@ -672,6 +678,9 @@
       </button>
       <button class="ctx-item ctx-ws-only hidden" data-ctx="export-ws">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-export"/></svg></span><span data-i18n="ctx.export_workspace">Exportar conexiones del perfil…</span>
+      </button>
+      <button class="ctx-item ctx-ws-only hidden" data-ctx="bulk-edit-ws" id="ctx-bulk-edit-ws">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-sliders"/></svg></span><span id="ctx-bulk-edit-ws-label" data-i18n="bulk_edit.ctx_workspace_static">Editar las conexiones del perfil…</span>
       </button>
       <button class="ctx-item danger ctx-ws-only hidden" data-ctx="delete-ws">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></span><span data-i18n="ctx.delete_workspace">Eliminar perfil</span>
@@ -1363,6 +1372,219 @@
           <button type="button" class="btn-secondary danger" id="trash-empty" data-i18n="trash.empty_btn">Vaciar papelera</button>
         </div>
         <div id="trash-list" class="trash-list"></div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════
+         MODAL: Edición en lote de conexiones
+    ══════════════════════════════════════════════════════ -->
+    <div id="bulk-edit-overlay" class="hidden">
+      <div id="bulk-edit-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-edit-title" aria-describedby="bulk-edit-scope">
+        <div class="modal-header">
+          <h2 id="bulk-edit-title" data-i18n="bulk_edit.title">Editar conexiones en lote</h2>
+          <button type="button" class="btn-icon modal-close" id="bulk-edit-close" data-i18n-aria-label="bulk_edit.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+        </div>
+        <form id="bulk-edit-form" autocomplete="off" novalidate>
+          <p class="bulk-scope" id="bulk-edit-scope"></p>
+          <p class="form-hint bulk-hint" id="bulk-edit-change-hint" data-i18n="bulk_edit.change_hint">Marca la casilla de cada campo que quieras cambiar; lo demás no se toca. Cada campo se aplica solo a las conexiones de un tipo compatible.</p>
+          <div class="bulk-fields">
+          <div class="bulk-field" data-bulk-field="username">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-username" data-bulk-field="username" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-username" data-i18n="modal_conn.user">Usuario</span>
+            </label>
+            <div class="bulk-control">
+              <input id="bulk-username" type="text" autocomplete="off" spellcheck="false" aria-labelledby="bulk-lbl-username" disabled />
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="username"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="port">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-port" data-bulk-field="port" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-port" data-i18n="modal_conn.port">Puerto</span>
+            </label>
+            <div class="bulk-control">
+              <input id="bulk-port" type="number" min="1" max="65535" step="1" aria-labelledby="bulk-lbl-port" disabled />
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="port"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="auth">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-auth" data-bulk-field="auth" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-auth" data-i18n="modal_conn.auth">Autenticación</span>
+            </label>
+            <div class="bulk-control">
+              <select id="bulk-auth" aria-labelledby="bulk-lbl-auth" disabled>
+                <option value="password" data-i18n="modal_conn.auth_password">Contraseña</option>
+                <option value="public_key" data-i18n="modal_conn.auth_publickey">Clave pública / privada</option>
+                <option value="agent" data-i18n="modal_conn.auth_agent">Agente SSH</option>
+                <option value="keyboard_interactive" data-i18n="modal_conn.auth_keyboard_interactive">Interactiva (código de verificación)</option>
+              </select>
+              <div class="bulk-sub hidden" id="bulk-key-path-row">
+                <label for="bulk-key-path" data-i18n="modal_conn.key_path">Ruta de clave privada</label>
+                <input id="bulk-key-path" type="text" autocomplete="off" spellcheck="false" disabled />
+                <p class="form-hint bulk-hint" data-i18n="bulk_edit.key_path_hint">Vacío: cada conexión conserva su ruta de clave.</p>
+              </div>
+            <p class="form-hint bulk-hint" data-i18n="bulk_edit.ssh_only_hint">Solo conexiones SSH.</p>
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="auth"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="master_credential">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-master_credential" data-bulk-field="master_credential" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-master_credential" data-i18n="modal_conn.password_source_master">Credencial maestra</span>
+            </label>
+            <div class="bulk-control">
+              <select id="bulk-master-cred" aria-labelledby="bulk-lbl-master_credential" disabled>
+                <option value="" data-i18n="bulk_edit.master_own">Contraseña propia de cada conexión</option>
+              </select>
+            <p class="form-hint bulk-hint" data-i18n="bulk_edit.master_hint">Las contraseñas no se escriben en lote: asigna una credencial maestra ya guardada o vuelve a la propia de cada conexión.</p>
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="master_credential"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="bastion">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-bastion" data-bulk-field="bastion" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-bastion" data-i18n="jump.form_bastion">Bastión</span>
+            </label>
+            <div class="bulk-control">
+              <select id="bulk-bastion" aria-labelledby="bulk-lbl-bastion" disabled>
+                <option value="" data-i18n="jump.form_none">Ninguno (conexión directa)</option>
+                <option value="manual" data-i18n="jump.form_manual">Dirección manual…</option>
+              </select>
+              <div class="bulk-sub hidden" id="bulk-proxy-jump-row">
+                <label for="bulk-proxy-jump" data-i18n="bulk_edit.bastion_manual_label">Dirección del bastión (usuario@host:puerto)</label>
+                <input id="bulk-proxy-jump" type="text" autocomplete="off" spellcheck="false" disabled />
+              </div>
+            <p class="form-hint bulk-hint" data-i18n="bulk_edit.bastion_hint">SSH, RDP, VNC y Telnet; la dirección manual, solo SSH y RDP. Nunca a sí misma ni formando un bucle.</p>
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="bastion"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="keep_alive_secs">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-keep_alive_secs" data-bulk-field="keep_alive_secs" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-keep_alive_secs" data-i18n="modal_conn.keep_alive">Keep-alive (segundos)</span>
+            </label>
+            <div class="bulk-control">
+              <input id="bulk-keep-alive" type="number" min="0" max="3600" step="5" aria-labelledby="bulk-lbl-keep_alive_secs" disabled />
+            <p class="form-hint bulk-hint" data-i18n="bulk_edit.zero_off_hint">0 = desactivado. Solo conexiones SSH.</p>
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="keep_alive_secs"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="auto_reconnect">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-auto_reconnect" data-bulk-field="auto_reconnect" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-auto_reconnect" data-i18n="modal_conn.auto_reconnect">Reintentos de reconexión</span>
+            </label>
+            <div class="bulk-control">
+              <input id="bulk-auto-reconnect" type="number" min="0" max="20" step="1" aria-labelledby="bulk-lbl-auto_reconnect" disabled />
+            <p class="form-hint bulk-hint" data-i18n="bulk_edit.zero_off_hint">0 = desactivado. Solo conexiones SSH.</p>
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="auto_reconnect"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="environment">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-environment" data-bulk-field="environment" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-environment" data-i18n="modal_conn.environment">Entorno</span>
+            </label>
+            <div class="bulk-control">
+              <select id="bulk-environment" aria-labelledby="bulk-lbl-environment" disabled>
+                <option value="" data-i18n="modal_conn.environment_none">Sin entorno</option>
+                <option value="prod" translate="no">PROD</option>
+                <option value="stage" translate="no">STAGE</option>
+                <option value="dev" translate="no">DEV</option>
+              </select>
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="environment"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="legacy">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-legacy" data-bulk-field="legacy" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-legacy" data-i18n="modal_conn.allow_legacy">Permitir cifrados / kex / MAC antiguos</span>
+            </label>
+            <div class="bulk-control">
+              <select id="bulk-legacy" aria-labelledby="bulk-lbl-legacy" disabled>
+                <option value="on" data-i18n="bulk_edit.on">Activado</option>
+                <option value="off" data-i18n="bulk_edit.off">Desactivado</option>
+              </select>
+            <p class="form-hint bulk-hint" data-i18n="bulk_edit.legacy_hint">Solo conexiones SSH. Al activarlo, cada conexión conserva su selección de algoritmos.</p>
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="legacy"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="session_log">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-session_log" data-bulk-field="session_log" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-session_log" data-i18n="modal_conn.session_log">Grabar sesión a fichero</span>
+            </label>
+            <div class="bulk-control">
+              <select id="bulk-session-log" aria-labelledby="bulk-lbl-session_log" disabled>
+                <option value="on" data-i18n="bulk_edit.on">Activado</option>
+                <option value="off" data-i18n="bulk_edit.off">Desactivado</option>
+              </select>
+            <p class="form-hint bulk-hint" data-i18n="bulk_edit.ssh_only_hint">Solo conexiones SSH.</p>
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="session_log"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="open_read_only">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-open_read_only" data-bulk-field="open_read_only" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-open_read_only" data-i18n="modal_conn.open_read_only">Abrir en solo lectura</span>
+            </label>
+            <div class="bulk-control">
+              <select id="bulk-open-read-only" aria-labelledby="bulk-lbl-open_read_only" disabled>
+                <option value="on" data-i18n="bulk_edit.on">Activado</option>
+                <option value="off" data-i18n="bulk_edit.off">Desactivado</option>
+              </select>
+            <p class="form-hint bulk-hint" data-i18n="bulk_edit.ssh_only_hint">Solo conexiones SSH.</p>
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="open_read_only"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="group">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-group" data-bulk-field="group" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-group" data-i18n="modal_conn.folder">Carpeta</span>
+            </label>
+            <div class="bulk-control">
+              <select id="bulk-folder" aria-labelledby="bulk-lbl-group" disabled>
+                <option value="" data-i18n="bulk_edit.folder_root">Raíz (sin carpeta)</option>
+                <option value="__new__" data-i18n="bulk_edit.folder_new">Nueva carpeta…</option>
+              </select>
+              <div class="bulk-sub hidden" id="bulk-folder-new-row">
+                <label for="bulk-folder-new" data-i18n="bulk_edit.folder_new_label">Nombre de la carpeta nueva</label>
+                <input id="bulk-folder-new" type="text" autocomplete="off" spellcheck="false" disabled />
+              </div>
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="group"></span>
+          </div>
+          <div class="bulk-field" data-bulk-field="host_replace">
+            <label class="checkbox-label bulk-toggle">
+              <input type="checkbox" class="bulk-on" id="bulk-on-host_replace" data-bulk-field="host_replace" aria-describedby="bulk-edit-change-hint" />
+              <span id="bulk-lbl-host_replace" data-i18n="bulk_edit.host_replace">Buscar y reemplazar en el host</span>
+            </label>
+            <div class="bulk-control">
+              <div class="bulk-split">
+                <div class="bulk-sub">
+                  <label for="bulk-host-from" data-i18n="bulk_edit.host_from">Buscar</label>
+                  <input id="bulk-host-from" type="text" autocomplete="off" spellcheck="false" disabled />
+                </div>
+                <div class="bulk-sub">
+                  <label for="bulk-host-to" data-i18n="bulk_edit.host_to">Reemplazar por</label>
+                  <input id="bulk-host-to" type="text" autocomplete="off" spellcheck="false" disabled />
+                </div>
+              </div>
+              <ul class="bulk-host-preview hidden" id="bulk-host-preview" aria-live="polite"></ul>
+            <p class="form-hint bulk-hint" data-i18n="bulk_edit.host_hint">Texto literal, sin comodines. Solo cambian los hosts que lo contienen.</p>
+            </div>
+            <span class="bulk-skip hidden" data-bulk-skip="host_replace"></span>
+          </div>
+          </div>
+          <p class="bulk-summary" id="bulk-edit-summary" aria-live="polite"></p>
+          <p class="bulk-error hidden" id="bulk-edit-error" role="alert"></p>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="bulk-edit-cancel" data-i18n="bulk_edit.cancel">Cancelar</button>
+            <button type="submit" class="btn-primary" id="bulk-edit-apply" data-i18n="bulk_edit.apply" disabled>Aplicar cambios</button>
+          </div>
+        </form>
       </div>
     </div>
 
