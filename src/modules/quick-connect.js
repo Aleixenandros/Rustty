@@ -8,9 +8,11 @@
  */
 
 /**
- * Usuario cuando el destino no lo lleva. Es el comportamiento histórico del
- * primer inicio y se conserva: la paleta lo enseña siempre en su entrada
- * («Conectar a root@host:22»), así que nunca se usa sin que se vea.
+ * Usuario de RESERVA cuando el destino no lo lleva y el llamador no inyecta
+ * otro (`defaultUser`). La conexión rápida propone el usuario local del
+ * sistema, como hace `ssh host`; este `root` histórico solo queda para cuando
+ * el backend no lo sabe. La paleta enseña siempre el usuario en su entrada
+ * («Conectar a ana@host:22»), así que nunca se usa sin que se vea.
  */
 export const QUICK_DEFAULT_USER = "root";
 
@@ -64,7 +66,9 @@ function isIpv4(host) {
 }
 
 /**
- * Lectura de la consulta de la paleta como destino. Casi cualquier texto encaja
+ * Lectura de la consulta de la paleta como destino. `defaultUser` es el usuario
+ * cuando la consulta no lo lleva (el local del sistema, inyectado por el
+ * llamador). Casi cualquier texto encaja
  * en la gramática de host, así que no basta con que parsee: `explicit` dice si
  * la consulta tiene inequívocamente forma de destino (usuario@, :puerto, IPv6,
  * IPv4 completa o `localhost`), y solo esas van arriba. Un nombre con punto
@@ -75,11 +79,12 @@ function isIpv4(host) {
  * para un host corto basta con `usuario@nas` o `nas:22`. Lo que solo tiene
  * números y puntos sin ser una IPv4 completa («22», «1.5») tampoco.
  * @param {unknown} query
+ * @param {{ defaultUser?: string }} [options]
  * @returns {{ target: QuickTarget, explicit: boolean }|null}
  */
-export function paletteQuickTarget(query) {
+export function paletteQuickTarget(query, { defaultUser = QUICK_DEFAULT_USER } = {}) {
   const text = String(query ?? "").trim();
-  const target = parseQuickTarget(text);
+  const target = parseQuickTarget(text, { defaultUser });
   if (!target) return null;
   const { host } = target;
   const numeric = /^[\d.]+$/.test(host);

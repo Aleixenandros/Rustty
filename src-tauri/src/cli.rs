@@ -2,7 +2,8 @@
 //! varios servidores y copiar ficheros por SFTP sin abrir la interfaz.
 //!
 //! Contrato de salida pensado para scripts:
-//! - **Código de salida** = el del comando remoto (`ssh` semántica): `255` si
+//! - **Código de salida** = el del comando remoto o, en la sesión interactiva
+//!   (`-c` sin `--exec`), el del shell remoto (`ssh` semántica): `255` si
 //!   la conexión o la autenticación fallan, `124` si se agota `--timeout`, `2`
 //!   por uso incorrecto o perfil no encontrado. En multi-host: `0` si todos
 //!   acabaron en `0`, `1` si alguno no.
@@ -739,7 +740,7 @@ fn print_help() {
 Uso:
   rustty -l | --list [--json]                 Lista conexiones SSH/SFTP guardadas, con su workspace
   rustty -l --workspace <w> | --group <g>     Solo las de ese workspace (nombre o id) o carpeta
-  rustty -c <nombre|id|ip|host>               Conecta sin abrir la interfaz grafica
+  rustty -c <nombre|id|ip|host>               Conecta sin abrir la interfaz grafica; sale con el codigo del shell
   rustty -c <perfil> --exec "cmd"             Ejecuta un comando remoto y sale con su codigo
   rustty -c <perfil> -- cmd                   Ejecuta un comando remoto y sale
   rustty -c <perfil> --tty -- cmd             Ejecuta con pseudo-terminal (stdin interactivo)
@@ -1443,11 +1444,34 @@ fn block_on_cli<F: std::future::Future>(fut: F) -> Result<F::Output, String> {
 
 // ─── Sesión interactiva ───────────────────────────────────────────────────────
 
+/// Cómo terminó el shell interactivo de `rustty -c <perfil>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShellExit {
+    /// El servidor mandó el código de salida del shell.
+    Status(u32),
+    /// El shell murió por una señal.
+    Signal,
+    /// El canal se cerró sin código (servidor que no lo manda, transporte
+    /// caído).
+    Closed,
+}
+
+/// Código de salida del proceso para la sesión interactiva: el del shell
+/// remoto, acotado a 255 como hace `ssh`; `255` si murió por señal o el canal
+/// se cerró sin código. Hasta ahora la sesión interactiva salía siempre con 0
+/// aunque el shell remoto hubiera terminado con otro código.
+fn shell_exit_code(exit: ShellExit) -> i32 {
+    match exit {
+        ShellExit::Status(code) => normalize_exit_code(code),
+        ShellExit::Signal | ShellExit::Closed => EXIT_CONNECT_FAILED,
+    }
+}
+
 async fn run_ssh_session(
     profile: ConnectionProfile,
     secrets: CliSecrets,
     host_key: Option<String>,
-) -> Result<(), String> {
+) -> Result<ShellExit, String> {
     let config = client_config(&profile);
     // `_jump_lease`: la cadena de saltos vive lo que la sesión.
     let RoutedHandle {
@@ -1491,14 +1515,23 @@ async fn run_ssh_session(
     let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     let mut stdin_buf = [0u8; 8192];
+    // Como con `--exec`: el código llega en `ExitStatus`, que el servidor manda
+    // tras la salida y antes de cerrar. Tras él se sigue leyendo hasta el EOF
+    // (puede quedar salida en vuelo) y tras el EOF hasta tener el código o
+    // `Close`. Un stdin agotado (una tubería) manda EOF y espera al shell,
+    // como `ssh`, en vez de salir sin saber cómo acabó.
+    let mut exit = ShellExit::Closed;
+    let mut stdin_closed = false;
+    let mut remote_eof = false;
 
     loop {
         tokio::select! {
-            read = stdin.read(&mut stdin_buf) => {
+            read = stdin.read(&mut stdin_buf), if !stdin_closed => {
                 let n = read.map_err(|e| format!("Error leyendo stdin: {e}"))?;
                 if n == 0 {
+                    stdin_closed = true;
                     let _ = channel.eof().await;
-                    break;
+                    continue;
                 }
                 channel
                     .data(&stdin_buf[..n])
@@ -1517,19 +1550,33 @@ async fn run_ssh_session(
                             .await
                             .map_err(|e| format!("Error vaciando stdout: {e}"))?;
                     }
-                    Some(ChannelMsg::Eof)
-                    | Some(ChannelMsg::Close)
-                    | Some(ChannelMsg::ExitStatus { .. })
-                    | Some(ChannelMsg::ExitSignal { .. }) => break,
+                    Some(ChannelMsg::ExitStatus { exit_status }) => {
+                        exit = ShellExit::Status(exit_status);
+                        if remote_eof {
+                            break;
+                        }
+                    }
+                    Some(ChannelMsg::ExitSignal { .. }) => {
+                        exit = ShellExit::Signal;
+                        if remote_eof {
+                            break;
+                        }
+                    }
+                    Some(ChannelMsg::Eof) => {
+                        remote_eof = true;
+                        if exit != ShellExit::Closed {
+                            break;
+                        }
+                    }
+                    Some(ChannelMsg::Close) | None => break,
                     Some(_) => {}
-                    None => break,
                 }
             }
         }
     }
 
     let _ = channel.close().await;
-    Ok(())
+    Ok(exit)
 }
 
 // ─── Ejecución remota ─────────────────────────────────────────────────────────
@@ -1952,7 +1999,7 @@ fn connect_single(
             secrets.route = router.route(&profile, &secrets)?;
             announce(&profile, &secrets.route, &opts);
             match block_on_cli(run_ssh_session(profile, secrets, opts.host_key.clone()))? {
-                Ok(()) => Ok(0),
+                Ok(exit) => Ok(shell_exit_code(exit)),
                 Err(err) => {
                     eprintln!("{err}");
                     Ok(EXIT_CONNECT_FAILED)
@@ -2747,6 +2794,19 @@ mod tests {
 
     fn args(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()
+    }
+
+    /// `rustty -c perfil` (sin `--exec`) sale con el código del shell remoto,
+    /// acotado a 255 como `ssh`; una señal o un canal cerrado sin código son
+    /// 255. Antes salía siempre con 0.
+    #[test]
+    fn la_sesion_interactiva_sale_con_el_codigo_del_shell_remoto() {
+        assert_eq!(shell_exit_code(ShellExit::Status(0)), 0);
+        assert_eq!(shell_exit_code(ShellExit::Status(3)), 3);
+        assert_eq!(shell_exit_code(ShellExit::Status(130)), 130);
+        assert_eq!(shell_exit_code(ShellExit::Status(300)), 255);
+        assert_eq!(shell_exit_code(ShellExit::Signal), EXIT_CONNECT_FAILED);
+        assert_eq!(shell_exit_code(ShellExit::Closed), EXIT_CONNECT_FAILED);
     }
 
     /// Perfil mínimo por JSON (como en `profiles.rs`): el struct no tiene

@@ -1999,6 +1999,14 @@ pub fn local_home_dir() -> Result<String, String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Nombre del usuario local del SO (`whoami`, sin ejecutar nada), para que la
+/// conexión rápida proponga ese usuario como hace `ssh host`. Solo lectura y
+/// sin argumentos; `None` si el sistema no lo dice (la interfaz cae a `root`).
+#[tauri::command]
+pub fn local_username() -> Option<String> {
+    crate::local_user::local_username()
+}
+
 /// Mide la latencia (en milisegundos) hasta `host:port` abriendo una
 /// conexión TCP nueva. Útil para la barra de estado de la sesión SSH activa.
 /// Timeout: 3 segundos.

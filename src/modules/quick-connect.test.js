@@ -14,7 +14,7 @@ describe("parseQuickTarget", () => {
       .toEqual({ username: "admin", host: "web01.example.com", port: 2222, userGiven: true, portGiven: true });
   });
 
-  it("sin usuario usa el de siempre del primer inicio y sin puerto el 22", () => {
+  it("sin usuario usa el inyectado (el local del sistema), con root de reserva, y sin puerto el 22", () => {
     expect(QUICK_DEFAULT_USER).toBe("root");
     expect(parseQuickTarget("  10.0.0.5 "))
       .toEqual({ username: "root", host: "10.0.0.5", port: 22, userGiven: false, portGiven: false });
@@ -42,6 +42,12 @@ describe("formatQuickTarget", () => {
 });
 
 describe("paletteQuickTarget", () => {
+  it("sin usuario en la consulta propone el inyectado, y root solo de reserva", () => {
+    expect(paletteQuickTarget("srv:22", { defaultUser: "ana" })?.target.username).toBe("ana");
+    expect(paletteQuickTarget("ops@srv:22", { defaultUser: "ana" })?.target.username).toBe("ops");
+    expect(paletteQuickTarget("srv:22")?.target.username).toBe("root");
+  });
+
   it("una consulta con forma de destino es explícita", () => {
     for (const q of ["admin@srv", "srv:2222", "192.168.1.10", "[::1]", "localhost"]) {
       expect(paletteQuickTarget(q)?.explicit, q).toBe(true);

@@ -27,6 +27,7 @@ mod keyring_scope;
 mod local_command;
 mod local_command_policy;
 mod local_fs_guard;
+mod local_user;
 mod local_shell_manager;
 mod locks;
 mod metrics;
@@ -41,6 +42,8 @@ mod profiles;
 mod ftp_fixture;
 #[cfg(test)]
 mod kbd_fixture;
+#[cfg(test)]
+mod shell_fixture;
 #[cfg(all(test, target_os = "linux"))]
 mod rdp_fixture;
 mod rdp_certs;
@@ -540,6 +543,7 @@ pub fn run() {
             // ── FS local (panel SFTP partido)
             commands::local_list_dir,
             commands::local_home_dir,
+            commands::local_username,
             commands::local_mkdir,
             commands::local_create_file,
             commands::local_remove,

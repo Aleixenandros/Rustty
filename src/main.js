@@ -82,7 +82,7 @@ import { createDialogController } from "./modules/dialogs/controller.js";
 import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { buildCheatsheet, filterCheatsheet } from "./modules/shortcuts/cheatsheet.js";
 import { formatAccelerator } from "./modules/platform.js";
-import { buildQuickProfile, findQuickTargetProfile, formatQuickTarget, paletteQuickTarget, parseQuickTarget } from "./modules/quick-connect.js";
+import { QUICK_DEFAULT_USER, buildQuickProfile, findQuickTargetProfile, formatQuickTarget, paletteQuickTarget, parseQuickTarget } from "./modules/quick-connect.js";
 import { normalizeTabWheel, tabWheelAction } from "./modules/tab-wheel.js";
 import { firstBlockPerAlias, linkSshConfigJumps, sshConfigJumpFields } from "./modules/ssh-config-jumps.js";
 import {
@@ -4533,6 +4533,11 @@ async function init() {
   // ello, y en un inicio normal no hay nada que barrer. Si barre algo, lo deja
   // escrito el propio backend en el log.
   invoke("sweep_orphan_sessions").catch(() => {});
+  // Usuario por defecto de la conexión rápida: el del sistema, como `ssh host`
+  // (`root` de reserva si el backend no lo sabe). No bloquea el arranque.
+  invoke("local_username")
+    .then((u) => { localUsername = typeof u === "string" && u.trim() ? u.trim() : null; })
+    .catch(() => {});
   loadPrefs();
   // La pantalla de carga (#boot-screen) ya está pintada con el HTML y el CSS
   // estáticos, así que la ventana puede enseñarse ya: es lo que ve el usuario
@@ -16234,7 +16239,8 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     const s = sessions.get(sessionId);
     if (s) s.status = "closed";
     if (s._tmuxControl) teardownTmuxControl(sessionId);
-    // Con la conexión mueren sus túneles (los de una hija siguen en su raíz).
+    // Con la sesión mueren sus túneles: los de la conexión entera si es una
+    // raíz; solo los abiertos desde ella si es una hija.
     forgetConnectionTunnels(sessionId);
     persistScreenSnapshot(s);
     appendConnectionLog(sessionId, {
@@ -16519,9 +16525,9 @@ async function closeSession(sessionId, opts = {}) {
   // zombi.
   for (const windowId of [...(s._tmuxWindows?.keys() || [])]) removeTmuxWindow(s, windowId);
   await invoke("ssh_disconnect", { sessionId }).catch(() => {});
-  // Cerrar una raíz cierra su conexión y sus túneles: fuera también de las
-  // listas (contador del rail incluido), los suyos y los de sus hijas.
-  if (!s._parentSessionId) forgetConnectionTunnels(sessionId);
+  // Cerrar una pestaña para sus túneles en el backend (una raíz, también los
+  // de sus hijas): fuera de las listas, contador del rail incluido.
+  forgetConnectionTunnels(sessionId);
   clearTerminalOutputQueue(s);
   s.terminal.dispose();
   sessions.delete(sessionId);
@@ -17260,6 +17266,14 @@ function bindBulkEditModal() {
   document.getElementById("bulk-edit-cancel")?.addEventListener("click", closeBulkEditModal);
 }
 
+/** Usuario local del sistema (`local_username`), o `null` si no se obtuvo. */
+let localUsername = /** @type {string|null} */ (null);
+
+/** Usuario de la conexión rápida cuando el destino no lo lleva: el local, o `root` de reserva. */
+function quickDefaultUser() {
+  return localUsername || QUICK_DEFAULT_USER;
+}
+
 /**
  * Conexión rápida a `[usuario@]host[:puerto]`, común al primer inicio y a la
  * paleta: si ya hay un perfil SSH con ese mismo destino conecta a él (repetir
@@ -17294,7 +17308,7 @@ async function quickConnectToTarget(target) {
 /** Conexión rápida del primer inicio: guarda un perfil mínimo y conecta. */
 async function quickConnectFromFirstRun() {
   const input = document.getElementById("firstrun-quick-input");
-  const target = parseQuickTarget(input?.value);
+  const target = parseQuickTarget(input?.value, { defaultUser: quickDefaultUser() });
   if (!target) {
     toast(t("firstrun.quick_invalid"), "warning");
     input?.focus();
@@ -20302,7 +20316,7 @@ async function startSshTunnel(sessionId, cfg, opts = {}) {
  */
 function forgetConnectionTunnels(closedId) {
   let changed = false;
-  for (const sid of connectionTunnelOwners(sessions, closedId, isSessionLive)) {
+  for (const sid of connectionTunnelOwners(sessions, closedId)) {
     const owner = sessions.get(sid);
     if (!owner?.tunnels?.size) continue;
     for (const tunnel of owner.tunnels.values()) tunnel.status = "closed";
@@ -27420,7 +27434,7 @@ function renderPaletteResults(query) {
     // puede ser lo que se buscaba («deploy.sh») y va detrás del primer
     // resultado, para no quitarle el Intro. La fila nombra el destino real: el
     // perfil guardado de ese host si se va a reutilizar.
-    const quick = paletteQuickTarget(q);
+    const quick = paletteQuickTarget(q, { defaultUser: quickDefaultUser() });
     if (quick) {
       const existing = findQuickTargetProfile(profiles, quick.target);
       const shown = existing
