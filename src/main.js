@@ -51,6 +51,7 @@ import {
 import { sftpRowOpenAction } from "./modules/sftp/row-open.js";
 import { foldSearchText, groupConnectionSearch, matchSegments } from "./modules/connection-search.js";
 import { clampUiZoom } from "./modules/num.js";
+import { rovingKey, treeKey, typeAhead, visibleNodes } from "./modules/tree-nav.js";
 import { baseSlugifyThemeId } from "./modules/text.js";
 import { formatTime, formatRelativeTimeShort, formatDashboardTime } from "./modules/datetime.js";
 import { compareVersions, normalizeVersion } from "./modules/version.js";
@@ -916,6 +917,17 @@ function applyReduceMotion(enabled) {
   document.body.classList.toggle("reduce-motion", !!enabled);
 }
 
+/**
+ * `behavior` para `scrollIntoView` según el movimiento reducido (la
+ * preferencia o el ajuste del sistema): un `"smooth"` explícito se salta el
+ * `scroll-behavior: auto` de la hoja de estilos.
+ */
+function scrollBehavior() {
+  const reduced = !!prefs.reduceMotion
+    || !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  return reduced ? "auto" : "smooth";
+}
+
 /** Refuerza el anillo de foco (grosor y contraste) para navegación por teclado. */
 function applyStrongFocus(enabled) {
   document.body.classList.toggle("strong-focus", !!enabled);
@@ -1064,7 +1076,7 @@ function appendCustomSwatch(picker, theme) {
   label.dataset.theme = theme.id;
   const inputName = picker === "ui" ? "pref-theme" : "pref-terminal-theme";
   label.innerHTML = `
-    <input type="radio" name="${inputName}" value="${escHtml(theme.id)}" />
+    <input type="radio" class="visually-hidden" name="${inputName}" value="${escHtml(theme.id)}" />
     ${renderThemePreviewHtml(theme)}
     <span class="theme-label">${escHtml(theme.name)}</span>`;
   const radio = label.querySelector("input");
@@ -1209,7 +1221,7 @@ function enhanceThemePickers() {
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "theme-picker-toggle";
-    toggle.setAttribute("aria-haspopup", "listbox");
+    toggle.setAttribute("aria-haspopup", "dialog");
     toggle.setAttribute("aria-expanded", "false");
     toggle.innerHTML = `
       <span class="theme-picker-toggle-preview" aria-hidden="true"></span>
@@ -1228,7 +1240,7 @@ function enhanceThemePickers() {
         <button type="button" class="theme-tone-chip" data-tone="hc" role="tab" aria-selected="false">${escHtml(t("prefs_appearance.tone_hc"))}</button>
         <button type="button" class="theme-picker-reset" data-action="reset-theme">${escHtml(t("prefs_appearance.theme_reset_system"))}</button>
       </div>
-      <div class="theme-options-list" role="listbox"></div>
+      <div class="theme-options-list" role="radiogroup" aria-label="${escHtml(t("prefs_appearance.theme"))}"></div>
     `;
     const list = panel.querySelector(".theme-options-list");
     options.forEach((option) => list.appendChild(option));
@@ -1259,10 +1271,32 @@ function enhanceThemePickers() {
       }
       setThemePickerOpen(root, false);
     });
+    // Con las flechas, el navegador marca el radio vecino (mismo `name`) y
+    // dispara `change`: el tema se aplica al vuelo y el panel sigue abierto,
+    // que cerrarlo dejaría el foco perdido y cortaría el recorrido. Enter o
+    // Espacio confirman y cierran; con el ratón, elegir cierra como siempre.
+    let keyboardChange = false;
     panel.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         // Consumido: el diálogo de debajo (Preferencias) no debe cerrarse.
         e.preventDefault();
+        setThemePickerOpen(root, false);
+        toggle.focus();
+        return;
+      }
+      const radio = e.target instanceof HTMLElement ? e.target.closest('input[type="radio"]') : null;
+      if (!radio) return;
+      if (e.key.startsWith("Arrow")) {
+        keyboardChange = true;
+        setTimeout(() => { keyboardChange = false; }, 0);
+      } else if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        keyboardChange = true;
+        if (!radio.checked) {
+          radio.checked = true;
+          radio.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        keyboardChange = false;
         setThemePickerOpen(root, false);
         toggle.focus();
       }
@@ -1271,7 +1305,7 @@ function enhanceThemePickers() {
       const radio = e.target.closest('input[type="radio"]');
       if (!radio) return;
       updateThemePickerButton(picker, radio.value);
-      setThemePickerOpen(root, false);
+      if (!keyboardChange) setThemePickerOpen(root, false);
     });
   });
 
@@ -4974,8 +5008,39 @@ function renderSidebarSkeleton(rows = 6) {
   return `<div class="sidebar-skeleton" role="status" aria-label="${escHtml(t("sidebar.loading"))}">${items.join("")}</div>`;
 }
 
+/**
+ * Modelo del árbol tal y como se ha pintado (mismo orden que el DOM), para la
+ * navegación por teclado (`modules/tree-nav.js`). Lo fija cada rama de
+ * `renderConnectionListInner`.
+ * @type {import("./modules/tree-nav.js").TreeModelNode[]}
+ */
+let _sidebarTreeModel = [];
+/** Clave de la última fila del árbol que tuvo el foco (tabindex itinerante). */
+let _sidebarTreeFocusKey = null;
+/** Fila que lleva ahora el `tabindex="0"` del árbol. */
+let _sidebarTreeRovingEl = null;
+
 function renderConnectionList() {
   const container = document.getElementById("connection-list");
+  // Repintar reconstruye el árbol con innerHTML y expulsaba el foco de la
+  // fila (sync, favorito, renombrar…): se recuerda qué fila lo tenía y se
+  // vuelve a enfocar por su clave (id de la conexión, o carpeta y workspace).
+  const active = document.activeElement;
+  const hadFocus = !!container && active instanceof HTMLElement && container.contains(active);
+  const focusedKey = hadFocus ? (active.closest("[data-tree-key]")?.dataset.treeKey ?? null) : null;
+  _sidebarTreeModel = [];
+  _sidebarTreeRovingEl = null;
+  renderConnectionListInner(container);
+  if (!container) return;
+  bindTreeKeyboard(container);
+  const roving = applySidebarTreeTabindex(container);
+  if (hadFocus) {
+    const target = (focusedKey && sidebarTreeRowByKey(container, focusedKey)) || roving;
+    target?.focus({ preventScroll: true });
+  }
+}
+
+function renderConnectionListInner(container) {
   container?.classList.toggle("compact", Boolean(prefs.sidebarCompact));
   persistSidebarOpenFolders();
   scheduleTrayQuickLauncherUpdate();
@@ -4985,13 +5050,16 @@ function renderConnectionList() {
   const sidebarQuery = _sidebarSearchQuery.trim();
   if (sidebarQuery) {
     if (prefs.searchGroupedResults !== false) {
-      container.innerHTML = renderSidebarSearchResults(sidebarQuery);
+      const grouped = groupedConnectionSearch(sidebarQuery);
+      container.innerHTML = renderSidebarSearchResults(grouped);
+      _sidebarTreeModel = searchTreeModel(grouped);
     } else {
       // Lista plana clásica (pref desactivada): cualquier coincidencia, alfabética.
       const matches = sidebarSearchCandidates(sidebarQuery);
       container.innerHTML = matches.length
         ? matches.map((profile) => renderConnectionItem(profile, 0)).join("")
         : `<div class="empty-state sidebar-empty-search">${escHtml(t("sidebar.search_no_results"))}</div>`;
+      _sidebarTreeModel = matches.map(connectionTreeModelNode);
     }
     bindTreeEvents(container);
     bindSidebarSearchFolderRows(container);
@@ -5001,6 +5069,7 @@ function renderConnectionList() {
 
   if (prefs.sidebarViewMode === "all") {
     container.innerHTML = renderAllWorkspacesTree();
+    _sidebarTreeModel = allWorkspacesTreeModel();
     bindTreeEvents(container);
     renderDashboard();
     return;
@@ -5008,6 +5077,7 @@ function renderConnectionList() {
 
   if (prefs.sidebarViewMode === "favorites") {
     container.innerHTML = renderFavoritesTree();
+    _sidebarTreeModel = favoriteProfilesSorted().map(connectionTreeModelNode);
     bindTreeEvents(container);
     renderDashboard();
     return;
@@ -5035,8 +5105,246 @@ function renderConnectionList() {
 
   const tree = buildFolderTree();
   container.innerHTML = renderTreeNode(tree, 0);
+  _sidebarTreeModel = treeModelFromNode(tree, getActiveWorkspaceId());
   bindTreeEvents(container);
   renderDashboard();
+}
+
+// ─── Árbol de conexiones: modelo para el teclado ────────────────
+// El mismo orden que pinta `renderTreeNode` (`orderedTreeChildren`), con la
+// identidad de cada fila en `data-tree-key`: el id de la conexión; la carpeta
+// con su workspace (la misma ruta puede existir en dos workspaces en la vista
+// «Todos»); `__ws__/<id>` para la raíz de un workspace; y las carpetas de una
+// búsqueda con su propio prefijo.
+
+function folderTreeKey(path, workspaceId) {
+  return `folder:${workspaceId}|${path}`;
+}
+
+function searchFolderTreeKey(path, workspaceId) {
+  return `sfolder:${workspaceId}|${path}`;
+}
+
+function connectionTreeModelNode(profile) {
+  return { key: profile.id, label: profile.name, kind: "connection" };
+}
+
+/** Hijos de un nodo del árbol en el orden en que se pintan (carpetas primero o no). */
+function orderedTreeChildren(node, workspaceId) {
+  const folders = sortedFolderEntries(node, workspaceId).map(([name, child]) => ({ kind: "folder", name, node: child }));
+  const connections = node.connections.map((profile) => ({ kind: "conn", profile }));
+  return prefs.foldersFirst !== false ? [...folders, ...connections] : [...connections, ...folders];
+}
+
+function treeModelFromNode(node, workspaceId) {
+  return orderedTreeChildren(node, workspaceId).map((child) => (child.kind === "folder"
+    ? {
+      key: folderTreeKey(child.node.path, workspaceId),
+      openKey: child.node.path,
+      label: child.name,
+      kind: "folder",
+      children: treeModelFromNode(child.node, workspaceId),
+    }
+    : connectionTreeModelNode(child.profile)));
+}
+
+function allWorkspacesTreeModel() {
+  return prefs.workspaces.map((w) => ({
+    key: `__ws__/${w.id}`,
+    label: w.name,
+    kind: "workspace",
+    children: treeModelFromNode(workspaceTreeRoot(w.id), w.id),
+  }));
+}
+
+/** Modelo de una búsqueda: las mismas secciones y orden que `renderSidebarSearchResults`. */
+function searchTreeModel(grouped) {
+  return [
+    ...grouped.connections.map((match) => connectionTreeModelNode(match.profile)),
+    ...grouped.folders.map((folder) => ({
+      key: searchFolderTreeKey(folder.path, folder.workspaceId),
+      label: folder.name,
+      kind: "search-folder",
+    })),
+    ...grouped.notes.map((match) => connectionTreeModelNode(match.profile)),
+  ];
+}
+
+function sidebarTreeRowByKey(container, key) {
+  if (!container || !key) return null;
+  return container.querySelector(`[data-tree-key="${CSS.escape(key)}"]`);
+}
+
+/**
+ * Pliega o despliega una carpeta (o la raíz de un workspace) en el DOM sin
+ * repintar: lo mismo que hacía el clic en su cabecera.
+ */
+function toggleSidebarFolderRow(item, force) {
+  const header = item.querySelector(":scope > .folder-header");
+  // La raíz de un workspace (vista «Todos») lleva la ruta `__ws__/<id>` en
+  // la cabecera, no en el item: leyendo solo el item todas compartían la
+  // clave `undefined` y el render las reabría.
+  const path = header?.dataset.folderPath || item.dataset.folderPath;
+  if (!path) return;
+  const open = typeof force === "boolean" ? force : !openFolders.has(path);
+  if (open) openFolders.add(path);
+  else openFolders.delete(path);
+  item.querySelector(":scope > .folder-children")?.classList.toggle("hidden", !open);
+  header?.querySelector(".folder-arrow")?.classList.toggle("open", open);
+  item.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+// ─── Árbol de conexiones: teclado (patrón APG «tree») ────────────
+// Un único `tabindex="0"` en todo el árbol (la última fila enfocada, si no la
+// conexión activa, si no la primera) y `-1` en el resto; las flechas, Inicio,
+// Fin, `*` y la búsqueda tecleando mueven el foco entre las filas visibles
+// (`modules/tree-nav.js`). Los botones de acción de una fila solo entran en
+// el orden de Tab en la fila que lleva el 0: así Tab atraviesa el árbol en
+// una parada (más sus acciones), no una por conexión.
+
+const _treeKeyboardBound = new WeakSet();
+let _treeTypeAhead = { text: "", at: 0 };
+const TREE_TYPE_AHEAD_MS = 700;
+
+function bindTreeKeyboard(container) {
+  if (_treeKeyboardBound.has(container)) return;
+  _treeKeyboardBound.add(container);
+  container.addEventListener("focusin", (e) => {
+    const row = e.target instanceof HTMLElement ? e.target.closest("[data-tree-key]") : null;
+    if (row && container.contains(row)) setSidebarTreeRovingRow(row);
+  });
+  container.addEventListener("keydown", (e) => handleSidebarTreeKeydown(e, container));
+}
+
+function rowActionButtons(row) {
+  return row.querySelectorAll(":scope > .conn-item-actions [data-action]");
+}
+
+function setSidebarTreeRovingRow(row) {
+  const prev = _sidebarTreeRovingEl;
+  if (prev && prev !== row && prev.isConnected) {
+    prev.setAttribute("tabindex", "-1");
+    rowActionButtons(prev).forEach((b) => b.setAttribute("tabindex", "-1"));
+  }
+  row.setAttribute("tabindex", "0");
+  rowActionButtons(row).forEach((b) => b.setAttribute("tabindex", "0"));
+  _sidebarTreeRovingEl = row;
+  _sidebarTreeFocusKey = row.dataset.treeKey || null;
+}
+
+/** Tras pintar: decide qué fila lleva el `tabindex="0"` y la devuelve. */
+function applySidebarTreeTabindex(container) {
+  const nodes = visibleNodes(_sidebarTreeModel, openFolders);
+  const key = rovingKey(nodes, _sidebarTreeFocusKey, activeProfileId());
+  const row = key ? sidebarTreeRowByKey(container, key) : null;
+  if (row) setSidebarTreeRovingRow(row);
+  return row;
+}
+
+function focusSidebarTreeRow(container, key, { select = false } = {}) {
+  const row = sidebarTreeRowByKey(container, key);
+  if (!row) return false;
+  setSidebarTreeRovingRow(row);
+  row.focus();
+  if (select && row.classList.contains("conn-item") && row.dataset.id) {
+    // Como un clic simple: la selección sigue al foco.
+    sidebarLastSelectedConnectionId = row.dataset.id;
+    setSidebarConnectionSelection([row.dataset.id], container);
+  }
+  return true;
+}
+
+function activateSidebarTreeRow(row) {
+  if (row.classList.contains("conn-item")) {
+    if (row.dataset.id) connectProfile(row.dataset.id);
+  } else if (row.classList.contains("search-folder-row")) {
+    revealSearchFolder(row.dataset.searchFolderWs, row.dataset.searchFolder);
+  } else if (row.classList.contains("folder-item")) {
+    toggleSidebarFolderRow(row);
+  }
+}
+
+/**
+ * Tecla Menú o Shift+F10: el menú contextual de la fila, abierto sobre su
+ * rectángulo por el mismo camino que el clic derecho (así vale para
+ * conexiones, carpetas y raíces de workspace, y Escape devuelve el foco).
+ */
+function openSidebarRowContextMenu(row) {
+  const anchor = row.querySelector(":scope > .folder-header") || row;
+  const rect = anchor.getBoundingClientRect();
+  anchor.dispatchEvent(new MouseEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+    clientX: Math.round(rect.left + Math.min(28, rect.width / 2)),
+    clientY: Math.round(rect.top + rect.height / 2),
+  }));
+}
+
+function handleSidebarTreeKeydown(e, container) {
+  if (e.defaultPrevented) return;
+  const target = e.target instanceof HTMLElement ? e.target : null;
+  if (!target || target.closest("input, textarea, [contenteditable=\"true\"]")) return;
+  const row = target.closest("[data-tree-key]");
+  if (!row || !container.contains(row)) return;
+  const currentKey = row.dataset.treeKey || null;
+
+  if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+    e.preventDefault();
+    openSidebarRowContextMenu(row);
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  // Los botones de la fila (favorito, editar, eliminar) se activan solos.
+  if (target.closest("[data-action]") && (e.key === "Enter" || e.key === " ")) return;
+
+  const nodes = visibleNodes(_sidebarTreeModel, openFolders);
+
+  // Shift+↑/↓ amplía la selección múltiple, como Shift+clic: el rango va del
+  // ancla (la última conexión elegida) a la fila destino, entre las visibles.
+  if (e.shiftKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    e.preventDefault();
+    const result = treeKey(nodes, currentKey, e.key);
+    if (!result?.focus) return;
+    const connIds = nodes.filter((n) => n.kind === "connection").map((n) => n.key);
+    if (connIds.includes(result.focus)) {
+      const last = sidebarLastSelectedConnectionId;
+      const anchor = last && sidebarSelectedConnectionIds.has(last) && connIds.includes(last)
+        ? last
+        : (currentKey && connIds.includes(currentKey) ? currentKey : result.focus);
+      const from = connIds.indexOf(anchor);
+      const to = connIds.indexOf(result.focus);
+      const [start, end] = from < to ? [from, to] : [to, from];
+      sidebarLastSelectedConnectionId = anchor;
+      setSidebarConnectionSelection(connIds.slice(start, end + 1), container);
+    }
+    focusSidebarTreeRow(container, result.focus);
+    return;
+  }
+
+  // Búsqueda tecleando: las letras se acumulan durante un instante.
+  if (e.key.length === 1 && e.key !== " " && e.key !== "*") {
+    e.preventDefault();
+    const now = performance.now();
+    const text = now - _treeTypeAhead.at > TREE_TYPE_AHEAD_MS ? e.key : _treeTypeAhead.text + e.key;
+    _treeTypeAhead = { text, at: now };
+    const hit = typeAhead(nodes, currentKey, text);
+    if (hit) focusSidebarTreeRow(container, hit, { select: true });
+    return;
+  }
+
+  const result = treeKey(nodes, currentKey, e.key);
+  if (!result) return;
+  e.preventDefault();
+  if (result.toggle) {
+    const item = sidebarTreeRowByKey(container, result.toggle);
+    if (item) toggleSidebarFolderRow(item);
+  }
+  for (const key of result.expand) {
+    const item = sidebarTreeRowByKey(container, key);
+    if (item) toggleSidebarFolderRow(item, true);
+  }
+  if (result.focus) focusSidebarTreeRow(container, result.focus, { select: true });
+  if (result.activate) activateSidebarTreeRow(row);
 }
 
 function activeProfileId() {
@@ -5067,7 +5375,7 @@ function markSidebarProfile(profileId, { scroll = false } = {}) {
   const item = container.querySelector(`.conn-item[data-id="${CSS.escape(profileId)}"]`);
   if (!item) return;
   if (scroll) {
-    item.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    item.scrollIntoView({ block: "nearest", behavior: scrollBehavior() });
   }
 }
 
@@ -5159,26 +5467,32 @@ function restoreSidebarTreeState(state) {
   }
 }
 
+/** Árbol (carpetas + conexiones) de un workspace, para la vista «Todos». */
+function workspaceTreeRoot(workspaceId) {
+  const root = { connections: [], folders: {} };
+  for (const fp of getWorkspaceFolders(workspaceId)) ensureFolderPath(root, fp);
+  for (const p of profiles) {
+    if ((p.workspace_id || "default") !== workspaceId) continue;
+    if (!p.group) root.connections.push(p);
+    else ensureFolderPath(root, p.group).connections.push(p);
+  }
+  return root;
+}
+
 function renderAllWorkspacesTree() {
   if (!prefs.workspaces.length) return `<div class="empty-state"><p>—</p></div>`;
   return prefs.workspaces.map((w) => {
-    const wsProfiles = profiles.filter((p) => (p.workspace_id || "default") === w.id);
-    const wsFolders = getWorkspaceFolders(w.id);
-    const root = { connections: [], folders: {} };
-    for (const fp of wsFolders) ensureFolderPath(root, fp);
-    for (const p of wsProfiles) {
-      if (!p.group) root.connections.push(p);
-      else ensureFolderPath(root, p.group).connections.push(p);
-    }
+    const root = workspaceTreeRoot(w.id);
     const inner = renderTreeNode(root, 1, w.id);
     const open = openFolders.has(`__ws__/${w.id}`) ? "open" : "";
     const childrenHidden = open ? "" : "hidden";
-    const count = wsProfiles.length;
-    return `<div class="folder-item ws-folder-item" data-ws-root="${escHtml(w.id)}" role="treeitem" aria-expanded="${open ? "true" : "false"}"${workspaceTintAttrs(w.id)}>
+    const count = countConnections(root);
+    const labelId = nextTreeLabelId();
+    return `<div class="folder-item ws-folder-item" data-ws-root="${escHtml(w.id)}" data-tree-key="__ws__/${escHtml(w.id)}" role="treeitem" tabindex="-1" aria-level="1" aria-expanded="${open ? "true" : "false"}" aria-labelledby="${labelId}"${workspaceTintAttrs(w.id)}>
       <div class="folder-header" data-folder-path="__ws__/${escHtml(w.id)}">
-        <span class="folder-arrow ${open}">▶</span>
+        <span class="folder-arrow ${open}" aria-hidden="true">▶</span>
         <span class="folder-icon">${folderIconSvg()}</span>
-        <span class="folder-name">${escHtml(w.name)}</span>
+        <span class="folder-name" id="${labelId}">${escHtml(w.name)}</span>
         <span class="folder-count">${count}</span>
       </div>
       <div class="folder-children ${childrenHidden}" role="group">
@@ -5198,8 +5512,11 @@ function renderFavoritesTree() {
         <p class="empty-state__hint">${escHtml(t("sidebar.favorites_empty_hint"))}</p>
       </div>`;
   }
-  favs.sort((a, b) => a.name.localeCompare(b.name));
-  return favs.map((p) => renderConnectionItem(p, 0)).join("");
+  return favoriteProfilesSorted().map((p) => renderConnectionItem(p, 0)).join("");
+}
+
+function favoriteProfilesSorted() {
+  return profiles.filter((p) => isFavoriteProfile(p.id)).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function renderWorkspaceSwitcher() {
@@ -5315,8 +5632,12 @@ function positionSidebarToolsPopover(anchorId = "btn-sidebar-tools") {
     top = Math.max(margin, triggerRect.top - popRect.height - margin);
   }
 
-  popover.style.top = `${top}px`;
-  popover.style.left = `${left}px`;
+  // El popover vive dentro del sidebar, que lleva el zoom de la interfaz: sus
+  // `top`/`left` se multiplican por él, mientras que las medidas del viewport
+  // son visuales. Se calcula en visual y se divide al escribir.
+  const zoom = clampUiZoom(prefs.uiZoom ?? 1);
+  popover.style.top = `${top / zoom}px`;
+  popover.style.left = `${left / zoom}px`;
 }
 // Compatibilidad con llamadas previas
 function toggleWorkspaceMenu(open) { toggleSidebarTools(open); }
@@ -6308,8 +6629,8 @@ function highlightHtml(text, tokens) {
  * todas sus conexiones sueltas) y coincidencias en notas, cada resultado con
  * su ruta y el texto coincidente resaltado.
  */
-function renderSidebarSearchResults(query) {
-  const grouped = groupedConnectionSearch(query);
+/** @param {ReturnType<typeof groupedConnectionSearch>} grouped */
+function renderSidebarSearchResults(grouped) {
   const sections = [];
   if (grouped.connections.length) {
     sections.push(searchSection(
@@ -6366,7 +6687,8 @@ function searchFolderContext(folder) {
 function renderSearchFolderRow(folder, tokens) {
   const context = searchFolderContext(folder);
   return `
-    <div class="search-folder-row" role="treeitem" aria-selected="false" tabindex="0"
+    <div class="search-folder-row" role="treeitem" aria-level="1" aria-selected="false" tabindex="-1"
+         data-tree-key="${escHtml(searchFolderTreeKey(folder.path, folder.workspaceId))}"
          data-search-folder="${escHtml(folder.path)}"
          data-search-folder-ws="${escHtml(folder.workspaceId)}"
          title="${escHtml(folder.path)}">
@@ -6380,14 +6702,9 @@ function renderSearchFolderRow(folder, tokens) {
 }
 
 function bindSidebarSearchFolderRows(container) {
+  // Enter y Espacio los atiende el teclado del árbol (`handleSidebarTreeKeydown`).
   container.querySelectorAll(".search-folder-row").forEach((row) => {
-    const open = () => revealSearchFolder(row.dataset.searchFolderWs, row.dataset.searchFolder);
-    row.addEventListener("click", open);
-    row.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      open();
-    });
+    row.addEventListener("click", () => revealSearchFolder(row.dataset.searchFolderWs, row.dataset.searchFolder));
   });
 }
 
@@ -6426,7 +6743,7 @@ function revealSearchFolder(workspaceId, path) {
     // Acotado al workspace destino: en vista "all" puede existir una carpeta
     // homónima en otro workspace y el selector plano scrollearía a la primera.
     const el = findSidebarFolderItem(document.getElementById("connection-list"), path, targetWorkspace);
-    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    el?.scrollIntoView({ block: "nearest", behavior: scrollBehavior() });
   });
 }
 
@@ -6464,22 +6781,19 @@ function focusConnectionSearch() {
 
 function renderTreeNode(node, depth, workspaceId = getActiveWorkspaceId()) {
   let html = "";
-  const renderConnections = () => {
-    for (const p of node.connections) html += renderConnectionItem(p, depth);
-  };
-  const renderFolders = () => {
-    for (const [name, child] of sortedFolderEntries(node, workspaceId)) {
-      html += renderFolderNode(name, child, depth, workspaceId);
-    }
-  };
-  if (prefs.foldersFirst !== false) {
-    renderFolders();
-    renderConnections();
-  } else {
-    renderConnections();
-    renderFolders();
+  for (const child of orderedTreeChildren(node, workspaceId)) {
+    html += child.kind === "folder"
+      ? renderFolderNode(child.name, child.node, depth, workspaceId)
+      : renderConnectionItem(child.profile, depth);
   }
   return html;
+}
+
+let _treeLabelSeq = 0;
+/** Id para el `aria-labelledby` de una carpeta: su nombre, no todo el subárbol. */
+function nextTreeLabelId() {
+  _treeLabelSeq += 1;
+  return `tree-label-${_treeLabelSeq}`;
 }
 
 function renderFolderNode(name, node, depth, workspaceId) {
@@ -6488,13 +6802,14 @@ function renderFolderNode(name, node, depth, workspaceId) {
   const count = countConnections(node);
   const indent = 14 + depth * 12;
   const tintAttrs = folderTintAttrs(path, workspaceId);
+  const labelId = nextTreeLabelId();
 
   return `
-    <div class="folder-item" data-folder-path="${escHtml(path)}" draggable="true" role="treeitem" aria-expanded="${isOpen ? "true" : "false"}"${tintAttrs}>
+    <div class="folder-item" data-folder-path="${escHtml(path)}" data-tree-key="${escHtml(folderTreeKey(path, workspaceId))}" draggable="true" role="treeitem" tabindex="-1" aria-level="${depth + 1}" aria-expanded="${isOpen ? "true" : "false"}" aria-labelledby="${labelId}"${tintAttrs}>
       <div class="folder-header" style="padding-left:${indent}px; padding-right:14px">
-        <span class="folder-arrow ${isOpen ? "open" : ""}">▶</span>
+        <span class="folder-arrow ${isOpen ? "open" : ""}" aria-hidden="true">▶</span>
         <span class="folder-icon">${folderIconSvg()}</span>
-        <span class="folder-name">${escHtml(name)}</span>
+        <span class="folder-name" id="${labelId}">${escHtml(name)}</span>
         <span class="folder-count">${count}</span>
       </div>
       <div class="folder-children${isOpen ? "" : " hidden"}" role="group">
@@ -6676,9 +6991,11 @@ function renderConnectionItem(p, depth, opts = {}) {
   return `
     <div class="${cls}"
          data-id="${p.id}"
+         data-tree-key="${escHtml(p.id)}"
          draggable="true"
-         tabindex="0"
+         tabindex="-1"
          role="treeitem"
+         aria-level="${depth + 1}"
          aria-selected="${isActiveTab || isSelected ? "true" : "false"}"
          aria-label="${escHtml(`${p.name} — ${p.username}@${p.host}:${p.port}`)}"
          style="padding-left:${indent}px">
@@ -6697,9 +7014,9 @@ function renderConnectionItem(p, depth, opts = {}) {
         ${contextLine}${noteLine}
       </div>
       <div class="conn-item-actions">
-        <button class="btn-icon-sm conn-fav${isFavoriteProfile(p.id) ? " on" : ""}" data-action="toggle-favorite" data-id="${p.id}" title="${escHtml(t("ctx.toggle_favorite"))}"><svg class="row-icon-svg${isFavoriteProfile(p.id) ? " filled" : ""}" aria-hidden="true"><use href="#ci-star"/></svg></button>
-        <button class="btn-icon-sm" data-action="edit" data-id="${p.id}" title="${escHtml(t("ctx.edit"))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></button>
-        <button class="btn-icon-sm danger" data-action="delete" data-id="${p.id}" title="${escHtml(t("ctx.delete"))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+        <button class="btn-icon-sm conn-fav${isFavoriteProfile(p.id) ? " on" : ""}" data-action="toggle-favorite" data-id="${p.id}" tabindex="-1" title="${escHtml(t("ctx.toggle_favorite"))}"><svg class="row-icon-svg${isFavoriteProfile(p.id) ? " filled" : ""}" aria-hidden="true"><use href="#ci-star"/></svg></button>
+        <button class="btn-icon-sm" data-action="edit" data-id="${p.id}" tabindex="-1" title="${escHtml(t("ctx.edit"))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></button>
+        <button class="btn-icon-sm danger" data-action="delete" data-id="${p.id}" tabindex="-1" title="${escHtml(t("ctx.delete"))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
       </div>
     </div>`;
 }
@@ -6811,17 +7128,7 @@ function bindTreeEvents(container) {
       // abierta de este perfil (force evita reutilizar la pestaña existente).
       connectProfile(el.dataset.id, { force: true });
     });
-    // Teclado: Enter/Espacio conectan (reutilizan pestaña si ya está abierta).
-    // El foco sobre la fila ya hace de «selección», así que aquí el activador
-    // abre la conexión, como el clic. Las acciones internas (favorito/editar/
-    // eliminar) son <button> propios y se gestionan aparte.
-    el.addEventListener("keydown", (e) => {
-      if (e.target.closest("[data-action]")) return;
-      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
-        e.preventDefault();
-        connectProfile(el.dataset.id);
-      }
-    });
+    // Teclado (Enter conecta, flechas, menú contextual…): `bindTreeKeyboard`.
   });
 
   // Clic en botones de acción
@@ -6854,23 +7161,7 @@ function bindTreeEvents(container) {
   container.querySelectorAll(".folder-header").forEach((header) => {
     header.addEventListener("click", () => {
       const item = header.closest(".folder-item");
-      // La raíz de un workspace (vista «Todos») lleva la ruta `__ws__/<id>` en
-      // la cabecera, no en el item: leyendo solo el item todas compartían la
-      // clave `undefined` y el render las reabría.
-      const path = header.dataset.folderPath || item.dataset.folderPath;
-      const children = item.querySelector(".folder-children");
-      const arrow = header.querySelector(".folder-arrow");
-      if (openFolders.has(path)) {
-        openFolders.delete(path);
-        children.classList.add("hidden");
-        arrow.classList.remove("open");
-        item.setAttribute("aria-expanded", "false");
-      } else {
-        openFolders.add(path);
-        children.classList.remove("hidden");
-        arrow.classList.add("open");
-        item.setAttribute("aria-expanded", "true");
-      }
+      if (item) toggleSidebarFolderRow(item);
     });
   });
 
@@ -22791,7 +23082,7 @@ function revealSftpActivity(panel) {
   wrap.classList.remove("hidden");
   setSftpLogTab(panel, "activity");
   log.scrollTop = 0;
-  wrap.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  wrap.scrollIntoView({ block: "nearest", behavior: scrollBehavior() });
 }
 
 function waitForPaint() {

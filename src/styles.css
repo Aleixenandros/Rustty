@@ -385,6 +385,22 @@ input, select, textarea {
 
 .hidden { display: none !important; }
 
+/* Oculto a la vista pero presente para el teclado y los lectores de pantalla
+   (un control cuyo aspecto lo da otro elemento, como los radios de la galería
+   de temas). `display: none` lo sacaba del orden de Tab. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* ─── Foco accesible (slice estético #1) ────────────────────────
    Anillo visible solo en navegación por teclado. No afecta al
    clic con ratón porque :focus-visible no se activa con puntero
@@ -428,8 +444,16 @@ a:focus-visible,
 #rail,
 #sidebar,
 #tab-bar,
-[role="dialog"] {
+[role="dialog"],
+#script-rec-bar,
+#script-run-bar {
   zoom: var(--ui-zoom, 1);
+}
+
+/* Un diálogo dentro de otro (el selector de carpeta de Nueva conexión) ya
+   hereda la escala de su padre: sin esto se escalaba dos veces. */
+[role="dialog"] [role="dialog"] {
+  zoom: 1;
 }
 
 /* ─── Rail vertical de iconos ────────────────────────────────── */
@@ -1538,8 +1562,26 @@ body:not(.native-scrollbars) #connection-list::-webkit-scrollbar-thumb:hover {
   gap: 4px;
 }
 
-.conn-item:hover .conn-item-actions {
+.conn-item:hover .conn-item-actions,
+.conn-item:focus-within .conn-item-actions {
   display: flex;
+}
+
+/* ─── Foco por teclado en el árbol (tabindex itinerante) ─────────
+   El anillo va por dentro de la fila: el contenedor tiene scroll y uno
+   exterior quedaba recortado. En una carpeta se dibuja sobre su cabecera
+   (el treeitem envuelve también a los hijos: el anillo abarcaba el subárbol).
+   El `#connection-list` da la especificidad para ganar a la regla genérica
+   de `[tabindex]:focus-visible`. */
+#connection-list .folder-item:focus-visible {
+  outline: none;
+}
+#connection-list .folder-item:focus-visible > .folder-header,
+#connection-list .conn-item:focus-visible,
+#connection-list .search-folder-row:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+  border-radius: var(--radius-sm);
 }
 
 #connection-list.compact .conn-item-actions {
@@ -4963,6 +5005,28 @@ select:focus {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 20%, transparent);
 }
 
+/* Al llegar con el teclado, los campos llevan el mismo anillo de foco que los
+   botones (respeta «Foco visible reforzado» y el contraste alto); el
+   resplandor de arriba queda para el ratón. */
+input[type="text"]:focus-visible,
+input[type="password"]:focus-visible,
+input[type="number"]:focus-visible,
+input[type="search"]:focus-visible,
+input[type="email"]:focus-visible,
+input[type="url"]:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.custom-select-display:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: none;
+}
+
+.custom-select-item:focus-visible {
+  background: var(--blue);
+  color: var(--on-blue);
+}
+
 input::placeholder {
   color: var(--subtext0);
   opacity: 1;
@@ -5887,6 +5951,19 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   color: var(--on-blue);
 }
 .ctx-item:hover .ctx-icon { color: var(--on-blue); }
+
+/* El ítem activo al recorrer el menú con el teclado se ve igual que con el
+   ratón; el anillo de foco común se mantiene por encima. */
+.ctx-item:focus-visible {
+  background: var(--blue);
+  color: var(--on-blue);
+}
+.ctx-item:focus-visible .ctx-icon { color: var(--on-blue); }
+.ctx-item.danger:focus-visible {
+  background: var(--red);
+  color: var(--on-red);
+}
+.ctx-item.danger:focus-visible .ctx-icon { color: var(--on-red); }
 
 .ctx-item:disabled {
   opacity: 0.45;
@@ -6959,8 +7036,11 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   display: none;
 }
 
-.theme-option input[type="radio"] {
-  display: none;
+/* El radio sigue siendo enfocable (clase `visually-hidden`); el anillo de foco
+   lo lleva la tarjeta, que es lo que se ve. */
+.theme-option:has(> input[type="radio"]:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .theme-option .theme-label {

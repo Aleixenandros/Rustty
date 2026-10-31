@@ -62,6 +62,7 @@ import { checkDialogs } from "./dialogs.mjs";
 import { checkKeyboard } from "./keyboard.mjs";
 import { checkToasts } from "./toasts.mjs";
 import { checkTerminalLayers } from "./terminal-layers.mjs";
+import { checkTree } from "./tree.mjs";
 import { checkTunnels } from "./tunnels.mjs";
 import { checkThemeTone } from "./theme-tone.mjs";
 import { checkTerminalProtocols } from "./terminal-protocols.mjs";
@@ -512,6 +513,7 @@ async function main() {
     await checkKeyboard(app, check);
     await checkToasts(app, check);
     await checkTerminalLayers(app, check);
+    await checkTree(app, check);
     await checkIpcLeastPrivilege(app, home);
     const sftpServer = await prepareSftpServer(home);
     if (sftpServer) {

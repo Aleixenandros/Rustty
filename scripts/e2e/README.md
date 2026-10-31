@@ -65,6 +65,14 @@ aviso de reconexión y diagnóstico— en sus cinco combinaciones y se mide que
 sus rectángulos no se solapen ni salgan del área; es una comprobación de la
 hoja de estilos, sin conexiones.
 
+El árbol de conexiones (`tree.mjs`) se recorre con eventos de teclado: la
+carpeta enfocada lleva el único tabindex 0 del árbol y su nombre como etiqueta,
+→ la despliega, ↓ baja a su conexión (que pasa a ser la parada de Tab con sus
+acciones), marcar favorito desde la fila repinta la lista sin perder el foco,
+Shift+F10 abre el menú contextual sobre la fila y Escape devuelve el foco, ←
+sube a la carpeta, Enter la pliega y teclear un nombre salta a esa conexión.
+Crea dos perfiles de prueba (uno en una carpeta) y recarga la interfaz.
+
 El panel de túneles se comprueba en claro, oscuro y una ventana de 800 px:
 controles de cabecera juntos, contenido sin desbordar, minimizar/reabrir,
 cerrar y confirmar/cancelar el borrado de un túnel guardado. Las capturas se
