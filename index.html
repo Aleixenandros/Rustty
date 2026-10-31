@@ -252,6 +252,10 @@
               <svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-route"/></svg>
               <span id="status-route-text" class="status-route-text"></span>
             </span>
+            <button type="button" class="status-tunnels hidden" id="status-tunnels" aria-haspopup="true">
+              <svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg>
+              <span id="status-tunnels-text" class="mono"></span>
+            </button>
             <span class="status-sep"></span>
             <span class="status-cwd hidden" id="status-cwd-wrap" title="Directorio remoto actual (OSC 7)" data-i18n-title="status.cwd_title">
               <span class="status-cwd-icon" aria-hidden="true"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-folder"/></svg></span>
@@ -2357,6 +2361,16 @@
                 </select>
               </div>
               <p class="settings-hint" data-i18n="prefs_terminal.remote_title_hint">El que ponen bash, zsh o vim (OSC 0/2), como la carpeta o el fichero abierto. Si renombras la pestaña, manda tu nombre.</p>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-tab-wheel" data-i18n="prefs_terminal.tab_wheel">Rueda del ratón sobre las pestañas</label>
+                <select id="pref-tab-wheel">
+                  <option value="scroll" data-i18n="prefs_terminal.tab_wheel_scroll">Desplazar la barra de pestañas</option>
+                  <option value="switch" data-i18n="prefs_terminal.tab_wheel_switch">Cambiar de pestaña</option>
+                  <option value="off" data-i18n="prefs_terminal.tab_wheel_off">No hacer nada</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="prefs_terminal.tab_wheel_hint">Con muchas pestañas abiertas, girar la rueda sobre ellas mueve la barra para llegar a las que no caben. Ctrl+rueda sigue siendo el zoom del terminal.</p>
 
               <div class="settings-row">
                 <label for="pref-local-cwd" data-i18n="prefs_terminal.local_cwd">Carpeta inicial de la consola local</label>

@@ -1132,6 +1132,11 @@
     "remote_title_tab": "Junto al nombre de la pestaña",
     "remote_title_off": "No mostrarlo",
     "remote_title_hint": "El que ponen bash, zsh o vim (OSC 0/2), como la carpeta o el fichero abierto. Si renombras la pestaña, manda tu nombre.",
+    "tab_wheel": "Rueda del ratón sobre las pestañas",
+    "tab_wheel_scroll": "Desplazar la barra de pestañas",
+    "tab_wheel_switch": "Cambiar de pestaña",
+    "tab_wheel_off": "No hacer nada",
+    "tab_wheel_hint": "Con muchas pestañas abiertas, girar la rueda sobre ellas mueve la barra para llegar a las que no caben. Ctrl+rueda sigue siendo el zoom del terminal.",
     "unit_seconds": "segundos",
     "local_cwd": "Carpeta inicial de la consola local",
     "local_cwd_placeholder": "$HOME",
@@ -1509,7 +1514,9 @@
     "cwd_copy": "Copiar ruta completa",
     "cwd_copy_seg": "Ctrl/Cmd+clic para copiar la ruta",
     "cwd_copied": "Ruta copiada al portapapeles",
-    "cwd_nav_error": "No se pudo abrir el panel SFTP en {path}"
+    "cwd_nav_error": "No se pudo abrir el panel SFTP en {path}",
+    "tunnels_open": "Túneles abiertos en esta conexión (pulsa para ver el panel)",
+    "tunnels_none": "Sin túneles abiertos"
   },
   "metrics": {
     "title": "Recursos",

@@ -83,6 +83,7 @@ import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { buildCheatsheet, filterCheatsheet } from "./modules/shortcuts/cheatsheet.js";
 import { formatAccelerator } from "./modules/platform.js";
 import { buildQuickProfile, findQuickTargetProfile, formatQuickTarget, paletteQuickTarget, parseQuickTarget } from "./modules/quick-connect.js";
+import { normalizeTabWheel, tabWheelAction } from "./modules/tab-wheel.js";
 import { firstBlockPerAlias, linkSshConfigJumps, sshConfigJumpFields } from "./modules/ssh-config-jumps.js";
 import {
   MAX_ENV_VALUE_LEN, MAX_ENV_VARS, allowsOsc7Hook, applySshConfigLaunchKey, formatEnvVarsText, launchKind,
@@ -1893,6 +1894,8 @@ function openSettingsModal() {
   if (_oscProgress) _oscProgress.checked = prefs.oscProgress !== false;
   const _remoteTitle = document.getElementById("pref-remote-title");
   if (_remoteTitle) _remoteTitle.value = normalizeRemoteTitleMode(prefs.remoteTitleMode);
+  const _tabWheel = document.getElementById("pref-tab-wheel");
+  if (_tabWheel) _tabWheel.value = normalizeTabWheel(prefs.tabWheel);
   const _ligEl = document.getElementById("pref-terminal-ligatures");
   if (_ligEl) _ligEl.checked = !!prefs.terminalLigatures;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
@@ -4054,6 +4057,7 @@ function readPrefsFromModal() {
     oscNotify:       !!document.getElementById("pref-osc-notify")?.checked,
     oscProgress:     document.getElementById("pref-osc-progress")?.checked ?? true,
     remoteTitleMode: normalizeRemoteTitleMode(document.getElementById("pref-remote-title")?.value),
+    tabWheel: normalizeTabWheel(document.getElementById("pref-tab-wheel")?.value),
     terminalLigatures: !!document.getElementById("pref-terminal-ligatures")?.checked,
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     tmuxScrollbackLines: (() => {
@@ -11075,6 +11079,39 @@ function refreshRouteIndicators() {
   updateStatusBar();
 }
 
+/**
+ * Segmento de la barra inferior con los túneles abiertos de la conexión
+ * activa: un túnel sigue vivo en segundo plano aunque el panel esté cerrado,
+ * y desde el pie de la sesión se ve de un vistazo (el número) y en el tooltip
+ * cuáles son. Pulsarlo abre el panel de túneles de la sesión. Se cuenta como
+ * en la barra lateral: todos los túneles de las sesiones de ese perfil.
+ * @param {{ id: string } | null | undefined} profile
+ */
+function renderStatusTunnels(profile) {
+  const el = document.getElementById("status-tunnels");
+  const textEl = document.getElementById("status-tunnels-text");
+  if (!el || !textEl) return;
+  const active = profile ? activeTunnelsForProfile(profile.id) : [];
+  el.classList.toggle("hidden", !active.length);
+  if (!active.length) {
+    textEl.textContent = "";
+    el.title = "";
+    el.setAttribute("aria-label", t("status.tunnels_none"));
+    return;
+  }
+  textEl.textContent = String(active.length);
+  const lines = active.map(({ tunnel }) => `• ${describeTunnel(tunnel)}`);
+  el.title = [t("status.tunnels_open"), ...lines].join("\n");
+  el.setAttribute("aria-label", `${t("tunnels.active_count", { n: active.length })}: ${lines.join(", ")}`);
+}
+
+/** Repinta el segmento de túneles de la barra inferior para la sesión activa. */
+function refreshStatusTunnels() {
+  const s = activeSessionId ? sessions.get(activeSessionId) : null;
+  const profile = s?.profileId ? profiles.find((p) => p.id === s.profileId) : null;
+  renderStatusTunnels(profile && (profile.connection_type || "ssh") === "ssh" ? profile : null);
+}
+
 /** Segmento de la barra inferior con la ruta de la sesión activa. */
 function renderStatusRoute(s) {
   const wrap = document.getElementById("status-route");
@@ -14064,6 +14101,7 @@ function setStatusBarVisible(visible) {
 
 function clearStatusBar() {
   setStatusBarVisible(false);
+  renderStatusTunnels(null);
   const userHostEl = document.getElementById("status-user-host");
   if (userHostEl) userHostEl.textContent = "—";
   const envEl = document.getElementById("status-env");
@@ -14750,6 +14788,7 @@ function updateStatusBar() {
   }
 
   renderStatusRoute(s);
+  renderStatusTunnels(profile);
 
   const dot = document.getElementById("status-dot");
   if (dot) {
@@ -19439,6 +19478,7 @@ function tunnelBadgeHtml(profileId) {
  */
 function refreshTunnelIndicators() {
   updateTunnelsRailIndicator();
+  refreshStatusTunnels();
   const container = document.getElementById("connection-list");
   if (!container) return;
   for (const el of container.querySelectorAll(".conn-item[data-id]")) {
@@ -25890,6 +25930,25 @@ function bindUIEvents() {
       return;
     }
     handleContextMenuAction(btn.dataset.ctx);
+  });
+
+  // Rueda del ratón sobre la tira de pestañas: desplazarla (o cambiar de
+  // pestaña, según la preferencia). Ctrl+rueda sigue siendo el zoom.
+  const tabScroll = document.getElementById("tab-scroll");
+  tabScroll?.addEventListener("wheel", (e) => {
+    const action = tabWheelAction(e, {
+      mode: prefs.tabWheel,
+      overflowing: tabScroll.scrollWidth > tabScroll.clientWidth + 1,
+    });
+    if (!action) return;
+    e.preventDefault();
+    if (action.type === "scroll") tabScroll.scrollLeft += action.px;
+    else switchTab(action.delta);
+  }, { passive: false });
+
+  // Túneles abiertos en el pie de la sesión: pulsar abre su panel de túneles.
+  document.getElementById("status-tunnels")?.addEventListener("click", () => {
+    if (activeSessionId) toggleTunnelPanel(activeSessionId);
   });
 
   // Clic derecho en una pestaña

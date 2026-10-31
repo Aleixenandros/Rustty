@@ -1132,6 +1132,11 @@
     "remote_title_tab": "Junto ao nome do separador",
     "remote_title_off": "Não o mostrar",
     "remote_title_hint": "O que definem o bash, o zsh ou o vim (OSC 0/2), como a pasta atual ou o ficheiro aberto. Se mudares o nome ao separador, prevalece o teu.",
+    "tab_wheel": "Roda do rato sobre os separadores",
+    "tab_wheel_scroll": "Deslocar a barra de separadores",
+    "tab_wheel_switch": "Mudar de separador",
+    "tab_wheel_off": "Não fazer nada",
+    "tab_wheel_hint": "Com muitos separadores abertos, rodar a roda sobre eles move a barra para chegar aos que não cabem. Ctrl+roda continua a ser o zoom do terminal.",
     "unit_seconds": "segundos",
     "local_cwd": "Pasta inicial do console local",
     "local_cwd_placeholder": "$HOME",
@@ -1509,7 +1514,9 @@
     "cwd_copy": "Copiar caminho completo",
     "cwd_copy_seg": "Ctrl/Cmd+clique para copiar o caminho",
     "cwd_copied": "Caminho copiado para a área de transferência",
-    "cwd_nav_error": "Não foi possível abrir o painel SFTP em {path}"
+    "cwd_nav_error": "Não foi possível abrir o painel SFTP em {path}",
+    "tunnels_open": "Túneis abertos nesta ligação (clica para abrir o painel)",
+    "tunnels_none": "Sem túneis abertos"
   },
   "metrics": {
     "title": "Recursos",

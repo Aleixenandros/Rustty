@@ -1132,6 +1132,11 @@
     "remote_title_tab": "Neben dem Tab-Namen",
     "remote_title_off": "Nicht anzeigen",
     "remote_title_hint": "Der Titel, den bash, zsh oder vim setzen (OSC 0/2), etwa der aktuelle Ordner oder die geöffnete Datei. Wenn du den Tab umbenennst, gilt dein Name.",
+    "tab_wheel": "Mausrad über den Tabs",
+    "tab_wheel_scroll": "Tableiste verschieben",
+    "tab_wheel_switch": "Tab wechseln",
+    "tab_wheel_off": "Nichts tun",
+    "tab_wheel_hint": "Bei vielen offenen Tabs verschiebt das Mausrad über ihnen die Leiste, um die zu erreichen, die nicht hineinpassen. Strg+Mausrad bleibt der Zoom des Terminals.",
     "unit_seconds": "Sekunden",
     "local_cwd": "Startordner der lokalen Konsole",
     "local_cwd_placeholder": "$HOME",
@@ -1509,7 +1514,9 @@
     "cwd_copy": "Vollständigen Pfad kopieren",
     "cwd_copy_seg": "Strg/Cmd+Klick zum Kopieren des Pfads",
     "cwd_copied": "Pfad in die Zwischenablage kopiert",
-    "cwd_nav_error": "SFTP-Panel konnte unter {path} nicht geöffnet werden"
+    "cwd_nav_error": "SFTP-Panel konnte unter {path} nicht geöffnet werden",
+    "tunnels_open": "Offene Tunnel auf dieser Verbindung (klicken, um das Panel zu öffnen)",
+    "tunnels_none": "Keine offenen Tunnel"
   },
   "metrics": {
     "title": "Ressourcen",

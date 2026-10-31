@@ -1132,6 +1132,11 @@
     "remote_title_tab": "À côté du nom de l'onglet",
     "remote_title_off": "Ne pas l'afficher",
     "remote_title_hint": "Celui que définissent bash, zsh ou vim (OSC 0/2), comme le dossier courant ou le fichier ouvert. Si vous renommez l'onglet, votre nom prévaut.",
+    "tab_wheel": "Molette de la souris sur les onglets",
+    "tab_wheel_scroll": "Faire défiler la barre d'onglets",
+    "tab_wheel_switch": "Changer d'onglet",
+    "tab_wheel_off": "Ne rien faire",
+    "tab_wheel_hint": "Avec beaucoup d'onglets ouverts, tourner la molette dessus déplace la barre pour atteindre ceux qui ne tiennent pas. Ctrl+molette reste le zoom du terminal.",
     "unit_seconds": "secondes",
     "local_cwd": "Dossier initial de la console locale",
     "local_cwd_placeholder": "$HOME",
@@ -1509,7 +1514,9 @@
     "cwd_copy": "Copier le chemin complet",
     "cwd_copy_seg": "Ctrl/Cmd+clic pour copier le chemin",
     "cwd_copied": "Chemin copié dans le presse-papiers",
-    "cwd_nav_error": "Impossible d'ouvrir le panneau SFTP sur {path}"
+    "cwd_nav_error": "Impossible d'ouvrir le panneau SFTP sur {path}",
+    "tunnels_open": "Tunnels ouverts sur cette connexion (cliquer pour ouvrir le panneau)",
+    "tunnels_none": "Aucun tunnel ouvert"
   },
   "metrics": {
     "title": "Ressources",

@@ -1132,6 +1132,11 @@
     "remote_title_tab": "Next to the tab name",
     "remote_title_off": "Don't show it",
     "remote_title_hint": "The one bash, zsh or vim set (OSC 0/2), such as the current folder or the open file. If you rename the tab, your name wins.",
+    "tab_wheel": "Mouse wheel over the tabs",
+    "tab_wheel_scroll": "Scroll the tab bar",
+    "tab_wheel_switch": "Switch tabs",
+    "tab_wheel_off": "Do nothing",
+    "tab_wheel_hint": "With many tabs open, turning the wheel over them moves the bar to reach the ones that don't fit. Ctrl+wheel remains the terminal zoom.",
     "unit_seconds": "seconds",
     "local_cwd": "Local console start folder",
     "local_cwd_placeholder": "$HOME",
@@ -1509,7 +1514,9 @@
     "cwd_copy": "Copy full path",
     "cwd_copy_seg": "Ctrl/Cmd+click to copy the path",
     "cwd_copied": "Path copied to clipboard",
-    "cwd_nav_error": "Could not open the SFTP panel at {path}"
+    "cwd_nav_error": "Could not open the SFTP panel at {path}",
+    "tunnels_open": "Tunnels open on this connection (click to open the panel)",
+    "tunnels_none": "No open tunnels"
   },
   "metrics": {
     "title": "Resources",

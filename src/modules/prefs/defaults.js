@@ -124,6 +124,9 @@ export const DEFAULT_PREFS = {
   // Título que fija el servidor (OSC 0/2): "off", "tooltip" (default) o "tab"
   // (junto al nombre). El alias manual de la pestaña manda siempre.
   remoteTitleMode:    "tooltip",
+  // Rueda del ratón sobre la barra de pestañas: "scroll" (desplaza la tira,
+  // por defecto), "switch" (cambia de pestaña) u "off".
+  tabWheel:           "scroll",
   scrollback:      5000,
   // Directorio inicial de las consolas locales nuevas. "" = $HOME (o el dir del
   // usuario). Una ruta válida se usa como cwd al abrir/reabrir la consola; si no

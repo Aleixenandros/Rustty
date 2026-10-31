@@ -11583,6 +11583,38 @@ body.sidebar-mode-rail .sidebar-route-pill {
   vertical-align: 0;
 }
 
+/* Túneles abiertos de la conexión activa: icono + recuento, lista en el
+   tooltip, y pulsarlo abre el panel de túneles de la sesión. */
+#status-bar .status-tunnels {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+  color: var(--blue);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+#status-bar .status-tunnels .ctx-icon-svg {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+#status-bar .status-tunnels:hover { background: color-mix(in srgb, var(--blue) 26%, transparent); }
+
+#status-bar .status-tunnels:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
 /* Segmento de la barra inferior con la ruta de la sesión activa. */
 #status-bar .status-route {
   display: inline-flex;
