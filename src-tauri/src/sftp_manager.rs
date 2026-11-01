@@ -1486,8 +1486,9 @@ struct FtpTimeouts {
 }
 
 impl FtpTimeouts {
-    /// El mismo plazo para todo (lo usan los tests).
-    #[cfg(test)]
+    /// El mismo plazo para todo (lo usan los tests de Linux, los únicos que
+    /// levantan servidores FTP).
+    #[cfg(all(test, target_os = "linux"))]
     const fn uniform(plazo: Duration) -> Self {
         Self {
             control: plazo,
@@ -1663,8 +1664,8 @@ impl FtpConnection {
         })
     }
 
-    /// Por qué la conexión ya no sirve, si es que no sirve.
-    #[cfg(test)]
+    /// Por qué la conexión ya no sirve, si es que no sirve (tests de Linux).
+    #[cfg(all(test, target_os = "linux"))]
     fn broken_reason(&self) -> Option<&str> {
         self.broken.as_deref()
     }
