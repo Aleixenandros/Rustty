@@ -440,13 +440,24 @@ a:focus-visible,
    visual como el espacio ocupado dentro del flex padre, así que la barra
    lateral y el rail acompañan al usuario de forma proporcional. Los diálogos
    (`[role="dialog"]`) se escalan dentro de su overlay centrado, que mantiene
-   el centrado al ser flex. */
+   el centrado al ser flex.
+   Los menús flotantes, el popover de pestañas y los avisos también son
+   chrome y se escalan: su posición la calcula el JS en píxeles de la ventana
+   y la divide por el zoom (`uiZoomFactor()`), que es en lo que se miden
+   `left`/`top` de un elemento escalado. Las listas de los desplegables
+   copian el zoom del control que las abre (ver `enhanceSelect`). */
 #rail,
 #sidebar,
 #tab-bar,
 [role="dialog"],
 #script-rec-bar,
-#script-run-bar {
+#script-run-bar,
+#context-menu,
+#tab-context-menu,
+#sftp-context-menu,
+#route-menu,
+#tab-overflow-popover,
+#toast-container {
   zoom: var(--ui-zoom, 1);
 }
 
@@ -3887,10 +3898,10 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   border-radius: var(--radius-lg);
   width: var(--connection-modal-width, 480px);
   height: var(--connection-modal-height, auto);
-  min-width: min(480px, 95vw);
-  min-height: min(360px, 90vh);
-  max-width: 95vw;
-  max-height: 90vh;
+  min-width: min(480px, calc(95vw / var(--ui-zoom, 1)));
+  min-height: min(360px, calc(90vh / var(--ui-zoom, 1)));
+  max-width: calc(95vw / var(--ui-zoom, 1));
+  max-height: calc(90vh / var(--ui-zoom, 1));
   overflow-y: auto;
   resize: both;
   box-shadow: var(--shadow-3);
@@ -3926,7 +3937,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 
 #credential-modal {
   width: 430px;
-  max-width: calc(100vw - 40px);
+  max-width: calc((100vw - 40px) / var(--ui-zoom, 1));
   background: var(--surface-panel);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -3976,7 +3987,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 #localcmd-edit-modal,
 #dup-modal {
   width: 520px;
-  max-width: calc(100vw - 40px);
+  max-width: calc((100vw - 40px) / var(--ui-zoom, 1));
   max-height: 86vh;
   overflow-y: auto;
   background: var(--surface-panel);
@@ -3991,7 +4002,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
    numeración por lado, al estilo de un diff de Git. */
 #block-diff-modal {
   width: 980px;
-  max-width: calc(100vw - 40px);
+  max-width: calc((100vw - 40px) / var(--ui-zoom, 1));
   max-height: 86vh;
   background: var(--surface-panel);
   border: 1px solid var(--border-subtle);
@@ -4162,7 +4173,7 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
 }
 #command-palette-modal {
   width: 640px;
-  max-width: calc(100vw - 40px);
+  max-width: calc((100vw - 40px) / var(--ui-zoom, 1));
   margin-top: 12vh;
   max-height: 70vh;
   background: var(--surface-panel);
@@ -4272,7 +4283,7 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
 }
 #shortcuts-help-modal {
   width: 620px;
-  max-width: calc(100vw - 40px);
+  max-width: calc((100vw - 40px) / var(--ui-zoom, 1));
   max-height: 80vh;
   display: flex;
   flex-direction: column;
@@ -4340,7 +4351,7 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
 
 #import-wizard-modal {
   width: 580px;
-  max-width: calc(100vw - 40px);
+  max-width: calc((100vw - 40px) / var(--ui-zoom, 1));
   max-height: 88vh;
   background: var(--surface-panel);
   border: 1px solid var(--border-subtle);
@@ -4365,7 +4376,7 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
 
 #cmd-editor-modal {
   width: 640px;
-  max-width: calc(100vw - 40px);
+  max-width: calc((100vw - 40px) / var(--ui-zoom, 1));
   max-height: 88vh;
   background: var(--surface-panel);
   border: 1px solid var(--border-subtle);
@@ -6025,8 +6036,9 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 #tab-context-menu.menu-overflow,
 #sftp-context-menu.menu-overflow,
 #route-menu.menu-overflow {
-  max-height: calc(100vh - 12px);
-  max-width: calc(100vw - 12px);
+  /* En unidades del menú, que va escalado por el zoom de la interfaz. */
+  max-height: calc((100vh - 12px) / var(--ui-zoom, 1));
+  max-width: calc((100vw - 12px) / var(--ui-zoom, 1));
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -6289,9 +6301,12 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   /* Tamaño de fábrica; el usuario lo cambia desde bordes y esquinas
      (`modules/dialogs/frame.js`) y se recuerda en este equipo. */
   width: 920px;
-  max-width: 94vw;
+  /* Topes en unidades de la ventana divididas por el zoom de la interfaz: en
+     un diálogo escalado, `vh`/`vw` también se escalan y al 140 % Preferencias
+     salía más alta que la ventana. */
+  max-width: calc(94vw / var(--ui-zoom, 1));
   height: 660px;
-  max-height: 88vh;
+  max-height: calc(88vh / var(--ui-zoom, 1));
   display: flex;
   flex-direction: column;
   box-shadow: var(--shadow-3);
@@ -7061,7 +7076,7 @@ body.density-spacious #modal-prefs > .modal-actions { padding: 12px 22px 14px; }
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-3);
   width: 440px;
-  max-width: calc(100vw - 40px);
+  max-width: calc((100vw - 40px) / var(--ui-zoom, 1));
   display: flex;
   flex-direction: column;
 }
@@ -10639,7 +10654,7 @@ body.color-blind-safe .modal-summary-badge.warn::before {
 
 #note-editor-modal {
   width: 1000px;
-  max-width: calc(100vw - 40px);
+  max-width: calc((100vw - 40px) / var(--ui-zoom, 1));
   height: 80vh;
   max-height: 88vh;
   background: var(--surface-panel);
@@ -12005,7 +12020,7 @@ body.sidebar-mode-rail .sidebar-route-pill {
 
 #jump-picker-modal {
   width: 520px;
-  max-width: calc(100vw - 40px);
+  max-width: calc((100vw - 40px) / var(--ui-zoom, 1));
   margin-top: 12vh;
   max-height: 70vh;
   display: flex;
@@ -12208,7 +12223,7 @@ body.sidebar-mode-rail .sidebar-route-pill {
 
 #bulk-edit-modal {
   width: 680px;
-  max-width: calc(100vw - 40px);
+  max-width: calc((100vw - 40px) / var(--ui-zoom, 1));
   max-height: 88vh;
   display: flex;
   flex-direction: column;

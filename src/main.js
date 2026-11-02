@@ -871,6 +871,18 @@ function applyUiZoom(zoom) {
 
 /* `clampUiZoom` vive ahora en `modules/num.js` (con tests). */
 
+/**
+ * Zoom vigente del chrome. Los elementos escalados miden su `left`/`top` en
+ * sus propias unidades: una posición calculada en píxeles de la ventana (un
+ * `getBoundingClientRect`, un clic) se divide por esto antes de asignarla.
+ */
+function uiZoomFactor() {
+  return clampUiZoom(Number(prefs?.uiZoom ?? 1));
+}
+
+/** Contenedores que escala el zoom de la interfaz (los de `styles.css`). */
+const UI_ZOOMED_SELECTOR = '#rail, #sidebar, #tab-bar, [role="dialog"], #script-rec-bar, #script-run-bar';
+
 function adjustUiZoom(delta) {
   const current = clampUiZoom(prefs.uiZoom ?? 1);
   let next;
@@ -9532,11 +9544,15 @@ function closeModal() {
 }
 
 function getConnectionModalSizeLimits() {
+  // En unidades del diálogo, que va escalado por el zoom de la interfaz.
+  const z = uiZoomFactor();
+  const vw = window.innerWidth / z;
+  const vh = window.innerHeight / z;
   return {
-    minWidth: Math.min(CONNECTION_MODAL_MIN_WIDTH, Math.floor(window.innerWidth * 0.95)),
-    minHeight: Math.min(CONNECTION_MODAL_MIN_HEIGHT, Math.floor(window.innerHeight * 0.9)),
-    maxWidth: Math.floor(window.innerWidth * 0.95),
-    maxHeight: Math.floor(window.innerHeight * 0.9),
+    minWidth: Math.min(CONNECTION_MODAL_MIN_WIDTH, Math.floor(vw * 0.95)),
+    minHeight: Math.min(CONNECTION_MODAL_MIN_HEIGHT, Math.floor(vh * 0.9)),
+    maxWidth: Math.floor(vw * 0.95),
+    maxHeight: Math.floor(vh * 0.9),
   };
 }
 
@@ -9643,8 +9659,11 @@ function initConnectionModalResizePersistence() {
   let saveTimer = null;
   const saveSize = () => {
     if (overlay.classList.contains("hidden")) return;
+    // El rectángulo viene en píxeles de la ventana; el tamaño se aplica en
+    // unidades del diálogo escalado.
     const rect = modal.getBoundingClientRect();
-    const size = clampConnectionModalSize(rect.width, rect.height);
+    const z = uiZoomFactor();
+    const size = clampConnectionModalSize(rect.width / z, rect.height / z);
     localStorage.setItem(CONNECTION_MODAL_SIZE_KEY, JSON.stringify(size));
   };
 
@@ -11332,7 +11351,7 @@ function openRouteMenu() {
   // Encima de la píldora, que vive al pie de la barra lateral.
   const r = pill.getBoundingClientRect();
   const { height } = positionFloatingMenu(menu, r.left, r.top);
-  menu.style.top = `${Math.max(6, r.top - height - 4)}px`;
+  menu.style.top = `${Math.max(6, r.top - height - 4) / uiZoomFactor()}px`;
   pill.setAttribute("aria-expanded", "true");
   onFloatingMenuOpened(menu);
 }
@@ -16139,8 +16158,9 @@ function positionTabOverflowPopover() {
   if (top + popRect.height > window.innerHeight - margin) {
     top = Math.max(margin, triggerRect.top - popRect.height - margin);
   }
-  popover.style.top = `${top}px`;
-  popover.style.left = `${left}px`;
+  const z = uiZoomFactor();
+  popover.style.top = `${top / z}px`;
+  popover.style.left = `${left / z}px`;
 }
 
 /**
@@ -23486,8 +23506,11 @@ function positionFloatingMenu(menu, x, y) {
     ({ width, height } = menu.getBoundingClientRect());
   }
   const pos = clampMenuPosition(x, y, width, height, window.innerWidth, window.innerHeight);
-  menu.style.left = `${pos.left}px`;
-  menu.style.top = `${pos.top}px`;
+  // El menú va escalado por el zoom de la interfaz: sus `left`/`top` cuentan
+  // en sus unidades, no en píxeles de la ventana.
+  const z = uiZoomFactor();
+  menu.style.left = `${pos.left / z}px`;
+  menu.style.top = `${pos.top / z}px`;
   return { ...pos, width, height };
 }
 
@@ -31150,22 +31173,27 @@ function enhanceSelect(selectEl) {
   }
 
   function position() {
+    // La lista vive en <body>: copia el zoom del control que la abre (dentro
+    // de un diálogo o de la barra lateral va escalado; en el inicio, no) y
+    // pasa las medidas de la ventana a sus unidades.
+    const z = display.closest(UI_ZOOMED_SELECTOR) ? uiZoomFactor() : 1;
+    list.style.zoom = z === 1 ? "" : String(z);
     const r = display.getBoundingClientRect();
-    list.style.left     = r.left + "px";
-    list.style.minWidth = r.width + "px";
-    list.style.maxWidth = Math.max(r.width, 320) + "px";
+    list.style.left     = r.left / z + "px";
+    list.style.minWidth = r.width / z + "px";
+    list.style.maxWidth = Math.max(r.width / z, 320) + "px";
 
     const spaceBelow = window.innerHeight - r.bottom;
     const spaceAbove = r.top;
     const maxH = 240;
     if (spaceBelow < 140 && spaceAbove > spaceBelow) {
       list.style.top      = "auto";
-      list.style.bottom   = (window.innerHeight - r.top + 4) + "px";
-      list.style.maxHeight = Math.min(maxH, spaceAbove - 12) + "px";
+      list.style.bottom   = (window.innerHeight - r.top + 4) / z + "px";
+      list.style.maxHeight = Math.min(maxH, (spaceAbove - 12) / z) + "px";
     } else {
-      list.style.top      = (r.bottom + 4) + "px";
+      list.style.top      = (r.bottom + 4) / z + "px";
       list.style.bottom   = "auto";
-      list.style.maxHeight = Math.min(maxH, spaceBelow - 12) + "px";
+      list.style.maxHeight = Math.min(maxH, (spaceBelow - 12) / z) + "px";
     }
   }
 
