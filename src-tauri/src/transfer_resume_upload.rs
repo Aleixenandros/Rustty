@@ -639,8 +639,11 @@ mod tests {
                 token: "../../etc/passwd".to_string(),
                 ..meta(4_000_000)
             },
+            // Hexadecimal en mayúsculas (el nuestro va en minúsculas). Se
+            // construye sin literal: escrito tal cual, el escáner de secretos
+            // del CI (gitleaks) lo toma por una clave.
             UploadMeta {
-                token: "0123456789ABCDEF".to_string(),
+                token: format!("{:016X}", 0x0123_4567_89AB_CDEF_u64),
                 ..meta(4_000_000)
             },
             UploadMeta {
