@@ -633,6 +633,7 @@ function loadPrefs() {
     applyTranslations();
     refreshTunnelIndicators();
     updateZenExitTooltip();
+    refreshWorkspaceLabels();
   });
   applyTranslations();
   registerAllCustomThemes();
@@ -4263,6 +4264,7 @@ function savePrefsFromModal() {
       refreshTunnelIndicators();
       renderRoutePill();
       refreshRouteIndicators();
+      refreshWorkspaceLabels();
     });
   }
   // Los snapshots ya no son relevantes: las prefs guardadas son la verdad.
@@ -5166,7 +5168,7 @@ function treeModelFromNode(node, workspaceId) {
 function allWorkspacesTreeModel() {
   return prefs.workspaces.map((w) => ({
     key: `__ws__/${w.id}`,
-    label: w.name,
+    label: workspaceLabel(w),
     kind: "workspace",
     children: treeModelFromNode(workspaceTreeRoot(w.id), w.id),
   }));
@@ -5507,7 +5509,7 @@ function renderAllWorkspacesTree() {
       <div class="folder-header" data-folder-path="__ws__/${escHtml(w.id)}">
         <span class="folder-arrow ${open}" aria-hidden="true">▶</span>
         <span class="folder-icon">${folderIconSvg()}</span>
-        <span class="folder-name" id="${labelId}">${escHtml(w.name)}</span>
+        <span class="folder-name" id="${labelId}">${escHtml(workspaceLabel(w))}</span>
         <span class="folder-count">${count}</span>
       </div>
       <div class="folder-children ${childrenHidden}" role="group">
@@ -5545,7 +5547,7 @@ function renderWorkspaceSwitcher() {
     } else if (prefs.sidebarViewMode === "favorites") {
       ctxLabel.textContent = t("sidebar.view_favorites");
     } else {
-      ctxLabel.textContent = activeWorkspace ? activeWorkspace.name : "Default"; // i18n-exempt: nombre guardado del workspace por defecto (dato sincronizado, no texto de la interfaz)
+      ctxLabel.textContent = workspaceLabel(activeWorkspace);
     }
   }
   if (ctxIcon) {
@@ -5581,7 +5583,7 @@ function renderWorkspaceSwitcher() {
     const color = getWorkspaceColor(w.id)?.color || "var(--overlay1)";
     return `<button class="ws-item${isActive ? " active" : ""}" data-ws-action="select" data-ws-id="${escHtml(w.id)}">
       <span class="ws-color-dot" style="--workspace-tint:${color}">${isActive ? "●" : "○"}</span>
-      <span>${escHtml(w.name)}</span>
+      <span>${escHtml(workspaceLabel(w))}</span>
     </button>`;
   }).join("");
   const canDelete = prefs.workspaces.length > 1;
@@ -5844,7 +5846,7 @@ function buildTrayQuickLauncherPayload() {
     .map(({ profile }) => ({ id: profile.id, label: trayProfileLabel(profile) }));
   const workspaces = (Array.isArray(prefs.workspaces) ? prefs.workspaces : [])
     .slice(0, 12)
-    .map((workspace) => ({ id: workspace.id, label: workspace.name || "Default" }));
+    .map((workspace) => ({ id: workspace.id, label: workspaceLabel(workspace) }));
   const wake = profiles
     .filter((profile) => (profile.mac_address || "").trim())
     .slice(0, 8)
@@ -6452,7 +6454,7 @@ function renderDashboardWorkspaceChip() {
     const favCount = (prefs.favorites || []).length;
     label = `${t("sidebar.view_favorites")} · ${favCount}`;
   } else if (ws) {
-    label = `${ws.name || "Default"} · ${totalInWs}`;
+    label = `${workspaceLabel(ws)} · ${totalInWs}`;
   }
   chip.textContent = label;
   chip.classList.toggle("hidden", !label);
@@ -6606,8 +6608,26 @@ function groupedConnectionSearch(query) {
   return groupConnectionSearch({ profiles: scoped, folders, notes: notesIndex, query });
 }
 
+/**
+ * Nombre a mostrar de un workspace. El workspace por defecto guarda el nombre
+ * "Default" como dato (lo compara la sincronización), pero en pantalla se
+ * traduce; el resto muestra su nombre tal cual.
+ */
+function workspaceLabel(ws) {
+  if (!ws || ws.id === "default" && (!ws.name || ws.name === "Default")) {
+    return t("sidebar.workspace_default");
+  }
+  return ws.name || t("sidebar.workspace_default");
+}
+
+/** Repinta las etiquetas de workspace (sidebar y chip del dashboard) con el idioma activo. */
+function refreshWorkspaceLabels() {
+  renderWorkspaceSwitcher();
+  renderDashboardWorkspaceChip();
+}
+
 function workspaceDisplayName(workspaceId) {
-  return prefs.workspaces.find((w) => w.id === workspaceId)?.name || "Default";
+  return workspaceLabel(prefs.workspaces.find((w) => w.id === workspaceId));
 }
 
 /** Ruta de contexto de un resultado: workspace (si no es el activo) › carpeta. */
@@ -8015,9 +8035,9 @@ async function renameWorkspaceById(wsId) {
   const name = await promptTextValue({
     title: t("sidebar.workspace_rename"),
     label: t("sidebar.workspace_prompt_rename"),
-    initialValue: ws.name,
+    initialValue: workspaceLabel(ws),
   });
-  if (!name || name === ws.name) return;
+  if (!name || name === ws.name || name === workspaceLabel(ws)) return;
   ws.name = name;
   prefs._prefsUpdatedAt = new Date().toISOString();
   savePrefs();
@@ -8034,7 +8054,7 @@ async function deleteWorkspaceById(wsId) {
     const ok = await confirmDestructiveTyped({
       title: t("sidebar.workspace_delete"),
       message: t("sidebar.workspace_confirm_delete_full"),
-      expectedText: ws.name,
+      expectedText: workspaceLabel(ws),
       danger: true,
     });
     if (!ok) return;
@@ -8074,14 +8094,14 @@ async function deleteWorkspaceById(wsId) {
       .then(() => {
         wsTrashPayload.profileTrashIds = lastDeletionTrashIds;
         finalize();
-        const wsTrashId = trashAdd("workspace", ws.name, wsTrashPayload);
-        showUndoDeleteToast(t("trash.workspace_deleted", { name: ws.name }), [wsTrashId]);
+        const wsTrashId = trashAdd("workspace", workspaceLabel(ws), wsTrashPayload);
+        showUndoDeleteToast(t("trash.workspace_deleted", { name: workspaceLabel(ws) }), [wsTrashId]);
       })
       .catch((err) => console.error("[workspace] delete_profiles", err));
   } else {
     finalize();
-    const wsTrashId = trashAdd("workspace", ws.name, wsTrashPayload);
-    showUndoDeleteToast(t("trash.workspace_deleted", { name: ws.name }), [wsTrashId]);
+    const wsTrashId = trashAdd("workspace", workspaceLabel(ws), wsTrashPayload);
+    showUndoDeleteToast(t("trash.workspace_deleted", { name: workspaceLabel(ws) }), [wsTrashId]);
   }
 }
 
@@ -8781,7 +8801,7 @@ function populateWorkspaceFormSelect(selectedId) {
   }
   field.classList.remove("hidden");
   sel.innerHTML = list
-    .map((w) => `<option value="${escHtml(w.id)}"${w.id === selectedId ? " selected" : ""}>${escHtml(w.name)}</option>`)
+    .map((w) => `<option value="${escHtml(w.id)}"${w.id === selectedId ? " selected" : ""}>${escHtml(workspaceLabel(w))}</option>`)
     .join("");
 }
 
@@ -18081,7 +18101,7 @@ function isSshProfile(profile) {
 }
 
 function profileTunnelLabel(profile) {
-  const workspace = prefs.workspaces.find((w) => w.id === (profile.workspace_id || "default"))?.name || "Default";
+  const workspace = workspaceLabel(prefs.workspaces.find((w) => w.id === (profile.workspace_id || "default")));
   const folder = profile.group ? ` / ${profile.group}` : "";
   return `${profile.name} · ${workspace}${folder}`;
 }
@@ -18507,7 +18527,7 @@ function openScriptEditor(script = null, presetTarget = null) {
 function scriptProfileOptionLabel(p) {
   const wsId = p.workspace_id || "default";
   const ws = (prefs.workspaces || []).find((w) => w.id === wsId);
-  return `${p.name || p.host || p.id} — ${ws ? ws.name || ws.id : wsId}`;
+  return `${p.name || p.host || p.id} — ${ws ? workspaceLabel(ws) : wsId}`;
 }
 
 /** Rutas de carpeta disponibles en un workspace (de perfiles + manuales). */
@@ -18558,7 +18578,7 @@ function renderScriptTargetEditor() {
   // Carpeta: workspace + ruta + recursivo
   const wsSel = document.getElementById("script-ed-target-ws");
   wsSel.innerHTML = (prefs.workspaces || [])
-    .map((w) => `<option value="${escHtml(w.id)}">${escHtml(w.name || w.id)}</option>`)
+    .map((w) => `<option value="${escHtml(w.id)}">${escHtml(workspaceLabel(w))}</option>`)
     .join("");
   const wsId = (kind === "folder" && target.workspaceId) || getActiveWorkspaceId();
   if ([...wsSel.options].some((o) => o.value === wsId)) wsSel.value = wsId;
@@ -20768,7 +20788,7 @@ async function openLocalShell() {
 
 async function getShellName() {
   // Leer $SHELL del entorno no es posible desde JS; usamos un nombre genérico
-  return "Terminal";
+  return t("prefs_terminal.title");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -24614,7 +24634,7 @@ async function exportConnections(folderFilter, workspaceId = getActiveWorkspaceI
  */
 async function exportConnectionsByWorkspace(workspaceId) {
   const ws = prefs.workspaces.find((w) => w.id === workspaceId);
-  const wsName = ws ? ws.name : workspaceId;
+  const wsName = ws ? workspaceLabel(ws) : workspaceId;
   const profilesToExport = profiles.filter(
     (p) => (p.workspace_id || "default") === workspaceId
   );

@@ -567,7 +567,8 @@
     "empty_cta": "Ajouter la première",
     "favorites_empty_hint": "Marquez une connexion comme favorite depuis son menu contextuel pour qu'elle apparaisse ici.",
     "loading": "Chargement des connexions…",
-    "folder_name": "Nom du dossier"
+    "folder_name": "Nom du dossier",
+    "workspace_default": "Par défaut"
   },
   "rail": {
     "view_profiles": "Profils",
@@ -1548,7 +1549,9 @@
     "lang_en": "Anglais (English)",
     "lang_fr": "Français",
     "lang_pt": "Portugais (Português)",
-    "lang_de": "Allemand (Deutsch)"
+    "lang_de": "Allemand (Deutsch)",
+    "lang_zh_tw": "Chinois traditionnel (繁體中文)",
+    "lang_id": "Indonésien (Bahasa Indonesia)"
   },
   "resizer": {
     "sidebar": "Largeur de la barre latérale",

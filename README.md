@@ -41,7 +41,7 @@
 - **Copias de seguridad y sincronización E2E**: perfiles, preferencias, temas, atajos, notas de conexión y, si lo activas, contraseñas guardadas pueden sincronizarse con Google Drive, iCloud Drive, carpeta local / NAS o WebDAV. El blob remoto se cifra localmente con `age` y una passphrase maestra. Sincronización **por evento** (comprueba al iniciar y sincroniza si hay cambios locales/remotos) y **restauración de snapshots históricos** desde la pestaña de Copias.
 - **Organización**: agrupa conexiones en **perfiles-contenedor (workspaces)** independientes, en carpetas dentro de cada workspace, **conexiones favoritas** y vistas de la sidebar (workspace actual, todos los perfiles, favoritos), búsqueda rápida y duplicación de conexiones / sesiones desde el menú contextual. **Orden alfabético o manual** de carpetas y conexiones: en modo manual, «Mover arriba / abajo» desde el menú contextual de cada carpeta o máquina.
 - **Personalización**: 12 temas base integrados y una biblioteca ampliada de 221 temas Rustty v2 precargados para interfaz y terminal, además de ajustes de cursor, scrollback y *bell*. Posibilidad de importar temas personalizados en formato JSON v2 con tokens de UI y terminal; consulta la [guía para crear un tema personalizado](web/docs/Temas.md#crear-un-tema-personalizado). **Tamaño de la interfaz ajustable** (rail, sidebar, pestañas y modales) independiente del terminal, con control en Preferencias y atajos `Ctrl+Alt` con `+` / `-` / `0`, y **densidad de la interfaz** en tres niveles (Espaciosa / Cómoda / Compacta). En Preferencias → Apariencia hay además ajustes de **accesibilidad** (contraste reforzado, reducir movimiento, foco visible, contraste mínimo del terminal y modo daltónico).
-- **Internacionalización**: interfaz traducida a español, inglés, francés, portugués y alemán. (Traducciones realizadas con IA)
+- **Internacionalización**: interfaz traducida a español, inglés, francés, portugués, alemán, chino tradicional e indonesio. (Traducciones realizadas con IA)
 
 ## Capturas
 
@@ -61,7 +61,7 @@ Preferencias → **Apariencia**: tema global de la interfaz y tema independiente
 
 ![Selector de temas](images/Captura4.png)
 
-Preferencias → **Idioma**: interfaz disponible en español, inglés, francés y portugués:
+Preferencias → **Idioma**: interfaz disponible en español, inglés, francés, portugués, alemán, chino tradicional e indonesio:
 
 ![Selector de idioma](images/Captura3.png)
 

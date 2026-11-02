@@ -336,6 +336,18 @@ pub fn prompt_texts(lang: &str) -> PromptTexts {
             accept: "Erlauben und ausführen",
             cancel: "Abbrechen",
         },
+        "zh-TW" => PromptTexts {
+            title: "授權本機指令",
+            message: "「{name}」即將在這台電腦上首次執行，或自上次以來已有變更。授權前請先檢查指令：\n\n{command}\n\n只有在指令變更時才會再次詢問你。",
+            accept: "授權並執行",
+            cancel: "取消",
+        },
+        "id" => PromptTexts {
+            title: "Izinkan perintah lokal",
+            message: "“{name}” akan dijalankan untuk pertama kalinya di komputer ini, atau telah berubah sejak terakhir kali. Periksa perintah sebelum mengizinkannya:\n\n{command}\n\nAnda hanya akan ditanya lagi jika perintah berubah.",
+            accept: "Izinkan dan jalankan",
+            cancel: "Batal",
+        },
         _ => PromptTexts {
             title: "Autorizar comando local",
             message: "«{name}» va a ejecutarse por primera vez en este equipo, o ha cambiado desde la última vez. Revisa la orden antes de autorizarla:\n\n{command}\n\nSolo se te volverá a preguntar si la orden cambia.",

@@ -567,7 +567,8 @@
     "empty_cta": "Add the first one",
     "favorites_empty_hint": "Mark a connection as favorite from its context menu and it'll show up here.",
     "loading": "Loading connections…",
-    "folder_name": "Folder name"
+    "folder_name": "Folder name",
+    "workspace_default": "Default"
   },
   "rail": {
     "view_profiles": "Profiles",
@@ -1548,7 +1549,9 @@
     "lang_en": "English",
     "lang_fr": "French (Français)",
     "lang_pt": "Portuguese (Português)",
-    "lang_de": "German (Deutsch)"
+    "lang_de": "German (Deutsch)",
+    "lang_zh_tw": "Traditional Chinese (繁體中文)",
+    "lang_id": "Indonesian (Bahasa Indonesia)"
   },
   "resizer": {
     "sidebar": "Sidebar width",

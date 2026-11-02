@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { SUPPORTED_LANGS } from "./i18n.js";
+import { SUPPORTED_LANGS, matchLanguage } from "./i18n.js";
 import es from "./modules/i18n/es.json";
 import en from "./modules/i18n/en.json";
 import fr from "./modules/i18n/fr.json";
 import pt from "./modules/i18n/pt.json";
 import de from "./modules/i18n/de.json";
+import zhTW from "./modules/i18n/zh-TW.json";
+import id from "./modules/i18n/id.json";
 
-const DICTIONARIES = { es, en, fr, pt, de };
+const DICTIONARIES = { es, en, fr, pt, de, "zh-TW": zhTW, id };
 
 /** Aplana un diccionario anidado a claves con puntos (`toast.close`, …). */
 function flatten(obj, prefix = "") {
@@ -28,11 +30,26 @@ const keySets = Object.fromEntries(
 const esKeys = [...keySets.es].sort();
 
 describe("i18n · paridad de claves", () => {
-  it("expone los 5 idiomas soportados", () => {
-    expect(SUPPORTED_LANGS).toEqual(["es", "en", "fr", "pt", "de"]);
+  it("expone los 7 idiomas soportados", () => {
+    expect(SUPPORTED_LANGS).toEqual(["es", "en", "fr", "pt", "de", "zh-TW", "id"]);
     for (const lang of SUPPORTED_LANGS) {
       expect(DICTIONARIES[lang], `falta el diccionario ${lang}`).toBeTruthy();
     }
+  });
+
+  it("matchLanguage mapea etiquetas del navegador al idioma soportado", () => {
+    expect(matchLanguage("zh-TW")).toBe("zh-TW");
+    expect(matchLanguage("zh-Hant-HK")).toBe("zh-TW");
+    expect(matchLanguage("zh-hant")).toBe("zh-TW");
+    expect(matchLanguage("zh-CN")).toBeNull(); // simplificado: no soportado
+    expect(matchLanguage("zh")).toBeNull();
+    expect(matchLanguage("id-ID")).toBe("id");
+    expect(matchLanguage("in-ID")).toBe("id"); // código antiguo de indonesio
+    expect(matchLanguage("pt-BR")).toBe("pt");
+    expect(matchLanguage("de_DE")).toBe("de");
+    expect(matchLanguage("ja-JP")).toBeNull();
+    expect(matchLanguage("")).toBeNull();
+    expect(matchLanguage(undefined)).toBeNull();
   });
 
   it("ningún idioma tiene claves huérfanas (ausentes en es)", () => {
@@ -57,7 +74,7 @@ describe("i18n · paridad de claves", () => {
     }
   });
 
-  it("los mensajes de UI (sección toast) existen en los 5 idiomas", () => {
+  it("los mensajes de UI (sección toast) existen en todos los idiomas", () => {
     // Garantiza que el barrido de literales hardcodeados quedó localizado en
     // todos los idiomas, francés y portugués incluidos.
     const swept = esKeys.filter((k) => k.startsWith("toast."));

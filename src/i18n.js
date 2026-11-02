@@ -20,13 +20,15 @@
 import es from "./modules/i18n/es.json";
 import en from "./modules/i18n/en.json";
 
-export const SUPPORTED_LANGS = ["es", "en", "fr", "pt", "de"];
+export const SUPPORTED_LANGS = ["es", "en", "fr", "pt", "de", "zh-TW", "id"];
 
 /** Cargadores perezosos de los idiomas que no forman parte del fallback. */
 const LAZY_LOADERS = {
   fr: () => import("./modules/i18n/fr.json"),
   pt: () => import("./modules/i18n/pt.json"),
   de: () => import("./modules/i18n/de.json"),
+  "zh-TW": () => import("./modules/i18n/zh-TW.json"),
+  id: () => import("./modules/i18n/id.json"),
 };
 
 /** Catálogos ya disponibles en memoria. */
@@ -74,12 +76,28 @@ export function getLanguage() {
 }
 
 /**
+ * Convierte una etiqueta BCP 47 (p. ej. "zh-Hant-TW", "in-ID", "pt-BR") al
+ * idioma soportado, o null si no hay ninguno. El chino tradicional
+ * (zh-TW, zh-HK, zh-MO, zh-Hant) va a "zh-TW"; el chino simplificado no está
+ * soportado y cae a null. "in" es el código antiguo de indonesio.
+ */
+export function matchLanguage(tag) {
+  const lower = String(tag || "").toLowerCase();
+  if (!lower) return null;
+  if (lower.startsWith("zh")) {
+    return /-(tw|hk|mo|hant)\b/.test(lower) ? "zh-TW" : null;
+  }
+  const primary = lower.split(/[-_]/)[0];
+  const lang = primary === "in" ? "id" : primary;
+  return SUPPORTED_LANGS.includes(lang) ? lang : null;
+}
+
+/**
  * Detecta el idioma más cercano a navigator.language entre los soportados.
  * Devuelve "es" si no hay coincidencia.
  */
 export function detectLanguage() {
-  const nav = (navigator.language || "es").toLowerCase().slice(0, 2);
-  return SUPPORTED_LANGS.includes(nav) ? nav : "es";
+  return matchLanguage(navigator.language) ?? "es";
 }
 
 /**

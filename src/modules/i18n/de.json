@@ -567,7 +567,8 @@
     "empty_cta": "Erste hinzufügen",
     "favorites_empty_hint": "Markiere eine Verbindung über das Kontextmenü als Favorit, dann erscheint sie hier.",
     "loading": "Verbindungen werden geladen…",
-    "folder_name": "Ordnername"
+    "folder_name": "Ordnername",
+    "workspace_default": "Standard"
   },
   "rail": {
     "view_profiles": "Profile",
@@ -1548,7 +1549,9 @@
     "lang_en": "Englisch (English)",
     "lang_fr": "Französisch (Français)",
     "lang_pt": "Portugiesisch (Português)",
-    "lang_de": "Deutsch"
+    "lang_de": "Deutsch",
+    "lang_zh_tw": "Traditionelles Chinesisch (繁體中文)",
+    "lang_id": "Indonesisch (Bahasa Indonesia)"
   },
   "resizer": {
     "sidebar": "Breite der Seitenleiste",

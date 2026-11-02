@@ -567,7 +567,8 @@
     "empty_cta": "Adicionar a primeira",
     "favorites_empty_hint": "Marca uma conexão como favorita a partir do menu contextual para que apareça aqui.",
     "loading": "A carregar conexões…",
-    "folder_name": "Nome da pasta"
+    "folder_name": "Nome da pasta",
+    "workspace_default": "Predefinido"
   },
   "rail": {
     "view_profiles": "Perfis",
@@ -1548,7 +1549,9 @@
     "lang_en": "Inglês (English)",
     "lang_fr": "Francês (Français)",
     "lang_pt": "Português",
-    "lang_de": "Alemão (Deutsch)"
+    "lang_de": "Alemão (Deutsch)",
+    "lang_zh_tw": "Chinês tradicional (繁體中文)",
+    "lang_id": "Indonésio (Bahasa Indonesia)"
   },
   "resizer": {
     "sidebar": "Largura da barra lateral",

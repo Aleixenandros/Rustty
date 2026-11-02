@@ -38,7 +38,7 @@
 - **E2E backups and synchronization**: profiles, preferences, themes, shortcuts, connection notes and, if you enable it, saved passwords can be synchronized with Google Drive, iCloud Drive, a local folder / NAS or WebDAV. The remote blob is encrypted locally with `age` and a master passphrase. **Event-based** synchronization (it checks at startup and syncs if there are local/remote changes) and **restoration of historical snapshots** from the Backups tab.
 - **Organization**: group connections into independent **container profiles (workspaces)**, in folders within each workspace, **favorite connections** and sidebar views (current workspace, all profiles, favorites), quick search and duplication of connections / sessions from the context menu. **Alphabetical or manual ordering** of folders and connections: in manual mode, "Move up / down" from each folder's or machine's context menu.
 - **Customization**: 12 built-in base themes and an extended library of 221 preloaded Rustty v2 themes for the interface and terminal, plus cursor, scrollback and *bell* settings. Ability to import custom themes in JSON v2 format with UI and terminal tokens; see the [custom theme guide](web/docs/Temas.md#crear-un-tema-personalizado). **Adjustable interface size** (rail, sidebar, tabs and modals) independent of the terminal, with a control in Preferences and `Ctrl+Alt` shortcuts with `+` / `-` / `0`, and **interface density** in three levels (Spacious / Comfortable / Compact). Preferences → Appearance also offers **accessibility** settings (stronger contrast, reduced motion, visible focus, minimum terminal contrast and color-blind mode).
-- **Internationalization**: interface translated into Spanish, English, French, Portuguese and German. (Translations done with AI)
+- **Internationalization**: interface translated into Spanish, English, French, Portuguese, German, Traditional Chinese and Indonesian. (Translations done with AI)
 
 ## Screenshots
 
@@ -58,7 +58,7 @@ Preferences → **Appearance**: global interface theme and an independent termin
 
 ![Theme selector](images/Captura4.png)
 
-Preferences → **Language**: interface available in Spanish, English, French and Portuguese:
+Preferences → **Language**: interface available in Spanish, English, French, Portuguese, German, Traditional Chinese and Indonesian:
 
 ![Language selector](images/Captura3.png)
 

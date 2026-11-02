@@ -67,9 +67,18 @@
       fr: "Démarrage…",
       pt: "A iniciar…",
       de: "Wird gestartet…",
+      id: "Memulai…",
+      "zh-tw": "正在啟動…",
     };
     var lang = prefs && prefs.lang ? prefs.lang : navigator.language || "es";
-    lang = String(lang).toLowerCase().slice(0, 2);
+    lang = String(lang).toLowerCase();
+    // Mismo criterio que matchLanguage() en src/i18n.js: chino tradicional
+    // → zh-tw; "in" (indonesio antiguo) → id; resto por idioma primario.
+    if (lang.indexOf("zh") === 0) {
+      lang = /-(tw|hk|mo|hant)\b/.test(lang) ? "zh-tw" : "";
+    } else {
+      lang = lang.slice(0, 2) === "in" ? "id" : lang.slice(0, 2);
+    }
     var text = STARTING[lang] || STARTING.es;
     var bridge = window.__TAURI_INTERNALS__;
     var revealEarly =
