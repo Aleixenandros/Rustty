@@ -50,6 +50,13 @@ por un icono del rail y por un botón con `title`: sale la burbuja propia
 doble en Windows y macOS), `el.title` sigue leyendo y escribiendo y al salir el
 atributo vuelve con su último valor.
 
+La sección de perfiles (`workspaces.mjs`) crea dos perfiles con una conexión
+cada uno y busca desde la barra lateral con los tres alcances (perfil actual,
+uno concreto y todos): comprueba qué sale, que el alcance se guarda junto al
+booleano antiguo y que el selector del inicio lo refleja, y que elegir en la
+lista del desplegable no cierra la búsqueda. Después baja el perfil activo con
+el botón del menú y lo sube con Alt+↑, y mira el orden guardado.
+
 La sección de teclado (`keyboard.mjs`) recorre los controles accesibles: el
 desplegable de Idioma de Preferencias es un combobox que se abre con ↓, elige
 con Enter, busca tecleando y cuyo Escape cierra la lista sin cerrar

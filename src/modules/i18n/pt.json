@@ -541,6 +541,9 @@
     "workspace_title": "Mudar de perfil",
     "workspace_new": "Novo perfil…",
     "workspace_rename": "Renomear perfil",
+    "workspace_move_up": "Subir perfil",
+    "workspace_move_down": "Descer perfil",
+    "workspace_order": "Mover este perfil",
     "workspace_delete": "Eliminar perfil",
     "workspace_prompt_new": "Nome do novo perfil",
     "workspace_prompt_rename": "Novo nome do perfil",
@@ -1245,8 +1248,8 @@
     "export_theme_template": "Exportar modelo",
     "import_theme": "Importar tema…",
     "theme_io_hint": "O novo formato usa tokens simples como base, text, blue ou red. Copia o modelo, muda as cores e importa-o.",
-    "search_all_workspaces": "Pesquisar conexões em todos os workspaces",
-    "search_all_workspaces_hint": "Se estiver desativado, as pesquisas do início e da barra lateral mostram apenas conexões do workspace ativo.",
+    "search_scope": "Onde pesquisa a pesquisa de conexões",
+    "search_scope_hint": "No perfil atual, num específico ou em todos. Também se muda a partir da própria pesquisa, na barra lateral e no início.",
     "search_grouped": "Agrupar os resultados da pesquisa por relevância",
     "search_grouped_hint": "Separa as correspondências diretas das pastas correspondentes (uma única entrada com contagem) e das notas, com o caminho de cada resultado. Desativado, volta a lista plana clássica.",
     "density": "Densidade da interface",
@@ -2418,5 +2421,11 @@
     "delete_active": "É o salto ativo: as novas ligações vão voltar a sair diretas.",
     "delete_active_multi": "Uma delas é o salto ativo: as novas ligações vão voltar a sair diretas.",
     "test_external_via": "{proto} vai por um salto: testa-se o salto e se deixa abrir túneis, não a porta do destino."
+  },
+  "search_scope": {
+    "label": "Pesquisar em",
+    "current": "Perfil atual",
+    "all": "Todos os perfis",
+    "group": "Um perfil específico"
   }
 }

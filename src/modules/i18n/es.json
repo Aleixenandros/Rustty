@@ -541,6 +541,9 @@
     "workspace_title": "Cambiar de perfil",
     "workspace_new": "Nuevo perfil…",
     "workspace_rename": "Renombrar perfil",
+    "workspace_move_up": "Subir perfil",
+    "workspace_move_down": "Bajar perfil",
+    "workspace_order": "Mover este perfil",
     "workspace_delete": "Eliminar perfil",
     "workspace_prompt_new": "Nombre del nuevo perfil",
     "workspace_prompt_rename": "Nuevo nombre del perfil",
@@ -1265,8 +1268,8 @@
     "bg_store_error": "No se pudo guardar la imagen (almacenamiento local lleno).",
     "color_blind_safe": "Modo daltónico",
     "color_blind_safe_hint": "Diferencia los dots de estado (pestañas, sync, barra inferior) también por forma además de por color.",
-    "search_all_workspaces": "Buscar conexiones en todos los workspaces",
-    "search_all_workspaces_hint": "Si se desactiva, los buscadores del inicio y de la sidebar solo muestran conexiones del workspace activo.",
+    "search_scope": "Dónde buscan los buscadores de conexiones",
+    "search_scope_hint": "En el perfil actual, en uno concreto o en todos. También se cambia desde el propio buscador, en la barra lateral y en el inicio.",
     "search_grouped": "Agrupar los resultados de búsqueda por relevancia",
     "search_grouped_hint": "Separa las coincidencias directas de las carpetas coincidentes (una entrada con recuento) y de las notas, con la ruta de cada resultado. Desactivado, vuelve la lista plana clásica.",
     "ui_zoom": "Tamaño de la interfaz",
@@ -2418,5 +2421,11 @@
     "delete_active": "Es el salto activo: las conexiones nuevas volverán a salir directas.",
     "delete_active_multi": "Una de ellas es el salto activo: las conexiones nuevas volverán a salir directas.",
     "test_external_via": "{proto} va por un salto: se prueba el salto y si deja abrir túneles, no el puerto del destino."
+  },
+  "search_scope": {
+    "label": "Buscar en",
+    "current": "Perfil actual",
+    "all": "Todos los perfiles",
+    "group": "Un perfil concreto"
   }
 }

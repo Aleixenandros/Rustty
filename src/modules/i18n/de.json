@@ -541,6 +541,9 @@
     "workspace_title": "Workspace wechseln",
     "workspace_new": "Neuer Workspace…",
     "workspace_rename": "Workspace umbenennen",
+    "workspace_move_up": "Workspace nach oben",
+    "workspace_move_down": "Workspace nach unten",
+    "workspace_order": "Diesen Workspace verschieben",
     "workspace_delete": "Workspace löschen",
     "workspace_prompt_new": "Name des neuen Workspaces",
     "workspace_prompt_rename": "Neuer Workspace-Name",
@@ -1265,8 +1268,8 @@
     "bg_store_error": "Bild konnte nicht gespeichert werden (lokaler Speicher voll).",
     "color_blind_safe": "Farbenblind-Modus",
     "color_blind_safe_hint": "Unterscheidet Status-Punkte (Tabs, Sync, Statusleiste) zusätzlich zur Farbe durch die Form.",
-    "search_all_workspaces": "Verbindungen in allen Workspaces suchen",
-    "search_all_workspaces_hint": "Wenn deaktiviert, zeigen die Suche auf der Startseite und in der Seitenleiste nur Verbindungen aus dem aktiven Workspace.",
+    "search_scope": "Wo die Verbindungssuche sucht",
+    "search_scope_hint": "Im aktuellen Workspace, in einem bestimmten oder in allen. Lässt sich auch direkt in der Suche ändern, in der Seitenleiste und auf der Startseite.",
     "search_grouped": "Suchergebnisse nach Relevanz gruppieren",
     "search_grouped_hint": "Trennt direkte Treffer von passenden Ordnern (ein einzelner Eintrag mit Zähler) und von Notizen, mit dem Pfad jedes Ergebnisses. Deaktiviert kehrt die klassische flache Liste zurück.",
     "ui_zoom": "Größe der Oberfläche",
@@ -2418,5 +2421,11 @@
     "delete_active": "Sie ist der aktive Jump-Host: Neue Verbindungen gehen wieder direkt.",
     "delete_active_multi": "Eine davon ist der aktive Jump-Host: Neue Verbindungen gehen wieder direkt.",
     "test_external_via": "{proto} geht über einen Jump-Host: Getestet werden der Jump-Host und ob er Tunnel erlaubt, nicht der Port des Ziels."
+  },
+  "search_scope": {
+    "label": "Suchen in",
+    "current": "Aktueller Workspace",
+    "all": "Alle Workspaces",
+    "group": "Ein bestimmter Workspace"
   }
 }

@@ -908,6 +908,18 @@ body.sidebar-collapsed #sidebar-resize-handle {
 
 .sidebar-tools-popover #sidebar-search:focus { border-color: var(--blue); }
 
+/* Alcance de la búsqueda, debajo del campo. */
+.sidebar-tools-popover .custom-select,
+.sidebar-tools-popover #sidebar-search-scope {
+  margin-top: 6px;
+}
+
+.sidebar-tools-popover .custom-select-display {
+  font-size: 12px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
 /* ── Overflow de pestañas (botón ⋯ + popover con buscador y lista) ── */
 #btn-tab-overflow {
   flex: 0 0 auto;
@@ -1061,6 +1073,60 @@ body.sidebar-collapsed #sidebar-resize-handle {
 .workspace-menu .ws-item.danger {
   color: var(--red);
 }
+
+.workspace-menu .ws-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.workspace-menu .ws-item:disabled:hover {
+  background: transparent;
+}
+
+/* Subir/bajar el perfil activo: una fila con dos iconos (con tooltip). */
+.workspace-menu .ws-order-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 8px;
+}
+
+.workspace-menu .ws-order-label {
+  flex: 1;
+  font-size: 12px;
+  color: var(--subtext0);
+}
+
+.workspace-menu .ws-order-btn {
+  width: 28px;
+  height: 26px;
+  justify-content: center;
+  padding: 0;
+}
+
+/* Orden de los perfiles: se arrastran en la lista; una guía marca dónde caen. */
+.workspace-menu .ws-item[draggable="true"] {
+  position: relative;
+}
+
+.workspace-menu .ws-item.is-dragging {
+  opacity: var(--dragging-opacity);
+}
+
+.workspace-menu .ws-item.drop-before::before,
+.workspace-menu .ws-item.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--blue);
+  pointer-events: none;
+}
+
+.workspace-menu .ws-item.drop-before::before { top: -1px; }
+.workspace-menu .ws-item.drop-after::after { bottom: -1px; }
 
 .workspace-menu .ws-sep {
   height: 1px;
@@ -3270,6 +3336,38 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   font-family: var(--font-mono);
   font-size: 10px;
   text-align: center;
+}
+
+/* Alcance del buscador del inicio: perfil actual, uno concreto o todos. */
+.dashboard-search-scope {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: var(--font-size-xs);
+  color: var(--subtext0);
+}
+
+.dashboard-search-scope label {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--subtext0);
+}
+
+.dashboard-search-scope .custom-select {
+  width: auto;
+  min-width: 190px;
+}
+
+.dashboard-search-scope .custom-select-display,
+.dashboard-search-scope select {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  font-size: var(--font-size-xs);
 }
 
 .dashboard-section {

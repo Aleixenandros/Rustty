@@ -166,6 +166,7 @@
 
           <div class="tools-section-title" data-i18n="sidebar.tools_search">Buscar</div>
           <input type="search" id="sidebar-search" data-i18n-placeholder="sidebar.search_placeholder" placeholder="Buscar conexiones…" spellcheck="false" />
+          <select id="sidebar-search-scope" class="search-scope-select" aria-label="Buscar en" data-i18n-aria-label="search_scope.label"></select>
         </div>
 
         <div id="connection-list" role="tree" data-i18n-aria-label="sidebar.tree_label">
@@ -357,6 +358,10 @@
                   <span class="dashboard-search-icon" aria-hidden="true"><svg viewBox="0 0 16 16" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><use href="#ci-search"/></svg></span>
                   <input id="dashboard-search" type="search" autocomplete="off" spellcheck="false" placeholder="Buscar perfil, host o usuario…" data-i18n-placeholder="dashboard.search_ph" />
                   <span class="dashboard-search-kbd" data-i18n="dashboard.search_kbd">Ctrl K</span>
+                </div>
+                <div class="dashboard-search-scope">
+                  <label for="dashboard-search-scope" data-i18n="search_scope.label">Buscar en</label>
+                  <select id="dashboard-search-scope" class="search-scope-select"></select>
                 </div>
               </section>
 
@@ -675,6 +680,12 @@
       <div class="ctx-sep ctx-ws-only hidden"></div>
       <button class="ctx-item ctx-ws-only hidden" data-ctx="rename-ws">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="ctx.rename_workspace">Renombrar perfil</span>
+      </button>
+      <button class="ctx-item ctx-ws-only hidden" data-ctx="move-ws-up">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></span><span data-i18n="ctx.move_up">Mover arriba</span>
+      </button>
+      <button class="ctx-item ctx-ws-only hidden" data-ctx="move-ws-down">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-down"/></svg></span><span data-i18n="ctx.move_down">Mover abajo</span>
       </button>
       <button class="ctx-item ctx-ws-only hidden" data-ctx="export-ws">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-export"/></svg></span><span data-i18n="ctx.export_workspace">Exportar conexiones del perfil…</span>
@@ -3037,13 +3048,11 @@
                 <p class="settings-hint" data-i18n="prefs_appearance.term_cursor_highvis_hint">Pinta el cursor con una tinta de alto contraste (blanco o negro según el fondo) en cualquier estilo y engrosa el caret cuando el estilo es «barra».</p>
               </div>
 
-              <div class="settings-row">
-                <label class="checkbox-label">
-                  <input type="checkbox" id="pref-search-all-workspaces" />
-                  <span data-i18n="prefs_appearance.search_all_workspaces">Buscar conexiones en todos los workspaces</span>
-                </label>
-                <p class="settings-hint" data-i18n="prefs_appearance.search_all_workspaces_hint">Si se desactiva, los buscadores del inicio y de la sidebar solo muestran conexiones del workspace activo.</p>
+              <div class="settings-row settings-row-inline">
+                <label for="pref-search-scope" data-i18n="prefs_appearance.search_scope">Dónde buscan los buscadores de conexiones</label>
+                <select id="pref-search-scope" class="search-scope-select"></select>
               </div>
+              <p class="settings-hint" data-i18n="prefs_appearance.search_scope_hint">En el perfil actual, en uno concreto o en todos. También se cambia desde el propio buscador, en la barra lateral y en el inicio.</p>
 
               <div class="settings-row">
                 <label class="checkbox-label">

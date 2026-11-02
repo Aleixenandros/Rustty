@@ -85,6 +85,8 @@ import { createShortcutController } from "./modules/shortcuts/controller.js";
 import { createDialogController } from "./modules/dialogs/controller.js";
 import { attachDialogFrame } from "./modules/dialogs/frame.js";
 import { createTooltipController } from "./modules/tooltips/controller.js";
+import { normalizeSearchScope, resolveSearchScope, scopeIncludesWorkspace, searchScopeOptions } from "./modules/search-scope.js";
+import { moveWorkspace, moveWorkspaceTo, workspaceMoves } from "./modules/profiles/workspace-order.js";
 import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { buildCheatsheet, filterCheatsheet } from "./modules/shortcuts/cheatsheet.js";
 import { formatAccelerator } from "./modules/platform.js";
@@ -1956,8 +1958,7 @@ function openSettingsModal() {
   syncScrollbarPrefControls();
   const _terminalRenderer = document.getElementById("pref-terminal-renderer");
   if (_terminalRenderer) _terminalRenderer.value = prefs.terminalRenderer === "dom" ? "dom" : "auto";
-  const _searchAllWorkspaces = document.getElementById("pref-search-all-workspaces");
-  if (_searchAllWorkspaces) _searchAllWorkspaces.checked = prefs.searchAllWorkspaces !== false;
+  renderSearchScopeSelects();
   const _searchGrouped = document.getElementById("pref-search-grouped");
   if (_searchGrouped) _searchGrouped.checked = prefs.searchGroupedResults !== false;
   document.getElementById("pref-cursor-blink").checked      = prefs.cursorBlink;
@@ -4196,7 +4197,10 @@ function readPrefsFromModal() {
       const v = document.getElementById("pref-terminal-renderer")?.value;
       return v === "dom" ? "dom" : "auto";
     })(),
-    searchAllWorkspaces: document.getElementById("pref-search-all-workspaces")?.checked ?? true,
+    ...(() => {
+      const scope = normalizeSearchScope(document.getElementById("pref-search-scope")?.value, prefs.searchAllWorkspaces);
+      return { searchScope: scope, searchAllWorkspaces: scope === "all" };
+    })(),
     searchGroupedResults: document.getElementById("pref-search-grouped")?.checked ?? true,
     keepassPath:     document.getElementById("pref-keepass-path").value.trim(),
     keepassKeyfile:  document.getElementById("pref-keepass-keyfile").value.trim(),
@@ -5546,6 +5550,7 @@ function favoriteProfilesSorted() {
 }
 
 function renderWorkspaceSwitcher() {
+  renderSearchScopeSelects();
   const ctxLabel = document.getElementById("sidebar-context-label");
   const ctxIcon  = document.querySelector("#sidebar-context-bar .app-folder-icon");
   const menu     = document.getElementById("workspace-menu");
@@ -5590,15 +5595,21 @@ function renderWorkspaceSwitcher() {
   const items = prefs.workspaces.map((w) => {
     const isActive = w.id === getActiveWorkspaceId() && prefs.sidebarViewMode === "current";
     const color = getWorkspaceColor(w.id)?.color || "var(--overlay1)";
-    return `<button class="ws-item${isActive ? " active" : ""}" data-ws-action="select" data-ws-id="${escHtml(w.id)}">
+    return `<button class="ws-item${isActive ? " active" : ""}" data-ws-action="select" data-ws-id="${escHtml(w.id)}" draggable="true" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown">
       <span class="ws-color-dot" style="--workspace-tint:${color}">${isActive ? "●" : "○"}</span>
       <span>${escHtml(workspaceLabel(w))}</span>
     </button>`;
   }).join("");
   const canDelete = prefs.workspaces.length > 1;
+  const moves = workspaceMoves(prefs.workspaces, getActiveWorkspaceId());
   menu.innerHTML = `${items}
     <div class="ws-sep"></div>
     <button class="ws-item" data-ws-action="new"><span>＋ ${escHtml(t("sidebar.workspace_new"))}</span></button>
+    <div class="ws-order-row">
+      <span class="ws-order-label">${escHtml(t("sidebar.workspace_order"))}</span>
+      <button class="ws-item ws-order-btn" data-ws-action="move-up" aria-label="${escHtml(t("sidebar.workspace_move_up"))}" ${moves.up ? "" : "disabled"}><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
+      <button class="ws-item ws-order-btn" data-ws-action="move-down" aria-label="${escHtml(t("sidebar.workspace_move_down"))}" ${moves.down ? "" : "disabled"}><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-down"/></svg></button>
+    </div>
     <button class="ws-item" data-ws-action="health"><span><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg> ${escHtml(t("health.workspace_action"))}</span></button>
     <button class="ws-item" data-ws-action="rename"><span><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg> ${escHtml(t("sidebar.workspace_rename"))}</span></button>
     <button class="ws-item danger" data-ws-action="delete" ${canDelete ? "" : "disabled"}><span><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg> ${escHtml(t("sidebar.workspace_delete"))}</span></button>`;
@@ -5760,21 +5771,14 @@ async function handleWorkspaceMenuClick(action, wsId) {
     return;
   }
   if (action === "rename") {
-    const cur = prefs.workspaces.find((w) => w.id === getActiveWorkspaceId());
-    if (!cur) return;
     toggleWorkspaceMenu(false);
-    const name = await promptTextValue({
-      title: t("sidebar.workspace_rename"),
-      label: t("sidebar.workspace_prompt_rename"),
-      initialValue: cur.name,
-    });
-    if (name && name !== cur.name) {
-      cur.name = name;
-      prefs._prefsUpdatedAt = new Date().toISOString();
-      savePrefs();
-      renderConnectionList();
-      scheduleProfileAutoSync();
-    }
+    // La misma vía que el menú contextual: el workspace por defecto se
+    // propone con su nombre traducido.
+    await renameWorkspaceById(getActiveWorkspaceId());
+    return;
+  }
+  if (action === "move-up" || action === "move-down") {
+    reorderWorkspace(getActiveWorkspaceId(), action === "move-up" ? -1 : 1);
     return;
   }
   if (action === "delete") {
@@ -5785,6 +5789,91 @@ async function handleWorkspaceMenuClick(action, wsId) {
     await deleteWorkspaceById(getActiveWorkspaceId());
     return;
   }
+}
+
+// ─── Orden de los perfiles (workspaces) ─────────────────────────
+// El orden es el de `prefs.workspaces` (`modules/profiles/workspace-order.js`)
+// y viaja en la sincronización: se fecha el bundle como al renombrar.
+
+/** @param {string[]|object[]} next */
+function commitWorkspaceOrder(next) {
+  if (next === prefs.workspaces) return false;
+  prefs.workspaces = next;
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+  renderConnectionList();
+  scheduleProfileAutoSync();
+  return true;
+}
+
+/** Sube (-1) o baja (+1) un workspace una posición. */
+function reorderWorkspace(wsId, delta) {
+  return commitWorkspaceOrder(moveWorkspace(prefs.workspaces, wsId, delta));
+}
+
+/** Coloca un workspace antes o después de otro (arrastrar y soltar). */
+function reorderWorkspaceTo(wsId, targetId, place) {
+  return commitWorkspaceOrder(moveWorkspaceTo(prefs.workspaces, wsId, targetId, place));
+}
+
+/**
+ * Arrastrar y soltar y Alt+↑/↓ en la lista de perfiles del popover de la
+ * barra lateral. Se engancha una vez al contenedor (la lista se repinta).
+ */
+function bindWorkspaceMenuReorder(menu) {
+  const DRAG_TYPE = "application/x-rustty-workspace";
+  let draggedId = null;
+  const clearMarks = () => menu.querySelectorAll(".ws-item.drop-before, .ws-item.drop-after")
+    .forEach((el) => el.classList.remove("drop-before", "drop-after"));
+  const placeFor = (item, ev) => {
+    const r = item.getBoundingClientRect();
+    return ev.clientY < r.top + r.height / 2 ? "before" : "after";
+  };
+  menu.addEventListener("dragstart", (ev) => {
+    const item = ev.target.closest?.('.ws-item[data-ws-action="select"]');
+    if (!item) return;
+    draggedId = item.dataset.wsId;
+    ev.dataTransfer.effectAllowed = "move";
+    ev.dataTransfer.setData(DRAG_TYPE, draggedId);
+    item.classList.add("is-dragging");
+  });
+  menu.addEventListener("dragover", (ev) => {
+    const item = ev.target.closest?.('.ws-item[data-ws-action="select"]');
+    if (!draggedId || !item || item.dataset.wsId === draggedId) { clearMarks(); return; }
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = "move";
+    const place = placeFor(item, ev);
+    clearMarks();
+    item.classList.add(place === "before" ? "drop-before" : "drop-after");
+  });
+  menu.addEventListener("dragleave", (ev) => {
+    if (!menu.contains(ev.relatedTarget)) clearMarks();
+  });
+  menu.addEventListener("drop", (ev) => {
+    const item = ev.target.closest?.('.ws-item[data-ws-action="select"]');
+    clearMarks();
+    if (!draggedId || !item) return;
+    ev.preventDefault();
+    reorderWorkspaceTo(draggedId, item.dataset.wsId, placeFor(item, ev));
+    draggedId = null;
+  });
+  menu.addEventListener("dragend", () => {
+    draggedId = null;
+    clearMarks();
+    menu.querySelectorAll(".ws-item.is-dragging").forEach((el) => el.classList.remove("is-dragging"));
+  });
+  menu.addEventListener("keydown", (ev) => {
+    if (!ev.altKey || (ev.key !== "ArrowUp" && ev.key !== "ArrowDown")) return;
+    const item = ev.target.closest?.('.ws-item[data-ws-action="select"]');
+    if (!item) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const id = item.dataset.wsId;
+    if (reorderWorkspace(id, ev.key === "ArrowUp" ? -1 : 1)) {
+      // La lista se ha repintado: el foco sigue al workspace movido.
+      menu.querySelector(`.ws-item[data-ws-id="${CSS.escape(id)}"]`)?.focus();
+    }
+  });
 }
 
 function loadRecentConnections() {
@@ -6597,8 +6686,63 @@ function sidebarSearchCandidates(query = "") {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Alcance de los buscadores ya resuelto: el perfil activo, uno concreto o todos. */
+function currentSearchScope() {
+  return resolveSearchScope(prefs.searchScope, {
+    activeId: getActiveWorkspaceId(),
+    workspaceIds: prefs.workspaces.map((w) => w.id),
+  });
+}
+
 function connectionSearchIncludesProfile(profile) {
-  return prefs.searchAllWorkspaces !== false || profileBelongsToActiveWorkspace(profile);
+  return scopeIncludesWorkspace(currentSearchScope(), profileWorkspaceId(profile));
+}
+
+const SEARCH_SCOPE_SELECT_IDS = ["sidebar-search-scope", "dashboard-search-scope", "pref-search-scope"];
+let _searchScopeOptionsKey = "";
+
+/**
+ * Rellena los selectores de alcance (barra lateral, inicio y Preferencias)
+ * y los pone en el valor guardado. Las opciones solo se rehacen si cambian
+ * los workspaces o el idioma: rehacerlas en cada repintado de la lista
+ * cerraría un desplegable abierto.
+ */
+function renderSearchScopeSelects() {
+  const options = searchScopeOptions(
+    prefs.workspaces.map((w) => ({ id: w.id, label: workspaceLabel(w) })),
+    { current: t("search_scope.current"), all: t("search_scope.all") },
+  );
+  const key = JSON.stringify([getLanguage(), options]);
+  const value = normalizeSearchScope(prefs.searchScope, prefs.searchAllWorkspaces);
+  for (const id of SEARCH_SCOPE_SELECT_IDS) {
+    const select = document.getElementById(id);
+    if (!select) continue;
+    if (key !== _searchScopeOptionsKey || !select.options.length) {
+      const base = options.filter((o) => o.group === "base");
+      const named = options.filter((o) => o.group === "workspaces");
+      const opt = (o) => `<option value="${escHtml(o.value)}">${escHtml(o.label)}</option>`;
+      select.innerHTML = base.map(opt).join("")
+        + (named.length ? `<optgroup label="${escHtml(t("search_scope.group"))}">${named.map(opt).join("")}</optgroup>` : "");
+    }
+    // Un workspace guardado que ya no existe se enseña como «actual», que es
+    // lo que de verdad se busca.
+    const shown = [...select.options].some((o) => o.value === value) ? value : "current";
+    if (select.value !== shown) select.value = shown;
+  }
+  _searchScopeOptionsKey = key;
+}
+
+/** Cambia el alcance desde uno de los buscadores; se guarda y se sincroniza. */
+function setSearchScope(value) {
+  const scope = normalizeSearchScope(value, prefs.searchAllWorkspaces);
+  if (scope === prefs.searchScope) return;
+  prefs.searchScope = scope;
+  prefs.searchAllWorkspaces = scope === "all";
+  prefs._prefsUpdatedAt = new Date().toISOString();
+  savePrefs();
+  renderSearchScopeSelects();
+  renderConnectionList();
+  scheduleProfileAutoSync();
 }
 
 /**
@@ -6610,8 +6754,9 @@ function groupedConnectionSearch(query) {
   const scoped = profiles.filter(connectionSearchIncludesProfile);
   const folders = [];
   const byWorkspace = prefs.userFoldersByWorkspace || {};
+  const scope = currentSearchScope();
   for (const [workspaceId, paths] of Object.entries(byWorkspace)) {
-    if (prefs.searchAllWorkspaces === false && workspaceId !== getActiveWorkspaceId()) continue;
+    if (!scopeIncludesWorkspace(scope, workspaceId)) continue;
     for (const path of paths || []) folders.push({ path, workspaceId });
   }
   return groupConnectionSearch({ profiles: scoped, folders, notes: notesIndex, query });
@@ -7585,6 +7730,13 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   menu.querySelectorAll(".ctx-ws-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "workspace")
   );
+  if (type === "workspace") {
+    const moves = workspaceMoves(prefs.workspaces, ctxTarget?.workspaceId || "");
+    const up = menu.querySelector('[data-ctx="move-ws-up"]');
+    const down = menu.querySelector('[data-ctx="move-ws-down"]');
+    if (up) up.disabled = !moves.up;
+    if (down) down.disabled = !moves.down;
+  }
   menu.querySelectorAll(".ctx-colorable").forEach((el) =>
     el.classList.toggle("hidden", type !== "folder" && type !== "workspace")
   );
@@ -8019,6 +8171,12 @@ function handleContextMenuAction(action) {
       break;
     case "rename-ws":
       renameWorkspaceById(ctxTarget.workspaceId);
+      break;
+    case "move-ws-up":
+      if (ctxTarget.workspaceId) reorderWorkspace(ctxTarget.workspaceId, -1);
+      break;
+    case "move-ws-down":
+      if (ctxTarget.workspaceId) reorderWorkspace(ctxTarget.workspaceId, 1);
       break;
     case "delete-ws":
       deleteWorkspaceById(ctxTarget.workspaceId);
@@ -26019,6 +26177,8 @@ function bindUIEvents() {
       e.stopPropagation();
       toggleSidebarTools();
     });
+    const wsMenu = document.getElementById("workspace-menu");
+    if (wsMenu) bindWorkspaceMenuReorder(wsMenu);
     popover.addEventListener("click", (e) => {
       const wsBtn = e.target.closest(".ws-item");
       if (wsBtn && !wsBtn.disabled) {
@@ -26050,8 +26210,16 @@ function bindUIEvents() {
         return;
       }
     });
+    // Elegir en el desplegable de alcance (su lista vive en <body>) no es un
+    // clic fuera: el `click` que sigue al `mousedown` sobre la lista cae en
+    // lo que hubiera debajo y cerraba el popover, borrando la búsqueda.
+    let downInDropdown = false;
+    document.addEventListener("mousedown", (e) => {
+      downInDropdown = !!(e.target instanceof Element && e.target.closest(".custom-select-list"));
+    }, true);
     document.addEventListener("click", (e) => {
       if (popover.classList.contains("hidden")) return;
+      if (downInDropdown) return;
       if (popover.contains(e.target) || toolsBtn.contains(e.target)) return;
       // Si el clic recae sobre una conexión de los resultados, no cierres el
       // popover de búsqueda: así la lista no se re-renderiza en el primer clic
@@ -26062,6 +26230,11 @@ function bindUIEvents() {
       if (e.target.closest(".conn-item, .search-folder-row, .sidebar-search-section-title")) return;
       toggleSidebarTools(false);
     });
+  }
+
+  // Alcance de los buscadores (barra lateral e inicio).
+  for (const id of ["sidebar-search-scope", "dashboard-search-scope"]) {
+    document.getElementById(id)?.addEventListener("change", (e) => setSearchScope(e.target.value));
   }
 
   // Búsqueda en la sidebar

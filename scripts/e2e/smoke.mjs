@@ -32,6 +32,8 @@
 //   6c. Preferencias se mueve, se redimensiona, recuerda su marco y se queda
 //      en iconos cuando es estrecha; los tooltips propios salen con el ratón
 //      y no dejan el `title` nativo a la vez (`frames.mjs`).
+//   6d. El buscador de la barra lateral busca en el perfil actual, en uno
+//      concreto o en todos, y los perfiles se reordenan (`workspaces.mjs`).
 //   7. Salto activo y bastiones por la interfaz (`jump.mjs`), sin servidores:
 //      el formulario guarda el bastión elegido entre las conexiones guardadas,
 //      «Usar como salto activo» enciende la píldora de la barra lateral y su ✕
@@ -63,6 +65,7 @@ import { checkSyncFeedback } from "./sync-feedback.mjs";
 import { checkShortcuts } from "./shortcuts.mjs";
 import { checkDialogs } from "./dialogs.mjs";
 import { checkFrames, checkTooltips } from "./frames.mjs";
+import { checkWorkspaces } from "./workspaces.mjs";
 import { checkKeyboard } from "./keyboard.mjs";
 import { checkToasts } from "./toasts.mjs";
 import { checkTerminalLayers } from "./terminal-layers.mjs";
@@ -516,6 +519,7 @@ async function main() {
     await checkDialogs(app, check);
     await checkFrames(app, check);
     await checkTooltips(app, check);
+    await checkWorkspaces(app, check);
     await checkKeyboard(app, check);
     await checkToasts(app, check);
     await checkTerminalLayers(app, check);

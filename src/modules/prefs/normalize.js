@@ -1,5 +1,6 @@
 // @ts-check
 import { normalizeJumpPrefs } from "../jump-route.js";
+import { normalizeSearchScope } from "../search-scope.js";
 
 /**
  * Normalización y migraciones **puras** de las preferencias al cargarlas.
@@ -66,7 +67,10 @@ export function normalizePrefs(prefs, stored, deps) {
   if (!["current", "all", "favorites"].includes(prefs.sidebarViewMode)) {
     prefs.sidebarViewMode = "current";
   }
-  prefs.searchAllWorkspaces = prefs.searchAllWorkspaces !== false;
+  // Alcance de los buscadores; sin valor propio sale del booleano antiguo,
+  // que se sigue escribiendo para las versiones anteriores que sincronizan.
+  prefs.searchScope = normalizeSearchScope(prefs.searchScope, prefs.searchAllWorkspaces);
+  prefs.searchAllWorkspaces = prefs.searchScope === "all";
   prefs.searchGroupedResults = prefs.searchGroupedResults !== false;
   prefs.sidebarCompact = Boolean(prefs.sidebarCompact);
   if (typeof prefs.foldersFirst !== "boolean") prefs.foldersFirst = true;

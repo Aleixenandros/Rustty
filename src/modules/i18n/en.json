@@ -541,6 +541,9 @@
     "workspace_title": "Switch workspace",
     "workspace_new": "New workspace…",
     "workspace_rename": "Rename workspace",
+    "workspace_move_up": "Move workspace up",
+    "workspace_move_down": "Move workspace down",
+    "workspace_order": "Move this workspace",
     "workspace_delete": "Delete workspace",
     "workspace_prompt_new": "Name of the new workspace",
     "workspace_prompt_rename": "New workspace name",
@@ -1265,8 +1268,8 @@
     "bg_store_error": "Could not store the image (local storage full).",
     "color_blind_safe": "Color-blind mode",
     "color_blind_safe_hint": "Differentiates status dots (tabs, sync, status bar) by shape in addition to color.",
-    "search_all_workspaces": "Search connections in all workspaces",
-    "search_all_workspaces_hint": "If disabled, the home and sidebar searches only show connections from the active workspace.",
+    "search_scope": "Where the connection search looks",
+    "search_scope_hint": "In the current workspace, in a specific one or in all of them. It can also be changed from the search itself, in the sidebar and on the home screen.",
     "search_grouped": "Group search results by relevance",
     "search_grouped_hint": "Separates direct matches from matching folders (a single entry with a count) and from notes, showing each result's path. When disabled, the classic flat list returns.",
     "ui_zoom": "Interface size",
@@ -2418,5 +2421,11 @@
     "delete_active": "It is the active jump host: new connections will go direct again.",
     "delete_active_multi": "One of them is the active jump host: new connections will go direct again.",
     "test_external_via": "{proto} goes through a jump host: this tests the jump host and whether it allows tunnels, not the destination port."
+  },
+  "search_scope": {
+    "label": "Search in",
+    "current": "Current workspace",
+    "all": "All workspaces",
+    "group": "A specific workspace"
   }
 }

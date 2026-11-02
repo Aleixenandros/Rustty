@@ -6,7 +6,7 @@ export const SYNCED_PREF_KEYS = [
   "fontFamily", "fontSize", "lineHeight", "letterSpacing",
   "cursorStyle", "cursorBlink", "scrollback", "bell", "lang",
   "userFolders", "userFoldersByWorkspace",
-  "workspaces", "favorites", "searchAllWorkspaces",
+  "workspaces", "favorites", "searchAllWorkspaces", "searchScope",
   "folderColors", "workspaceColors", "highlightRules",
 ];
 

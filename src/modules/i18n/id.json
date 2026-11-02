@@ -541,6 +541,9 @@
     "workspace_title": "Ganti ruang kerja",
     "workspace_new": "Ruang kerja baru…",
     "workspace_rename": "Ganti nama ruang kerja",
+    "workspace_move_up": "Naikkan ruang kerja",
+    "workspace_move_down": "Turunkan ruang kerja",
+    "workspace_order": "Pindahkan ruang kerja ini",
     "workspace_delete": "Hapus ruang kerja",
     "workspace_prompt_new": "Nama ruang kerja baru",
     "workspace_prompt_rename": "Nama ruang kerja baru",
@@ -1265,8 +1268,8 @@
     "bg_store_error": "Tidak dapat menyimpan gambar (penyimpanan lokal penuh).",
     "color_blind_safe": "Mode buta warna",
     "color_blind_safe_hint": "Membedakan titik status (tab, sinkronisasi, bilah status) berdasarkan bentuk selain warna.",
-    "search_all_workspaces": "Cari koneksi di semua ruang kerja",
-    "search_all_workspaces_hint": "Jika dinonaktifkan, pencarian di beranda dan bilah samping hanya menampilkan koneksi dari ruang kerja aktif.",
+    "search_scope": "Cakupan pencarian koneksi",
+    "search_scope_hint": "Di ruang kerja saat ini, di ruang kerja tertentu, atau di semuanya. Juga dapat diubah langsung dari kotak pencarian, di bilah samping dan di beranda.",
     "search_grouped": "Kelompokkan hasil pencarian berdasarkan relevansi",
     "search_grouped_hint": "Memisahkan kecocokan langsung dari folder yang cocok (satu entri dengan jumlah) dan dari catatan, serta menampilkan path setiap hasil. Jika dinonaktifkan, daftar datar klasik kembali.",
     "ui_zoom": "Ukuran antarmuka",
@@ -2418,5 +2421,11 @@
     "delete_active": "Ini adalah jump host aktif: koneksi baru akan kembali langsung.",
     "delete_active_multi": "Salah satunya adalah jump host aktif: koneksi baru akan kembali langsung.",
     "test_external_via": "{proto} melalui jump host: ini menguji jump host dan apakah mengizinkan tunnel, bukan port tujuan."
+  },
+  "search_scope": {
+    "label": "Cari di",
+    "current": "Ruang kerja saat ini",
+    "all": "Semua ruang kerja",
+    "group": "Ruang kerja tertentu"
   }
 }

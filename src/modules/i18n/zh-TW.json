@@ -541,6 +541,9 @@
     "workspace_title": "切換工作區",
     "workspace_new": "新增工作區…",
     "workspace_rename": "重新命名工作區",
+    "workspace_move_up": "工作區上移",
+    "workspace_move_down": "工作區下移",
+    "workspace_order": "移動此工作區",
     "workspace_delete": "刪除工作區",
     "workspace_prompt_new": "新工作區的名稱",
     "workspace_prompt_rename": "新的工作區名稱",
@@ -1265,8 +1268,8 @@
     "bg_store_error": "無法儲存圖片（本機儲存空間已滿）。",
     "color_blind_safe": "色盲模式",
     "color_blind_safe_hint": "除了顏色之外，也以形狀區分狀態圓點（分頁、同步、狀態列）。",
-    "search_all_workspaces": "在所有工作區中搜尋連線",
-    "search_all_workspaces_hint": "停用時，首頁與側邊欄的搜尋只會顯示作用中工作區的連線。",
+    "search_scope": "連線搜尋的範圍",
+    "search_scope_hint": "在目前的工作區、指定的工作區或所有工作區中搜尋。也可以直接在側邊欄與首頁的搜尋框中變更。",
     "search_grouped": "依相關性將搜尋結果分組",
     "search_grouped_hint": "將直接符合的項目、符合的資料夾（單一項目並附數量）與備註分開，並顯示每筆結果的路徑。停用時恢復傳統的平面清單。",
     "ui_zoom": "介面大小",
@@ -2418,5 +2421,11 @@
     "delete_active": "它是作用中的跳板主機：新連線將恢復為直接連線。",
     "delete_active_multi": "其中一個是作用中的跳板主機：新連線將恢復為直接連線。",
     "test_external_via": "{proto} 經由跳板主機：這會測試跳板主機及其是否允許通道，而非目的地連接埠。"
+  },
+  "search_scope": {
+    "label": "搜尋範圍",
+    "current": "目前的工作區",
+    "all": "所有工作區",
+    "group": "指定的工作區"
   }
 }

@@ -188,6 +188,9 @@ export const DEFAULT_PREFS = {
   // Si está activo, las búsquedas de conexiones recorren todos los workspaces.
   // Si se desactiva, solo consultan el workspace activo.
   searchAllWorkspaces: true,
+  // Alcance de los buscadores: "current" | "all" | "ws:<id>". Sin valor
+  // (null) lo deduce `normalizePrefs` de `searchAllWorkspaces`, el antiguo.
+  searchScope: null,
   // Resultados de búsqueda agrupados por relevancia: conexiones directas,
   // carpetas coincidentes (una entrada con recuento) y coincidencias en notas.
   // Desactivado, vuelve la lista plana alfabética clásica.
