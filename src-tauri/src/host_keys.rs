@@ -7,14 +7,13 @@ use std::time::Duration;
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use russh::client;
 use russh::keys::{known_hosts, ssh_key::PublicKey, PublicKeyOrCertificate};
-use russh::{Channel, ChannelMsg};
+use russh::Channel;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 
-use crate::ipc::{event_name, EventKind, HOST_KEY_PROMPT};
+use crate::ipc::HOST_KEY_PROMPT;
 use crate::locks::MutexExt;
 
 // ── Política de primera conexión (TOFU estricto) ─────────────────────────────
@@ -981,17 +980,14 @@ impl client::Handler for KnownHostsClient {
             if let Ok(stream) =
                 tokio::net::TcpStream::connect((target.host.as_str(), target.port)).await
             {
-                let _ = pump_channel_with_traffic(
-                    channel,
-                    stream,
-                    TrafficSink {
-                        session_id: target.session_id,
-                        tunnel_id: target.tunnel_id,
-                        app_handle: target.app_handle,
-                        totals: target.traffic,
-                    },
-                )
-                .await;
+                // El mismo bombeo que un túnel local: direcciones independientes
+                // y tráfico coalescido con el acumulado del túnel.
+                let on_traffic = crate::ssh_manager::tunnel_traffic_emitter(
+                    target.app_handle,
+                    &target.session_id,
+                    &target.tunnel_id,
+                );
+                crate::channel_pump::pump_tunnel(channel, stream, target.traffic, on_traffic).await;
             }
         });
         Ok(())
@@ -1038,147 +1034,24 @@ async fn forward_to_x11(channel: Channel<russh::client::Msg>) -> std::io::Result
     pump_channel(channel, stream).await
 }
 
-/// Bombea datos en ambas direcciones entre un canal russh y un stream local
-/// (Unix socket o TCP). Termina cuando cualquiera de los dos extremos cierra.
+/// Bombea un canal que abrió el servidor (agente o X11) contra el socket local
+/// que lo atiende. Lectura y escritura del canal van separadas (ver
+/// [`crate::channel_pump`]): antes la escritura esperaba ventana dentro del
+/// `select!` que leía el canal y un servidor que no absorbía la subida colgaba
+/// la conexión entera. Termina cuando cualquiera de los dos extremos cierra.
 async fn pump_channel<S>(channel: Channel<russh::client::Msg>, stream: S) -> std::io::Result<()>
 where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite,
 {
-    pump_channel_inner(channel, stream, None).await
-}
-
-/// Destino de los eventos de tráfico de una conexión de túnel remoto.
-struct TrafficSink {
-    session_id: String,
-    tunnel_id: String,
-    app_handle: AppHandle,
-    /// Contadores del túnel entero: el evento lleva el acumulado, no el de la
-    /// conexión (ver [`crate::tunnel_throttle::TunnelTraffic`]).
-    totals: Arc<crate::tunnel_throttle::TunnelTraffic>,
-}
-
-async fn pump_channel_with_traffic<S>(
-    channel: Channel<russh::client::Msg>,
-    stream: S,
-    sink: TrafficSink,
-) -> std::io::Result<()>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-{
-    pump_channel_inner(channel, stream, Some(sink)).await
-}
-
-async fn pump_channel_inner<S>(
-    mut channel: Channel<russh::client::Msg>,
-    stream: S,
-    traffic: Option<TrafficSink>,
-) -> std::io::Result<()>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-{
-    let (mut local_rx, mut local_tx) = tokio::io::split(stream);
-    let mut buf = vec![0u8; 8192];
-    let mut bytes_up = 0u64;
-    let mut bytes_down = 0u64;
-    // Coalescing de los eventos de tráfico (ver `tunnel_throttle`): emitir a lo
-    // sumo cada intervalo/umbral en vez de por chunk, con flush final exacto.
-    let mut last_emit = std::time::Instant::now();
-    let mut last_emit_total = 0u64;
-    loop {
-        tokio::select! {
-            msg = channel.wait() => {
-                match msg {
-                    Some(ChannelMsg::Data { data }) => {
-                        if local_tx.write_all(&data).await.is_err() {
-                            break;
-                        }
-                        bytes_down = bytes_down.saturating_add(data.len() as u64);
-                        add_traffic(&traffic, 0, data.len() as u64);
-                        maybe_emit_traffic(&traffic, bytes_up, bytes_down, &mut last_emit, &mut last_emit_total);
-                    }
-                    Some(ChannelMsg::Eof)
-                    | Some(ChannelMsg::Close)
-                    | Some(ChannelMsg::ExitStatus { .. })
-                    | Some(ChannelMsg::ExitSignal { .. }) => break,
-                    Some(_) => {}
-                    None => break,
-                }
-            }
-            n = local_rx.read(&mut buf) => {
-                match n {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        if channel.data(&buf[..n]).await.is_err() {
-                            break;
-                        }
-                        bytes_up = bytes_up.saturating_add(n as u64);
-                        add_traffic(&traffic, n as u64, 0);
-                        maybe_emit_traffic(&traffic, bytes_up, bytes_down, &mut last_emit, &mut last_emit_total);
-                    }
-                }
-            }
-        }
-    }
-    // Flush final con los totales exactos por si el último chunk no cruzó el umbral.
-    if bytes_up.saturating_add(bytes_down) != last_emit_total {
-        emit_tunnel_traffic(&traffic);
-    }
-    let _ = channel.eof().await;
-    let _ = channel.close().await;
+    crate::channel_pump::pump_stream(channel, stream, |_, _| {}).await;
     Ok(())
-}
-
-/// Suma los bytes de esta conexión a los contadores del túnel.
-fn add_traffic(traffic: &Option<TrafficSink>, up: u64, down: u64) {
-    if let Some(sink) = traffic {
-        sink.totals.add(up, down);
-    }
-}
-
-/// Emite un evento de tráfico solo si el throttle lo permite (ver
-/// [`crate::tunnel_throttle`]), actualizando el estado de coalescing. El ritmo
-/// se decide con los bytes de ESTA conexión (`bytes_up`/`bytes_down`); el
-/// evento lleva el acumulado del túnel.
-fn maybe_emit_traffic(
-    traffic: &Option<TrafficSink>,
-    bytes_up: u64,
-    bytes_down: u64,
-    last_emit: &mut std::time::Instant,
-    last_emit_total: &mut u64,
-) {
-    if traffic.is_none() {
-        return;
-    }
-    let total = bytes_up.saturating_add(bytes_down);
-    if crate::tunnel_throttle::should_emit_traffic(
-        last_emit.elapsed(),
-        total.saturating_sub(*last_emit_total),
-    ) {
-        emit_tunnel_traffic(traffic);
-        *last_emit = std::time::Instant::now();
-        *last_emit_total = total;
-    }
-}
-
-fn emit_tunnel_traffic(traffic: &Option<TrafficSink>) {
-    let Some(TrafficSink { session_id, tunnel_id, app_handle, totals }) = traffic else {
-        return;
-    };
-    let (bytes_up, bytes_down) = totals.totals();
-    let _ = app_handle.emit(
-        &event_name(EventKind::SshTunnelTraffic, session_id),
-        serde_json::json!({
-            "id": tunnel_id,
-            "bytesUp": bytes_up,
-            "bytesDown": bytes_down,
-        }),
-    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use russh::keys::ssh_key::PublicKey;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     // `fingerprint_sha256` debe producir exactamente el mismo SHA256 que
     // `ssh-keygen -lf` (SHA256 de la clave en formato wire, base64 sin padding,
@@ -1602,5 +1475,98 @@ mod tests {
             assert!(!body.contains(forbidden), "confirm_on_stdin usa {forbidden}");
         }
         assert!(body.contains("stderr()"));
+    }
+
+    // ─── Bombeo de los canales que abre el servidor (-R, agente, X11) ─────
+
+    /// Canal `direct-tcpip` contra el servidor en proceso: para el bombeo da
+    /// igual quién abrió el canal, y así no hace falta un `tcpip-forward`.
+    async fn pumped_channel(
+        opts: crate::shell_fixture::ShellServerOptions,
+    ) -> (
+        crate::shell_fixture::ShellServer,
+        client::Handle<KnownHostsClient>,
+        Channel<client::Msg>,
+    ) {
+        let server = crate::shell_fixture::ShellServer::start(opts).await;
+        let handle = server.connect().await;
+        let channel = handle
+            .channel_open_direct_tcpip("127.0.0.1", 80, "127.0.0.1", 40000)
+            .await
+            .expect("direct-tcpip");
+        (server, handle, channel)
+    }
+
+    /// Lee de `local` hasta sumar `expected` bytes o agotar el plazo.
+    async fn read_until(local: &mut tokio::io::DuplexStream, expected: usize) -> usize {
+        let mut got = 0usize;
+        let mut buf = vec![0u8; 64 * 1024];
+        let lectura = async {
+            while got < expected {
+                match local.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => got += n,
+                }
+            }
+        };
+        let _ = tokio::time::timeout(Duration::from_secs(10), lectura).await;
+        got
+    }
+
+    /// **Regresión del bloqueo de la conexión por un túnel remoto.** El
+    /// servidor no absorbe lo que el lado local manda (ventana cero: el otro
+    /// extremo del `-R` o la aplicación X11 remota leen más despacio de lo que
+    /// produce el lado local) y a la vez manda 300 mensajes, más que el buffer
+    /// de 100 por canal del cliente russh. Con la escritura dentro del
+    /// `select!` del lector, el bombeo se quedaba parado en `data`, el buffer se
+    /// llenaba y la tarea de sesión de russh se bloqueaba al entregar el
+    /// mensaje 101: la bajada no llegaba y con ella se paraba la conexión
+    /// entera (terminal, SFTP y el resto de túneles).
+    #[tokio::test]
+    async fn una_subida_que_el_servidor_no_absorbe_no_frena_la_bajada_del_reenvio() {
+        use crate::shell_fixture::ShellServerOptions;
+        let opts = ShellServerOptions::never_reads(Some((300, 16 * 1024)));
+        let (_server, _handle, channel) = pumped_channel(opts).await;
+        let (mut local, pumped) = tokio::io::duplex(256 * 1024);
+        let pump = tokio::spawn(pump_channel(channel, pumped));
+
+        // Subida que el servidor nunca absorberá...
+        local.write_all(&vec![b'u'; 64 * 1024]).await.unwrap();
+        // ...y la bajada tiene que llegar entera.
+        let expected = opts.burst_len();
+        let got = read_until(&mut local, expected).await;
+        assert_eq!(
+            got, expected,
+            "la bajada se atascó: {got} de {expected} bytes"
+        );
+        pump.abort();
+    }
+
+    /// Si el servidor cierra el canal mientras la subida espera ventana, el
+    /// bombeo termina (y suelta el socket local). Antes la espera de `data`
+    /// no acababa nunca: nadie vuelve a abrir la ventana de un canal cerrado,
+    /// y la conexión local del túnel quedaba colgada para siempre.
+    #[tokio::test]
+    async fn el_bombeo_termina_si_el_servidor_cierra_con_la_subida_pendiente() {
+        use crate::shell_fixture::ShellServerOptions;
+        let opts = ShellServerOptions::never_reads(Some((8, 1024))).then_exit(0);
+        let (_server, _handle, channel) = pumped_channel(opts).await;
+        let (mut local, pumped) = tokio::io::duplex(256 * 1024);
+        let pump = tokio::spawn(pump_channel(channel, pumped));
+
+        local.write_all(&vec![b'u'; 64 * 1024]).await.unwrap();
+        let expected = opts.burst_len();
+        assert_eq!(read_until(&mut local, expected).await, expected);
+        tokio::time::timeout(Duration::from_secs(10), pump)
+            .await
+            .expect("el bombeo debe terminar al cerrarse el canal")
+            .unwrap()
+            .unwrap();
+        // Con el bombeo terminado, el extremo local ve el fin de la conexión.
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), local.read_to_end(&mut rest))
+            .await
+            .expect("el extremo local debe cerrarse")
+            .unwrap();
     }
 }

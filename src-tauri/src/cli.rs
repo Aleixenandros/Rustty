@@ -27,8 +27,9 @@ use russh::client::{self, AuthResult};
 use russh::keys::load_secret_key;
 use russh::{ChannelMsg, Preferred};
 use serde::Serialize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
+use crate::channel_pump::{copy_to_channel, finish_channel, CopyError};
 use crate::credentials::{self, CredentialKind, CredentialStore};
 use crate::host_keys;
 use crate::jump_route::{self, HopSecrets, JumpRoute, RouteChoice};
@@ -1512,33 +1513,53 @@ async fn run_ssh_session(
     }
 
     let _raw = RawModeGuard::enter()?;
-    let mut stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::stdout();
-    let mut stdin_buf = [0u8; 8192];
+    interactive_loop(channel, tokio::io::stdin(), tokio::io::stdout()).await
+}
+
+/// Bucle de `rustty -c <perfil>`: `stdin` va al shell remoto y su salida a
+/// `stdout` hasta que el shell termina.
+///
+/// La subida corre como futuro aparte del que lee el canal (ver
+/// [`crate::channel_pump`]): un pegado grande o una tubería que el shell no lee
+/// espera ventana sin dejar de mostrar la salida ni de ver cómo acaba el
+/// shell. Antes esa espera iba dentro del `select!` del lector y, con salida en
+/// vuelo, colgaba la sesión para siempre, aunque el shell volviera a leer.
+async fn interactive_loop<R, W>(
+    channel: russh::Channel<client::Msg>,
+    stdin: R,
+    mut stdout: W,
+) -> Result<ShellExit, String>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let (mut read, write) = channel.split();
+    // Un stdin agotado (una tubería) manda EOF y espera al shell, como `ssh`,
+    // en vez de salir sin saber cómo acabó.
+    let up = async {
+        copy_to_channel(stdin, &write, |_| {}).await?;
+        let _ = write.eof().await;
+        Ok::<(), CopyError>(())
+    };
+    tokio::pin!(up);
     // Como con `--exec`: el código llega en `ExitStatus`, que el servidor manda
     // tras la salida y antes de cerrar. Tras él se sigue leyendo hasta el EOF
     // (puede quedar salida en vuelo) y tras el EOF hasta tener el código o
-    // `Close`. Un stdin agotado (una tubería) manda EOF y espera al shell,
-    // como `ssh`, en vez de salir sin saber cómo acabó.
+    // `Close`.
     let mut exit = ShellExit::Closed;
-    let mut stdin_closed = false;
+    let mut stdin_done = false;
     let mut remote_eof = false;
 
     loop {
         tokio::select! {
-            read = stdin.read(&mut stdin_buf), if !stdin_closed => {
-                let n = read.map_err(|e| format!("Error leyendo stdin: {e}"))?;
-                if n == 0 {
-                    stdin_closed = true;
-                    let _ = channel.eof().await;
-                    continue;
-                }
-                channel
-                    .data(&stdin_buf[..n])
-                    .await
-                    .map_err(|e| format!("Error enviando datos al servidor: {e}"))?;
+            sent = &mut up, if !stdin_done => {
+                stdin_done = true;
+                sent.map_err(|err| match err {
+                    CopyError::Read(e) => format!("Error leyendo stdin: {e}"),
+                    CopyError::Send(e) => format!("Error enviando datos al servidor: {e}"),
+                })?;
             }
-            msg = channel.wait() => {
+            msg = read.wait() => {
                 match msg {
                     Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
                         stdout
@@ -1575,7 +1596,7 @@ async fn run_ssh_session(
         }
     }
 
-    let _ = channel.close().await;
+    finish_channel(&write, false).await;
     Ok(exit)
 }
 
@@ -1715,49 +1736,49 @@ async fn exec_on_handle(
         .await
         .map_err(|e| ExecError::Connect(format!("No se pudo ejecutar el comando remoto: {e}")))?;
 
-    let mut inherit_stdin = false;
-    match stdin {
-        StdinMode::Inherit => inherit_stdin = true,
-        StdinMode::Bytes(bytes) => {
-            if !bytes.is_empty() {
-                channel
-                    .data(&bytes[..])
-                    .await
-                    .map_err(|e| ExecError::Io(format!("Error enviando stdin al comando remoto: {e}")))?;
+    // El stdin sube como futuro aparte del que lee el canal (ver
+    // [`crate::channel_pump`]), también los bytes de `--script` y del
+    // multi-host, que antes se escribían enteros antes de leer nada: un
+    // comando que no lee su entrada (o que acaba sin leerla) con salida en
+    // vuelo colgaba la CLI para siempre. Con la ventana llena, la espera solo
+    // frena la lectura del stdin, nunca la de la salida ni la del código.
+    // Cuando el comando acaba, `stdin_stop` corta la copia y el EOF sale de
+    // este mismo futuro: mandarlo desde el lector podía no volver nunca.
+    let (mut read, write) = channel.split();
+    let stdin_stop = tokio::sync::Notify::new();
+    let up = async {
+        let copy = async {
+            match stdin {
+                StdinMode::Inherit => copy_to_channel(tokio::io::stdin(), &write, |_| {}).await,
+                StdinMode::Bytes(bytes) => copy_to_channel(&bytes[..], &write, |_| {}).await,
+                StdinMode::Closed => Ok(()),
             }
-            let _ = channel.eof().await;
+        };
+        tokio::select! {
+            copied = copy => copied?,
+            () = stdin_stop.notified() => {}
         }
-        StdinMode::Closed => {
-            let _ = channel.eof().await;
-        }
-    }
+        let _ = write.eof().await;
+        Ok::<(), CopyError>(())
+    };
+    tokio::pin!(up);
 
-    let mut stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
     let mut stderr = tokio::io::stderr();
-    let mut stdin_buf = [0u8; 8192];
-    let mut stdin_closed = !inherit_stdin;
+    let mut stdin_done = false;
     let mut outcome = ExecOutcome::default();
     let mut remote_eof = false;
 
     loop {
         tokio::select! {
-            read = stdin.read(&mut stdin_buf), if !stdin_closed => {
-                match read {
-                    Ok(0) => {
-                        stdin_closed = true;
-                        let _ = channel.eof().await;
-                    }
-                    Ok(n) => {
-                        channel
-                            .data(&stdin_buf[..n])
-                            .await
-                            .map_err(|e| ExecError::Io(format!("Error enviando stdin al comando remoto: {e}")))?;
-                    }
-                    Err(e) => return Err(ExecError::Io(format!("Error leyendo stdin: {e}"))),
-                }
+            sent = &mut up, if !stdin_done => {
+                stdin_done = true;
+                sent.map_err(|err| ExecError::Io(match err {
+                    CopyError::Read(e) => format!("Error leyendo stdin: {e}"),
+                    CopyError::Send(e) => format!("Error enviando stdin al comando remoto: {e}"),
+                }))?;
             }
-            msg = channel.wait() => {
+            msg = read.wait() => {
                 match msg {
                     Some(ChannelMsg::Data { data }) => {
                         if capture {
@@ -1777,20 +1798,14 @@ async fn exec_on_handle(
                     }
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
                         outcome.exit_code = Some(exit_status);
-                        if !stdin_closed {
-                            stdin_closed = true;
-                            let _ = channel.eof().await;
-                        }
+                        stdin_stop.notify_one();
                         if remote_eof {
                             break;
                         }
                     }
                     Some(ChannelMsg::ExitSignal { .. }) => {
                         outcome.exit_code = Some(EXIT_CONNECT_FAILED as u32);
-                        if !stdin_closed {
-                            stdin_closed = true;
-                            let _ = channel.eof().await;
-                        }
+                        stdin_stop.notify_one();
                         if remote_eof {
                             break;
                         }
@@ -1810,7 +1825,7 @@ async fn exec_on_handle(
         }
     }
 
-    let _ = channel.close().await;
+    finish_channel(&write, false).await;
     Ok(outcome)
 }
 
@@ -3571,6 +3586,79 @@ mod tests {
         assert!(text.contains("1 omitidos") && text.contains("1 con error"), "{text}");
     }
 
+    /// Un servidor que no lee el stdin que se le manda (ventana cero, como un
+    /// comando remoto que no consume su entrada) y a la vez vuelca salida: la
+    /// CLI tiene que seguir leyendo esa salida y enterarse de cómo acaba el
+    /// comando. Antes la escritura del stdin esperaba ventana en el mismo bucle
+    /// que leía el canal (o antes de entrar en él, con `--script` y en
+    /// multi-host): con más de 100 mensajes de salida en vuelo la tarea de
+    /// sesión de russh se bloqueaba y la CLI se quedaba colgada para siempre,
+    /// aunque el comando remoto ya hubiera terminado.
+    mod servidor_que_no_lee {
+        use super::*;
+        use crate::shell_fixture::{ShellServer, ShellServerOptions};
+
+        /// Plazo de cada caso: lo que tarda de sobra sin el bloqueo. Con él,
+        /// el test falla en vez de colgar el `cargo test`.
+        const PLAZO: Duration = Duration::from_secs(10);
+
+        /// `--script`, o el stdin leído entero para repartirlo en multi-host:
+        /// los bytes ya no se escriben antes de leer el canal.
+        #[tokio::test]
+        async fn un_exec_con_stdin_que_no_se_lee_recibe_la_salida_y_el_codigo() {
+            let opts = ShellServerOptions::never_reads(Some((300, 16 * 1024))).then_exit(7);
+            let server = ShellServer::start(opts).await;
+            let mut handle = server.connect().await;
+            let stdin = StdinMode::Bytes(vec![b's'; 256 * 1024]);
+            let outcome = tokio::time::timeout(
+                PLAZO,
+                exec_on_handle(
+                    &mut handle,
+                    "cat",
+                    false,
+                    false,
+                    stdin,
+                    true,
+                    &SessionLaunch::default(),
+                ),
+            )
+            .await
+            .expect("el exec se colgó con el stdin sin leer")
+            .expect("exec");
+            assert_eq!(outcome.stdout.len(), opts.burst_len(), "salida incompleta");
+            assert_eq!(outcome.exit_code, Some(7));
+            assert!(
+                server.received().is_empty(),
+                "con ventana cero no debía llegar nada"
+            );
+        }
+
+        /// `rustty -c perfil`: un pegado (o una tubería) que el shell no lee
+        /// no congela la sesión; la salida llega entera y el código del shell
+        /// también.
+        #[tokio::test]
+        async fn la_sesion_interactiva_con_entrada_sin_leer_sigue_mostrando_la_salida() {
+            let opts = ShellServerOptions::never_reads(Some((300, 16 * 1024))).then_exit(3);
+            let server = ShellServer::start(opts).await;
+            let handle = server.connect().await;
+            let channel = handle.channel_open_session().await.expect("canal");
+            channel
+                .request_pty(true, "xterm", 80, 24, 0, 0, &[])
+                .await
+                .expect("pty");
+            channel.request_shell(true).await.expect("shell");
+            let pegado = vec![b'p'; 256 * 1024];
+            let mut salida = Vec::new();
+            let exit =
+                tokio::time::timeout(PLAZO, interactive_loop(channel, &pegado[..], &mut salida))
+                    .await
+                    .expect("la sesión se colgó con la entrada sin leer")
+                    .expect("sesión");
+            assert_eq!(exit, ShellExit::Status(3));
+            assert_eq!(salida.len(), opts.burst_len(), "salida incompleta");
+        }
+    }
+
     /// Integración real contra el `sshd` del fixture: código de salida, stdin
     /// cerrado, script por stdin y captura separada de stdout/stderr.
     #[cfg(target_os = "linux")]
@@ -3831,6 +3919,68 @@ mod tests {
             let out = exec(&mut handle, "bash -s", StdinMode::Bytes(script)).await;
             assert_eq!(out.exit_code, Some(7));
             assert_eq!(String::from_utf8_lossy(&out.stdout), "hola desde el script\n");
+        }
+
+        /// El bloqueo de la CLI contra un `sshd` de verdad: el stdin repartido
+        /// en multi-host (8 MiB) va a un comando que no lo lee y escribe megas
+        /// de salida. La ventana de `sshd` (2 MiB) se agota, y antes la CLI
+        /// seguía esperándola sin leer la salida: pasados 100 mensajes la
+        /// conexión quedaba bloqueada y el `exec` no volvía nunca.
+        ///
+        /// Cubre además lo que el servidor en proceso no reproduce: al acabar
+        /// el comando, russh se queda con datos sin ventana y deja de vaciar
+        /// la cola de salida de la conexión, y un EOF o un cierre esperados
+        /// desde el lector no volvían (ver `crate::channel_pump`).
+        #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+        #[tokio::test]
+        async fn un_comando_que_no_lee_su_stdin_y_escribe_mucho_no_cuelga_la_cli() {
+            let _guard = CLI_IT_LOCK.lock().await;
+            let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+                eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+                return;
+            };
+            host_keys::set_strict_first_connect(false);
+            let mut handle = fixture_handle(&server).await;
+
+            let stdin = StdinMode::Bytes(vec![b'x'; 8 * 1024 * 1024]);
+            let out = exec(&mut handle, "sleep 1; seq 1 1000000; exit 4", stdin).await;
+            assert_eq!(out.exit_code, Some(4));
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert_eq!(text.lines().count(), 1_000_000, "salida incompleta");
+            assert_eq!(text.lines().last(), Some("1000000"));
+        }
+
+        /// Lo mismo en la sesión interactiva (`rustty -c perfil` con una
+        /// tubería o un pegado que el otro lado no lee): termina con el código
+        /// del comando y toda su salida, sin quedarse esperando a russh.
+        #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+        #[tokio::test]
+        async fn la_sesion_interactiva_con_entrada_sin_leer_no_cuelga_contra_sshd() {
+            let _guard = CLI_IT_LOCK.lock().await;
+            let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+                eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+                return;
+            };
+            host_keys::set_strict_first_connect(false);
+            let handle = fixture_handle(&server).await;
+            let channel = handle.channel_open_session().await.expect("canal");
+            channel
+                .exec(true, "sleep 1; seq 1 1000000; exit 4")
+                .await
+                .expect("exec");
+
+            let entrada = vec![b'x'; 8 * 1024 * 1024];
+            let mut salida = Vec::new();
+            let exit = tokio::time::timeout(
+                Duration::from_secs(15),
+                interactive_loop(channel, &entrada[..], &mut salida),
+            )
+            .await
+            .expect("la sesión se colgó con la entrada sin leer")
+            .expect("sesión");
+            assert_eq!(exit, ShellExit::Status(4));
+            let text = String::from_utf8_lossy(&salida);
+            assert_eq!(text.lines().count(), 1_000_000, "salida incompleta");
         }
     }
 }

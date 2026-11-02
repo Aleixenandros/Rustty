@@ -10,12 +10,15 @@
 //! todas las plataformas y dentro del `cargo test` normal.
 //!
 //! Con la ventana normal es un servidor sumidero corriente: acepta contraseña,
-//! PTY y shell, guarda todo lo que recibe (para comprobar orden y completitud)
-//! y vuelca la ráfaga si se le pidió.
+//! PTY, shell y `exec`, guarda todo lo que recibe (para comprobar orden y
+//! completitud) y los cambios de tamaño, y vuelca la ráfaga si se le pidió. Tras la ráfaga puede además
+//! terminar el canal (código de salida, EOF y cierre), como un comando remoto
+//! que acaba sin haber leído su stdin.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use russh::client;
 use russh::keys::ssh_key::Algorithm;
 use russh::keys::PrivateKey;
 use russh::server::{self, Auth, Msg, Session};
@@ -40,6 +43,10 @@ pub struct ShellServerOptions {
     /// mensaje)`. Con más de 100 mensajes desborda el buffer por canal del
     /// cliente si este deja de leer.
     pub burst: Option<(usize, usize)>,
+    /// Tras la ráfaga, termina el canal: en una shell o un `exec` manda este
+    /// código de salida y luego EOF y cierre; en un `direct-tcpip`, EOF y
+    /// cierre. `None` = el canal sigue abierto.
+    pub exit: Option<u32>,
 }
 
 impl ShellServerOptions {
@@ -48,6 +55,7 @@ impl ShellServerOptions {
         Self {
             window_size: NORMAL_WINDOW,
             burst,
+            exit: None,
         }
     }
 
@@ -56,6 +64,15 @@ impl ShellServerOptions {
         Self {
             window_size: 0,
             burst,
+            exit: None,
+        }
+    }
+
+    /// Termina cada canal tras su ráfaga (ver [`Self::exit`]).
+    pub fn then_exit(self, code: u32) -> Self {
+        Self {
+            exit: Some(code),
+            ..self
         }
     }
 
@@ -72,6 +89,7 @@ pub struct ShellServer {
     /// (así el test no toca ningún `known_hosts`).
     pub fingerprint: String,
     received: Arc<Mutex<Vec<u8>>>,
+    sizes: Arc<Mutex<Vec<(u32, u32)>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -101,6 +119,8 @@ impl ShellServer {
         let port = listener.local_addr().expect("addr").port();
         let received: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&received);
+        let sizes: Arc<Mutex<Vec<(u32, u32)>>> = Arc::new(Mutex::new(Vec::new()));
+        let size_sink = Arc::clone(&sizes);
         let task = tokio::spawn(async move {
             loop {
                 let Ok((socket, _)) = listener.accept().await else {
@@ -109,6 +129,7 @@ impl ShellServer {
                 let handler = Handler {
                     opts,
                     received: Arc::clone(&sink),
+                    sizes: Arc::clone(&size_sink),
                 };
                 let config = Arc::clone(&config);
                 tokio::spawn(async move {
@@ -122,6 +143,7 @@ impl ShellServer {
             port,
             fingerprint,
             received,
+            sizes,
             task,
         }
     }
@@ -130,29 +152,74 @@ impl ShellServer {
     pub fn received(&self) -> Vec<u8> {
         self.received.lock_recover().clone()
     }
+
+    /// Cambios de tamaño (`window-change`) recibidos, en orden.
+    pub fn window_changes(&self) -> Vec<(u32, u32)> {
+        self.sizes.lock_recover().clone()
+    }
+
+    /// Conexión autenticada contra este servidor con su huella fijada (no
+    /// toca ningún `known_hosts`), para los tests de fuera de `ssh_manager`.
+    pub async fn connect(&self) -> client::Handle<crate::host_keys::KnownHostsClient> {
+        let (mut handler, failure) =
+            crate::host_keys::client("127.0.0.1".to_string(), self.port, false, false);
+        handler.expect_fingerprint(Some(self.fingerprint.clone()));
+        let addr = format!("127.0.0.1:{}", self.port);
+        let mut handle = crate::ssh_manager::russh_connect_addr(
+            Arc::new(client::Config::default()),
+            &addr,
+            handler,
+        )
+        .await
+        .unwrap_or_else(|e| {
+            panic!(
+                "no conectó: {e}. {:?}",
+                crate::host_keys::take_failure(&failure)
+            )
+        });
+        let auth = handle
+            .authenticate_password("ana", PASSWORD)
+            .await
+            .expect("autenticación");
+        assert!(auth.success(), "auth: {auth:?}");
+        handle
+    }
 }
 
 struct Handler {
     opts: ShellServerOptions,
     received: Arc<Mutex<Vec<u8>>>,
+    sizes: Arc<Mutex<Vec<(u32, u32)>>>,
 }
 
 impl Handler {
-    /// Vuelca la ráfaga configurada por `channel`, en su propia tarea (la
-    /// sesión sigue atendiendo al cliente mientras tanto). El pequeño retardo
-    /// deja que la confirmación de apertura salga antes que los datos.
-    fn burst(&self, channel: ChannelId, session: &Session) {
-        let Some((count, size)) = self.opts.burst else {
+    /// Vuelca la ráfaga configurada por `channel` y, si se pidió, termina el
+    /// canal, en su propia tarea (la sesión sigue atendiendo al cliente
+    /// mientras tanto). El pequeño retardo deja que la confirmación de
+    /// apertura salga antes que los datos. `session_channel` = shell o `exec`
+    /// (los que llevan código de salida).
+    fn burst(&self, channel: ChannelId, session: &Session, session_channel: bool) {
+        let ShellServerOptions { burst, exit, .. } = self.opts;
+        if burst.is_none() && exit.is_none() {
             return;
-        };
+        }
         let handle = session.handle();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            let chunk = vec![b'#'; size];
-            for _ in 0..count {
-                if handle.data(channel, chunk.clone()).await.is_err() {
-                    break;
+            if let Some((count, size)) = burst {
+                let chunk = vec![b'#'; size];
+                for _ in 0..count {
+                    if handle.data(channel, chunk.clone()).await.is_err() {
+                        return;
+                    }
                 }
+            }
+            if let Some(code) = exit {
+                if session_channel {
+                    let _ = handle.exit_status_request(channel, code).await;
+                }
+                let _ = handle.eof(channel).await;
+                let _ = handle.close(channel).await;
             }
         });
     }
@@ -191,7 +258,7 @@ impl server::Handler for Handler {
     ) -> Result<(), Self::Error> {
         let id = channel.id();
         reply.accept().await;
-        self.burst(id, session);
+        self.burst(id, session, false);
         Ok(())
     }
 
@@ -214,12 +281,13 @@ impl server::Handler for Handler {
     async fn window_change_request(
         &mut self,
         channel: ChannelId,
-        _col_width: u32,
-        _row_height: u32,
+        col_width: u32,
+        row_height: u32,
         _pix_width: u32,
         _pix_height: u32,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        self.sizes.lock_recover().push((col_width, row_height));
         session.channel_success(channel)?;
         Ok(())
     }
@@ -230,7 +298,18 @@ impl server::Handler for Handler {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         session.channel_success(channel)?;
-        self.burst(channel, session);
+        self.burst(channel, session, true);
+        Ok(())
+    }
+
+    async fn exec_request(
+        &mut self,
+        channel: ChannelId,
+        _command: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.channel_success(channel)?;
+        self.burst(channel, session, true);
         Ok(())
     }
 

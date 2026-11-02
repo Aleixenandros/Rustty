@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use zeroize::Zeroizing;
@@ -32,10 +32,11 @@ use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::auth_prompt;
+use crate::channel_pump::{finish_channel, pump_tunnel};
 use crate::error::AppError;
 use crate::host_keys;
 use crate::ipc::{event_name, EventKind};
@@ -414,14 +415,28 @@ const SHELL_WRITER_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 /// encolaron), encolar nunca bloquea al lector, y `finish` deja la tarea
 /// terminada —vacía la cola con un plazo y, si el servidor sigue sin leer, la
 /// aborta— para que no sobreviva a la shell.
+///
+/// Los cambios de tamaño van por una tarea propia ([`Self::resize`]) y no por
+/// la cola de datos: tampoco esperan ventana, así que no tienen por qué
+/// quedarse detrás de un pegado que el servidor no absorbe (OpenSSH también
+/// los adelanta). Y el lector no los espera: todo envío a la sesión pasa por
+/// una cola común que russh puede dejar de vaciar (ver `crate::channel_pump`),
+/// y un `window_change().await` en el bucle que lee volvía a congelar la
+/// conexión entera al redimensionar.
 struct ChannelWriter {
     tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
     task: JoinHandle<()>,
+    /// Último tamaño pedido; la tarea de tamaño manda siempre el más reciente
+    /// (los intermedios de un arrastre se funden).
+    size_tx: watch::Sender<Option<(u32, u32)>>,
+    resize_task: JoinHandle<()>,
 }
 
 impl ChannelWriter {
     fn spawn(write: Arc<ChannelWriteHalf<client::Msg>>) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (size_tx, mut size_rx) = watch::channel(None::<(u32, u32)>);
+        let resize_write = write.clone();
         let task = tokio::spawn(async move {
             while let Some(bytes) = rx.recv().await {
                 // `data_bytes` toma los bytes en propiedad (sin copia). Un
@@ -431,7 +446,28 @@ impl ChannelWriter {
                 }
             }
         });
-        Self { tx: Some(tx), task }
+        let resize_task = tokio::spawn(async move {
+            while size_rx.changed().await.is_ok() {
+                let size = *size_rx.borrow_and_update();
+                if let Some((cols, rows)) = size {
+                    if resize_write.window_change(cols, rows, 0, 0).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        Self {
+            tx: Some(tx),
+            task,
+            size_tx,
+            resize_task,
+        }
+    }
+
+    /// Pide un cambio de tamaño del PTY. Nunca espera: si hay uno sin mandar,
+    /// lo sustituye.
+    fn resize(&self, cols: u32, rows: u32) {
+        self.size_tx.send_replace(Some((cols, rows)));
     }
 
     /// Encola bytes para el canal. `Err` si la tarea escritora ya terminó
@@ -444,8 +480,10 @@ impl ChannelWriter {
     }
 
     /// Cierra la cola: deja de aceptar bytes, espera (con plazo) a que se
-    /// vacíe lo pendiente y aborta la tarea si el servidor sigue sin leer.
+    /// vacíe lo pendiente y aborta la tarea si el servidor sigue sin leer. Un
+    /// tamaño pendiente ya no le importa a nadie: su tarea se aborta.
     async fn finish(mut self) {
+        self.resize_task.abort();
         drop(self.tx.take());
         if tokio::time::timeout(SHELL_WRITER_DRAIN_TIMEOUT, &mut self.task)
             .await
@@ -1738,9 +1776,7 @@ async fn run_extra_shell(
                     Some(ShellMsg::Input(data)) => {
                         let _ = writer.send(data);
                     }
-                    Some(ShellMsg::Resize { cols, rows }) => {
-                        let _ = write.window_change(cols, rows, 0, 0).await;
-                    }
+                    Some(ShellMsg::Resize { cols, rows }) => writer.resize(cols, rows),
                     Some(ShellMsg::Close) | None => break,
                 }
             }
@@ -1750,8 +1786,7 @@ async fn run_extra_shell(
         let _ = on_data.send(Response::new(std::mem::take(&mut out_buf)));
     }
     writer.finish().await;
-    let _ = write.eof().await;
-    let _ = write.close().await;
+    finish_channel(&write, true).await;
     let _ = cmd_tx.send(SessionCommand::ShellClosed { shell_id });
 }
 
@@ -2504,7 +2539,7 @@ async fn run_session(
                         // (`refresh-client -C` por `tmux_set_client_size`); un
                         // window-change sobre su exec sin PTY no significa nada.
                         None if control.is_some() => {}
-                        None => { let _ = write.window_change(cols, rows, 0, 0).await; }
+                        None => writer.resize(cols, rows),
                         Some(id) => {
                             if let Some(tx) = shells.get(&id) {
                                 let _ = tx.send(ShellMsg::Resize { cols, rows });
@@ -2776,8 +2811,7 @@ async fn run_session(
         map.clear();
     }
     writer.finish().await;
-    let _ = write.eof().await;
-    let _ = write.close().await;
+    finish_channel(&write, true).await;
     exit_kind
 }
 
@@ -3197,7 +3231,7 @@ async fn read_socks5_target(mut stream: TcpStream) -> std::io::Result<(TcpStream
 /// Emisor de `ssh-tunnel-traffic-{session}` para las conexiones del túnel
 /// `tunnel_id`: el bombeo solo conoce esta clausura, no el `AppHandle`, y así
 /// se prueba sin Tauri.
-fn tunnel_traffic_emitter(
+pub(crate) fn tunnel_traffic_emitter(
     app_handle: AppHandle,
     session_id: &str,
     tunnel_id: &str,
@@ -3210,118 +3244,6 @@ fn tunnel_traffic_emitter(
             SshTunnelTrafficEvent { id: id.clone(), bytes_up, bytes_down },
         );
     }
-}
-
-/// Coalescing de los eventos de tráfico de UNA conexión de túnel: en vez de
-/// emitir por cada chunk (avalancha IPC en transferencias masivas), se emite a
-/// lo sumo cada `TRAFFIC_MIN_INTERVAL` o cada `TRAFFIC_MIN_BYTES`, y `flush`
-/// manda los totales exactos al terminar. El ritmo lo deciden los bytes de
-/// ESTA conexión; el evento lleva el acumulado del túnel. Con interior mutable
-/// porque las dos direcciones del bombeo corren como futuros independientes.
-struct TunnelTrafficEmitter<F: Fn(u64, u64)> {
-    traffic: Arc<TunnelTraffic>,
-    on_traffic: F,
-    conn_total: AtomicU64,
-    last: Mutex<(Instant, u64)>,
-}
-
-impl<F: Fn(u64, u64)> TunnelTrafficEmitter<F> {
-    fn new(traffic: Arc<TunnelTraffic>, on_traffic: F) -> Self {
-        Self {
-            traffic,
-            on_traffic,
-            conn_total: AtomicU64::new(0),
-            last: Mutex::new((Instant::now(), 0)),
-        }
-    }
-
-    fn add(&self, up: u64, down: u64) {
-        self.traffic.add(up, down);
-        let delta = up.saturating_add(down);
-        let total = self
-            .conn_total
-            .fetch_add(delta, Ordering::Relaxed)
-            .saturating_add(delta);
-        let mut last = self.last.lock_recover();
-        if crate::tunnel_throttle::should_emit_traffic(
-            last.0.elapsed(),
-            total.saturating_sub(last.1),
-        ) {
-            self.emit();
-            *last = (Instant::now(), total);
-        }
-    }
-
-    fn emit(&self) {
-        let (bytes_up, bytes_down) = self.traffic.totals();
-        (self.on_traffic)(bytes_up, bytes_down);
-    }
-
-    /// Flush final: la UI ve los totales exactos aunque el último chunk no
-    /// cruzara el umbral de emisión.
-    fn flush(&self) {
-        let total = self.conn_total.load(Ordering::Relaxed);
-        if total != self.last.lock_recover().1 {
-            self.emit();
-        }
-    }
-}
-
-/// Bombea una conexión de túnel: socket local ↔ canal `direct-tcpip`.
-///
-/// Las dos direcciones son futuros INDEPENDIENTES (no una escritura en el
-/// cuerpo de una rama del `select!`): si el servidor no absorbe la subida
-/// (ventana llena), la espera de `data` ya no impide seguir leyendo el canal,
-/// que es lo que mantiene a russh entregando mensajes al resto de canales de
-/// la conexión. Termina cuando cualquiera de los dos extremos cierra.
-async fn pump_tunnel(
-    channel: russh::Channel<russh::client::Msg>,
-    stream: TcpStream,
-    traffic: Arc<TunnelTraffic>,
-    on_traffic: impl Fn(u64, u64) + Send + Sync + 'static,
-) {
-    let emitter = TunnelTrafficEmitter::new(traffic, on_traffic);
-    let (mut read, write) = channel.split();
-    let (mut local_rx, mut local_tx) = tokio::io::split(stream);
-    let up = async {
-        let mut buf = vec![0u8; 16384];
-        loop {
-            match local_rx.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if write.data(&buf[..n]).await.is_err() {
-                        break;
-                    }
-                    emitter.add(n as u64, 0);
-                }
-            }
-        }
-    };
-    let down = async {
-        loop {
-            match read.wait().await {
-                Some(ChannelMsg::Data { data }) => {
-                    if local_tx.write_all(&data).await.is_err() {
-                        break;
-                    }
-                    emitter.add(0, data.len() as u64);
-                }
-                Some(ChannelMsg::Eof)
-                | Some(ChannelMsg::Close)
-                | Some(ChannelMsg::ExitStatus { .. })
-                | Some(ChannelMsg::ExitSignal { .. }) => break,
-                Some(_) => {}
-                None => break,
-            }
-        }
-    };
-    tokio::select! {
-        _ = up => {}
-        _ = down => {}
-    }
-    emitter.flush();
-    let _ = write.eof().await;
-    let _ = write.close().await;
 }
 
 /// Autenticación vía agente SSH. Probamos cada identidad hasta que una
@@ -4346,6 +4268,71 @@ mod tests {
             .await
             .expect("escribir en B tras cerrar A");
         leer_hasta(&mut shell_b, "sigo-viva-48").await;
+    }
+
+    /// Un cambio de tamaño de una shell hija llega al PTY real por la tarea
+    /// de tamaño del escritor (ya no lo manda el bucle lector): `stty size`
+    /// en el servidor ve las filas y columnas nuevas.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_redimensionar_una_shell_hija_llega_al_pty() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+        let handle = connect_and_auth(&server).await;
+        let channel = open_shell_channel(&handle).await;
+        let (on_data, mut data_rx) = capture_channel();
+        let (shell_tx, shell_rx) = mpsc::unbounded_channel();
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
+        let task = tokio::spawn(run_extra_shell(
+            channel,
+            "hija".to_string(),
+            on_data,
+            shell_rx,
+            cmd_tx,
+        ));
+
+        shell_tx
+            .send(ShellMsg::Resize {
+                cols: 123,
+                rows: 45,
+            })
+            .unwrap();
+        // El tamaño viaja aparte de la entrada: se reintenta hasta verlo.
+        let mut salida = Vec::new();
+        let visto = async {
+            loop {
+                shell_tx
+                    .send(ShellMsg::Input(b"stty size\n".to_vec()))
+                    .unwrap();
+                let pausa = tokio::time::sleep(Duration::from_millis(300));
+                tokio::pin!(pausa);
+                loop {
+                    tokio::select! {
+                        Some(bytes) = data_rx.recv() => salida.extend_from_slice(&bytes),
+                        _ = &mut pausa => break,
+                    }
+                }
+                if String::from_utf8_lossy(&salida).contains("45 123") {
+                    break;
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(15), visto)
+            .await
+            .unwrap_or_else(|_| panic!("el PTY no cambió: {}", String::from_utf8_lossy(&salida)));
+
+        shell_tx.send(ShellMsg::Close).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("cierre")
+            .unwrap();
     }
 
     /// Perfil SSH con comando al conectar, variables y TERM, resuelto como al
@@ -5467,6 +5454,161 @@ mod tests {
             .await
             .expect("cierre limpio")
             .unwrap();
+    }
+
+    /// Un cambio de tamaño no espera ventana: llega al servidor aunque un
+    /// pegado que el servidor no lee siga esperándola (por la cola de datos
+    /// se quedaría detrás de él). Y de varios seguidos llega el último.
+    #[tokio::test]
+    async fn un_cambio_de_tamano_no_espera_detras_de_un_pegado_sin_leer() {
+        use crate::shell_fixture::{ShellServer, ShellServerOptions};
+        let server = ShellServer::start(ShellServerOptions::never_reads(None)).await;
+        let handle = connect_shell_server(&server).await;
+        let channel = open_shell_channel(&handle).await;
+        let (on_data, _data_rx) = capture_channel();
+        let (shell_tx, shell_rx) = mpsc::unbounded_channel();
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
+        shell_tx
+            .send(ShellMsg::Input(vec![b'p'; 64 * 1024]))
+            .unwrap();
+        let task = tokio::spawn(run_extra_shell(
+            channel,
+            "hija".to_string(),
+            on_data,
+            shell_rx,
+            cmd_tx,
+        ));
+        for cols in [100, 110, 120] {
+            shell_tx.send(ShellMsg::Resize { cols, rows: 40 }).unwrap();
+        }
+        let llega = async {
+            while server.window_changes().last() != Some(&(120, 40)) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(5), llega)
+            .await
+            .unwrap_or_else(|_| panic!("el tamaño no llegó: {:?}", server.window_changes()));
+        assert!(server.received().is_empty(), "el pegado no debía salir");
+        shell_tx.send(ShellMsg::Close).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("cierre")
+            .unwrap();
+    }
+
+    /// Shell hija sobre una conexión cuya cola de salida está llena y nadie
+    /// vacía: es lo que ve cuando russh deja de vaciar esa cola común (ver
+    /// `crate::channel_pump`). Para provocarlo, otro canal de la conexión
+    /// recibe más de 100 mensajes que no se leen (la tarea de sesión se queda
+    /// esperando para entregarlos) y se le encolan envíos hasta que no cabe
+    /// ninguno más. Devuelve lo que hay que mantener vivo, el buzón de la
+    /// shell, su tarea y el receptor de avisos al worker.
+    async fn shell_with_stalled_outbound() -> (
+        impl Sized,
+        mpsc::UnboundedSender<ShellMsg>,
+        JoinHandle<()>,
+        mpsc::UnboundedReceiver<SessionCommand>,
+    ) {
+        use crate::shell_fixture::{ShellServer, ShellServerOptions};
+        let opts = ShellServerOptions::reads(Some((150, 1024)));
+        let server = ShellServer::start(opts).await;
+        let handle = connect_shell_server(&server).await;
+        let channel = open_shell_channel(&handle).await;
+        let (on_data, mut data_rx) = capture_channel();
+        let (shell_tx, shell_rx) = mpsc::unbounded_channel();
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
+        let task = tokio::spawn(run_extra_shell(
+            channel,
+            "hija".to_string(),
+            on_data,
+            shell_rx,
+            cmd_tx,
+        ));
+        // La ráfaga de la shell, entera antes de parar la conexión.
+        assert_eq!(
+            drain_until(&mut data_rx, opts.burst_len()).await,
+            opts.burst_len()
+        );
+
+        // Canal que no se lee: su ráfaga para la tarea de sesión.
+        let (stalled_read, stalled_write) = handle
+            .channel_open_direct_tcpip("127.0.0.1", 80, "127.0.0.1", 40000)
+            .await
+            .expect("direct-tcpip")
+            .split();
+        let queued = Arc::new(AtomicU32::new(0));
+        let counter = queued.clone();
+        let filler = tokio::spawn(async move {
+            while stalled_write.data(&b"x"[..]).await.is_ok() {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        // Llena cuando el contador deja de avanzar (la tarea de sesión se
+        // para en cuanto el canal sin leer recibe su mensaje 101).
+        let llena = async {
+            let mut last = u32::MAX;
+            loop {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                let now = queued.load(Ordering::SeqCst);
+                if now == last {
+                    break;
+                }
+                last = now;
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(10), llena)
+            .await
+            .expect("la cola de salida no llegó a llenarse");
+        (
+            (server, handle, stalled_read, filler, data_rx),
+            shell_tx,
+            task,
+            cmd_rx,
+        )
+    }
+
+    /// Espera a que la shell cierre y avise al worker.
+    async fn expect_shell_closed(
+        task: JoinHandle<()>,
+        cmd_rx: &mut mpsc::UnboundedReceiver<SessionCommand>,
+    ) {
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("la shell se quedó colgada con la cola de salida llena")
+            .unwrap();
+        assert!(matches!(
+            cmd_rx.try_recv(),
+            Ok(SessionCommand::ShellClosed { shell_id }) if shell_id == "hija"
+        ));
+    }
+
+    /// **Regresión: redimensionar no congela la shell.** Con la cola de salida
+    /// llena, el `window_change().await` que había en el bucle lector no
+    /// volvía: la shell dejaba de leer su canal (y, pasados 100 mensajes, la
+    /// conexión entera quedaba parada). Ahora el bucle sigue atendiendo: aquí,
+    /// el cierre que llega detrás.
+    #[tokio::test]
+    async fn redimensionar_con_la_cola_de_salida_llena_no_congela_la_shell() {
+        let (_keep, shell_tx, task, mut cmd_rx) = shell_with_stalled_outbound().await;
+        shell_tx
+            .send(ShellMsg::Resize {
+                cols: 100,
+                rows: 40,
+            })
+            .unwrap();
+        shell_tx.send(ShellMsg::Close).unwrap();
+        expect_shell_closed(task, &mut cmd_rx).await;
+    }
+
+    /// Cerrar con la cola de salida llena tampoco se queda colgado: el EOF y
+    /// el cierre del canal van con plazo (`finish_channel`), y la shell avisa
+    /// al worker igual.
+    #[tokio::test]
+    async fn cerrar_con_la_cola_de_salida_llena_no_se_queda_colgado() {
+        let (_keep, shell_tx, task, mut cmd_rx) = shell_with_stalled_outbound().await;
+        shell_tx.send(ShellMsg::Close).unwrap();
+        expect_shell_closed(task, &mut cmd_rx).await;
     }
 
     /// Invariante: al cerrar una shell hija caen SOLO los túneles abiertos

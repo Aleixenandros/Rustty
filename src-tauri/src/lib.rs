@@ -3,6 +3,7 @@ mod app_tray;
 mod asbru;
 mod atomic_file;
 mod auth_prompt;
+mod channel_pump;
 pub mod cli;
 mod commands;
 mod credentials;
