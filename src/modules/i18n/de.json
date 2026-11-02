@@ -1597,8 +1597,8 @@
     "limit_hint": "0 = kein Limit (wie bisher). Die Grenze gilt für die Leitung, nicht für den einzelnen Transfer: zwei gleichzeitige Downloads teilen sich dieselbe Bandbreite. Praktisch, um eine lange Kopie im Hintergrund laufen zu lassen, ohne dass Videoanruf oder andere Sitzungen leiden. Gilt für SFTP, FTP und FTPS und wirkt sofort.",
     "max_concurrent": "Gleichzeitige Transfers (alle Sitzungen)",
     "max_concurrent_hint": "0 = keine Grenze (wie bisher). Gezählt werden die laufenden Kopiervorgänge der gesamten Anwendung, nicht die Anfragen jedes einzelnen: Was darüber liegt, wartet, und das Panel zeigt es als wartend an. Ein ganzer Ordner belegt nur einen Platz.",
-    "resume": "Unterbrochene Downloads fortsetzen",
-    "resume_hint": "Behält den bereits geladenen Teil, wenn ein Download fehlschlägt oder abgebrochen wird, und macht beim nächsten Mal dort weiter. Fortgesetzt wird nur, wenn die Datei auf dem Server unverändert ist – gleicher Pfad, gleiche Größe, gleiches Datum; hat sie sich geändert, beginnt der Download neu. Der Preis: Bei einem Fehler bleibt eine Datei „.rustty-part“ neben dem Ziel liegen, statt gelöscht zu werden. Nur SFTP."
+    "resume": "Unterbrochene Übertragungen fortsetzen",
+    "resume_hint": "Behält das bereits Kopierte, wenn eine Übertragung fehlschlägt oder abgebrochen wird, und macht beim nächsten Mal dort weiter. Ein Download wird nur fortgesetzt, wenn die Datei auf dem Server unverändert ist – gleicher Pfad, gleiche Größe, gleiches Datum –, ein Upload nur, wenn die lokale Datei unverändert ist und das, was auf dem Server liegt, zu ihr passt; hat sich etwas geändert, beginnt die Übertragung neu. Uploads gehen in eine temporäre Datei auf dem Server und bekommen ihren Namen erst am Ende. Der Preis: Bei einem Fehler bleibt eine Datei „.rustty-part“ neben dem Ziel liegen – auf deinem Rechner oder auf dem Server –, statt gelöscht zu werden. Nur SFTP."
   },
   "prefs_language": {
     "title": "Sprache",

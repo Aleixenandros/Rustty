@@ -1597,8 +1597,8 @@
     "limit_hint": "0 = no limit (as always). The cap is on the link, not on each transfer: two downloads at once share the same budget. Useful for leaving a long copy running without your video call or other sessions suffering. Works for SFTP, FTP and FTPS, and applies right away.",
     "max_concurrent": "Transfers at once (all sessions)",
     "max_concurrent_hint": "0 = no cap (as always). It counts the copies running across the whole app, not the requests each one makes: the extra ones wait their turn and the panel marks them as queued. A whole folder takes a single turn.",
-    "resume": "Resume interrupted downloads",
-    "resume_hint": "Keeps the part already downloaded when a download fails or is cancelled, and carries on from there next time. It only resumes if the file on the server is still the same —same path, size and date—; if it changed, it starts over. The price is that a failure leaves a “.rustty-part” temporary file next to the destination instead of deleting it. SFTP only."
+    "resume": "Resume interrupted transfers",
+    "resume_hint": "Keeps what was already copied when a transfer fails or is cancelled, and carries on from there next time. A download only resumes if the file on the server is still the same —same path, size and date—, and an upload only if the local file is still the same and what is on the server matches it; if anything changed, it starts over. Uploads go to a temporary file on the server and only take their name when they finish. The price is that a failure leaves a “.rustty-part” temporary file next to the destination, on your computer or on the server, instead of deleting it. SFTP only."
   },
   "prefs_language": {
     "title": "Language",

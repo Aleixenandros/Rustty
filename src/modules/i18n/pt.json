@@ -1597,8 +1597,8 @@
     "limit_hint": "0 = sem limite (como sempre). O teto é da ligação, não de cada transferência: duas descargas ao mesmo tempo repartem o mesmo caudal. Serve para deixar uma cópia longa em segundo plano sem prejudicar a videochamada ou as outras sessões. Vale para SFTP, FTP e FTPS, e aplica-se de imediato.",
     "max_concurrent": "Transferências ao mesmo tempo (todas as sessões)",
     "max_concurrent_hint": "0 = sem teto (como sempre). Conta as cópias em curso em toda a aplicação, não os pedidos de cada uma: as que sobram esperam a sua vez e o painel marca-as como em fila. Uma pasta inteira ocupa uma única vez.",
-    "resume": "Retomar descargas interrompidas",
-    "resume_hint": "Guarda a parte já descarregada quando uma descarga falha ou é cancelada e continua daí na vez seguinte. Só retoma se o ficheiro do servidor continuar igual —mesmo caminho, tamanho e data—; se mudou, começa do zero. O preço é que uma falha deixa um temporário «.rustty-part» junto ao destino em vez de o apagar. Apenas SFTP."
+    "resume": "Retomar transferências interrompidas",
+    "resume_hint": "Guarda o que já foi copiado quando uma transferência falha ou é cancelada e continua daí na vez seguinte. Uma descarga só é retomada se o ficheiro do servidor continuar igual —mesmo caminho, tamanho e data—, e um envio só se o ficheiro local continuar igual e o que está no servidor coincidir com ele; se algo mudou, começa do zero. Os envios vão para um temporário no servidor e só ocupam o seu nome ao terminar. O preço é que uma falha deixa um temporário «.rustty-part» junto ao destino, no seu computador ou no servidor, em vez de o apagar. Apenas SFTP."
   },
   "prefs_language": {
     "title": "Idioma",

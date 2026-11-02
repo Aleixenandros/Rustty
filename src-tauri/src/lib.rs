@@ -76,6 +76,7 @@ pub mod tmux;
 mod transfer_batch;
 mod transfer_rate;
 mod transfer_resume;
+mod transfer_resume_upload;
 mod workspace_index;
 mod transfer_slots;
 mod tunnel_throttle;

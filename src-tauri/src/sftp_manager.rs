@@ -43,6 +43,7 @@ use crate::ipc::{event_name, EventKind};
 use crate::profiles::{AuthType, ConnectionProfile};
 use crate::transfer_batch::{self, Batch};
 use crate::transfer_resume;
+use crate::transfer_resume_upload;
 
 // ─── Tipos expuestos al frontend ─────────────────────────────────────────────
 
@@ -137,9 +138,33 @@ struct TransferCtx<'a> {
     /// En un fichero de una transferencia de carpeta, el id de la carpeta: es
     /// con el que el frontend pausa y cancela. `None` en una transferencia suelta.
     parent_id: Option<&'a str>,
-    app: &'a AppHandle,
+    app: ProgressSink<'a>,
     controls: &'a Arc<TransferControls>,
     verify_size: bool,
+}
+
+/// A quién se cuenta el progreso de una transferencia: en la app, a la
+/// interfaz por sus eventos. Los tests de integración, que no tienen
+/// `AppHandle`, recorren el mismo camino y se quedan con los eventos para
+/// comprobarlos.
+#[derive(Clone, Copy)]
+enum ProgressSink<'a> {
+    App(&'a AppHandle),
+    #[cfg(all(test, target_os = "linux"))]
+    Record(&'a Mutex<Vec<serde_json::Value>>),
+}
+
+impl ProgressSink<'_> {
+    fn emit(&self, event: &str, payload: serde_json::Value) -> tauri::Result<()> {
+        match self {
+            Self::App(app) => app.emit(event, payload),
+            #[cfg(all(test, target_os = "linux"))]
+            Self::Record(events) => {
+                events.lock_recover().push(payload);
+                Ok(())
+            }
+        }
+    }
 }
 
 impl<'a> TransferCtx<'a> {
@@ -382,6 +407,10 @@ struct SftpBackend {
     /// La cadena de saltos por la que va el panel: mientras viva la sesión, la
     /// conexión con los saltos sigue abierta (y compartida en el pool).
     _jump: Option<crate::jump_pool::JumpLease>,
+    /// Dónde y para quién se guardan las fichas de las subidas reanudables (ver
+    /// [`crate::transfer_resume_upload`]). Si se usan lo decide la preferencia
+    /// en cada subida.
+    resume: Option<transfer_resume_upload::Scope>,
 }
 
 struct FtpBackend {
@@ -803,7 +832,7 @@ async fn run_sftp_worker(
                 let ctx = TransferCtx {
                     transfer_id: &transfer_id,
                     parent_id: None,
-                    app: &app_handle,
+                    app: ProgressSink::App(&app_handle),
                     controls: &controls,
                     verify_size,
                 };
@@ -826,7 +855,7 @@ async fn run_sftp_worker(
                 let ctx = TransferCtx {
                     transfer_id: &transfer_id,
                     parent_id: None,
-                    app: &app_handle,
+                    app: ProgressSink::App(&app_handle),
                     controls: &controls,
                     verify_size,
                 };
@@ -847,7 +876,7 @@ async fn run_sftp_worker(
                 let ctx = TransferCtx {
                     transfer_id: &transfer_id,
                     parent_id: None,
-                    app: &app_handle,
+                    app: ProgressSink::App(&app_handle),
                     controls: &controls,
                     verify_size,
                 };
@@ -870,7 +899,7 @@ async fn run_sftp_worker(
                 let ctx = TransferCtx {
                     transfer_id: &transfer_id,
                     parent_id: None,
-                    app: &app_handle,
+                    app: ProgressSink::App(&app_handle),
                     controls: &controls,
                     verify_size,
                 };
@@ -964,10 +993,21 @@ async fn connect_and_open_backend(
             let (sftp, jump) =
                 connect_and_open_sftp(request, &log, &crate::ssh_transport::default_host_key_check)
                     .await?;
+            let resume = app_handle
+                .try_state::<crate::DataDir>()
+                .map(|data| transfer_resume_upload::Scope {
+                    dir: data.0.join(transfer_resume_upload::DIR_NAME),
+                    profile_id: profile.id.clone(),
+                    host: profile.host.clone(),
+                    port: profile.port,
+                    user: profile.username.clone(),
+                    checkpoint_every: transfer_resume_upload::CHECKPOINT_EVERY,
+                });
             Ok(Box::new(SftpBackend {
                 sftp,
                 max_parallelism,
                 _jump: jump,
+                resume,
             }))
         }
     }
@@ -1419,7 +1459,11 @@ impl FileTransfer for SftpBackend {
         remote: &str,
         ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
-        do_upload(&self.sftp, local, remote, ctx, self.max_parallelism).await
+        let resume = self.resume.as_ref().map(|scope| UploadResume {
+            scope,
+            enabled: transfer_resume::enabled(),
+        });
+        do_upload(&self.sftp, local, remote, ctx, self.max_parallelism, resume).await
     }
 
     async fn close(&mut self) {
@@ -1446,8 +1490,10 @@ impl FileTransfer for SftpBackend {
                 BatchDirection::Download => {
                     do_download(sftp, &job.remote, &job.local, ctx.child(&job.sub_id), 1).await
                 }
+                // Un fichero de un lote cabe en un trozo: no hay nada que
+                // reanudar y va directo, como siempre.
                 BatchDirection::Upload => {
-                    do_upload(sftp, &job.local, &job.remote, ctx.child(&job.sub_id), 1).await
+                    do_upload(sftp, &job.local, &job.remote, ctx.child(&job.sub_id), 1, None).await
                 }
             }
         })
@@ -2474,12 +2520,33 @@ async fn do_download(
     }
 }
 
+/// Reanudación de subidas de una sesión SFTP: dónde y para quién van las fichas
+/// y si la preferencia está encendida en este momento.
+#[derive(Clone, Copy)]
+struct UploadResume<'a> {
+    scope: &'a transfer_resume_upload::Scope,
+    enabled: bool,
+}
+
+/// El fichero local de una subida y lo que lo identifica.
+struct UploadSource<'a> {
+    path: &'a Path,
+    size: u64,
+    mtime_ns: Option<u64>,
+}
+
+/// Plazo para dejar apuntado lo ya enviado al cancelar una subida reanudable:
+/// cancelar tiene que ser inmediato, y si el servidor tarda en confirmar se
+/// conserva el punto de control anterior.
+const UPLOAD_CANCEL_CHECKPOINT: Duration = Duration::from_secs(3);
+
 async fn do_upload(
     sftp: &SftpSession,
     local: &Path,
     remote: &str,
     ctx: TransferCtx<'_>,
     max_parallelism: usize,
+    resume: Option<UploadResume<'_>>,
 ) -> Result<(), String> {
     let meta = tokio::fs::metadata(local)
         .await
@@ -2487,7 +2554,28 @@ async fn do_upload(
     check_file_source(meta.is_dir(), &local.display().to_string())?;
     let total = meta.len();
 
-    pipelined_upload(sftp, local, remote, total, ctx, max_parallelism).await?;
+    // Un fichero de un solo trozo viaja en una sola escritura: no hay nada que
+    // reanudar, y el temporal solo le añadiría viajes de ida y vuelta.
+    if let Some(resume) = resume.filter(|_| total > SFTP_CHUNK) {
+        let source = UploadSource {
+            path: local,
+            size: total,
+            mtime_ns: transfer_resume_upload::mtime_ns(&meta),
+        };
+        if let Some(result) =
+            resumable_upload(sftp, &source, remote, ctx, max_parallelism, resume).await
+        {
+            return result;
+        }
+    }
+
+    let target = UploadTarget {
+        path: remote,
+        start: 0,
+        truncate: true,
+        checkpoint: None,
+    };
+    pipelined_upload(sftp, local, target, total, ctx, max_parallelism).await?;
 
     if ctx.verify_size {
         let written = sftp
@@ -2502,6 +2590,327 @@ async fn do_upload(
         }
     }
 
+    Ok(())
+}
+
+/// Subida por un temporal reanudable (ver [`crate::transfer_resume_upload`]).
+///
+/// `None` = esta subida va por el camino de siempre, directa al destino: con la
+/// preferencia apagada (tras retirar el temporal que quedara de cuando estaba
+/// encendida), si otra subida al mismo destino está en marcha, si el destino no
+/// es un fichero regular (el `rename` final sustituiría un enlace en vez de
+/// escribir a través de él) o si el temporal no se puede usar ahí (sin permiso
+/// para crear ficheros en la carpeta, o sin poder conservar el dueño del
+/// destino).
+async fn resumable_upload(
+    sftp: &SftpSession,
+    source: &UploadSource<'_>,
+    remote: &str,
+    ctx: TransferCtx<'_>,
+    max_parallelism: usize,
+    resume: UploadResume<'_>,
+) -> Option<Result<(), String>> {
+    use transfer_resume_upload::{self as tru, Candidate, UploadPlan};
+
+    let scope = resume.scope;
+    let meta_file = tru::meta_file(&scope.dir, &scope.profile_id, remote);
+    // Otra subida a este mismo destino es dueña de su ficha y de su temporal.
+    let _active = tru::claim(&meta_file)?;
+    let local_id = tokio::fs::canonicalize(source.path)
+        .await
+        .unwrap_or_else(|_| source.path.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    let identity = tru::Identity::new(scope, remote, local_id, source.size, source.mtime_ns);
+    let stored = tru::read_meta(&meta_file).await;
+    let candidate = tru::candidate(stored.as_ref(), &identity);
+    // El temporal que es nuestro según la ficha, si lo hay: el único fichero
+    // del servidor que este camino puede borrar.
+    let ours = match &candidate {
+        Candidate::Fresh { stale } => stale.clone(),
+        Candidate::Probe { temp, .. } => Some(temp.clone()),
+    };
+
+    if !resume.enabled {
+        if stored.is_some() {
+            discard_upload_temp(sftp, ours.as_deref(), &meta_file).await;
+        }
+        return None;
+    }
+    let dest = sftp.symlink_metadata(remote.to_string()).await.ok();
+    if dest.as_ref().is_some_and(|m| !is_plain_file(m)) {
+        if stored.is_some() {
+            discard_upload_temp(sftp, ours.as_deref(), &meta_file).await;
+        }
+        return None;
+    }
+    tru::sweep_if_due(&scope.dir).await;
+
+    // Cancelada mientras esperaba turno: no se crea ni se toca nada.
+    if ctx.cancel_requested() {
+        let _ = ctx.app.emit(
+            &event_name(EventKind::SftpProgress, ctx.transfer_id),
+            serde_json::json!({
+                "transferred": 0u64, "total": source.size, "done": true, "canceled": true,
+            }),
+        );
+        return Some(Err("transferencia cancelada".to_string()));
+    }
+
+    let plan = match &candidate {
+        Candidate::Probe { temp, confirmed } => {
+            probe_upload_temp(sftp, temp, source, *confirmed).await
+        }
+        Candidate::Fresh { .. } => UploadPlan::Fresh,
+    };
+    let (meta, start, fresh) = match (plan, stored) {
+        (UploadPlan::Continue(offset), Some(meta)) => (meta, offset, false),
+        (UploadPlan::Complete, Some(meta)) => (meta, source.size, false),
+        _ => {
+            discard_upload_temp(sftp, ours.as_deref(), &meta_file).await;
+            let meta = tru::UploadMeta::new(&identity, tru::new_token());
+            if create_upload_temp(sftp, &meta.temp_path()).await.is_err() {
+                return None;
+            }
+            // Sin ficha, un fallo dejaría un temporal que nadie reconocería.
+            if tru::write_meta(&meta_file, &meta).await.is_err() {
+                let _ = sftp.remove_file(meta.temp_path()).await;
+                return None;
+            }
+            (meta, 0, true)
+        }
+    };
+    let temp = meta.temp_path();
+    if let Some(dest) = &dest {
+        let ready = upload_temp_keeps_owner(sftp, &temp, dest).await
+            && (!fresh || upload_temp_no_wider(sftp, &temp, dest).await);
+        if !ready {
+            discard_upload_temp(sftp, Some(&temp), &meta_file).await;
+            return None;
+        }
+    }
+
+    let token = meta.token.clone();
+    let mut checkpoint = tru::Checkpoint::new(meta_file.clone(), meta, scope.checkpoint_every);
+    let target = UploadTarget {
+        path: &temp,
+        start,
+        truncate: false,
+        checkpoint: Some(&mut checkpoint),
+    };
+    // Un error deja el temporal y la ficha a propósito: son lo que permite
+    // continuar después.
+    if let Err(e) =
+        pipelined_upload(sftp, source.path, target, source.size, ctx, max_parallelism).await
+    {
+        return Some(Err(e));
+    }
+
+    // Nunca se publica un temporal que no mide lo que el fichero local.
+    let written = match sftp.metadata(temp.clone()).await {
+        Ok(m) => m.len(),
+        Err(e) => return Some(Err(format!("verificación remota: {e}"))),
+    };
+    if written != source.size {
+        discard_upload_temp(sftp, Some(&temp), &meta_file).await;
+        return Some(Err(format!(
+            "verificación fallida: tamaño remoto {written} B, esperado {} B",
+            source.size
+        )));
+    }
+    // Entero y confirmado: si publicar falla, el reintento solo tendrá que
+    // publicarlo.
+    checkpoint.save(source.size).await;
+
+    // El fichero que sustituye a otro hereda sus permisos, como cuando se
+    // escribía encima.
+    if let Some(mode) = dest.as_ref().and_then(|m| m.permissions) {
+        let _ = sftp
+            .set_metadata(
+                temp.clone(),
+                FileAttributes {
+                    permissions: Some(mode & 0o7777),
+                    ..FileAttributes::empty()
+                },
+            )
+            .await;
+    }
+    match publish_upload(sftp, &temp, remote, dest.is_some(), &token).await {
+        Ok(()) => {
+            tru::remove_meta(&meta_file).await;
+            Some(Ok(()))
+        }
+        // El panel solo pregunta por el conflicto de un fichero suelto: dentro
+        // de una carpeta se cuenta con palabras.
+        Err(e) if ctx.parent_id.is_some() && e.starts_with(TRANSFER_EXISTS_MARKER) => Some(Err(
+            format!("{remote} apareció en el servidor mientras se subía y no se ha sustituido"),
+        )),
+        Err(e) => Some(Err(e)),
+    }
+}
+
+/// `true` si es un fichero regular (o el servidor no dice su tipo).
+fn is_plain_file(attrs: &FileAttributes) -> bool {
+    attrs.permissions.is_none() || attrs.file_type().is_file()
+}
+
+/// Comprueba el temporal de una ficha antes de continuar desde `confirmed` (ver
+/// [`transfer_resume_upload::settle`]).
+async fn probe_upload_temp(
+    sftp: &SftpSession,
+    temp: &str,
+    source: &UploadSource<'_>,
+    confirmed: u64,
+) -> transfer_resume_upload::UploadPlan {
+    let temp_size = match sftp.symlink_metadata(temp.to_string()).await {
+        Ok(m) if is_plain_file(&m) => Some(m.len()),
+        _ => None,
+    };
+    let windows_match = match temp_size {
+        Some(size) if size >= confirmed => {
+            upload_windows_match(sftp, temp, source.path, confirmed).await
+        }
+        _ => false,
+    };
+    transfer_resume_upload::settle(confirmed, source.size, temp_size, windows_match)
+}
+
+/// ¿Coinciden el temporal y el fichero local en los tramos que hay que mirar
+/// antes de continuar desde `confirmed`? Cualquier error cuenta como que no.
+async fn upload_windows_match(sftp: &SftpSession, temp: &str, local: &Path, confirmed: u64) -> bool {
+    use std::io::SeekFrom;
+    let Ok(mut remote) = sftp.open_with_flags(temp.to_string(), OpenFlags::READ).await else {
+        return false;
+    };
+    let Ok(mut local) = tokio::fs::File::open(local).await else {
+        return false;
+    };
+    let mut same = true;
+    for (offset, len) in transfer_resume_upload::probe_windows(confirmed) {
+        let theirs = read_chunk_at(&mut remote, offset, len).await;
+        let mut ours = vec![0u8; len as usize];
+        let read_ours = async {
+            local.seek(SeekFrom::Start(offset)).await?;
+            local.read_exact(&mut ours).await
+        };
+        let read_ours = read_ours.await;
+        if !matches!((theirs, read_ours), (Ok(theirs), Ok(_)) if theirs == ours) {
+            same = false;
+            break;
+        }
+    }
+    let _ = remote.shutdown().await;
+    same
+}
+
+/// Crea el temporal vacío. Con `EXCLUDE`: si ese nombre ya existe no es
+/// nuestro, y no se toca.
+async fn create_upload_temp(sftp: &SftpSession, temp: &str) -> Result<(), String> {
+    let mut file = sftp
+        .open_with_flags(
+            temp.to_string(),
+            OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    close_written(&mut file).await
+}
+
+/// Retira el temporal **nuestro** de una ficha, si lo hay, y la ficha.
+async fn discard_upload_temp(sftp: &SftpSession, temp: Option<&str>, meta_file: &Path) {
+    if let Some(temp) = temp {
+        let _ = sftp.remove_file(temp.to_string()).await;
+    }
+    transfer_resume_upload::remove_meta(meta_file).await;
+}
+
+/// Mientras se sube, el temporal no puede ser más visible que el fichero al que
+/// va a sustituir: escribir encima conservaba el modo del destino (un `.env`
+/// en 0600 no se leía a medias). Nace con el modo por defecto del servidor y se
+/// le pone el del destino, sin bits especiales y con lectura y escritura para
+/// su dueño, que hacen falta para seguir. El modo exacto se le da al publicar.
+async fn upload_temp_no_wider(sftp: &SftpSession, temp: &str, dest: &FileAttributes) -> bool {
+    let Some(mode) = dest.permissions else {
+        return true;
+    };
+    sftp.set_metadata(
+        temp.to_string(),
+        FileAttributes {
+            permissions: Some((mode & 0o777) | 0o600),
+            ..FileAttributes::empty()
+        },
+    )
+    .await
+    .is_ok()
+}
+
+/// Publicar el temporal sobre un destino existente no puede cambiarle el dueño:
+/// escribir encima lo conservaba. El temporal nace del usuario que sube; si no
+/// coincide con el del destino se intenta darle el suyo, y si el servidor no lo
+/// permite (sin ser root no se regala un fichero) la subida irá directa.
+async fn upload_temp_keeps_owner(sftp: &SftpSession, temp: &str, dest: &FileAttributes) -> bool {
+    let (Some(uid), Some(gid)) = (dest.uid, dest.gid) else {
+        return true;
+    };
+    let Ok(current) = sftp.metadata(temp.to_string()).await else {
+        return false;
+    };
+    if current.uid == Some(uid) && current.gid == Some(gid) {
+        return true;
+    }
+    sftp.set_metadata(
+        temp.to_string(),
+        FileAttributes {
+            uid: Some(uid),
+            gid: Some(gid),
+            ..FileAttributes::empty()
+        },
+    )
+    .await
+    .is_ok()
+}
+
+/// Publica el temporal con el nombre definitivo. `replace` = el destino existía
+/// al empezar: la política de conflictos o el permiso de sobrescribir ya
+/// decidieron sustituirlo antes de llegar aquí. Uno que **aparece** mientras se
+/// subía no es nuestro y no se pisa: se devuelve el marcador de conflicto y el
+/// temporal entero se queda, listo para publicarse si el usuario lo decide.
+///
+/// El `rename` de SFTP no sustituye un fichero existente en muchos servidores
+/// (OpenSSH, entre ellos). Entonces el destino se aparta un momento con otro
+/// nombre, el temporal ocupa su sitio y el apartado se borra; si el segundo
+/// paso falla, el destino vuelve a su sitio: nunca se queda sin ninguna de las
+/// dos versiones.
+async fn publish_upload(
+    sftp: &SftpSession,
+    temp: &str,
+    dest: &str,
+    replace: bool,
+    token: &str,
+) -> Result<(), String> {
+    // Hay servidores cuyo `rename` sí pisa: sin permiso, se mira antes.
+    if !replace && sftp.symlink_metadata(dest.to_string()).await.is_ok() {
+        return Err(format!("{TRANSFER_EXISTS_MARKER} {dest}"));
+    }
+    let first = match sftp.rename(temp.to_string(), dest.to_string()).await {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    if sftp.symlink_metadata(dest.to_string()).await.is_err() {
+        return Err(format!("no se pudo publicar la subida: {first}"));
+    }
+    if !replace {
+        return Err(format!("{TRANSFER_EXISTS_MARKER} {dest}"));
+    }
+    let backup = transfer_resume_upload::backup_path(dest, token);
+    sftp.rename(dest.to_string(), backup.clone())
+        .await
+        .map_err(|e| format!("no se pudo apartar el destino anterior: {e}"))?;
+    if let Err(e) = sftp.rename(temp.to_string(), dest.to_string()).await {
+        let _ = sftp.rename(backup, dest.to_string()).await;
+        return Err(format!("no se pudo publicar la subida: {e}"));
+    }
+    let _ = sftp.remove_file(backup).await;
     Ok(())
 }
 
@@ -2704,13 +3113,33 @@ async fn read_chunk_at(file: &mut SftpFile, offset: u64, len: u64) -> Result<Vec
     Ok(buf)
 }
 
-/// Sube con pipelining. El primer handle se abre con TRUNCATE para vaciar el
-/// destino; los N-1 restantes se abren con WRITE para escribir en paralelo a
-/// distintos offsets sobre el mismo fichero.
+/// Dónde escribe una subida y desde dónde.
+struct UploadTarget<'a> {
+    /// Fichero remoto en el que se escribe: el destino, o su temporal.
+    path: &'a str,
+    /// Primer byte que se escribe: 0, o lo confirmado al reanudar.
+    start: u64,
+    /// `true` = abrir vaciando el fichero (la subida directa de siempre);
+    /// `false` = el fichero ya existe (el temporal de una subida reanudable).
+    truncate: bool,
+    /// Puntos de control de una subida reanudable (ver
+    /// [`crate::transfer_resume_upload::Checkpoint`]).
+    checkpoint: Option<&'a mut transfer_resume_upload::Checkpoint>,
+}
+
+/// Sube con pipelining: N handles sobre el mismo fichero remoto, cada uno
+/// escribiendo en su desplazamiento. En la subida directa el primero se abre
+/// con TRUNCATE para vaciar el destino; en el temporal de una reanudable, todos
+/// con WRITE desde `start`, y el progreso cuenta lo anterior como hecho.
+///
+/// Con puntos de control, cada cierto tiempo, al pausar y al cancelar se deja
+/// vaciar lo que hay en vuelo y se cierran los handles con `shutdown()`: eso
+/// recoge el acuse de cada escritura, y entonces todo lo enviado está
+/// confirmado y se apunta en la ficha antes de reabrirlos.
 async fn pipelined_upload(
     sftp: &SftpSession,
     local: &Path,
-    remote: &str,
+    target: UploadTarget<'_>,
     total: u64,
     ctx: TransferCtx<'_>,
     max_parallelism: usize,
@@ -2718,10 +3147,16 @@ async fn pipelined_upload(
     let TransferCtx {
         transfer_id, app, ..
     } = ctx;
+    let UploadTarget {
+        path: remote,
+        start,
+        truncate,
+        mut checkpoint,
+    } = target;
     let event = event_name(EventKind::SftpProgress, transfer_id);
     let _ = app.emit(
         &event,
-        serde_json::json!({ "transferred": 0u64, "total": total, "done": false }),
+        serde_json::json!({ "transferred": start, "total": total, "done": false }),
     );
 
     // Abrir con TRUNCATE vacía el remoto: si la cancelaron mientras esperaba su
@@ -2731,19 +3166,30 @@ async fn pipelined_upload(
         let _ = app.emit(
             &event,
             serde_json::json!({
-                "transferred": 0u64, "total": total, "done": true, "canceled": true,
+                "transferred": start, "total": total, "done": true, "canceled": true,
             }),
         );
         return Err("transferencia cancelada".to_string());
     }
 
+    // El temporal ya tiene el fichero entero: no hay nada que escribir.
+    if !truncate && start >= total {
+        let _ = app.emit(
+            &event,
+            serde_json::json!({ "transferred": total, "total": total, "done": true }),
+        );
+        return Ok(());
+    }
+
     // Crear/truncar el remoto antes de abrir handles paralelos. El primer
     // handle también nos sirve como uno de los N en vuelo.
+    let first_flags = if truncate {
+        OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE
+    } else {
+        OpenFlags::WRITE
+    };
     let first = sftp
-        .open_with_flags(
-            remote.to_string(),
-            OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
-        )
+        .open_with_flags(remote.to_string(), first_flags)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -2757,7 +3203,8 @@ async fn pipelined_upload(
         return Ok(());
     }
 
-    let parallelism = effective_parallelism(total, max_parallelism);
+    // Como al bajar: lo que decide cuántos handles hacen falta es lo que queda.
+    let parallelism = effective_parallelism(total - start, max_parallelism);
     let mut idle_files: Vec<SftpFile> = Vec::with_capacity(parallelism);
     idle_files.push(first);
     if parallelism > 1 {
@@ -2770,10 +3217,16 @@ async fn pipelined_upload(
     let mut local_file = tokio::fs::File::open(local)
         .await
         .map_err(|e| e.to_string())?;
+    if start > 0 {
+        local_file
+            .seek(std::io::SeekFrom::Start(start))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
-    let mut next_offset: u64 = 0;
-    let mut transferred: u64 = 0;
-    let mut last_emit: u64 = 0;
+    let mut next_offset: u64 = start;
+    let mut transferred: u64 = start;
+    let mut last_emit: u64 = start;
     let mut in_flight: FuturesUnordered<_> = FuturesUnordered::new();
     let mut was_paused = false;
 
@@ -2785,6 +3238,20 @@ async fn pipelined_upload(
                     "transferred": transferred, "total": total, "done": true, "canceled": true,
                 }),
             );
+            if let Some(cp) = checkpoint.as_deref_mut() {
+                // Lo ya enviado se deja apuntado si el servidor lo confirma a
+                // tiempo; si no, vale el punto de control anterior.
+                let _ = tokio::time::timeout(UPLOAD_CANCEL_CHECKPOINT, async {
+                    while let Some((f, _, result)) = in_flight.next().await {
+                        idle_files.push(f);
+                        result?;
+                    }
+                    checkpoint_handles(sftp, remote, &mut idle_files, 0).await?;
+                    cp.save(next_offset).await;
+                    Ok::<(), String>(())
+                })
+                .await;
+            }
             return Err("transferencia cancelada".to_string());
         }
 
@@ -2806,7 +3273,14 @@ async fn pipelined_upload(
         }
         was_paused = paused;
 
-        if !paused {
+        // Toca punto de control: no se envía nada más hasta hacerlo. Al final no
+        // hace falta, que el cierre de los handles ya lo confirma todo.
+        let barrier = next_offset < total
+            && checkpoint
+                .as_ref()
+                .is_some_and(|cp| cp.due(next_offset, std::time::Instant::now()));
+
+        if !paused && !barrier {
             while !idle_files.is_empty() && next_offset < total {
                 let Some(mut f) = idle_files.pop() else { break };
                 let len = (total - next_offset).min(SFTP_CHUNK);
@@ -2845,6 +3319,31 @@ async fn pipelined_upload(
         }
 
         if in_flight.is_empty() {
+            if let Some(cp) = checkpoint.as_deref_mut() {
+                // Con nada en vuelo, cerrar los handles recoge todos los acuses:
+                // todo lo enviado está confirmado. Al pausar se hace una vez.
+                // Esperar los acuses puede llevar un rato en un enlace lento
+                // con muchos handles: cancelar no espera a que acabe.
+                if barrier || (paused && cp.confirmed() < next_offset) {
+                    tokio::select! {
+                        result = checkpoint_handles(sftp, remote, &mut idle_files, parallelism) => {
+                            result?;
+                            cp.save(next_offset).await;
+                            continue;
+                        }
+                        () = cancel_signal(ctx) => {
+                            let _ = app.emit(
+                                &event,
+                                serde_json::json!({
+                                    "transferred": transferred, "total": total, "done": true,
+                                    "canceled": true,
+                                }),
+                            );
+                            return Err("transferencia cancelada".to_string());
+                        }
+                    }
+                }
+            }
             if paused {
                 tokio::time::sleep(Duration::from_millis(150)).await;
                 continue;
@@ -2878,6 +3377,37 @@ async fn pipelined_upload(
         &event,
         serde_json::json!({ "transferred": transferred, "total": total, "done": true }),
     );
+    Ok(())
+}
+
+/// Vuelve cuando se pide cancelar la transferencia (o su carpeta).
+async fn cancel_signal(ctx: TransferCtx<'_>) {
+    while !ctx.cancel_requested() {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Punto de control de una subida reanudable: cierra los handles con
+/// `shutdown()`, que espera el acuse de cada escritura encolada (y propaga su
+/// error), y abre `reopen` nuevos para seguir.
+async fn checkpoint_handles(
+    sftp: &SftpSession,
+    remote: &str,
+    files: &mut Vec<SftpFile>,
+    reopen: usize,
+) -> Result<(), String> {
+    let mut closing: FuturesUnordered<_> = files
+        .drain(..)
+        .map(|mut f| async move { close_written(&mut f).await })
+        .collect();
+    while let Some(result) = closing.next().await {
+        result?;
+    }
+    if reopen > 0 {
+        *files = open_handles(sftp, remote, reopen, OpenFlags::WRITE)
+            .await
+            .map_err(|e| format!("No se pudieron abrir los handles SFTP: {e}"))?;
+    }
     Ok(())
 }
 
@@ -3149,7 +3679,7 @@ async fn auto_rename_remote_path(backend: &mut dyn FileTransfer, remote: &str) -
 /// barra/velocidad/ETA de la fila reflejen el total de la carpeta. Estilo
 /// FileZilla: el usuario ve qué subcarpeta/archivo va transfiriéndose.
 fn emit_dir_progress(
-    app: &AppHandle,
+    app: ProgressSink<'_>,
     event: &str,
     bytes_done: u64,
     bytes_total: u64,
@@ -3283,7 +3813,7 @@ async fn gate_dir_transfer(
     summary_event: &str,
     bytes_done: u64,
     bytes_total: u64,
-    app: &AppHandle,
+    app: ProgressSink<'_>,
     controls: &Arc<TransferControls>,
 ) -> Result<(), String> {
     let mut emitted_pause = false;
@@ -3328,7 +3858,7 @@ async fn gate_dir_transfer(
 /// Progreso de una transferencia de carpeta: lo movido, lo que hay y a quién
 /// contárselo. Lo comparten el bucle y [`flush_batch`].
 struct DirProgress<'a> {
-    app: &'a AppHandle,
+    app: ProgressSink<'a>,
     event: &'a str,
     transfer_id: &'a str,
     controls: &'a Arc<TransferControls>,
@@ -4299,6 +4829,442 @@ mod tests {
             panic!("el bastión antiguo debía dejar pasar al panel: {e}. Registro: {stages:#?}")
         });
         do_list_dir(&sftp, "/").await.expect("listar la raíz por el salto");
+    }
+
+    // ─── Subidas reanudables contra un `sshd` real ──────────────────────────
+    //
+    // El `sshd` del fixture sirve el sistema de ficheros del usuario que corre
+    // el test, así que el «remoto» es una carpeta temporal de esta máquina: se
+    // puede mirar, y estropear, con `std::fs`.
+
+    /// Bytes de prueba deterministas y distintos en cada posición (xorshift):
+    /// un hueco, un trozo repetido o un desplazamiento mal puesto se notan.
+    #[cfg(target_os = "linux")]
+    fn pseudo_random_bytes(len: usize, mut seed: u64) -> Vec<u8> {
+        let mut out = Vec::with_capacity(len + 8);
+        while out.len() < len {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            out.extend_from_slice(&seed.to_le_bytes());
+        }
+        out.truncate(len);
+        out
+    }
+
+    /// Escenario de una subida: fichero local, carpeta «remota» y carpeta de
+    /// fichas, todo bajo una raíz que se borra al soltarlo.
+    #[cfg(target_os = "linux")]
+    struct UploadScene {
+        root: PathBuf,
+        local: PathBuf,
+        remote: String,
+        data: Vec<u8>,
+        scope: transfer_resume_upload::Scope,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl UploadScene {
+        /// 24 MiB: 96 trozos, unos cuantos puntos de control antes del corte.
+        const SIZE: usize = 24 * 1024 * 1024;
+
+        fn new(server: &crate::ssh_fixture::FakeSshServer, checkpoint_every: Duration) -> Self {
+            let root = std::env::temp_dir().join(format!("rustty-upr-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(root.join("local")).expect("carpeta local");
+            std::fs::create_dir_all(root.join("remoto")).expect("carpeta remota");
+            let data = pseudo_random_bytes(Self::SIZE, 0x5eed_cafe_f00d_d00d);
+            let local = root.join("local").join("origen.bin");
+            std::fs::write(&local, &data).expect("fichero local");
+            let remote = root.join("remoto").join("destino.bin").to_string_lossy().into_owned();
+            let scope = transfer_resume_upload::Scope {
+                dir: root.join("datos").join(transfer_resume_upload::DIR_NAME),
+                profile_id: "perfil-upr".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: server.port,
+                user: server.username.clone(),
+                checkpoint_every,
+            };
+            Self {
+                root,
+                local,
+                remote,
+                data,
+                scope,
+            }
+        }
+
+        fn total(&self) -> u64 {
+            self.data.len() as u64
+        }
+
+        fn remote_dir(&self) -> PathBuf {
+            self.root.join("remoto")
+        }
+
+        fn meta_file(&self) -> PathBuf {
+            transfer_resume_upload::meta_file(&self.scope.dir, &self.scope.profile_id, &self.remote)
+        }
+
+        fn ficha(&self) -> Option<transfer_resume_upload::UploadMeta> {
+            let raw = std::fs::read(self.meta_file()).ok()?;
+            serde_json::from_slice(&raw).ok()
+        }
+
+        /// Temporales y apartados que quedan en la carpeta remota.
+        fn leftovers(&self) -> Vec<String> {
+            let mut names: Vec<String> = std::fs::read_dir(self.remote_dir())
+                .expect("listar el remoto")
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".rustty-part") || n.ends_with(".rustty-old"))
+                .collect();
+            names.sort();
+            names
+        }
+
+        fn destination(&self) -> Option<Vec<u8>> {
+            std::fs::read(&self.remote).ok()
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for UploadScene {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// Sesión SFTP del panel contra el `sshd` del fixture, por su camino real.
+    #[cfg(target_os = "linux")]
+    async fn fixture_sftp(server: &crate::ssh_fixture::FakeSshServer) -> SftpSession {
+        host_keys::set_strict_first_connect(false);
+        let profile = ssh_profile(server);
+        let (result, stages) = open_panel_sftp(&profile, &server.known_hosts_path()).await;
+        result.unwrap_or_else(|e| panic!("no se abrió SFTP: {e}. Registro: {stages:#?}"))
+    }
+
+    /// Lo más alto que ha contado el progreso.
+    #[cfg(target_os = "linux")]
+    fn progressed(events: &Mutex<Vec<serde_json::Value>>) -> u64 {
+        events
+            .lock_recover()
+            .iter()
+            .filter_map(|e| e["transferred"].as_u64())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Desde dónde empezó a contar la subida (su primer evento de progreso).
+    #[cfg(target_os = "linux")]
+    fn started_at(events: &Mutex<Vec<serde_json::Value>>) -> u64 {
+        events.lock_recover()[0]["transferred"]
+            .as_u64()
+            .expect("primer evento con «transferred»")
+    }
+
+    #[cfg(target_os = "linux")]
+    const UPR_ID: &str = "upr-subida";
+
+    /// Sube el fichero del escenario por `do_upload`, el camino de producción,
+    /// con 4 handles en vuelo.
+    #[cfg(target_os = "linux")]
+    async fn scene_upload(
+        sftp: &SftpSession,
+        scene: &UploadScene,
+        enabled: bool,
+        controls: &Arc<TransferControls>,
+        events: &Mutex<Vec<serde_json::Value>>,
+    ) -> Result<(), String> {
+        let ctx = TransferCtx {
+            transfer_id: UPR_ID,
+            parent_id: None,
+            app: ProgressSink::Record(events),
+            controls,
+            verify_size: true,
+        };
+        let resume = UploadResume {
+            scope: &scene.scope,
+            enabled,
+        };
+        do_upload(sftp, &scene.local, &scene.remote, ctx, 4, Some(resume)).await
+    }
+
+    /// Corta una subida en seco a media altura: el futuro se suelta sin
+    /// cancelar ni cerrar nada, como cuando cae la red o se cierra la app. Las
+    /// escrituras que ya estaban encoladas siguen llegando al servidor, de modo
+    /// que el temporal acaba midiendo más de lo confirmado.
+    #[cfg(target_os = "linux")]
+    async fn scene_upload_cut(sftp: &SftpSession, scene: &UploadScene) {
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        let watcher = async {
+            while progressed(&events) < scene.total() / 2 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        };
+        tokio::select! {
+            result = scene_upload(sftp, scene, true, &controls, &events) => {
+                panic!("la subida terminó antes del corte: {result:?}");
+            }
+            () = watcher => {}
+        }
+        // La ficha se escribe en un hilo aparte: se le deja terminar.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+
+    /// **Integración**: una subida cortada a mitad se reanuda desde lo que el
+    /// servidor confirmó, con otra conexión, y el destino queda idéntico al
+    /// fichero local. Sin temporales ni ficha al acabar.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn sftp_una_subida_cortada_se_reanuda_y_llega_entera() {
+        let _guard = SFTP_IT_LOCK.lock().await;
+        let Some(server) = crate::ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        let scene = UploadScene::new(&server, Duration::ZERO);
+
+        let sftp = fixture_sftp(&server).await;
+        scene_upload_cut(&sftp, &scene).await;
+        let _ = sftp.close().await;
+
+        let ficha = scene.ficha().expect("la ficha queda tras el corte");
+        assert!(
+            ficha.confirmed > 0 && ficha.confirmed < scene.total(),
+            "lo confirmado debía quedarse a medias: {}",
+            ficha.confirmed
+        );
+        let temp_name = ficha.temp_path().rsplit_once('/').unwrap().1.to_string();
+        assert_eq!(scene.leftovers(), vec![temp_name.clone()]);
+        assert!(scene.destination().is_none(), "el destino no aparece hasta el final");
+        let temp_len = std::fs::metadata(scene.remote_dir().join(&temp_name)).unwrap().len();
+        assert!(temp_len >= ficha.confirmed, "temporal de {temp_len} B");
+
+        // Otra conexión, como tras reconectar.
+        let sftp = fixture_sftp(&server).await;
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        scene_upload(&sftp, &scene, true, &controls, &events)
+            .await
+            .expect("la subida reanudada termina");
+        let _ = sftp.close().await;
+
+        assert_eq!(
+            started_at(&events),
+            ficha.confirmed,
+            "debía continuar desde lo confirmado, no desde cero"
+        );
+        assert!(scene.destination() == Some(scene.data.clone()), "el destino no es idéntico al local");
+        assert!(scene.ficha().is_none(), "la ficha se borra al publicar");
+        assert!(scene.leftovers().is_empty(), "sobran: {:?}", scene.leftovers());
+    }
+
+    /// **Integración**: si el temporal del servidor no coincide con el fichero
+    /// local (aquí, un byte cambiado justo antes de lo confirmado), no se pega
+    /// nada detrás: se empieza de cero, se retira ese temporal —que es nuestro—
+    /// y un fichero con pinta de temporal que no sale de ninguna ficha no se
+    /// toca.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn sftp_un_temporal_alterado_obliga_a_empezar_de_cero() {
+        use std::os::unix::fs::FileExt;
+
+        let _guard = SFTP_IT_LOCK.lock().await;
+        let Some(server) = crate::ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        let scene = UploadScene::new(&server, Duration::ZERO);
+        let ajeno = scene.remote_dir().join("destino.bin.0123456789abcdef.rustty-part");
+        std::fs::write(&ajeno, b"no es nuestro").unwrap();
+
+        let sftp = fixture_sftp(&server).await;
+        scene_upload_cut(&sftp, &scene).await;
+        let _ = sftp.close().await;
+
+        let ficha = scene.ficha().expect("la ficha queda tras el corte");
+        let temp = scene
+            .remote_dir()
+            .join(ficha.temp_path().rsplit_once('/').unwrap().1);
+        let mut byte = [0u8; 1];
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&temp)
+            .unwrap();
+        file.read_exact_at(&mut byte, ficha.confirmed - 10).unwrap();
+        file.write_all_at(&[byte[0] ^ 0xff], ficha.confirmed - 10).unwrap();
+        drop(file);
+
+        let sftp = fixture_sftp(&server).await;
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        scene_upload(&sftp, &scene, true, &controls, &events)
+            .await
+            .expect("la subida de cero termina");
+        let _ = sftp.close().await;
+
+        assert_eq!(started_at(&events), 0, "con el temporal alterado se empieza de cero");
+        assert!(scene.destination() == Some(scene.data.clone()), "el destino no es idéntico al local");
+        assert!(!temp.exists(), "el temporal alterado era nuestro y se retira");
+        assert_eq!(
+            std::fs::read(&ajeno).unwrap(),
+            b"no es nuestro",
+            "lo que no sale de una ficha no se toca"
+        );
+        assert_eq!(scene.leftovers(), vec![ajeno.file_name().unwrap().to_string_lossy().into_owned()]);
+        assert!(scene.ficha().is_none());
+    }
+
+    /// **Integración**: sobrescribir con la reanudación activada. OpenSSH no
+    /// deja que un `rename` pise un fichero: el destino se aparta, el temporal
+    /// ocupa su sitio y el destino nuevo conserva los permisos del viejo. Y con
+    /// la preferencia apagada, una subida al mismo destino va directa y retira
+    /// el temporal y la ficha que quedaron de cuando estaba encendida.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn sftp_una_subida_reanudable_sustituye_el_destino_y_conserva_sus_permisos() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = SFTP_IT_LOCK.lock().await;
+        let Some(server) = crate::ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        let scene = UploadScene::new(&server, Duration::ZERO);
+        std::fs::write(&scene.remote, b"version vieja").unwrap();
+        std::fs::set_permissions(&scene.remote, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        let sftp = fixture_sftp(&server).await;
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        scene_upload(&sftp, &scene, true, &controls, &events)
+            .await
+            .expect("la subida sustituye al destino");
+        assert!(scene.destination() == Some(scene.data.clone()), "el destino no es idéntico al local");
+        let mode = std::fs::metadata(&scene.remote).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o640, "el destino nuevo hereda los permisos");
+        assert!(scene.leftovers().is_empty(), "sobran: {:?}", scene.leftovers());
+        assert!(scene.ficha().is_none());
+
+        // Un corte deja temporal y ficha. Mientras tanto el temporal no es
+        // más visible que el destino (el servidor lo crearía en 0644).
+        scene_upload_cut(&sftp, &scene).await;
+        assert!(scene.ficha().is_some());
+        let leftovers = scene.leftovers();
+        assert_eq!(leftovers.len(), 1);
+        let temp_mode = std::fs::metadata(scene.remote_dir().join(&leftovers[0]))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(temp_mode & 0o777, 0o640, "el temporal nace con el modo del destino");
+        // Con la preferencia apagada, la subida siguiente va directa y los
+        // retira.
+        let events = Mutex::new(Vec::new());
+        scene_upload(&sftp, &scene, false, &controls, &events)
+            .await
+            .expect("la subida directa termina");
+        let _ = sftp.close().await;
+        assert!(scene.destination() == Some(scene.data.clone()), "el destino no es idéntico al local");
+        assert!(scene.ficha().is_none(), "la ficha vieja se retira");
+        assert!(scene.leftovers().is_empty(), "sobran: {:?}", scene.leftovers());
+    }
+
+    /// **Integración**: un destino que aparece mientras se sube (otro lo crea)
+    /// no se pisa: la subida acaba con el marcador de conflicto y el temporal
+    /// entero se queda. El reintento con permiso para sobrescribir —lo que hace
+    /// el panel si el usuario lo elige— solo publica: no vuelve a mandar nada.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn sftp_un_destino_que_aparece_a_mitad_no_se_pisa() {
+        let _guard = SFTP_IT_LOCK.lock().await;
+        let Some(server) = crate::ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        let scene = UploadScene::new(&server, Duration::ZERO);
+
+        let sftp = fixture_sftp(&server).await;
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        let intruder = async {
+            while progressed(&events) < scene.total() / 2 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            std::fs::write(&scene.remote, b"de otro").unwrap();
+        };
+        let (result, ()) = tokio::join!(
+            scene_upload(&sftp, &scene, true, &controls, &events),
+            intruder
+        );
+        let err = result.expect_err("no debía pisar el destino que apareció");
+        assert!(err.starts_with(TRANSFER_EXISTS_MARKER), "{err}");
+        assert_eq!(scene.destination().as_deref(), Some(&b"de otro"[..]));
+        let ficha = scene.ficha().expect("la ficha se queda");
+        assert_eq!(ficha.confirmed, scene.total(), "el temporal quedó entero y confirmado");
+
+        let events = Mutex::new(Vec::new());
+        scene_upload(&sftp, &scene, true, &controls, &events)
+            .await
+            .expect("el reintento publica");
+        let _ = sftp.close().await;
+        assert_eq!(started_at(&events), scene.total(), "no se vuelve a subir nada");
+        assert!(scene.destination() == Some(scene.data.clone()), "el destino no es idéntico al local");
+        assert!(scene.leftovers().is_empty(), "sobran: {:?}", scene.leftovers());
+        assert!(scene.ficha().is_none());
+    }
+
+    /// **Integración**: cancelar deja apuntado lo que el servidor ya confirmó,
+    /// aunque no tocara ningún punto de control periódico, y la subida
+    /// siguiente continúa desde ahí.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn sftp_cancelar_una_subida_reanudable_guarda_lo_confirmado() {
+        let _guard = SFTP_IT_LOCK.lock().await;
+        let Some(server) = crate::ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        // Sin puntos de control periódicos durante el test: lo confirmado solo
+        // puede salir del de la cancelación.
+        let scene = UploadScene::new(&server, Duration::from_secs(3600));
+
+        let sftp = fixture_sftp(&server).await;
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        let canceller = async {
+            while progressed(&events) < scene.total() / 2 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            controls.cancel(UPR_ID.to_string());
+        };
+        let (result, ()) = tokio::join!(
+            scene_upload(&sftp, &scene, true, &controls, &events),
+            canceller
+        );
+        assert_eq!(result, Err("transferencia cancelada".to_string()));
+        let ficha = scene.ficha().expect("la ficha se queda al cancelar");
+        assert!(
+            ficha.confirmed >= scene.total() / 2 && ficha.confirmed < scene.total(),
+            "lo enviado antes de cancelar debía quedar confirmado: {}",
+            ficha.confirmed
+        );
+
+        let events = Mutex::new(Vec::new());
+        scene_upload(&sftp, &scene, true, &controls, &events)
+            .await
+            .expect("la subida reanudada termina");
+        let _ = sftp.close().await;
+        assert_eq!(started_at(&events), ficha.confirmed);
+        assert!(scene.destination() == Some(scene.data.clone()), "el destino no es idéntico al local");
+        assert!(scene.leftovers().is_empty(), "sobran: {:?}", scene.leftovers());
+        assert!(scene.ficha().is_none());
     }
 
     /// Dónde se calla el servidor FTP de mentira de [`ftp_mudo`].
