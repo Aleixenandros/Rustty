@@ -202,4 +202,4 @@ Ese ejemplo de pack usa solo los tokens mínimos para abreviar. Para un tema pul
 
 ## Idioma
 
-Desde **Preferencias → Idioma** puedes dejar la opción **Sistema (automático)**, que detecta el idioma del sistema operativo, o fijar manualmente uno de los disponibles: **español**, **inglés**, **francés**, **portugués** y **alemán**.
+Desde **Preferencias → Idioma** puedes dejar la opción **Sistema (automático)**, que detecta el idioma del sistema operativo, o fijar manualmente uno de los disponibles: **español**, **inglés**, **francés**, **portugués**, **alemán**, **chino tradicional** e **indonesio**.

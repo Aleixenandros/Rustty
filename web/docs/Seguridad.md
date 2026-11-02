@@ -41,7 +41,7 @@ Desde la versión 2.14, la interfaz ya no puede pedir que se ejecute una orden c
 - **Los valores no se interpretan como órdenes.** Cada `${host}`, `${var:...}` o `${ask:...}` llega al shell como **un único argumento**, a través de una variable de entorno: un valor con `;`, `|` o `$(...)` se pasa tal cual y no ejecuta nada. Si tu plantilla contaba con que un `${ask:...}` se partiera en varias palabras, ahora llega entero. En Windows, un valor con comillas o saltos de línea se rechaza, y en todos los sistemas un `${host}`, `${user}` o `${port}` que empiece por `-` (se tomaría por una opción del programa).
 - Lo que se garantiza es que **el shell de tu equipo** no reinterpreta los valores. Si la plantilla los entrega a otro intérprete —`sh -c '…'`, `ssh servidor "…"`, `eval`—, ese intérprete sí los analiza: es la orden que escribiste y autorizaste.
 
-La ejecución está **acotada**: un plazo máximo configurable (30 s por defecto, desactivable), un tope de salida capturada y un botón **Cancelar** en el aviso mientras el comando corre. Al cancelar o agotarse el plazo se termina el comando **y el árbol de procesos que haya lanzado**, de modo que un comando que no termina no puede quedarse consumiendo recursos de fondo. Los detalles están en la [guía de scripts y comandos](Scripts).
+La ejecución está **acotada**: un plazo máximo configurable (30 s por defecto, desactivable), un tope de salida capturada y un botón **Cancelar** en el aviso mientras el comando corre. Al cancelar o agotarse el plazo se termina el comando **y el árbol de procesos que haya lanzado**, de modo que un comando que no termina no puede quedarse consumiendo recursos de fondo. Los detalles están en la [guía de scripts y comandos](?page=Scripts).
 
 ## Scripts
 
