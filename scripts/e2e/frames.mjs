@@ -114,6 +114,56 @@ export async function checkFrames(app, check, { shot } = {}) {
   await sleep(300);
 }
 
+export async function checkConnectionFrame(app, check, { shot } = {}) {
+  const pointer = (type, x, y) => app.exec(`
+    const el = document.querySelector("#modal-connection > .modal-header");
+    el.dispatchEvent(new PointerEvent(arguments[0], { bubbles: true, cancelable: true, pointerId: 9,
+      pointerType: "mouse", button: 0, buttons: arguments[0] === "pointerup" ? 0 : 1, clientX: arguments[1], clientY: arguments[2] }));
+    return true;
+  `, [type, x, y]);
+  const rect = () => app.exec(`
+    const r = document.getElementById("modal-connection").getBoundingClientRect();
+    return { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), bottom: Math.round(r.bottom), vh: innerHeight };
+  `);
+  await app.exec('localStorage.removeItem("rustty-dialog-frame-connection"); return true;');
+  await app.jsClick("#rail-btn-new");
+  await app.waitFor("#modal-overlay:not(.hidden)");
+  await sleep(500);
+  const before = await rect();
+  const title = await app.exec(`
+    const r = document.getElementById("modal-title").getBoundingClientRect();
+    return { x: Math.round(r.left + 8), y: Math.round(r.top + r.height / 2) };
+  `);
+  await pointer("pointerdown", title.x, title.y);
+  await pointer("pointermove", title.x + 50, title.y + 30);
+  await pointer("pointermove", title.x + 100, title.y + 60);
+  await pointer("pointerup", title.x + 100, title.y + 60);
+  await sleep(150);
+  const after = await rect();
+  // En vertical baja lo que quepa: es casi tan alto como la ventana y el
+  // marco no deja que se salga de ella.
+  check("el formulario de conexión se mueve arrastrando su cabecera, sin cambiar de tamaño ni salirse",
+    Math.abs(after.left - (before.left + 100)) <= 2 && after.top > before.top && after.top <= before.top + 60
+      && after.bottom <= after.vh && after.width === before.width,
+    `${JSON.stringify(before)} → ${JSON.stringify(after)}`);
+  check("la cabecera del formulario de conexión hereda el radio del diálogo",
+    await app.exec(`
+      const box = getComputedStyle(document.getElementById("modal-connection")).borderTopLeftRadius;
+      const head = getComputedStyle(document.querySelector("#modal-connection > .modal-header")).borderTopLeftRadius;
+      return box === head && box !== "0px";
+    `));
+  if (shot) await shot("connection-moved");
+  await app.exec(`
+    document.querySelector("#modal-connection > .modal-header").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    return true;
+  `);
+  await sleep(150);
+  const reset = await rect();
+  check("doble clic en su cabecera lo devuelve al centro", Math.abs(reset.left - before.left) <= 2, `${JSON.stringify(reset)}`);
+  await app.jsClick("#btn-modal-close");
+  await sleep(300);
+}
+
 export async function checkTooltips(app, check, { shot } = {}) {
   // Un icono del rail con data-tooltip y otro botón con title.
   const hover = (selector) => app.exec(`

@@ -68,7 +68,7 @@ import { checkPrefsSync } from "./prefs-sync.mjs";
 import { checkSyncFeedback } from "./sync-feedback.mjs";
 import { checkShortcuts } from "./shortcuts.mjs";
 import { checkDialogs } from "./dialogs.mjs";
-import { checkFrames, checkTooltips } from "./frames.mjs";
+import { checkConnectionFrame, checkFrames, checkTooltips } from "./frames.mjs";
 import { checkWorkspaces } from "./workspaces.mjs";
 import { checkLocalStatusBar } from "./local-status.mjs";
 import { zoomDialogs, zoomFloating } from "./zoom.mjs";
@@ -524,6 +524,7 @@ async function main() {
     await checkShortcuts(app, check);
     await checkDialogs(app, check);
     await checkFrames(app, check);
+    await checkConnectionFrame(app, check);
     await checkTooltips(app, check);
     await checkWorkspaces(app, check);
     await checkLocalStatusBar(app, check);
