@@ -27,6 +27,8 @@ describe("contrato de prefijos", () => {
     expect(Object.keys(EVENT_PREFIX).sort()).toEqual(
       [
         "rdpClosed",
+        "rdpEmbedStatus",
+        "rdpEmbedClip",
         "vncClosed",
         "telnetClosed",
         "sftpLog",
@@ -69,6 +71,12 @@ describe("contrato de prefijos", () => {
   // los scripts y cada salto ProxyJump, y no todos conocen el sessionId.
   it("el evento global ssh-auth-prompt es estable", () => {
     expect(EVENT.sshAuthPrompt).toBe("ssh-auth-prompt");
+  });
+
+  // Espejo de `RDP_CERT_PROMPT` en src-tauri/src/ipc.rs.
+  it("el evento global rdp-cert-prompt es estable", () => {
+    expect(EVENT.rdpCertPrompt).toBe("rdp-cert-prompt");
+    expect(eventName("rdpEmbedStatus", "rdp-1")).toBe("rdp-embed-status-rdp-1");
   });
 
   it("los catálogos son inmutables (Object.freeze)", () => {

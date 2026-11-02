@@ -123,6 +123,65 @@ regex = "1.12.4"
 # de rand_core 0.10, que ya está en el árbol vía russh. Misma versión del lock.
 rand = "0.10"
 tauri-plugin-single-instance = "2.4.2"
+# Cliente RDP integrado (pestaña con canvas) con IronRDP. Se usan los crates
+# sueltos y NO el meta-crate `ironrdp`: su 0.17 fija el juego de julio y
+# mezclaría tipos de dos versiones. Todo opcional detrás de la feature
+# `embedded-rdp` (activa por defecto).
+# `ironrdp-egfx` es el canal gráfico (MS-RDPEGFX): sin él, GNOME Remote Desktop
+# corta la conexión, y los Windows modernos lo prefieren. Va sin H.264: el
+# servidor elige entre los códecs que decodifica IronRDP (RemoteFX, progresivo,
+# ClearCodec, plano).
+# `ironrdp-cliprdr` (portapapeles, texto y ficheros) y `ironrdp-rdpdr` +
+# `ironrdp-rdpdr-native` (carpeta local como unidad del remoto) son del mismo
+# juego que el resto (`ironrdp-svc` 0.10 / `ironrdp-pdu` 0.11). `arboard` lee y
+# escribe el portapapeles del sistema (texto y lista de ficheros); ya estaba en
+# el árbol por `tauri-plugin-clipboard-manager`.
+# El TLS lo montamos nosotros con `tokio-rustls` + proveedor `ring` explícito
+# (no `ironrdp-tls`): su configuración usa el proveedor por defecto del
+# proceso —que con `ring` y `aws-lc` en el árbol no existe y entra en pánico—
+# y activa el volcado de claves de `SSLKEYLOGFILE`. Así, además, el TOFU de
+# certificados usa la misma huella SHA-256 que el de FTPS.
+ironrdp-connector = { version = "0.12", optional = true }
+ironrdp-session = { version = "0.13", optional = true }
+ironrdp-tokio = { version = "0.12", optional = true }
+ironrdp-dvc = { version = "0.10", optional = true }
+ironrdp-displaycontrol = { version = "0.10", optional = true }
+ironrdp-egfx = { version = "0.5", optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"], optional = true }
+ironrdp-pdu = { version = "0.11", optional = true }
+ironrdp-graphics = { version = "0.11", optional = true }
+ironrdp-input = { version = "0.9", optional = true }
+ironrdp-core = { version = "0.3", optional = true }
+ironrdp-svc = { version = "0.10", optional = true }
+ironrdp-cliprdr = { version = "0.9", optional = true }
+ironrdp-rdpdr = { version = "0.9", optional = true }
+ironrdp-rdpdr-native = { version = "0.9", optional = true }
+arboard = { version = "3.6", default-features = false, optional = true }
+x509-cert = { version = "0.3", default-features = false, features = ["std"], optional = true }
+
+[features]
+default = ["embedded-rdp"]
+# Escritorio remoto dentro de la pestaña. Sin esta feature solo queda el
+# lanzador de cliente externo (mstsc / xfreerdp).
+embedded-rdp = [
+    "dep:ironrdp-connector",
+    "dep:ironrdp-session",
+    "dep:ironrdp-tokio",
+    "dep:ironrdp-dvc",
+    "dep:ironrdp-displaycontrol",
+    "dep:ironrdp-egfx",
+    "dep:tokio-rustls",
+    "dep:ironrdp-pdu",
+    "dep:ironrdp-graphics",
+    "dep:ironrdp-input",
+    "dep:ironrdp-core",
+    "dep:ironrdp-svc",
+    "dep:ironrdp-cliprdr",
+    "dep:ironrdp-rdpdr",
+    "dep:ironrdp-rdpdr-native",
+    "dep:arboard",
+    "dep:x509-cert",
+]
 
 # Señales POSIX para terminar el árbol de procesos de un «comando local» que se
 # cancela o agota su plazo (`kill(-pgid)`). Solo Unix: en Windows el árbol se

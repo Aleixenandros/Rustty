@@ -37,6 +37,12 @@ pub enum EventKind {
     SftpProgress,
     /// `rdp-closed-{sessionId}` — proceso RDP externo terminado.
     RdpClosed,
+    /// `rdp-embed-status-{sessionId}` — estado de una sesión RDP **integrada**
+    /// (`connecting` / `connected` / `closed` / `error` con `code`).
+    RdpEmbedStatus,
+    /// `rdp-embed-clip-{sessionId}` — portapapeles de una sesión RDP integrada
+    /// (progreso de la descarga de ficheros copiados en el remoto, errores).
+    RdpEmbedClip,
     /// `vnc-closed-{sessionId}` — visor VNC externo terminado.
     VncClosed,
     /// `telnet-closed-{sessionId}` — cliente Telnet externo terminado.
@@ -90,6 +96,8 @@ impl EventKind {
             EventKind::SftpLog => "sftp-log-",
             EventKind::SftpProgress => "sftp-progress-",
             EventKind::RdpClosed => "rdp-closed-",
+            EventKind::RdpEmbedStatus => "rdp-embed-status-",
+            EventKind::RdpEmbedClip => "rdp-embed-clip-",
             EventKind::VncClosed => "vnc-closed-",
             EventKind::TelnetClosed => "telnet-closed-",
             EventKind::ScriptProgress => "script-progress-",
@@ -140,6 +148,14 @@ pub const HOST_KEY_PROMPT: &str = "ssh-hostkey-prompt";
 ///
 /// Payload: `{ promptId, host, port, fingerprint }`.
 pub const FTPS_CERT_PROMPT: &str = "ftps-cert-prompt";
+
+/// Evento global (sin sufijo): el servidor de una sesión RDP **integrada**
+/// presenta un certificado **desconocido** o **distinto** del guardado (TOFU,
+/// mismo patrón que las host keys SSH). Se pregunta tras el handshake TLS y
+/// antes de enviar credenciales. La respuesta vuelve por `rdp_cert_response`.
+///
+/// Payload: `{ promptId, host, port, fingerprint, changed, previous, viaJump }`.
+pub const RDP_CERT_PROMPT: &str = "rdp-cert-prompt";
 
 /// Evento global (sin sufijo): el servidor pide una o varias respuestas por el
 /// método `keyboard-interactive` (RFC 4256) — el camino de la MFA/2FA: códigos
@@ -195,6 +211,8 @@ mod tests {
             EventKind::SftpLog,
             EventKind::SftpProgress,
             EventKind::RdpClosed,
+            EventKind::RdpEmbedStatus,
+            EventKind::RdpEmbedClip,
             EventKind::VncClosed,
             EventKind::TelnetClosed,
             EventKind::ScriptProgress,

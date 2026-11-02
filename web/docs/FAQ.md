@@ -55,7 +55,7 @@ Sí. Haz clic derecho sobre una conexión → **Añadir nota** y escribe en Mark
 
 ## ¿Rustty trae cliente RDP, VNC o Telnet integrado?
 
-No. Esos perfiles viven dentro de Rustty, pero se abren en clientes externos del sistema. RDP usa `xfreerdp`/`rdesktop`, `mstsc` o el cliente registrado; VNC usa un visor VNC como TigerVNC o el manejador `vnc://`; Telnet abre el comando `telnet` en una terminal externa. Más detalles en [Clientes externos](?page=ClientesExternos).
+RDP, opcionalmente; VNC y Telnet, no. Por defecto los tres se abren en clientes externos del sistema. RDP usa `xfreerdp`/`rdesktop`, `mstsc` o el cliente registrado, pero en Preferencias → Sistema puedes elegir verlo dentro de la pestaña con el cliente integrado de Rustty (portapapeles compartido y carpeta compartida opcionales). VNC usa un visor VNC como TigerVNC o el manejador `vnc://`; Telnet abre el comando `telnet` en una terminal externa. Más detalles en [Clientes externos](?page=ClientesExternos).
 
 ## ¿Los snippets y comandos locales se sincronizan?
 

@@ -177,6 +177,24 @@ impl LocalFsGuard {
         Ok(())
     }
 
+    /// ¿Se puede dar `path` a un servidor remoto, como unidad (carpeta
+    /// compartida del RDP integrado, en lectura y escritura) o como destino de
+    /// los ficheros que copió? No puede ser, estar dentro ni contener la carpeta
+    /// de datos ni `~/.ssh`: compartir la carpeta personal entera daría al
+    /// remoto las claves SSH y los perfiles, y dejar ahí sus ficheros le
+    /// permitiría plantar un `.bash_login` o un `.profile` que no existían.
+    #[cfg(any(test, feature = "embedded-rdp"))]
+    pub fn check_share(&self, path: &Path) -> Result<(), String> {
+        self.check_remove(path)?;
+        if let Some(ssh) = self.ssh_dir() {
+            let forms = resolved_forms(path)?;
+            if forms.iter().any(|f| f.starts_with(&ssh) || ssh.starts_with(f)) {
+                return Err(error("protected", &path.display().to_string()));
+            }
+        }
+        Ok(())
+    }
+
     fn file_concern(
         &self,
         canonical: &Path,
@@ -492,6 +510,27 @@ mod tests {
         // Fuera de ella, todo normal.
         assert!(f.guard.check_write(&f.home.join("descarga.txt")).is_ok());
         assert!(f.guard.check_remove(&f.home.join("descarga.txt")).is_ok());
+    }
+
+    #[test]
+    fn carpeta_compartida_no_expone_datos_ni_claves() {
+        let f = fixture("share");
+        // La carpeta personal contiene las dos: no.
+        assert!(f.guard.check_share(&f.home).is_err());
+        assert!(f.guard.check_share(&f.home.join(".ssh")).is_err());
+        assert!(f.guard.check_share(&f.data).is_err());
+        assert!(f.guard.check_share(&f.home.join(".local")).is_err());
+        std::fs::create_dir_all(f.home.join(".ssh/sub")).unwrap();
+        assert!(f.guard.check_share(&f.home.join(".ssh/sub")).is_err());
+        // Una carpeta concreta, sí.
+        std::fs::create_dir_all(f.home.join("Documentos")).unwrap();
+        assert!(f.guard.check_share(&f.home.join("Documentos")).is_ok());
+        // Ni a través de un enlace.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&f.home, f.home.join("Documentos/atajo")).unwrap();
+            assert!(f.guard.check_share(&f.home.join("Documentos/atajo")).is_err());
+        }
     }
 
     #[test]

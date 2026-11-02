@@ -363,7 +363,7 @@ pub struct ConnectOverrides {
 }
 
 /// Aplica los overrides de conexión sobre la copia local del perfil.
-fn apply_connect_overrides(profile: &mut ConnectionProfile, ov: &ConnectOverrides) {
+pub(crate) fn apply_connect_overrides(profile: &mut ConnectionProfile, ov: &ConnectOverrides) {
     if let Some(u) = ov.username.as_deref() {
         if !u.trim().is_empty() {
             profile.username = u.trim().to_string();
@@ -819,7 +819,7 @@ fn resolve_password_from_keepass(profile: &ConnectionProfile) -> Result<Option<S
 /// perfil: sobrescribe usuario y parámetros de autenticación para que el resto
 /// del flujo (sustitución, resolución de contraseña, conexión) use esa
 /// identidad en vez de la principal. Si el id no existe, devuelve error.
-fn apply_credential(profile: &mut ConnectionProfile, credential_id: &str) -> Result<(), String> {
+pub(crate) fn apply_credential(profile: &mut ConnectionProfile, credential_id: &str) -> Result<(), String> {
     let cred = profile
         .extra_credentials
         .iter()
@@ -1036,45 +1036,84 @@ pub fn get_profile_password(
     // Identidad adicional cuya contraseña se quiere pegar. `None` = principal.
     credential_id: Option<String>,
 ) -> Result<Option<String>, String> {
-    use crate::profiles::PasswordSource;
-
     let profiles = profile_state.load_all().map_err(|e| e.to_string())?;
     let mut profile = profiles
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Perfil {} no encontrado", profile_id))?;
 
-    // Clave de keyring de la contraseña propia: la principal usa
-    // `password:<id>`; cada identidad extra usa `password:<id>:<cred_id>`.
-    let keyring_key = match credential_id.as_deref() {
-        Some(cid) => {
-            apply_credential(&mut profile, cid)?;
-            format!("password:{}:{}", profile_id, cid)
-        }
-        None => format!("password:{}", profile_id),
-    };
-
-    let has_keepass = profile
-        .keepass_entry_uuid
-        .as_deref()
-        .is_some_and(|s| !s.is_empty());
+    if let Some(cid) = credential_id.as_deref() {
+        apply_credential(&mut profile, cid)?;
+    }
 
     // 1) KeePass o credencial maestra → reutilizamos la resolución unificada.
-    if matches!(
-        profile.password_source,
-        PasswordSource::Keepass | PasswordSource::Master
-    ) || has_keepass
-    {
+    if uses_external_secret(&profile) {
         return resolve_profile_password(&profile, &cred_state, None, None);
     }
 
     // 2) keyring (si el usuario guardó la contraseña al crear el perfil)
+    stored_own_password(&profile_id, credential_id.as_deref())
+}
+
+/// El perfil (con la identidad ya aplicada) toma la contraseña de KeePass o de
+/// una credencial maestra, no del keyring propio del perfil.
+fn uses_external_secret(profile: &ConnectionProfile) -> bool {
+    let has_keepass = profile
+        .keepass_entry_uuid
+        .as_deref()
+        .is_some_and(|s| !s.is_empty());
+    matches!(
+        profile.password_source,
+        PasswordSource::Keepass | PasswordSource::Master
+    ) || has_keepass
+}
+
+/// Contraseña propia guardada en el keyring. La principal usa
+/// `password:<id>`; cada identidad extra usa `password:<id>:<cred_id>`.
+fn stored_own_password(
+    profile_id: &str,
+    credential_id: Option<&str>,
+) -> Result<Option<String>, String> {
+    let keyring_key = match credential_id {
+        Some(cid) => format!("password:{profile_id}:{cid}"),
+        None => format!("password:{profile_id}"),
+    };
     let entry = keyring::Entry::new(keyring_scope::SERVICE, &keyring_key).map_err(|e| e.to_string())?;
     match entry.get_password() {
         Ok(p) => Ok(Some(p)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// Contraseña de una conexión resuelta **entera en el backend** a partir del
+/// perfil: KeePass, credencial maestra o keyring propio, y después el motor de
+/// sustitución (`${master:}`, `${secret:}`…). El frontend no la ve nunca.
+///
+/// `prompted` es la que el usuario acaba de teclear en el diálogo cuando no
+/// había ninguna guardada; manda sobre el keyring. `Ok(None)` = no hay ninguna
+/// y hay que pedirla. Se devuelve en `Zeroizing` para borrarla al soltarla.
+#[cfg_attr(not(feature = "embedded-rdp"), allow(dead_code))]
+pub(crate) fn resolve_connection_secret(
+    profile: &ConnectionProfile,
+    profile_id: &str,
+    credential_id: Option<&str>,
+    store: &CredentialStore,
+    prompted: Option<String>,
+) -> Result<Option<Zeroizing<String>>, String> {
+    let resolved = if uses_external_secret(profile) {
+        resolve_profile_password(profile, store, None, None)?
+    } else {
+        let own = match prompted.filter(|p| !p.is_empty()) {
+            Some(p) => Some(p),
+            None => stored_own_password(profile_id, credential_id)?,
+        };
+        match own {
+            Some(pw) => resolve_profile_password(profile, store, Some(pw), None)?,
+            None => None,
+        }
+    };
+    Ok(resolved.filter(|p| !p.is_empty()).map(Zeroizing::new))
 }
 
 /// Envía bytes de entrada del usuario al servidor SSH.
@@ -1263,7 +1302,7 @@ pub async fn rdp_connect(
 // Los argumentos son los de los tres comandos que lo llaman; agruparlos sería
 // otro struct de ida y vuelta para una función privada.
 #[allow(clippy::too_many_arguments)]
-async fn external_forward(
+pub(crate) async fn external_forward(
     kind: &str,
     profiles: &[ConnectionProfile],
     profile: &ConnectionProfile,
@@ -1788,7 +1827,6 @@ async fn confirm_upload_off_thread(
 /// Antes de subir algo sensible (una clave privada, `~/.ssh`, la carpeta de
 /// datos), pregunta con un diálogo **nativo**; ver [`crate::local_fs_guard`].
 fn confirm_upload(app: &AppHandle, guard: &LocalFsGuard, request: &TransferRequest, is_dir: bool) -> Result<(), String> {
-    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     let local = Path::new(&request.local_path);
     let concern = if is_dir {
         guard.upload_dir_concern(local)?
@@ -1799,16 +1837,35 @@ fn confirm_upload(app: &AppHandle, guard: &LocalFsGuard, request: &TransferReque
         return Ok(());
     };
     let lang = request.lang.as_deref().unwrap_or("es");
-    let texts = local_fs_guard::upload_texts(lang);
     let name = local
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| request.local_path.clone());
+    if ask_sensitive_upload(app, lang, &concern, &name, &request.remote_path, is_dir) {
+        Ok(())
+    } else {
+        Err(local_fs_guard::rejected_error(&name))
+    }
+}
+
+/// Diálogo **nativo** de subida sensible (textos del backend, en `lang`).
+/// `true` = el usuario la confirma. Bloquea: no llamarlo desde el hilo
+/// principal ni desde el runtime.
+pub(crate) fn ask_sensitive_upload(
+    app: &AppHandle,
+    lang: &str,
+    concern: &local_fs_guard::UploadConcern,
+    name: &str,
+    dest: &str,
+    is_dir: bool,
+) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let texts = local_fs_guard::upload_texts(lang);
     let message = local_fs_guard::upload_message(
         lang,
-        &concern,
-        &local_command_policy::display_name(&name),
-        &local_command_policy::displayable(&request.remote_path),
+        concern,
+        &local_command_policy::display_name(name),
+        &local_command_policy::displayable(dest),
         is_dir,
     );
     let dialog = app
@@ -1825,11 +1882,7 @@ fn confirm_upload(app: &AppHandle, guard: &LocalFsGuard, request: &TransferReque
         Some(window) => dialog.parent(&window),
         None => dialog,
     };
-    if dialog.blocking_show() {
-        Ok(())
-    } else {
-        Err(local_fs_guard::rejected_error(&name))
-    }
+    dialog.blocking_show()
 }
 
 /// Descarga un fichero remoto a `local_path`.

@@ -634,6 +634,50 @@
     "workarea": "Área de trabajo",
     "fixed": "Tamaño fijo (servidores antiguos)"
   },
+  "rdp_mode": {
+    "embedded": "En la pestaña",
+    "external": "En una ventana externa (mstsc / xfreerdp)"
+  },
+  "rdp_perf": {
+    "speed": "Velocidad",
+    "balanced": "Equilibrado",
+    "quality": "Calidad"
+  },
+  "rdp_embed": {
+    "err": {
+      "generic": "error inesperado de la sesión.",
+      "auth_failed": "usuario o contraseña incorrectos, o la cuenta no puede iniciar sesión por escritorio remoto.",
+      "cert_rejected": "no se confirmó el certificado del servidor.",
+      "cert_changed": "el certificado del servidor ha cambiado y no se aceptó el cambio.",
+      "cert_store": "no se pudo guardar la huella del certificado.",
+      "unreachable": "no se pudo llegar al servidor.",
+      "timeout": "el servidor no respondió a tiempo.",
+      "tls": "falló la negociación TLS (el servidor puede usar una versión de TLS demasiado antigua).",
+      "unsupported": "el servidor exige un modo de seguridad que el cliente integrado no soporta. Prueba con el cliente externo.",
+      "protocol": "error de protocolo RDP. Si se repite, prueba con el cliente externo.",
+      "network": "se perdió la conexión con el servidor.",
+      "redirect": "el servidor pide redirigir la sesión a otro equipo, y el cliente integrado aún no lo soporta.",
+      "reactivation_timeout": "el servidor no terminó de reactivar la sesión tras un cambio de pantalla.",
+      "internal": "error interno del cliente integrado."
+    },
+    "clip_save": "Guardar en…",
+    "clip_cancel": "Cancelar",
+    "clip_save_title": "Dónde guardar los ficheros copiados en el escritorio remoto",
+    "clip_err": {
+      "generic": "error inesperado.",
+      "too_large": "la copia supera el máximo de 8 GiB.",
+      "too_many": "la copia tiene demasiadas entradas (máximo 20 000).",
+      "too_deep": "la copia tiene carpetas demasiado anidadas (máximo 32 niveles).",
+      "unsafe_name": "el remoto envió un nombre de fichero no válido.",
+      "duplicate_name": "el remoto envió dos entradas con el mismo nombre.",
+      "remote": "el escritorio remoto no entregó el fichero.",
+      "short_read": "el fichero cambió en el remoto durante la copia.",
+      "empty": "no había nada que copiar.",
+      "busy": "ya hay otra copia de ficheros en curso.",
+      "expired": "esa copia ya no está disponible; vuelve a copiar los ficheros en el remoto.",
+      "cancelled": "cancelada; se ha borrado lo que se llevaba copiado."
+    }
+  },
   "ctx": {
     "key_access": "Acceso sin contraseña (clave SSH)…",
     "new_conn_here": "Nueva conexión aquí",
@@ -1087,7 +1131,16 @@
     "stored": "Registrada:\n{fingerprint}",
     "received": "Recibida ahora:\n{fingerprint}",
     "advice": "Acepta SOLO si esperabas este cambio y puedes verificar la huella nueva por un canal de confianza. Al aceptar, se olvida el certificado guardado y la conexión se relanza en esta misma pestaña; al rechazar, no se modifica nada.",
-    "accept": "Aceptar el certificado nuevo"
+    "accept": "Aceptar el certificado nuevo",
+    "advice_embedded": "Acepta SOLO si esperabas este cambio y puedes verificar la huella nueva por un canal de confianza. Hasta que decidas no se envía ninguna credencial. Al aceptar, la huella nueva sustituye a la guardada y la conexión continúa; al rechazar, no se modifica nada."
+  },
+  "modal_rdp_cert": {
+    "title": "Certificado del servidor RDP desconocido",
+    "intro": "Es la primera vez que te conectas a {host}:{port} con el escritorio remoto integrado y no hay ningún certificado guardado para este servidor.",
+    "via_jump": "La conexión va por un salto: la huella es la del servidor de destino, no la del salto.",
+    "fingerprint": "Huella del certificado (SHA-256):\n{fingerprint}",
+    "advice": "Compruébala con el administrador del servidor por un canal de confianza. Hasta que la aceptes no se envía ninguna credencial. Si aceptas, se guardará y en adelante te avisaremos si cambia.",
+    "accept": "Confiar y conectar"
   },
   "key_setup": {
     "title": "Acceso sin contraseña",
@@ -1389,7 +1442,7 @@
     "host_key_change_prompt": "Preguntar si la clave de un servidor cambia",
     "host_key_change_prompt_hint": "Si la clave de un servidor ya conocido cambia (señal típica de un intermediario, pero también de una reinstalación), muestra un aviso con las huellas y deja decidir: aceptar reemplaza la entrada antigua y la conexión continúa; rechazar no toca nada. Si lo desactivas, el cambio se rechaza siempre y hay que editar known_hosts a mano.",
     "rdp_cert_change_prompt": "Preguntar si el certificado de un servidor RDP cambia",
-    "rdp_cert_change_prompt_hint": "Equivalente para RDP: el cliente externo recuerda el certificado de cada servidor y, si cambia, cancela la conexión sin poder preguntar nada. Con esto activo, Rustty muestra las dos huellas y deja decidir: aceptar olvida el certificado guardado y reconecta en la misma pestaña; rechazar no toca nada. Si lo desactivas, el aviso se limita a explicar cómo borrarlo a mano.",
+    "rdp_cert_change_prompt_hint": "Equivalente para RDP: el cliente externo recuerda el certificado de cada servidor y, si cambia, cancela la conexión sin poder preguntar nada. Con esto activo, Rustty muestra las dos huellas y deja decidir: aceptar olvida el certificado guardado y reconecta en la misma pestaña; rechazar no toca nada. Si lo desactivas, el aviso se limita a explicar cómo borrarlo a mano. Con el cliente integrado en la pestaña se pregunta antes de enviar ninguna credencial; desactivado, el cambio se rechaza.",
     "strict_ftps_cert": "Confirmar el certificado FTPS en la primera conexión",
     "strict_ftps_cert_hint": "Los servidores FTPS con certificado autofirmado (un NAS, un equipo interno) se aceptan por huella igual que las claves SSH: la primera vez se muestra la huella del certificado y se pide confirmación; después, un cambio de certificado se rechaza. Si lo desactivas, la primera huella se recuerda automáticamente.",
     "read_only_prod": "Abrir en solo lectura las conexiones PROD",
@@ -1826,6 +1879,18 @@
     "autostart_hint": "Añade Rustty a los programas que se lanzan automáticamente al iniciar sesión.",
     "rdp_display": "Ventana del escritorio remoto (RDP)",
     "rdp_display_hint": "Valor por defecto de las sesiones RDP; cada perfil puede llevar el suyo. La ventana redimensionable deja maximizar y arrastrar, y el escritorio remoto sigue el tamaño: necesita Windows 8 / Server 2012 o superior. «Tamaño fijo» es el comportamiento anterior, para servidores que no lo admiten.",
+    "rdp_mode": "Abrir el escritorio remoto (RDP)",
+    "rdp_mode_hint": "La ventana externa (por defecto) usa el cliente de escritorio remoto del sistema (mstsc en Windows, xfreerdp en Linux) y admite lo que ese cliente admita (audio, impresoras, varios monitores…). En la pestaña, el escritorio se ve dentro de Rustty con el cliente integrado, que es nuevo: si algo no funciona con tu servidor, vuelve a la ventana externa.",
+    "rdp_perf": "Rendimiento del escritorio remoto",
+    "rdp_perf_hint": "Se aplica a las conexiones nuevas. «Velocidad» quita en el remoto el fondo, los temas y las animaciones, y comprime al máximo: para enlaces lentos. «Equilibrado» quita el fondo y las animaciones pero mantiene las fuentes suavizadas. «Calidad» muestra el escritorio tal cual, para redes locales.",
+    "rdp_clipboard": "Compartir el portapapeles con el escritorio remoto",
+    "rdp_clipboard_hint": "Copiar en un lado y pegar en el otro. Lo copiado en local se envía al remoto al volver a la pestaña o al pegar.",
+    "rdp_clipboard_files": "Copiar y pegar también ficheros y carpetas",
+    "rdp_clipboard_files_hint": "Los ficheros copiados en el remoto no se descargan solos: Rustty avisa y los guarda en la carpeta que elijas. Lo copiado en local se ofrece al remoto al volver a la pestaña (el remoto puede leerlo desde ese momento) y, si parece sensible —una clave privada, algo de ~/.ssh—, se pregunta antes.",
+    "rdp_shared_folder": "Compartir una carpeta local como unidad del remoto",
+    "rdp_shared_folder_pick": "Elegir carpeta…",
+    "rdp_shared_folder_hint": "La carpeta aparece en el Explorador del remoto, con lectura y escritura. Solo esa carpeta: nada fuera de ella. No se puede compartir la carpeta personal entera ni ninguna que contenga tus claves SSH o los datos de Rustty. Se aplica a las conexiones nuevas.",
+    "rdp_shared_folder_none": "Ninguna carpeta elegida",
     "autostart_minimized": "Arrancar minimizado",
     "restore_work_tabs": "Ofrecer restaurar las pestañas de la última sesión",
     "restore_work_tabs_hint": "Guarda el orden de pestañas y sus perfiles (nunca el contenido del terminal, ni secretos, ni sesiones privadas) y al arrancar ofrece reconectarlas en lote.",
@@ -2144,6 +2209,17 @@
     "transfers_pause_all_failed": "No se pudo cambiar la pausa general: {err}",
     "file_grant_invalid": "El permiso para ese fichero ya no es válido (caducó, ya se usó o la ruta cambió). Vuelve a elegirlo.",
     "import_failed": "Error al importar: {err}",
+    "rdp_embed_failed": "No se pudo abrir el escritorio remoto «{name}»: {reason}",
+    "rdp_shared_folder_failed": "No se pudo guardar la carpeta compartida: {error}",
+    "rdp_shared_folder_protected": "No se puede compartir esa carpeta: es, contiene o está dentro de tu carpeta de claves SSH o de la carpeta de datos de Rustty. Elige una más concreta, como Documentos.",
+    "rdp_clip_download_start": "«{name}»: copiando {files} fichero(s) del escritorio remoto ({size} MB)…",
+    "rdp_clip_files_offered": "«{name}»: el escritorio remoto ha copiado {files} fichero(s) ({size} MB). ¿Guardarlos en este equipo?",
+    "rdp_clip_download_done": "«{name}»: {files} fichero(s) guardados en {folder}",
+    "rdp_clip_download_failed": "«{name}»: no se pudieron copiar los ficheros: {reason}",
+    "rdp_clip_withheld": "«{name}»: lo copiado no se ofrece al escritorio remoto porque no se confirmó el envío de un fichero sensible.",
+    "rdp_clip_save_failed": "No se pudieron guardar los ficheros del escritorio remoto: {error}",
+    "rdp_clip_save_protected": "No se pueden guardar ahí los ficheros del escritorio remoto: esa carpeta es tu carpeta personal entera, o es, contiene o está dentro de tu carpeta de claves SSH o de la de datos de Rustty. Elige una más concreta, como Descargas.",
+    "rdp_clip_unavailable": "«{name}»: el portapapeles del sistema no está disponible; copiar y pegar con el escritorio remoto no funcionará.",
     "overflow_open": "{n} avisos más: abrir el centro de actividad"
   },
   "time": {

@@ -634,6 +634,50 @@
     "workarea": "Arbeitsbereich",
     "fixed": "Feste Größe (ältere Server)"
   },
+  "rdp_mode": {
+    "embedded": "Im Tab",
+    "external": "In einem externen Fenster (mstsc / xfreerdp)"
+  },
+  "rdp_perf": {
+    "speed": "Geschwindigkeit",
+    "balanced": "Ausgewogen",
+    "quality": "Qualität"
+  },
+  "rdp_embed": {
+    "err": {
+      "generic": "unerwarteter Sitzungsfehler.",
+      "auth_failed": "falscher Benutzername oder falsches Passwort, oder das Konto darf sich nicht per Remotedesktop anmelden.",
+      "cert_rejected": "das Serverzertifikat wurde nicht bestätigt.",
+      "cert_changed": "das Serverzertifikat hat sich geändert und die Änderung wurde nicht akzeptiert.",
+      "cert_store": "der Fingerabdruck des Zertifikats konnte nicht gespeichert werden.",
+      "unreachable": "der Server ist nicht erreichbar.",
+      "timeout": "der Server hat nicht rechtzeitig geantwortet.",
+      "tls": "die TLS-Aushandlung ist fehlgeschlagen (der Server verwendet möglicherweise eine zu alte TLS-Version).",
+      "unsupported": "der Server verlangt einen Sicherheitsmodus, den der integrierte Client nicht unterstützt. Versuche den externen Client.",
+      "protocol": "RDP-Protokollfehler. Wenn er erneut auftritt, versuche den externen Client.",
+      "network": "die Verbindung zum Server ist abgebrochen.",
+      "redirect": "der Server möchte die Sitzung auf einen anderen Rechner umleiten, was der integrierte Client noch nicht unterstützt.",
+      "reactivation_timeout": "der Server hat die Sitzung nach einer Bildschirmänderung nicht rechtzeitig reaktiviert.",
+      "internal": "interner Fehler des integrierten Clients."
+    },
+    "clip_save": "Speichern unter…",
+    "clip_cancel": "Abbrechen",
+    "clip_save_title": "Wo die auf dem Remotedesktop kopierten Dateien gespeichert werden",
+    "clip_err": {
+      "generic": "unerwarteter Fehler.",
+      "too_large": "die Kopie überschreitet das Limit von 8 GiB.",
+      "too_many": "die Kopie hat zu viele Einträge (höchstens 20.000).",
+      "too_deep": "die Kopie hat zu tief verschachtelte Ordner (höchstens 32 Ebenen).",
+      "unsafe_name": "der Remote hat einen ungültigen Dateinamen gesendet.",
+      "duplicate_name": "der Remote hat zwei Einträge mit demselben Namen gesendet.",
+      "remote": "der Remotedesktop hat die Datei nicht geliefert.",
+      "short_read": "die Datei hat sich während des Kopierens auf dem Remote geändert.",
+      "empty": "es gab nichts zu kopieren.",
+      "busy": "es läuft bereits eine andere Dateikopie.",
+      "expired": "diese Kopie ist nicht mehr verfügbar; kopiere die Dateien auf dem Remote erneut.",
+      "cancelled": "abgebrochen; das bisher Kopierte wurde gelöscht."
+    }
+  },
   "ctx": {
     "key_access": "Zugriff ohne Passwort (SSH-Schlüssel)…",
     "new_conn_here": "Neue Verbindung hier",
@@ -1087,7 +1131,16 @@
     "stored": "Gespeichert:\n{fingerprint}",
     "received": "Jetzt empfangen:\n{fingerprint}",
     "advice": "Akzeptiere NUR, wenn du diese Änderung erwartet hast und den neuen Fingerabdruck über einen vertrauenswürdigen Kanal prüfen kannst. Beim Akzeptieren wird das gespeicherte Zertifikat vergessen und die Verbindung im selben Tab neu gestartet; beim Ablehnen wird nichts geändert.",
-    "accept": "Neues Zertifikat akzeptieren"
+    "accept": "Neues Zertifikat akzeptieren",
+    "advice_embedded": "Stimme NUR zu, wenn du diese Änderung erwartet hast und den neuen Fingerabdruck über einen vertrauenswürdigen Kanal prüfen kannst. Bis du entscheidest, werden keine Anmeldedaten gesendet. Zustimmen ersetzt den gespeicherten Fingerabdruck und die Verbindung wird fortgesetzt; Ablehnen ändert nichts."
+  },
+  "modal_rdp_cert": {
+    "title": "Unbekanntes Zertifikat des RDP-Servers",
+    "intro": "Du verbindest dich zum ersten Mal mit dem integrierten Remotedesktop zu {host}:{port}, und für diesen Server ist kein Zertifikat gespeichert.",
+    "via_jump": "Die Verbindung läuft über einen Sprunghost: Das ist der Fingerabdruck des Zielservers, nicht des Sprunghosts.",
+    "fingerprint": "Fingerabdruck des Zertifikats (SHA-256):\n{fingerprint}",
+    "advice": "Prüfe ihn über einen vertrauenswürdigen Kanal mit dem Serveradministrator. Bis du zustimmst, werden keine Anmeldedaten gesendet. Wenn du zustimmst, wird er gespeichert und wir warnen dich, falls er sich ändert.",
+    "accept": "Vertrauen und verbinden"
   },
   "key_setup": {
     "title": "Zugriff ohne Passwort",
@@ -1389,7 +1442,7 @@
     "host_key_change_prompt": "Nachfragen, wenn sich der Schlüssel eines Servers ändert",
     "host_key_change_prompt_hint": "Ändert sich der Schlüssel eines bekannten Servers (das klassische Zeichen eines Man-in-the-Middle, aber auch einer Neuinstallation), wird eine Warnung mit beiden Fingerabdrücken angezeigt: Akzeptieren ersetzt den alten Eintrag und die Verbindung läuft weiter; Ablehnen ändert nichts. Wenn deaktiviert, wird die Änderung immer abgelehnt und known_hosts muss von Hand bearbeitet werden.",
     "rdp_cert_change_prompt": "Fragen, wenn sich das Zertifikat eines RDP-Servers ändert",
-    "rdp_cert_change_prompt_hint": "Das Gegenstück für RDP: Der externe Client merkt sich das Zertifikat jedes Servers und bricht die Verbindung ab, wenn es sich ändert — ohne fragen zu können. Ist dies aktiv, zeigt Rustty beide Fingerabdrücke und lässt dich entscheiden: Beim Akzeptieren wird das gespeicherte Zertifikat vergessen und im selben Tab neu verbunden; beim Ablehnen wird nichts geändert. Deaktiviert erklärt der Hinweis nur, wie man es von Hand löscht.",
+    "rdp_cert_change_prompt_hint": "Das Gegenstück für RDP: Der externe Client merkt sich das Zertifikat jedes Servers und bricht die Verbindung ab, wenn es sich ändert — ohne fragen zu können. Ist dies aktiv, zeigt Rustty beide Fingerabdrücke und lässt dich entscheiden: Beim Akzeptieren wird das gespeicherte Zertifikat vergessen und im selben Tab neu verbunden; beim Ablehnen wird nichts geändert. Deaktiviert erklärt der Hinweis nur, wie man es von Hand löscht. Beim integrierten Client im Tab wird gefragt, bevor Anmeldedaten gesendet werden; deaktiviert wird die Änderung abgelehnt.",
     "strict_ftps_cert": "FTPS-Zertifikat bei der ersten Verbindung bestätigen",
     "strict_ftps_cert_hint": "FTPS-Server mit selbstsigniertem Zertifikat (ein NAS, ein internes Gerät) werden per Fingerabdruck akzeptiert wie SSH-Schlüssel: beim ersten Mal wird der Zertifikat-Fingerabdruck angezeigt und um Bestätigung gebeten; danach wird ein Zertifikatwechsel abgelehnt. Wenn du das deaktivierst, wird der erste Fingerabdruck automatisch gemerkt.",
     "read_only_prod": "PROD-Verbindungen schreibgeschützt öffnen",
@@ -1826,6 +1879,18 @@
     "autostart_hint": "Fügt Rustty zur Liste der Programme hinzu, die beim Anmelden automatisch gestartet werden.",
     "rdp_display": "Fenster des Remotedesktops (RDP)",
     "rdp_display_hint": "Standard für RDP-Sitzungen; jedes Profil kann davon abweichen. Das größenveränderbare Fenster lässt sich maximieren und ziehen, und der Remotedesktop folgt der Größe: benötigt Windows 8 / Server 2012 oder neuer. «Feste Größe» ist das bisherige Verhalten, für Server, die das nicht unterstützen.",
+    "rdp_mode": "Remotedesktop (RDP) öffnen",
+    "rdp_mode_hint": "Das externe Fenster (Standard) nutzt den Remotedesktop-Client des Systems (mstsc unter Windows, xfreerdp unter Linux) und unterstützt, was dieser Client unterstützt (Audio, Drucker, mehrere Monitore…). Im Tab wird der Desktop mit dem integrierten Client in Rustty angezeigt; er ist neu: Wenn etwas mit deinem Server nicht funktioniert, wechsle zurück zum externen Fenster.",
+    "rdp_perf": "Leistung des Remotedesktops",
+    "rdp_perf_hint": "Gilt für neue Verbindungen. „Geschwindigkeit“ blendet auf dem Remote Hintergrundbild, Designs und Animationen aus und komprimiert am stärksten: für langsame Verbindungen. „Ausgewogen“ blendet Hintergrundbild und Animationen aus, behält aber die Schriftglättung. „Qualität“ zeigt den Desktop unverändert, für lokale Netze.",
+    "rdp_clipboard": "Zwischenablage mit dem Remotedesktop teilen",
+    "rdp_clipboard_hint": "Auf einer Seite kopieren, auf der anderen einfügen. Lokal Kopiertes wird an den Remote gesendet, sobald du zum Tab zurückkehrst oder einfügst.",
+    "rdp_clipboard_files": "Auch Dateien und Ordner kopieren und einfügen",
+    "rdp_clipboard_files_hint": "Auf dem Remote kopierte Dateien werden nicht von selbst heruntergeladen: Rustty weist darauf hin und speichert sie in dem Ordner, den du wählst. Lokal Kopiertes wird dem Remote angeboten, sobald du zum Tab zurückkehrst (der Remote kann es ab dann lesen), und wenn es sensibel aussieht – ein privater Schlüssel, etwas aus ~/.ssh –, wird vorher nachgefragt.",
+    "rdp_shared_folder": "Einen lokalen Ordner als Laufwerk auf dem Remote freigeben",
+    "rdp_shared_folder_pick": "Ordner wählen…",
+    "rdp_shared_folder_hint": "Der Ordner erscheint im Explorer des Remotes, mit Lese- und Schreibzugriff. Nur dieser Ordner, nichts außerhalb. Der ganze persönliche Ordner oder einer, der deine SSH-Schlüssel oder die Daten von Rustty enthält, kann nicht freigegeben werden. Gilt für neue Verbindungen.",
+    "rdp_shared_folder_none": "Kein Ordner gewählt",
     "autostart_minimized": "Minimiert starten",
     "restore_work_tabs": "Wiederherstellen der Tabs der letzten Sitzung anbieten",
     "restore_work_tabs_hint": "Speichert die Tab-Reihenfolge und ihre Profile (nie Terminalinhalte, Geheimnisse oder private Sitzungen) und bietet beim Start an, sie gesammelt neu zu verbinden.",
@@ -2144,6 +2209,17 @@
     "transfers_pause_all_failed": "Die allgemeine Pause ließ sich nicht ändern: {err}",
     "file_grant_invalid": "Die Berechtigung für diese Datei ist nicht mehr gültig (abgelaufen, schon benutzt oder der Pfad hat sich geändert). Wähle sie erneut aus.",
     "import_failed": "Import fehlgeschlagen: {err}",
+    "rdp_embed_failed": "Remotedesktop „{name}“ konnte nicht geöffnet werden: {reason}",
+    "rdp_shared_folder_failed": "Freigegebener Ordner konnte nicht gespeichert werden: {error}",
+    "rdp_shared_folder_protected": "Dieser Ordner kann nicht freigegeben werden: Er ist, enthält oder liegt in deinem SSH-Schlüsselordner oder dem Datenordner von Rustty. Wähle einen spezifischeren, etwa Dokumente.",
+    "rdp_clip_download_start": "„{name}“: {files} Datei(en) werden vom Remotedesktop kopiert ({size} MB)…",
+    "rdp_clip_files_offered": "„{name}“: Der Remotedesktop hat {files} Datei(en) kopiert ({size} MB). Auf diesem Computer speichern?",
+    "rdp_clip_download_done": "„{name}“: {files} Datei(en) in {folder} gespeichert",
+    "rdp_clip_download_failed": "„{name}“: Dateien konnten nicht kopiert werden: {reason}",
+    "rdp_clip_withheld": "„{name}“: Das Kopierte wird dem Remotedesktop nicht angeboten, weil das Senden einer sensiblen Datei nicht bestätigt wurde.",
+    "rdp_clip_save_failed": "Die Dateien vom Remotedesktop konnten nicht gespeichert werden: {error}",
+    "rdp_clip_save_protected": "Die Dateien des Remotedesktops können dort nicht gespeichert werden: Dieser Ordner ist dein ganzer persönlicher Ordner oder er ist, enthält oder liegt in deinem SSH-Schlüsselordner oder dem Datenordner von Rustty. Wähle einen spezifischeren, etwa Downloads.",
+    "rdp_clip_unavailable": "„{name}“: Die System-Zwischenablage ist nicht verfügbar; Kopieren und Einfügen mit dem Remotedesktop funktioniert nicht.",
     "overflow_open": "{n} weitere Benachrichtigungen: Aktivitätszentrum öffnen"
   },
   "time": {

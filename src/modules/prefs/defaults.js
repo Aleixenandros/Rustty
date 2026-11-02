@@ -61,6 +61,26 @@ export const DEFAULT_PREFS = {
   // tamaño clavado de siempre, para servidores sin Display Control). Cada perfil
   // puede llevar su propio `rdp_display` y entonces manda el del perfil.
   rdpDisplay:      "window",
+  // Dónde se abre el escritorio remoto: "external" (mstsc / xfreerdp en su
+  // propia ventana, el de siempre) o "embedded" (en la pestaña, cliente
+  // integrado IronRDP). Por defecto el externo: el integrado es nuevo y aún no
+  // se ha probado lo bastante contra servidores Windows reales.
+  // Si la build no trae el cliente integrado se usa siempre el externo.
+  rdpMode:         "external",
+  // Solo en la pestaña: portapapeles compartido con el escritorio remoto
+  // (texto, como el `+clipboard` del cliente externo) y, si se activa,
+  // ficheros y carpetas. Los ficheros, apagados por defecto: el remoto puede
+  // leer lo que se copie en local en cuanto se anuncia.
+  rdpClipboard:    true,
+  rdpClipboardFiles: false,
+  // Solo en la pestaña: qué se pide al servidor para gastar menos ancho de
+  // banda. "speed" (sin fondo, temas ni animaciones, compresión fuerte),
+  // "balanced" (sin fondo ni animaciones) o "quality" (el escritorio tal cual).
+  rdpPerfProfile:  "balanced",
+  // Solo en la pestaña: compartir la carpeta elegida en Ajustes como unidad
+  // del remoto. La ruta la guarda el backend (`rdp_shared_folder_pick`): aquí
+  // solo el interruptor.
+  rdpSharedFolder: false,
   // Captura la pantalla de cada sesión SSH (no privada) en disco para poder
   // restaurarla luego con «Conectar y restaurar pantalla anterior». Solo es la
   // salida visual; puede contener datos sensibles. Excluido de sync.

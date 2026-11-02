@@ -634,6 +634,50 @@
     "workarea": "Area kerja",
     "fixed": "Ukuran tetap (server lawas)"
   },
+  "rdp_mode": {
+    "embedded": "Di dalam tab",
+    "external": "Di jendela eksternal (mstsc / xfreerdp)"
+  },
+  "rdp_perf": {
+    "speed": "Kecepatan",
+    "balanced": "Seimbang",
+    "quality": "Kualitas"
+  },
+  "rdp_embed": {
+    "err": {
+      "generic": "kesalahan sesi tak terduga.",
+      "auth_failed": "nama pengguna atau kata sandi salah, atau akun tidak diizinkan masuk melalui desktop jarak jauh.",
+      "cert_rejected": "sertifikat server tidak dikonfirmasi.",
+      "cert_changed": "sertifikat server telah berubah dan perubahan tidak diterima.",
+      "cert_store": "sidik jari sertifikat tidak dapat disimpan.",
+      "unreachable": "server tidak dapat dijangkau.",
+      "timeout": "server tidak merespons tepat waktu.",
+      "tls": "negosiasi TLS gagal (server mungkin menggunakan versi TLS yang terlalu lama).",
+      "unsupported": "server memerlukan mode keamanan yang tidak didukung klien bawaan. Coba klien eksternal.",
+      "protocol": "kesalahan protokol RDP. Jika terulang, coba klien eksternal.",
+      "network": "koneksi ke server terputus.",
+      "redirect": "server meminta pengalihan sesi ke mesin lain, yang belum didukung klien bawaan.",
+      "reactivation_timeout": "server tidak menyelesaikan pengaktifan ulang sesi setelah perubahan layar.",
+      "internal": "kesalahan internal pada klien bawaan."
+    },
+    "clip_save": "Simpan ke…",
+    "clip_cancel": "Batal",
+    "clip_save_title": "Tempat menyimpan berkas yang disalin di desktop jarak jauh",
+    "clip_err": {
+      "generic": "kesalahan tak terduga.",
+      "too_large": "salinan melebihi batas 8 GiB.",
+      "too_many": "salinan berisi terlalu banyak entri (maksimal 20.000).",
+      "too_deep": "salinan berisi folder yang bersarang terlalu dalam (maksimal 32 tingkat).",
+      "unsafe_name": "sisi jarak jauh mengirim nama berkas yang tidak valid.",
+      "duplicate_name": "sisi jarak jauh mengirim dua entri dengan nama yang sama.",
+      "remote": "desktop jarak jauh tidak mengirimkan berkas.",
+      "short_read": "berkas berubah di sisi jarak jauh selama penyalinan.",
+      "empty": "tidak ada yang dapat disalin.",
+      "busy": "penyalinan berkas lain sedang berlangsung.",
+      "expired": "salinan itu tidak lagi tersedia; salin kembali berkas di sisi jarak jauh.",
+      "cancelled": "dibatalkan; yang sudah disalin sejauh ini telah dihapus."
+    }
+  },
   "ctx": {
     "key_access": "Akses tanpa kata sandi (kunci SSH)…",
     "new_conn_here": "Koneksi baru di sini",
@@ -1087,7 +1131,16 @@
     "stored": "Tercatat:\n{fingerprint}",
     "received": "Diterima sekarang:\n{fingerprint}",
     "advice": "Terima HANYA jika Anda memang mengharapkan perubahan ini dan dapat memverifikasi sidik jari baru melalui saluran tepercaya. Menerima akan melupakan sertifikat tersimpan dan koneksi dijalankan ulang di tab yang sama; menolak tidak mengubah apa pun.",
-    "accept": "Terima sertifikat baru"
+    "accept": "Terima sertifikat baru",
+    "advice_embedded": "Terima HANYA jika Anda memang mengharapkan perubahan ini dan dapat memverifikasi sidik jari baru melalui saluran tepercaya. Tidak ada kredensial yang dikirim sampai Anda memutuskan. Menerima akan menggantikan sidik jari tersimpan dan koneksi dilanjutkan; menolak tidak mengubah apa pun."
+  },
+  "modal_rdp_cert": {
+    "title": "Sertifikat server RDP tidak dikenal",
+    "intro": "Ini pertama kalinya Anda menyambung ke {host}:{port} dengan desktop jarak jauh bawaan dan tidak ada sertifikat tersimpan untuk server ini.",
+    "via_jump": "Koneksi melewati jump host: ini adalah sidik jari server tujuan, bukan jump host.",
+    "fingerprint": "Sidik jari sertifikat (SHA-256):\n{fingerprint}",
+    "advice": "Verifikasi dengan administrator server melalui saluran tepercaya. Tidak ada kredensial yang dikirim sampai Anda menerima. Jika diterima, sertifikat akan disimpan dan kami akan memperingatkan jika berubah.",
+    "accept": "Percayai dan sambungkan"
   },
   "key_setup": {
     "title": "Akses tanpa kata sandi",
@@ -1389,7 +1442,7 @@
     "host_key_change_prompt": "Tanya saat kunci server berubah",
     "host_key_change_prompt_hint": "Jika kunci server yang dikenal berubah (tanda klasik man-in-the-middle, tetapi juga instal ulang), tampilkan peringatan dengan kedua sidik jari dan biarkan Anda memutuskan: menerima akan menggantikan entri lama dan koneksi dilanjutkan; menolak tidak mengubah apa pun. Jika dimatikan, perubahan selalu ditolak dan known_hosts harus diedit manual.",
     "rdp_cert_change_prompt": "Tanya jika sertifikat server RDP berubah",
-    "rdp_cert_change_prompt_hint": "Padanan RDP: klien eksternal mengingat sertifikat setiap server dan, jika berubah, membatalkan koneksi tanpa bisa bertanya apa pun. Dengan opsi ini aktif, Rustty menampilkan kedua sidik jari dan membiarkan Anda memutuskan: menerima akan melupakan sertifikat tersimpan dan menyambung ulang di tab yang sama; menolak tidak mengubah apa pun. Jika dimatikan, peringatan hanya menjelaskan cara menghapusnya secara manual.",
+    "rdp_cert_change_prompt_hint": "Padanan RDP: klien eksternal mengingat sertifikat setiap server dan, jika berubah, membatalkan koneksi tanpa bisa bertanya apa pun. Dengan opsi ini aktif, Rustty menampilkan kedua sidik jari dan membiarkan Anda memutuskan: menerima akan melupakan sertifikat tersimpan dan menyambung ulang di tab yang sama; menolak tidak mengubah apa pun. Jika dimatikan, peringatan hanya menjelaskan cara menghapusnya secara manual. Dengan klien bawaan di dalam tab, Anda ditanya sebelum kredensial apa pun dikirim; jika dimatikan, perubahan ditolak.",
     "strict_ftps_cert": "Konfirmasi sertifikat FTPS pada koneksi pertama",
     "strict_ftps_cert_hint": "Server FTPS dengan sertifikat yang ditandatangani sendiri (NAS, mesin internal) diterima berdasarkan sidik jari seperti kunci SSH: pertama kali sidik jari sertifikat ditampilkan dan konfirmasi diminta; setelahnya, perubahan sertifikat ditolak. Jika dimatikan, sidik jari pertama diingat otomatis.",
     "read_only_prod": "Buka koneksi PROD sebagai hanya baca",
@@ -1826,6 +1879,18 @@
     "autostart_hint": "Menambahkan Rustty ke daftar aplikasi yang dimulai otomatis saat login.",
     "rdp_display": "Jendela desktop jarak jauh (RDP)",
     "rdp_display_hint": "Default untuk sesi RDP; setiap profil dapat menimpanya. Jendela yang dapat diubah ukurannya dapat dimaksimalkan dan diseret, dan desktop jarak jauh mengikuti ukurannya: memerlukan Windows 8 / Server 2012 atau lebih baru. «Ukuran tetap» adalah perilaku sebelumnya, untuk server yang tidak mendukungnya.",
+    "rdp_mode": "Buka desktop jarak jauh (RDP)",
+    "rdp_mode_hint": "Jendela eksternal (bawaan) menggunakan klien desktop jarak jauh sistem (mstsc di Windows, xfreerdp di Linux) dan mendukung apa pun yang didukung klien tersebut (audio, printer, beberapa monitor…). Di dalam tab, desktop ditampilkan di dalam Rustty dengan klien bawaan, yang masih baru: jika ada yang tidak berfungsi dengan server Anda, kembali ke jendela eksternal.",
+    "rdp_perf": "Performa desktop jarak jauh",
+    "rdp_perf_hint": "Berlaku untuk koneksi baru. «Kecepatan» menyembunyikan wallpaper, tema, dan animasi di sisi jarak jauh serta mengompresi paling banyak: untuk tautan lambat. «Seimbang» menyembunyikan wallpaper dan animasi tetapi mempertahankan font halus. «Kualitas» menampilkan desktop apa adanya, untuk jaringan lokal.",
+    "rdp_clipboard": "Bagikan papan klip dengan desktop jarak jauh",
+    "rdp_clipboard_hint": "Salin di satu sisi dan tempel di sisi lain. Yang Anda salin secara lokal dikirim ke sisi jarak jauh saat Anda kembali ke tab atau menempel.",
+    "rdp_clipboard_files": "Salin dan tempel juga berkas dan folder",
+    "rdp_clipboard_files_hint": "Berkas yang disalin di sisi jarak jauh tidak diunduh dengan sendirinya: Rustty memberi tahu Anda dan menyimpannya di folder yang Anda pilih. Yang Anda salin secara lokal ditawarkan ke sisi jarak jauh saat Anda kembali ke tab (sisi jarak jauh dapat membacanya sejak saat itu) dan, jika tampak sensitif — kunci privat, sesuatu di ~/.ssh — Anda akan ditanya terlebih dahulu.",
+    "rdp_shared_folder": "Bagikan folder lokal sebagai drive di sisi jarak jauh",
+    "rdp_shared_folder_pick": "Pilih folder…",
+    "rdp_shared_folder_hint": "Folder muncul di Explorer sisi jarak jauh, baca dan tulis. Hanya folder itu: tidak ada yang di luarnya. Folder pribadi secara keseluruhan, atau folder apa pun yang berisi kunci SSH Anda atau data Rustty, tidak dapat dibagikan. Berlaku untuk koneksi baru.",
+    "rdp_shared_folder_none": "Belum ada folder dipilih",
     "autostart_minimized": "Mulai dalam keadaan diminimalkan",
     "restore_work_tabs": "Tawarkan memulihkan tab sesi terakhir",
     "restore_work_tabs_hint": "Menyimpan urutan tab dan profilnya (tidak pernah isi terminal, rahasia, atau sesi privat) dan menawarkan untuk menyambungkannya kembali sekaligus saat startup.",
@@ -2144,6 +2209,17 @@
     "transfers_pause_all_failed": "Tidak dapat mengubah jeda global: {err}",
     "file_grant_invalid": "Izin untuk berkas itu tidak lagi valid (kedaluwarsa, sudah dipakai, atau path berubah). Pilih lagi.",
     "import_failed": "Impor gagal: {err}",
+    "rdp_embed_failed": "Tidak dapat membuka desktop jarak jauh “{name}”: {reason}",
+    "rdp_shared_folder_failed": "Tidak dapat menyimpan folder bersama: {error}",
+    "rdp_shared_folder_protected": "Folder itu tidak dapat dibagikan: folder itu adalah, berisi, atau berada di dalam folder kunci SSH Anda atau folder data Rustty. Pilih yang lebih spesifik, seperti Dokumen.",
+    "rdp_clip_download_start": "“{name}”: menyalin {files} berkas dari desktop jarak jauh ({size} MB)…",
+    "rdp_clip_files_offered": "“{name}”: desktop jarak jauh menyalin {files} berkas ({size} MB). Simpan di komputer ini?",
+    "rdp_clip_download_done": "“{name}”: {files} berkas disimpan di {folder}",
+    "rdp_clip_download_failed": "“{name}”: tidak dapat menyalin berkas: {reason}",
+    "rdp_clip_withheld": "“{name}”: yang Anda salin tidak ditawarkan ke desktop jarak jauh, karena pengiriman berkas sensitif tidak dikonfirmasi.",
+    "rdp_clip_save_failed": "Tidak dapat menyimpan berkas dari desktop jarak jauh: {error}",
+    "rdp_clip_save_protected": "Berkas dari desktop jarak jauh tidak dapat disimpan di sana: folder itu adalah seluruh folder pribadi Anda, atau adalah, berisi, atau berada di dalam folder kunci SSH Anda atau folder data Rustty. Pilih yang lebih spesifik, seperti Unduhan.",
+    "rdp_clip_unavailable": "“{name}”: papan klip sistem tidak tersedia; salin dan tempel dengan desktop jarak jauh tidak akan berfungsi.",
     "overflow_open": "{n} pemberitahuan lagi: buka pusat aktivitas"
   },
   "time": {
