@@ -45,8 +45,8 @@ serde_json = "1"
 # interactivo (ssh_manager) como el explorador de ficheros (sftp_manager);
 # nos permite arrancar un sftp-server elevado con `sudo` sobre un canal exec.
 # feature "des": habilita 3des-cbc para servidores legacy muy antiguos.
-russh = { version = "0.64", features = ["des"] }
-russh-sftp = "2.3"
+russh = { version = "0.65", features = ["des"] }
+russh-sftp = "3.0"
 suppaftp = { version = "12.1.0", features = ["rustls-ring"] }
 # `rt-multi-thread`: el runtime propio de las conexiones a los saltos
 # (`jump_pool::jump_runtime`), que comparten sesiones de hilos distintos.
@@ -74,12 +74,11 @@ dirs = "7"
 thiserror = "2"
 # Borrado seguro de secretos en memoria (Zeroizing) al liberarlos
 zeroize = "1"
-# Lectura de bases de datos KeePass (.kdbx).
-# Clavado en 0.13.22: a partir de 0.13.23 el crate salta a `cipher` 0.5 /
-# `crypto-common` 0.2, y el resto del árbol (russh, age, rustls) sigue en la
-# 0.1. Conviven las dos versiones y `Aes256` deja de cumplir los traits que la
-# otra espera: no compila. Subirlo exige que el ecosistema entero cruce.
-keepass = "=0.13.22"
+# Lectura de bases de datos KeePass (.kdbx). Estuvo clavado en 0.13.22 porque
+# sus versiones nuevas pedían otra generación de `cipher` que el resto del árbol;
+# desde que comparten `cipher` 0.5 con russh (comprobado 2026-11-02) sigue las
+# versiones normales.
+keepass = "0.17"
 # Enumeración de fuentes del sistema para el selector de familia del terminal
 fontdb = "0.24"
 # Sincronización en la nube: crypto + HTTP + timestamps
@@ -205,5 +204,5 @@ rustls = { version = "0.23.42", default-features = false, features = ["ring", "s
 # arrastrar `aws-lc` (toolchain C), Prometheus y proxy-protocol; alinea el
 # proveedor TLS con el `rustls-ring` del cliente. Dev-only: no entra en el binario
 # ni en la cadena de suministro de release.
-libunftp = { version = "0.23.0", default-features = false, features = ["ring"] }
+libunftp = { version = "0.24.0", default-features = false, features = ["ring"] }
 unftp-sbe-fs = "0.4.0"
