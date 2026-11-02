@@ -13,6 +13,12 @@ En una sesión SSH conectada, la barra inferior (junto a la latencia) muestra do
 
 Si prefieres que el monitor se encienda automáticamente al conectar, puedes dejarlo activado por defecto (ver «Preferencias»).
 
+### En la consola local
+
+La consola local también tiene barra inferior: usuario y equipo, la carpeta actual (si la integración de shell está activa), el tamaño del terminal y, **en Linux**, el mismo monitor, que en este caso mide **tu propio equipo**. Se enciende igual, con el botón de la gráfica, y abre el mismo panel ampliado. Por prudencia, en la consola local el panel **no** ofrece «Terminar proceso». En Windows y macOS la barra aparece sin el monitor.
+
+Si no quieres la barra en la consola local, desactívala en **Preferencias → Terminal → «Mostrar la barra inferior en la consola local»**.
+
 ## El panel ampliado
 
 El panel se **acopla a la sesión partiendo la pantalla**, sin taparte el terminal. Con su botón de orientación puedes ponerlo **debajo del terminal (horizontal)** o **a un lado (vertical)**, según te venga mejor. Puedes **redimensionarlo** arrastrando su borde, y el tamaño se recuerda.

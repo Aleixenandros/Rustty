@@ -8,9 +8,10 @@ Además del modelo "perfil = conexión", Rustty admite **perfiles-contenedor** (
 
 - **Vista**: alterna entre *Workspace actual*, *Todos los perfiles* (árbol agrupado por workspace) y *Favoritos*.
 - **Perfil**: cambia al workspace que quieras, crea un **Nuevo perfil**, **Renombra** el activo o **Elimina** uno (con confirmación si contiene conexiones; éstas se eliminan en cascada). En la vista *Todos los perfiles* puedes renombrar / eliminar cada workspace directamente desde el menú contextual de su nodo.
-- **Buscar**: filtra conexiones por nombre, host, usuario o grupo.
+- **Orden de los perfiles**: arrastra un perfil de la lista a otra posición, usa las flechas de **Mover este perfil** (suben o bajan el activo) o, con el foco en un perfil de la lista, **Alt+↑ / Alt+↓**. En la vista *Todos los perfiles*, el menú contextual de cada perfil tiene **Mover arriba / Mover abajo**. El orden se ve igual en la barra lateral, en la vista *Todos*, en la bandeja y en los selectores de búsqueda, y viaja con la sincronización.
+- **Buscar**: filtra conexiones por nombre, host, usuario o grupo. Debajo del campo, **Buscar en** elige dónde: el **perfil actual**, **todos los perfiles** o **uno concreto** aunque no sea el activo. El buscador del inicio tiene el mismo selector y los dos comparten el valor, que se recuerda (Preferencias → Apariencia → «Dónde buscan los buscadores de conexiones»).
 
-En la vista *Workspace actual* la lista de la sidebar, el dashboard de inicio y la búsqueda se filtran por el workspace activo. Cuando hay más de un workspace, el formulario de conexión muestra un selector de **Perfil** para mover la conexión a otro contenedor. Cada workspace mantiene además su **propio conjunto de carpetas**.
+En la vista *Workspace actual* la lista de la sidebar y el dashboard de inicio se filtran por el workspace activo; la búsqueda sigue su propio selector **Buscar en**. Cuando hay más de un workspace, el formulario de conexión muestra un selector de **Perfil** para mover la conexión a otro contenedor. Cada workspace mantiene además su **propio conjunto de carpetas**.
 
 Los workspaces, las carpetas por workspace y el modo de vista viven en las preferencias y viajan con la sincronización en la nube.
 
