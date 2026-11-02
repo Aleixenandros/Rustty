@@ -7093,6 +7093,13 @@ body.density-spacious #modal-prefs > .modal-actions { padding: 12px 22px 14px; }
   line-height: 1.4;
 }
 
+/* Una ayuda suelta tras una fila en línea (etiqueta + control) quedaba pegada
+   a la etiqueta de la fila siguiente: el mismo aire que entre dos filas. */
+.settings-hint + .settings-row,
+.settings-hint + .settings-row-inline {
+  margin-top: 14px;
+}
+
 /* ─── Selector de tema ───────────────────────────────────────── */
 .theme-picker {
   position: relative;
