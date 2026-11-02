@@ -21,7 +21,10 @@ export async function checkWorkspaces(app, check, { shot } = {}) {
   };
   const settle = () => sleep(250);
 
-  // Dos perfiles con una conexión cada uno y nombres que comparten la búsqueda.
+  // El perfil activo que haya (el smoke trabaja en el que trae la sincronización)
+  // y uno nuevo; al final todo vuelve a como estaba.
+  const original = await app.exec('return JSON.parse(localStorage.getItem("rustty-prefs") || "{}");');
+  const activeId = original.activeWorkspaceId || "default";
   const all = await invoke("get_profiles");
   const make = (id, name, workspace) => ({
     id, name, host: "198.51.100.70", port: 22, username: "ana",
@@ -31,7 +34,7 @@ export async function checkWorkspaces(app, check, { shot } = {}) {
   await invoke("save_profiles", {
     profiles: [
       ...all.filter((p) => p.id !== IDS.a && p.id !== IDS.b),
-      make(IDS.a, "e2e-alcance-casa", "default"),
+      make(IDS.a, "e2e-alcance-casa", activeId),
       make(IDS.b, "e2e-alcance-trabajo", WS_B.id),
     ],
   });
@@ -39,7 +42,6 @@ export async function checkWorkspaces(app, check, { shot } = {}) {
     const prefs = JSON.parse(localStorage.getItem("rustty-prefs") || "{}");
     const list = (prefs.workspaces || [{ id: "default", name: "Default" }]).filter((w) => w.id !== arguments[0].id);
     prefs.workspaces = [...list, arguments[0]];
-    prefs.activeWorkspaceId = "default";
     prefs.sidebarViewMode = "current";
     prefs.searchScope = "current";
     prefs.searchAllWorkspaces = false;
@@ -129,27 +131,48 @@ export async function checkWorkspaces(app, check, { shot } = {}) {
   await app.waitFor("#sidebar-tools-popover:not(.hidden)");
   await settle();
   const before = await order();
-  await app.jsClick('#workspace-menu .ws-item[data-ws-action="move-down"]');
+  const canDown = before.indexOf(activeId) < before.length - 1;
+  await app.jsClick(`#workspace-menu .ws-item[data-ws-action="${canDown ? "move-down" : "move-up"}"]`);
   await settle();
   const afterDown = await order();
-  check("«Bajar perfil» mueve el perfil activo una posición",
-    afterDown.indexOf("default") === before.indexOf("default") + 1, `${before} → ${afterDown}`);
+  check("«Bajar/Subir perfil» mueve el perfil activo una posición",
+    afterDown.indexOf(activeId) === before.indexOf(activeId) + (canDown ? 1 : -1), `${before} → ${afterDown}`);
   check("la lista del menú sigue el orden nuevo",
     await app.exec(`return [...document.querySelectorAll('#workspace-menu .ws-item[data-ws-action="select"]')]
       .map((b) => b.dataset.wsId).join() === arguments[0];`, [afterDown.join()]));
-  const altUp = await app.exec(`
-    const item = document.querySelector('#workspace-menu .ws-item[data-ws-id="default"]');
+  const altBack = await app.exec(`
+    const item = document.querySelector('#workspace-menu .ws-item[data-ws-id="' + arguments[0] + '"]');
     item.focus();
-    const ev = new KeyboardEvent("keydown", { key: "ArrowUp", code: "ArrowUp", altKey: true, bubbles: true, cancelable: true });
+    const key = arguments[1] ? "ArrowUp" : "ArrowDown";
+    const ev = new KeyboardEvent("keydown", { key, code: key, altKey: true, bubbles: true, cancelable: true });
     item.dispatchEvent(ev);
     return { prevented: ev.defaultPrevented, focus: document.activeElement?.dataset?.wsId || null };
-  `);
+  `, [activeId, canDown]);
   await settle();
-  const afterUp = await order();
-  check("Alt+↑ sobre un perfil de la lista lo sube y el foco lo acompaña",
-    afterUp.join() === before.join() && altUp.prevented && altUp.focus === "default",
-    `${afterUp} ${JSON.stringify(altUp)}`);
+  const afterBack = await order();
+  check("Alt+↑/↓ sobre un perfil de la lista lo devuelve a su sitio y el foco lo acompaña",
+    afterBack.join() === before.join() && altBack.prevented && altBack.focus === activeId,
+    `${afterBack} ${JSON.stringify(altBack)}`);
   if (shot) await shot("workspace-menu");
   await app.jsClick("#btn-sidebar-tools");
   await settle();
+
+  // Limpieza: fuera las conexiones y el perfil de prueba, y las preferencias
+  // tocadas vuelven a su valor (el resto del smoke cuenta con ellas).
+  await invoke("delete_profiles", { ids: [IDS.a, IDS.b] });
+  await app.exec(`
+    const prefs = JSON.parse(localStorage.getItem("rustty-prefs") || "{}");
+    const o = arguments[0];
+    prefs.workspaces = (prefs.workspaces || []).filter((w) => w.id !== arguments[1]);
+    prefs.activeWorkspaceId = o.activeWorkspaceId ?? prefs.activeWorkspaceId;
+    prefs.sidebarViewMode = o.sidebarViewMode ?? "current";
+    prefs.searchScope = o.searchScope ?? null;
+    prefs.searchAllWorkspaces = o.searchAllWorkspaces ?? true;
+    localStorage.setItem("rustty-prefs", JSON.stringify(prefs));
+    setTimeout(() => location.reload(), 50);
+    return true;
+  `, [original, WS_B.id]);
+  await sleep(2000);
+  await app.waitForApp();
+  await sleep(800);
 }
