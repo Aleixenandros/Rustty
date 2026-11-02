@@ -133,7 +133,7 @@ import { createMetricsPoller } from "./modules/metrics-poller.js";
 import { localUserHost, statusBarModel } from "./modules/status-bar.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { inkTokens, ringColor } from "./modules/themes/ink.js";
-import { colorLuminance, isHighContrastThemeId, toneFor } from "./modules/themes/tone.js";
+import { isHighContrastThemeId, toneFor, toneForId } from "./modules/themes/tone.js";
 import { compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
 import { createChunkDecoder } from "./modules/terminal/chunk-decoder.js";
 import { createShellCloseGate } from "./modules/terminal/shell-close.js";
@@ -1219,15 +1219,16 @@ function detectThemeOptionTone(option) {
   const id = (option.dataset.theme || "").toLowerCase();
   const label = (option.querySelector(".theme-label")?.textContent || "").toLowerCase();
   if (isHighContrastThemeId(id + " " + label)) return "hc";
-  // Filtro de la galería: un fondo de tono medio cuenta aquí como oscuro (el
-  // umbral es más alto que el de `toneFor`, que decide el esquema de color).
+  // El mismo criterio que decide el esquema de color al aplicar el tema
+  // (`toneFor`: texto frente a fondo, y el fondo solo si no hay texto): antes
+  // la galería usaba un umbral propio y un tema podía filtrarse como oscuro y
+  // aplicarse como claro.
   const preview = option.querySelector(".theme-preview-main") || option.querySelector(".theme-preview");
   if (preview) {
-    const lum = colorLuminance(getComputedStyle(preview).backgroundColor);
-    if (Number.isFinite(lum)) return lum > 0.55 ? "light" : "dark";
+    const text = preview.querySelector(".theme-preview-term");
+    return toneFor(getComputedStyle(preview).backgroundColor, id, text ? getComputedStyle(text).color : undefined);
   }
-  if (/light|day|lotus|latte|dawn|gruvbox-light|solarized-light/.test(id)) return "light";
-  return "dark";
+  return toneForId(id);
 }
 
 function setThemePickerOpen(root, open) {
