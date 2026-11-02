@@ -83,6 +83,15 @@ describe("normalizePrefs", () => {
     expect(normalizePrefs({}, null, deps).searchScope).toBe("all");
   });
 
+  it("la barra inferior de la consola local va encendida salvo apagada a mano", () => {
+    expect(normalizePrefs({}, null, deps).localShellStatusBar).toBe(true);
+    expect(normalizePrefs({ localShellStatusBar: "x" }, null, deps).localShellStatusBar).toBe(true);
+    expect(normalizePrefs({ localShellStatusBar: true }, null, deps).localShellStatusBar).toBe(true);
+    const off = normalizePrefs({ localShellStatusBar: false }, null, deps);
+    expect(off.localShellStatusBar).toBe(false);
+    expect(off._prefsUpdatedAt).toBeUndefined();
+  });
+
   it("siembra las reglas de highlight solo cuando toca", () => {
     // Sin array → defaults.
     const p1 = normalizePrefs({}, null, deps);

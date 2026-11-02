@@ -1222,7 +1222,9 @@
     "quick_select_add": "＋ Muster hinzufügen",
     "quick_select_invalid": "Ungültiger regulärer Ausdruck, länger als {max} Zeichen oder mit verschachtelten Wiederholungen wie (a+)+, die die App einfrieren könnten: Er wird nicht verwendet",
     "tmux_scrollback": "Scrollback beim tmux-Reattach",
-    "tmux_scrollback_hint": "Beim Verbinden einer Kontrollmodus-Sitzung stellt jede Pane bis zu dieser Zeilenzahl ihrer Historie wieder her. 0 = nichts wiederherstellen (sofortiges Verbinden)."
+    "tmux_scrollback_hint": "Beim Verbinden einer Kontrollmodus-Sitzung stellt jede Pane bis zu dieser Zeilenzahl ihrer Historie wieder her. 0 = nichts wiederherstellen (sofortiges Verbinden).",
+    "local_status_bar": "Statusleiste in der lokalen Konsole anzeigen",
+    "local_status_bar_hint": "Benutzer und Rechner, aktueller Ordner (mit Shell-Integration), Terminalgröße und unter Linux der Ressourcenmonitor dieses Rechners. Was zu einer entfernten Verbindung gehört, etwa Latenz oder Tunnel, wird nicht angezeigt."
   },
   "prefs_appearance": {
     "title": "Aussehen",
@@ -1589,7 +1591,10 @@
     "cwd_copied": "Pfad in die Zwischenablage kopiert",
     "cwd_nav_error": "SFTP-Panel konnte unter {path} nicht geöffnet werden",
     "tunnels_open": "Offene Tunnel auf dieser Verbindung (klicken, um das Panel zu öffnen)",
-    "tunnels_none": "Keine offenen Tunnel"
+    "tunnels_none": "Keine offenen Tunnel",
+    "cwd_title_local": "Aktuelles Verzeichnis (OSC 7)",
+    "cwd_seg_copy": "{path} kopieren",
+    "local_state": "Lokale Konsole: {state}"
   },
   "metrics": {
     "title": "Ressourcen",
@@ -1826,7 +1831,7 @@
     "restore_work_tabs_hint": "Speichert die Tab-Reihenfolge und ihre Profile (nie Terminalinhalte, Geheimnisse oder private Sitzungen) und bietet beim Start an, sie gesammelt neu zu verbinden.",
     "autostart_minimized_hint": "Beim Systemstart das Fenster ausblenden und nur das Tray-Symbol anzeigen.",
     "metrics_title": "Ressourcenmonitor",
-    "metrics_hint": "Zeigt CPU, Speicher, Datenträger, Netzwerk und Prozesse des entfernten Servers über die SSH-Verbindung selbst, ohne etwas zu installieren. Vorerst nur Linux.",
+    "metrics_hint": "Zeigt CPU, Speicher, Datenträger, Netzwerk und Prozesse des entfernten Servers über die SSH-Verbindung selbst, ohne etwas zu installieren, und die dieses Rechners in der lokalen Konsole. Vorerst nur Linux.",
     "metrics_enabled": "Beim Verbinden automatisch aktivieren",
     "metrics_enabled_hint": "Wenn deaktiviert, den Monitor pro Sitzung von Hand mit der Schaltfläche in der Statusleiste einschalten.",
     "metrics_rate": "Aktualisierungsrate",

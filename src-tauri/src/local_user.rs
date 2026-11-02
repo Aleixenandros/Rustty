@@ -5,6 +5,9 @@
 //! Primero las variables de entorno de la sesión y, en Unix, la cuenta del
 //! uid efectivo (`getpwuid_r`) si el entorno no lo dice (un lanzador que no
 //! exporte `USER`). En Windows `USERNAME` siempre está puesta.
+//!
+//! También el nombre del equipo (`gethostname`; `COMPUTERNAME` en Windows),
+//! para el `usuario@equipo` de la barra inferior de la consola local.
 
 /// Variables de entorno que llevan el usuario, por orden de confianza.
 #[cfg(unix)]
@@ -62,6 +65,41 @@ fn username_from_system() -> Option<String> {
     None
 }
 
+/// Nombre de este equipo (el de `hostname`), sin ejecutar ningún proceso: lo
+/// enseña la barra inferior de la consola local como `usuario@equipo`. `None`
+/// si el sistema no lo dice.
+pub fn local_hostname() -> Option<String> {
+    hostname_from_system()
+}
+
+/// Primer tramo hasta el NUL, sin espacios alrededor; vacío = `None`. Puro:
+/// `gethostname` no garantiza el terminador si el nombre llena el búfer.
+fn clean_hostname(raw: &[u8]) -> Option<String> {
+    let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
+    let name = String::from_utf8_lossy(&raw[..end]).trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+#[cfg(unix)]
+fn hostname_from_system() -> Option<String> {
+    let mut buf = [0u8; 256];
+    // SAFETY: `buf` vive durante la llamada y `buf.len()` es su tamaño real;
+    // `gethostname` solo escribe dentro de él.
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr().cast::<libc::c_char>(), buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    clean_hostname(&buf)
+}
+
+/// En Windows `COMPUTERNAME` siempre está puesta (la fija el sistema).
+#[cfg(not(unix))]
+fn hostname_from_system() -> Option<String> {
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .and_then(|name| clean_hostname(name.as_bytes()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,6 +133,25 @@ mod tests {
         assert_eq!(username_from_env(lookup), Some("luis".to_string()));
         assert_eq!(username_from_env(|_| None), None);
         assert_eq!(username_from_env(|_| Some(String::new())), None);
+    }
+
+    /// El nombre del equipo se corta en el NUL (o al final si no lo hay) y
+    /// sin nada legible no se inventa.
+    #[test]
+    fn el_nombre_del_equipo_se_corta_en_el_nul_y_vacio_no_cuenta() {
+        assert_eq!(clean_hostname(b"fedora\0basura"), Some("fedora".to_string()));
+        assert_eq!(clean_hostname(b"  portatil  "), Some("portatil".to_string()));
+        assert_eq!(clean_hostname(b"\0\0\0"), None);
+        assert_eq!(clean_hostname(b""), None);
+    }
+
+    /// Este equipo tiene nombre (lo pide `gethostname` en Unix).
+    #[cfg(unix)]
+    #[test]
+    fn el_nombre_de_este_equipo_se_resuelve() {
+        let name = local_hostname().expect("nombre del equipo");
+        assert!(!name.trim().is_empty());
+        assert!(!name.contains('\0'));
     }
 
     /// En esta máquina hay un usuario: por el entorno o por la cuenta del uid.

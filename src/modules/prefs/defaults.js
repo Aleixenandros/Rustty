@@ -137,6 +137,10 @@ export const DEFAULT_PREFS = {
   // actual) sin tocar los dotfiles del usuario. Opt-in: cambia cómo arranca
   // el shell, así que solo se aplica a consolas nuevas.
   localShellIntegration: false,
+  // Barra inferior también en la consola local: usuario@equipo, carpeta (con
+  // la integración de shell), tamaño y, en Linux, el monitor de recursos de
+  // este equipo. Encendida por defecto; apagada, la consola local va sin barra.
+  localShellStatusBar: true,
   // Comandos locales del catálogo: plazo máximo de ejecución en segundos
   // (0 = sin límite, opción explícita del usuario) y tope de salida capturada
   // por flujo en KiB. Al agotarse el plazo se termina el árbol de procesos.

@@ -1521,6 +1521,57 @@ pub fn local_shell_has_job(shell_state: State<'_, LocalShellManager>, session_id
     shell_state.has_running_job(&session_id)
 }
 
+/// Lo que la barra inferior de la consola local enseña de este equipo.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalMachineInfo {
+    pub user: Option<String>,
+    pub host: Option<String>,
+    /// ¿Sabe muestrear este equipo el monitor de recursos? Solo Linux, como el
+    /// monitor remoto: lee `/proc`.
+    pub metrics: bool,
+}
+
+/// Usuario, nombre del equipo y si hay monitor de recursos local. Sin
+/// argumentos y sin ejecutar nada (`getpwuid_r`/`gethostname`).
+#[tauri::command]
+pub fn local_machine_info() -> LocalMachineInfo {
+    LocalMachineInfo {
+        user: crate::local_user::local_username(),
+        host: crate::local_user::local_hostname(),
+        metrics: cfg!(target_os = "linux"),
+    }
+}
+
+/// Una muestra del monitor de recursos de este equipo para la consola local
+/// `session_id`, con la misma forma que el evento `ssh-metrics-*` (`Metrics`).
+/// La pide el frontend con su temporizador, una a la vez; `fresh` descarta la
+/// muestra previa (al encender el monitor). Solo para una consola viva, y el
+/// comando que corre es fijo: del renderer no llega nada más que el id. Async
+/// con `spawn_blocking`: lanza un proceso y no puede ocupar el hilo principal.
+#[tauri::command]
+pub async fn local_metrics_sample(
+    app_handle: AppHandle,
+    session_id: String,
+    fresh: bool,
+) -> Result<crate::metrics::Metrics, String> {
+    #[cfg(target_os = "linux")]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            app_handle
+                .state::<LocalShellManager>()
+                .sample_metrics(&session_id, fresh)
+        })
+        .await
+        .map_err(|e| format!("local_metrics_sample: {e}"))?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app_handle, session_id, fresh);
+        Err("El monitor de recursos local solo está disponible en Linux".into())
+    }
+}
+
 // ─── Comandos SFTP ────────────────────────────────────────────────────────────
 
 /// Abre una sesión SFTP paralela a la SSH para transferencia de ficheros.

@@ -266,8 +266,8 @@
             <span class="status-dims" id="status-dims-wrap" title="Tamaño del terminal" data-i18n-title="status.dims_title">
               <span id="status-dims" class="mono">—</span>
             </span>
-            <span class="status-sep"></span>
-            <span class="status-latency">
+            <span class="status-sep" id="status-latency-sep"></span>
+            <span class="status-latency" id="status-latency-wrap">
               <span class="status-label" data-i18n="status.latency">Latencia</span>
               <span id="status-latency">—</span>
             </span>
@@ -2624,6 +2624,14 @@
               </div>
 
               <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-local-status-bar" />
+                  <span data-i18n="prefs_terminal.local_status_bar">Mostrar la barra inferior en la consola local</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_terminal.local_status_bar_hint">Usuario y equipo, carpeta actual (con la integración de shell), tamaño del terminal y, en Linux, el monitor de recursos de este equipo. Lo que es de una conexión remota, como la latencia o los túneles, no aparece.</p>
+              </div>
+
+              <div class="settings-row">
                 <label data-i18n="prefs_terminal.highlight_title">Resaltado por regex</label>
                 <p class="form-hint" data-i18n="prefs_terminal.highlight_hint">
                   Cada regla colorea las coincidencias del patrón en el buffer del terminal. Los matches que crucen un chunk de red no se resaltan.
@@ -3963,7 +3971,7 @@
 
             <section class="prefs-panel" role="tabpanel" data-prefs-panel="monitor">
               <h3 class="prefs-panel-title" data-i18n="prefs_system.metrics_title">Monitor de recursos</h3>
-              <p class="prefs-panel-hint" data-i18n="prefs_system.metrics_hint">Muestra CPU, memoria, disco, red y procesos del servidor remoto por la propia conexión SSH, sin instalar nada. Solo Linux por ahora.</p>
+              <p class="prefs-panel-hint" data-i18n="prefs_system.metrics_hint">Muestra CPU, memoria, disco, red y procesos del servidor remoto por la propia conexión SSH, sin instalar nada, y los de este equipo en la consola local. Solo Linux por ahora.</p>
 
               <div class="settings-row">
                 <label class="checkbox-label">

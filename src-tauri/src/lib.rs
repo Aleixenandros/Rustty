@@ -518,6 +518,8 @@ pub fn run() {
             commands::local_shell_resize,
             commands::local_shell_close,
             commands::local_shell_has_job,
+            commands::local_machine_info,
+            commands::local_metrics_sample,
             // ── SFTP
             commands::sftp_connect,
             commands::sftp_disconnect,

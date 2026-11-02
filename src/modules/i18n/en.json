@@ -1222,7 +1222,9 @@
     "quick_select_add": "＋ Add pattern",
     "quick_select_invalid": "Invalid regular expression, longer than {max} characters or with nested repetitions such as (a+)+, which could freeze the app: it will not be used",
     "tmux_scrollback": "Scrollback to recover on tmux reattach",
-    "tmux_scrollback_hint": "When attaching a control-mode session, each pane rehydrates up to this many lines of its history. 0 = recover nothing (instant attach)."
+    "tmux_scrollback_hint": "When attaching a control-mode session, each pane rehydrates up to this many lines of its history. 0 = recover nothing (instant attach).",
+    "local_status_bar": "Show the status bar in the local console",
+    "local_status_bar_hint": "User and computer, current folder (with shell integration), terminal size and, on Linux, the resource monitor for this computer. What belongs to a remote connection, such as latency or tunnels, is not shown."
   },
   "prefs_appearance": {
     "title": "Appearance",
@@ -1589,7 +1591,10 @@
     "cwd_copied": "Path copied to clipboard",
     "cwd_nav_error": "Could not open the SFTP panel at {path}",
     "tunnels_open": "Tunnels open on this connection (click to open the panel)",
-    "tunnels_none": "No open tunnels"
+    "tunnels_none": "No open tunnels",
+    "cwd_title_local": "Current directory (OSC 7)",
+    "cwd_seg_copy": "Copy {path}",
+    "local_state": "Local console: {state}"
   },
   "metrics": {
     "title": "Resources",
@@ -1826,7 +1831,7 @@
     "restore_work_tabs_hint": "Saves the tab order and their profiles (never terminal contents, secrets or private sessions) and offers to reconnect them in bulk at startup.",
     "autostart_minimized_hint": "When started with the system, hide the window and keep only the tray icon.",
     "metrics_title": "Resource monitor",
-    "metrics_hint": "Shows CPU, memory, disk, network and processes of the remote server over the SSH connection itself, with nothing to install. Linux only for now.",
+    "metrics_hint": "Shows CPU, memory, disk, network and processes of the remote server over the SSH connection itself, with nothing to install, and those of this computer in the local console. Linux only for now.",
     "metrics_enabled": "Turn on automatically when connecting",
     "metrics_enabled_hint": "If off, turn the monitor on by hand with the button in the status bar for each session.",
     "metrics_rate": "Refresh rate",

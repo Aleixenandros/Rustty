@@ -1222,7 +1222,9 @@
     "quick_select_add": "＋ Adicionar padrão",
     "quick_select_invalid": "Expressão regular inválida, com mais de {max} caracteres ou com repetições aninhadas como (a+)+, que poderiam bloquear a aplicação: não será usada",
     "tmux_scrollback": "Scrollback a recuperar ao reengatar tmux",
-    "tmux_scrollback_hint": "Ao engatar uma sessão em modo de controlo, cada painel reidrata até este número de linhas da sua história. 0 = não recuperar nada (engate instantâneo)."
+    "tmux_scrollback_hint": "Ao engatar uma sessão em modo de controlo, cada painel reidrata até este número de linhas da sua história. 0 = não recuperar nada (engate instantâneo).",
+    "local_status_bar": "Mostrar a barra inferior na consola local",
+    "local_status_bar_hint": "Utilizador e computador, pasta atual (com a integração de shell), tamanho do terminal e, em Linux, o monitor de recursos deste computador. O que é de uma ligação remota, como a latência ou os túneis, não aparece."
   },
   "prefs_appearance": {
     "tone_filter": "Filtrar por tonalidade",
@@ -1589,7 +1591,10 @@
     "cwd_copied": "Caminho copiado para a área de transferência",
     "cwd_nav_error": "Não foi possível abrir o painel SFTP em {path}",
     "tunnels_open": "Túneis abertos nesta ligação (clica para abrir o painel)",
-    "tunnels_none": "Sem túneis abertos"
+    "tunnels_none": "Sem túneis abertos",
+    "cwd_title_local": "Pasta atual (OSC 7)",
+    "cwd_seg_copy": "Copiar {path}",
+    "local_state": "Consola local: {state}"
   },
   "metrics": {
     "title": "Recursos",
@@ -1832,7 +1837,7 @@
     "restore_work_tabs_hint": "Guarda a ordem dos separadores e os seus perfis (nunca o conteúdo do terminal, nem segredos, nem sessões privadas) e oferece religá-los em lote no arranque.",
     "autostart_minimized_hint": "Ao arrancar com o sistema, oculta a janela e mantém apenas o ícone na bandeja.",
     "metrics_title": "Monitor de recursos",
-    "metrics_hint": "Mostra CPU, memória, disco, rede e processos do servidor remoto pela própria ligação SSH, sem instalar nada. Apenas Linux por agora.",
+    "metrics_hint": "Mostra CPU, memória, disco, rede e processos do servidor remoto pela própria ligação SSH, sem instalar nada, e os deste computador na consola local. Apenas Linux por agora.",
     "metrics_enabled": "Ativar automaticamente ao ligar",
     "metrics_enabled_hint": "Se desativado, liga o monitor à mão com o botão da barra inferior em cada sessão.",
     "metrics_rate": "Taxa de atualização",

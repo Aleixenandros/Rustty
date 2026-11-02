@@ -74,6 +74,8 @@ export function normalizePrefs(prefs, stored, deps) {
   prefs.searchGroupedResults = prefs.searchGroupedResults !== false;
   prefs.sidebarCompact = Boolean(prefs.sidebarCompact);
   if (typeof prefs.foldersFirst !== "boolean") prefs.foldersFirst = true;
+  // Barra inferior en la consola local: encendida salvo que se apagara a mano.
+  prefs.localShellStatusBar = prefs.localShellStatusBar !== false;
 
   if (!Array.isArray(prefs.highlightRules)) {
     prefs.highlightRules = defaultHighlightRules();

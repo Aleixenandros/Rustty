@@ -22,7 +22,33 @@ struct ShellHandle {
     /// PID del proceso shell (el proceso raíz del PTY).
     /// Se usa para detectar si hay procesos hijos activos antes de cerrar.
     shell_pid: Option<u32>,
+    /// Muestra anterior del monitor de recursos de esta consola: el %CPU y las
+    /// tasas de red se derivan contra ella. Vive en el handle para irse con él
+    /// al cerrar la consola o al terminar el shell, sin limpieza aparte.
+    #[cfg(target_os = "linux")]
+    metrics_prev: Option<crate::metrics::RawSample>,
 }
+
+impl ShellHandle {
+    fn new(cmd_tx: mpsc::Sender<ShellCommand>, shell_pid: Option<u32>) -> Self {
+        Self {
+            cmd_tx,
+            shell_pid,
+            #[cfg(target_os = "linux")]
+            metrics_prev: None,
+        }
+    }
+}
+
+/// Plazo de una muestra del monitor local. Un `df` colgado de un montaje de
+/// red muerto no puede dejar la petición esperando: se corta y se salta.
+#[cfg(target_os = "linux")]
+const METRICS_SAMPLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Tope de lo que se lee de una muestra (son unas decenas de KiB); lo que pase
+/// se descarta sin dejar de drenar la tubería, para que el hijo no se bloquee.
+#[cfg(target_os = "linux")]
+const METRICS_SAMPLE_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Opciones de apertura de una consola local. Las dicta el `invoke` del
 /// frontend (`opts` de `local_shell_open`).
@@ -130,7 +156,7 @@ impl LocalShellManager {
         let (cmd_tx, cmd_rx) = mpsc::channel::<ShellCommand>();
         self.sessions
             .lock_recover()
-            .insert(session_id.clone(), ShellHandle { cmd_tx, shell_pid });
+            .insert(session_id.clone(), ShellHandle::new(cmd_tx, shell_pid));
 
         // ── Hilo de lectura: shell → frontend ────────────────────
         let sid_r = session_id.clone();
@@ -262,6 +288,41 @@ impl LocalShellManager {
         Ok(())
     }
 
+    /// Una muestra del monitor de recursos de **este equipo** para la consola
+    /// `session_id`: el mismo comando y el mismo núcleo puro que el monitor
+    /// remoto ([`crate::metrics`]), ejecutados con `sh -c` en local (en el
+    /// anfitrión bajo Flatpak). Las tasas se derivan contra la muestra previa
+    /// de la consola; con `fresh` se descarta, para que al encender el monitor
+    /// la primera no promedie desde una muestra de hace rato.
+    ///
+    /// Solo responde por una consola viva: sin ella no hay a quién atribuir la
+    /// muestra, y el comando tampoco recibe nada del frontend más que el id.
+    /// Bloquea mientras corre el comando: se llama dentro de `spawn_blocking`.
+    #[cfg(target_os = "linux")]
+    pub fn sample_metrics(
+        &self,
+        session_id: &str,
+        fresh: bool,
+    ) -> Result<crate::metrics::Metrics, String> {
+        let not_found = || format!("Sesión de shell no encontrada: {session_id}");
+        if !self.sessions.lock_recover().contains_key(session_id) {
+            return Err(not_found());
+        }
+        // Sin el cerrojo mientras corre el comando: la consola sigue escribiendo.
+        let text = run_metrics_command(
+            &crate::metrics::linux_sample_command(),
+            METRICS_SAMPLE_TIMEOUT,
+        )?;
+        let cur = crate::metrics::RawSample::parse(&text);
+        let mut map = self.sessions.lock_recover();
+        // La consola pudo cerrarse mientras tanto: entonces no se guarda nada.
+        let handle = map.get_mut(session_id).ok_or_else(not_found)?;
+        let prev = if fresh { None } else { handle.metrics_prev.as_ref() };
+        let derived = crate::metrics::Metrics::derive(prev, &cur);
+        handle.metrics_prev = Some(cur);
+        Ok(derived)
+    }
+
     /// Cierra todas las consolas y devuelve cuántas había.
     pub fn close_all(&self) -> usize {
         let handles: Vec<_> = self
@@ -275,6 +336,62 @@ impl LocalShellManager {
             let _ = handle.cmd_tx.send(ShellCommand::Close);
         }
         count
+    }
+}
+
+/// Ejecuta el comando de muestreo con `sh -c` y devuelve su salida. Por
+/// `sandbox::host_command`: bajo Flatpak, `/proc`, `df` y `ps` tienen que ser
+/// los del anfitrión, no los del contenedor (que ni ve sus procesos).
+///
+/// La lectura va en un hilo y la espera tiene plazo: al agotarse se mata el
+/// grupo de procesos entero (el `df` colgado incluido). Bajo Flatpak ese grupo
+/// es el de `flatpak-spawn`; lo que quede en el anfitrión termina por su
+/// cuenta o con `--watch-bus` al cerrar Rustty.
+#[cfg(target_os = "linux")]
+fn run_metrics_command(script: &str, timeout: std::time::Duration) -> Result<String, String> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    let mut cmd = crate::sandbox::host_command("sh", crate::sandbox::HostSpawn::default());
+    cmd.arg("-c").arg(script);
+    // Grupo propio: el plazo alcanza también a los hijos del shell.
+    cmd.process_group(0);
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("No se pudo leer el monitor local: {e}"))?;
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("No se pudo leer el monitor local".into());
+    };
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut stdout = stdout;
+        let mut buf = Vec::new();
+        let _ = (&mut stdout).take(METRICS_SAMPLE_MAX_BYTES).read_to_end(&mut buf);
+        // Lo que sobre se drena: un hijo con la tubería llena no terminaría.
+        let _ = std::io::copy(&mut stdout, &mut std::io::sink());
+        let _ = tx.send(buf);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(buf) => {
+            // EOF: el shell ya cerró su salida al terminar; esto solo lo recoge.
+            let _ = child.wait();
+            Ok(String::from_utf8_lossy(&buf).into_owned())
+        }
+        Err(_) => {
+            // SAFETY: `kill` no toca memoria. El hijo aún no se ha recogido
+            // (`wait`), así que su PID —y con él el id del grupo— no puede
+            // haberse reutilizado.
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
+            let _ = child.wait();
+            Err("El monitor local no respondió a tiempo".into())
+        }
     }
 }
 
@@ -502,5 +619,79 @@ mod tests {
             stat.is_empty(),
             "el shell sigue en la tabla de procesos (¿zombi?): {stat}"
         );
+    }
+
+    /// Mete en el gestor una consola sin PTY: el monitor solo necesita que la
+    /// sesión exista en el mapa.
+    #[cfg(target_os = "linux")]
+    fn manager_with_fake_console(id: &str) -> super::LocalShellManager {
+        use crate::locks::MutexExt;
+        let manager = super::LocalShellManager::new();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        manager
+            .sessions
+            .lock_recover()
+            .insert(id.to_string(), super::ShellHandle::new(tx, None));
+        manager
+    }
+
+    /// El monitor local es el remoto ejecutado aquí: el mismo comando, leído
+    /// con el mismo parser. La primera muestra (o una `fresh`) no trae %CPU ni
+    /// tasas; la siguiente sí, derivada contra la que guardó la consola.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn el_monitor_local_deriva_contra_la_muestra_previa_de_la_consola() {
+        let manager = manager_with_fake_console("local-a");
+
+        let first = manager.sample_metrics("local-a", false).expect("primera muestra");
+        assert!(first.mem.total_kb > 0, "debe leer /proc/meminfo: {first:?}");
+        assert!(first.mem_used_kb <= first.mem.total_kb);
+        assert!(first.cpu_pct.is_none(), "sin muestra previa no hay %CPU");
+        assert!(first.net_rx_bps.is_none());
+        assert!(first.uptime_secs > 0.0);
+
+        // Margen para que avancen los jiffies de /proc/stat y el uptime.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let second = manager.sample_metrics("local-a", false).expect("segunda muestra");
+        let cpu = second.cpu_pct.expect("con muestra previa hay %CPU");
+        assert!((0.0..=100.0).contains(&cpu));
+        assert!(second.net_rx_bps.is_some());
+
+        // `fresh` olvida la previa: se vuelve a empezar como al encender.
+        let restarted = manager.sample_metrics("local-a", true).expect("muestra fresca");
+        assert!(restarted.cpu_pct.is_none());
+    }
+
+    /// Sin consola viva no hay muestra, y al cerrarla su muestra previa se va
+    /// con ella: no queda estado del monitor de una sesión cerrada.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn el_monitor_local_solo_responde_por_una_consola_viva() {
+        let manager = manager_with_fake_console("local-b");
+        assert!(manager.sample_metrics("otra", false).is_err());
+
+        manager.sample_metrics("local-b", false).expect("muestra");
+        manager.close("local-b").unwrap();
+        assert!(manager.sample_metrics("local-b", false).is_err());
+    }
+
+    /// Una fuente colgada no deja la petición esperando: se corta en el plazo.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn una_muestra_colgada_se_corta_en_el_plazo() {
+        let started = std::time::Instant::now();
+        let err = super::run_metrics_command("sleep 30", std::time::Duration::from_millis(300))
+        .unwrap_err();
+        assert!(!err.is_empty());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "el plazo no cortó la muestra: {:?}",
+            started.elapsed()
+        );
+
+        // Y la salida normal llega entera.
+        let out = super::run_metrics_command("printf 'a\\nb\\n'", std::time::Duration::from_secs(5))
+            .expect("salida");
+        assert_eq!(out, "a\nb\n");
     }
 }

@@ -1222,7 +1222,9 @@
     "quick_select_add": "＋ Tambah pola",
     "quick_select_invalid": "Ekspresi reguler tidak valid, lebih panjang dari {max} karakter, atau memiliki pengulangan bersarang seperti (a+)+, yang dapat membekukan aplikasi: tidak akan dipakai",
     "tmux_scrollback": "Scrollback yang dipulihkan saat tmux tersambung ulang",
-    "tmux_scrollback_hint": "Saat menyambung sesi mode kontrol, setiap panel memulihkan hingga sejumlah baris riwayatnya ini. 0 = tidak memulihkan apa pun (sambung instan)."
+    "tmux_scrollback_hint": "Saat menyambung sesi mode kontrol, setiap panel memulihkan hingga sejumlah baris riwayatnya ini. 0 = tidak memulihkan apa pun (sambung instan).",
+    "local_status_bar": "Tampilkan bilah status di konsol lokal",
+    "local_status_bar_hint": "Pengguna dan komputer, folder saat ini (dengan integrasi shell), ukuran terminal, dan di Linux, monitor sumber daya komputer ini. Hal yang khusus untuk koneksi jarak jauh, seperti latensi atau tunnel, tidak ditampilkan."
   },
   "prefs_appearance": {
     "title": "Tampilan",
@@ -1589,7 +1591,10 @@
     "cwd_copied": "Path disalin ke papan klip",
     "cwd_nav_error": "Tidak dapat membuka panel SFTP di {path}",
     "tunnels_open": "Tunnel terbuka di koneksi ini (klik untuk membuka panel)",
-    "tunnels_none": "Tidak ada tunnel terbuka"
+    "tunnels_none": "Tidak ada tunnel terbuka",
+    "cwd_title_local": "Direktori saat ini (OSC 7)",
+    "cwd_seg_copy": "Salin {path}",
+    "local_state": "Konsol lokal: {state}"
   },
   "metrics": {
     "title": "Sumber daya",
@@ -1826,7 +1831,7 @@
     "restore_work_tabs_hint": "Menyimpan urutan tab dan profilnya (tidak pernah isi terminal, rahasia, atau sesi privat) dan menawarkan untuk menyambungkannya kembali sekaligus saat startup.",
     "autostart_minimized_hint": "Saat dimulai bersama sistem, sembunyikan jendela dan sisakan hanya ikon baki.",
     "metrics_title": "Monitor sumber daya",
-    "metrics_hint": "Menampilkan CPU, memori, disk, jaringan, dan proses server jarak jauh melalui koneksi SSH itu sendiri, tanpa perlu menginstal apa pun. Saat ini hanya Linux.",
+    "metrics_hint": "Menampilkan CPU, memori, disk, jaringan, dan proses server jarak jauh melalui koneksi SSH itu sendiri, tanpa perlu menginstal apa pun, serta milik komputer ini di konsol lokal. Saat ini hanya Linux.",
     "metrics_enabled": "Aktifkan otomatis saat menyambung",
     "metrics_enabled_hint": "Jika mati, aktifkan monitor secara manual dengan tombol di bilah status untuk setiap sesi.",
     "metrics_rate": "Laju penyegaran",

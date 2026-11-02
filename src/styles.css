@@ -2748,6 +2748,13 @@ body.reduce-motion.terminal-bell-visual::after {
   background: var(--surface0);
 }
 
+/* Consola local: el punto solo enseña el estado (no hay diagnóstico de
+   conexión que abrir), así que ni se pulsa ni cambia al pasar por encima. */
+#status-bar .status-dot.static {
+  cursor: default;
+  pointer-events: none;
+}
+
 #status-bar .status-log-dot {
   width: 7px;
   height: 7px;

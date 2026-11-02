@@ -1222,7 +1222,9 @@
     "quick_select_add": "＋ Añadir patrón",
     "quick_select_invalid": "Expresión regular no válida, de más de {max} caracteres o con repeticiones anidadas como (a+)+, que podrían colgar la aplicación: no se usará",
     "tmux_scrollback": "Scrollback al reenganchar tmux",
-    "tmux_scrollback_hint": "Al enganchar una sesión en modo control, cada pane rehidrata hasta estas líneas de su historia. 0 = no recuperar nada (enganche instantáneo)."
+    "tmux_scrollback_hint": "Al enganchar una sesión en modo control, cada pane rehidrata hasta estas líneas de su historia. 0 = no recuperar nada (enganche instantáneo).",
+    "local_status_bar": "Mostrar la barra inferior en la consola local",
+    "local_status_bar_hint": "Usuario y equipo, carpeta actual (con la integración de shell), tamaño del terminal y, en Linux, el monitor de recursos de este equipo. Lo que es de una conexión remota, como la latencia o los túneles, no aparece."
   },
   "prefs_appearance": {
     "title": "Apariencia",
@@ -1589,7 +1591,10 @@
     "cwd_copied": "Ruta copiada al portapapeles",
     "cwd_nav_error": "No se pudo abrir el panel SFTP en {path}",
     "tunnels_open": "Túneles abiertos en esta conexión (pulsa para ver el panel)",
-    "tunnels_none": "Sin túneles abiertos"
+    "tunnels_none": "Sin túneles abiertos",
+    "cwd_title_local": "Directorio actual (OSC 7)",
+    "cwd_seg_copy": "Copiar {path}",
+    "local_state": "Consola local: {state}"
   },
   "metrics": {
     "title": "Recursos",
@@ -1826,7 +1831,7 @@
     "restore_work_tabs_hint": "Guarda el orden de pestañas y sus perfiles (nunca el contenido del terminal, ni secretos, ni sesiones privadas) y al arrancar ofrece reconectarlas en lote.",
     "autostart_minimized_hint": "Al arrancar con el sistema, oculta la ventana y mantiene solo el icono en la bandeja.",
     "metrics_title": "Monitor de recursos",
-    "metrics_hint": "Muestra CPU, memoria, disco, red y procesos del servidor remoto por la propia conexión SSH, sin instalar nada. Solo Linux por ahora.",
+    "metrics_hint": "Muestra CPU, memoria, disco, red y procesos del servidor remoto por la propia conexión SSH, sin instalar nada, y los de este equipo en la consola local. Solo Linux por ahora.",
     "metrics_enabled": "Activar automáticamente al conectar",
     "metrics_enabled_hint": "Si se desactiva, el monitor se enciende a mano con el botón de la barra inferior en cada sesión.",
     "metrics_rate": "Tasa de refresco",

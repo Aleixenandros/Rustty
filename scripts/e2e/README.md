@@ -57,6 +57,11 @@ booleano antiguo y que el selector del inicio lo refleja, y que elegir en la
 lista del desplegable no cierra la búsqueda. Después baja el perfil activo con
 el botón del menú y lo sube con Alt+↑, y mira el orden guardado.
 
+La sección de la consola local (`local-status.mjs`) abre una consola desde el
+inicio y comprueba la barra inferior: usuario@equipo y tamaño, sin latencia,
+túneles ni ruta; en Linux, encender el monitor trae CPU y memoria de este
+equipo, y el icono del monitor enseña su tooltip.
+
 La sección de teclado (`keyboard.mjs`) recorre los controles accesibles: el
 desplegable de Idioma de Preferencias es un combobox que se abre con ↓, elige
 con Enter, busca tecleando y cuyo Escape cierra la lista sin cerrar

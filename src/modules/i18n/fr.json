@@ -1222,7 +1222,9 @@
     "quick_select_add": "＋ Ajouter un motif",
     "quick_select_invalid": "Expression régulière non valide, de plus de {max} caractères ou avec des répétitions imbriquées comme (a+)+, qui pourraient bloquer l’application : elle ne sera pas utilisée",
     "tmux_scrollback": "Historique à récupérer au rattachement tmux",
-    "tmux_scrollback_hint": "En attachant une session en mode contrôle, chaque panneau réhydrate jusqu'à ce nombre de lignes de son historique. 0 = ne rien récupérer (attache instantanée)."
+    "tmux_scrollback_hint": "En attachant une session en mode contrôle, chaque panneau réhydrate jusqu'à ce nombre de lignes de son historique. 0 = ne rien récupérer (attache instantanée).",
+    "local_status_bar": "Afficher la barre d'état dans la console locale",
+    "local_status_bar_hint": "Utilisateur et ordinateur, dossier actuel (avec l'intégration du shell), taille du terminal et, sous Linux, le moniteur de ressources de cet ordinateur. Ce qui relève d'une connexion distante, comme la latence ou les tunnels, n'apparaît pas."
   },
   "prefs_appearance": {
     "tone_filter": "Filtrer par tonalité",
@@ -1589,7 +1591,10 @@
     "cwd_copied": "Chemin copié dans le presse-papiers",
     "cwd_nav_error": "Impossible d'ouvrir le panneau SFTP sur {path}",
     "tunnels_open": "Tunnels ouverts sur cette connexion (cliquer pour ouvrir le panneau)",
-    "tunnels_none": "Aucun tunnel ouvert"
+    "tunnels_none": "Aucun tunnel ouvert",
+    "cwd_title_local": "Répertoire actuel (OSC 7)",
+    "cwd_seg_copy": "Copier {path}",
+    "local_state": "Console locale : {state}"
   },
   "metrics": {
     "title": "Ressources",
@@ -1832,7 +1837,7 @@
     "restore_work_tabs_hint": "Enregistre l'ordre des onglets et leurs profils (jamais le contenu du terminal, ni secrets, ni sessions privées) et propose de les reconnecter en bloc au démarrage.",
     "autostart_minimized_hint": "Au démarrage avec le système, cache la fenêtre et conserve uniquement l'icône dans la barre système.",
     "metrics_title": "Moniteur de ressources",
-    "metrics_hint": "Affiche le CPU, la mémoire, le disque, le réseau et les processus du serveur distant via la connexion SSH elle-même, sans rien installer. Linux uniquement pour l'instant.",
+    "metrics_hint": "Affiche le CPU, la mémoire, le disque, le réseau et les processus du serveur distant via la connexion SSH elle-même, sans rien installer, et ceux de cet ordinateur dans la console locale. Linux uniquement pour l'instant.",
     "metrics_enabled": "Activer automatiquement à la connexion",
     "metrics_enabled_hint": "Si désactivé, allumez le moniteur à la main avec le bouton de la barre d'état pour chaque session.",
     "metrics_rate": "Fréquence de rafraîchissement",

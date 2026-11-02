@@ -1222,7 +1222,9 @@
     "quick_select_add": "＋ 新增模式",
     "quick_select_invalid": "正規表示式無效、長度超過 {max} 個字元，或含有 (a+)+ 這類巢狀重複而可能讓應用程式凍結：將不會使用",
     "tmux_scrollback": "tmux 重新附加時要恢復的捲動緩衝區",
-    "tmux_scrollback_hint": "附加控制模式工作階段時，每個窗格最多會還原這麼多行的歷程記錄。0 = 不恢復任何內容（立即附加）。"
+    "tmux_scrollback_hint": "附加控制模式工作階段時，每個窗格最多會還原這麼多行的歷程記錄。0 = 不恢復任何內容（立即附加）。",
+    "local_status_bar": "在本機主控台中顯示狀態列",
+    "local_status_bar_hint": "使用者與電腦、目前資料夾（需啟用 shell 整合）、終端機大小，以及在 Linux 上這台電腦的資源監控。延遲、通道等屬於遠端連線的項目不會顯示。"
   },
   "prefs_appearance": {
     "title": "外觀",
@@ -1589,7 +1591,10 @@
     "cwd_copied": "路徑已複製到剪貼簿",
     "cwd_nav_error": "無法在 {path} 開啟 SFTP 面板",
     "tunnels_open": "此連線上已開啟的通道（按一下開啟面板）",
-    "tunnels_none": "沒有開啟的通道"
+    "tunnels_none": "沒有開啟的通道",
+    "cwd_title_local": "目前的目錄（OSC 7）",
+    "cwd_seg_copy": "複製 {path}",
+    "local_state": "本機主控台：{state}"
   },
   "metrics": {
     "title": "資源",
@@ -1826,7 +1831,7 @@
     "restore_work_tabs_hint": "儲存分頁順序及其設定檔（絕不包含終端機內容、機密或私密工作階段），並在啟動時提供批次重新連線的選項。",
     "autostart_minimized_hint": "隨系統啟動時，隱藏視窗並只保留系統匣圖示。",
     "metrics_title": "資源監控",
-    "metrics_hint": "透過 SSH 連線本身顯示遠端伺服器的 CPU、記憶體、磁碟、網路與處理程序，無需安裝任何東西。目前僅支援 Linux。",
+    "metrics_hint": "透過 SSH 連線本身顯示遠端伺服器的 CPU、記憶體、磁碟、網路與處理程序，無需安裝任何東西；在本機主控台中則顯示這台電腦的資訊。目前僅支援 Linux。",
     "metrics_enabled": "連線時自動開啟",
     "metrics_enabled_hint": "若關閉，則需針對每個工作階段使用狀態列的按鈕手動開啟監控。",
     "metrics_rate": "更新頻率",

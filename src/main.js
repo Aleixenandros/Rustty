@@ -129,6 +129,8 @@ import {
 } from "./modules/terminal/osc.js";
 import { opensReadOnly, readOnlyInputDecision, readOnlyKeyAction } from "./modules/terminal/read-only.js";
 import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts } from "./modules/metrics-view.js";
+import { createMetricsPoller } from "./modules/metrics-poller.js";
+import { localUserHost, statusBarModel } from "./modules/status-bar.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { inkTokens, ringColor } from "./modules/themes/ink.js";
 import { colorLuminance, isHighContrastThemeId, toneFor } from "./modules/themes/tone.js";
@@ -2002,6 +2004,8 @@ function openSettingsModal() {
   if (_termCursorHv) _termCursorHv.checked = !!prefs.terminalCursorHighVis;
   const _shellIntegration = document.getElementById("pref-local-shell-integration");
   if (_shellIntegration) _shellIntegration.checked = prefs.localShellIntegration === true;
+  const _localStatusBar = document.getElementById("pref-local-status-bar");
+  if (_localStatusBar) _localStatusBar.checked = prefs.localShellStatusBar !== false;
   const _localCwdEl = document.getElementById("pref-local-cwd");
   if (_localCwdEl) _localCwdEl.value = prefs.localShellCwd || "";
   const _localCmdTimeout = document.getElementById("pref-localcmd-timeout");
@@ -4164,6 +4168,7 @@ function readPrefsFromModal() {
     terminalCursorHighVis: !!document.getElementById("pref-terminal-cursor-highvis")?.checked,
     localShellCwd:   (document.getElementById("pref-local-cwd")?.value || "").trim(),
     localShellIntegration: !!document.getElementById("pref-local-shell-integration")?.checked,
+    localShellStatusBar: document.getElementById("pref-local-status-bar")?.checked ?? true,
     localCmdTimeoutSecs: (() => {
       const v = Number(document.getElementById("pref-localcmd-timeout")?.value);
       return LOCALCMD_TIMEOUTS.includes(v) ? v : DEFAULT_PREFS.localCmdTimeoutSecs;
@@ -4241,6 +4246,8 @@ function savePrefsFromModal() {
   // Reaplica la disposición del panel SFTP (remoto izquierda/derecha) a los
   // paneles ya abiertos.
   applySftpRemoteSideToAll();
+  // Barra inferior de la consola local: aplicada a las consolas abiertas.
+  applyLocalStatusBarPref();
   // Dónde se ve el título remoto (OSC 0/2): se repinta en las pestañas abiertas.
   for (const [sid, s] of sessions) if (s.remoteTitle && !isTmuxPaneSession(s)) updateTabRemoteTitle(sid);
   // Persistir también la configuración de la pestaña de Sincronización
@@ -14632,6 +14639,9 @@ async function wireLocalShellStreams(s, sessionId, { refreshDashboard = false } 
   };
   const ulClose = await listen(eventName("shellClosed", sessionId), () => {
     s.status = "closed";
+    // Sin consola no hay a quién atribuir las muestras: el sondeo se para (el
+    // monitor sigue encendido y vuelve al reabrirla).
+    syncLocalMetricsPoller(s);
     updateTabStatus(sessionId, "error");
     if (refreshDashboard) renderDashboard();
     showReconnectOverlay(sessionId, t("terminal.console_closed"));
@@ -14668,6 +14678,7 @@ async function reconnectLocalInPlace(s) {
       hideReconnectOverlay(sessionId);
       updateTabStatus(sessionId, "connected");
       renderDashboard();
+      resumeLocalMetrics(s);
     }
   } catch (err) {
     for (const ul of s.unlisteners) { try { ul(); } catch {} }
@@ -14831,6 +14842,99 @@ function selectHomeTab() {
 
 let _statusLatencyTimer = null;
 
+/**
+ * Este equipo, para la barra inferior de la consola local: usuario, nombre y
+ * si el backend sabe muestrear sus recursos (solo Linux). Se pide una vez.
+ * @type {{ user: string | null, host: string | null, metrics: boolean }}
+ */
+let localMachine = { user: null, host: null, metrics: false };
+/** @type {Promise<void> | null} */
+let _localMachinePromise = null;
+
+/**
+ * Pide (una sola vez) los datos de este equipo; al llegar, repinta la barra si
+ * la pestaña activa es una consola local. Sin respuesta, `localhost` y sin
+ * monitor.
+ * @returns {Promise<void>}
+ */
+function ensureLocalMachineInfo() {
+  if (!_localMachinePromise) {
+    _localMachinePromise = invoke("local_machine_info")
+      .then((/** @type {any} */ info) => {
+        localMachine = {
+          user: typeof info?.user === "string" ? info.user : null,
+          host: typeof info?.host === "string" ? info.host : null,
+          metrics: info?.metrics === true,
+        };
+      })
+      .catch(() => { /* sin datos del equipo: la barra cae a «localhost» */ })
+      .then(() => {
+        const s = activeSessionId ? sessions.get(activeSessionId) : null;
+        if (isLocalShellSession(s)) updateStatusBar();
+      });
+  }
+  return _localMachinePromise;
+}
+
+/**
+ * Qué lleva la barra inferior para una sesión (null = sin barra); la regla
+ * vive en `modules/status-bar.js`.
+ * @param {any} s
+ */
+function statusBarModelFor(s) {
+  if (!s) return null;
+  const profile = s.profileId ? profiles.find((p) => p.id === s.profileId) : null;
+  return statusBarModel({
+    local: isLocalShellSession(s),
+    profile,
+    localBarEnabled: prefs.localShellStatusBar !== false,
+    localMetrics: localMachine.metrics,
+    childShell: !!s._parentSessionId,
+  });
+}
+
+/** Para el sondeo de latencia de la barra y deja su valor en blanco. */
+function stopStatusLatency() {
+  if (_statusLatencyTimer) {
+    clearInterval(_statusLatencyTimer);
+    _statusLatencyTimer = null;
+  }
+  const latEl = document.getElementById("status-latency");
+  if (latEl) latEl.textContent = "—";
+}
+
+/** La latencia (y su separador) solo se ve donde se mide: en SSH. */
+function setStatusLatencyVisible(visible) {
+  document.getElementById("status-latency-wrap")?.classList.toggle("hidden", !visible);
+  document.getElementById("status-latency-sep")?.classList.toggle("hidden", !visible);
+}
+
+/**
+ * El punto de estado abre el diagnóstico de la conexión en SSH. En la consola
+ * local no hay conexión que diagnosticar: solo enseña el estado, sin foco ni
+ * clic, y lo dice a los lectores de pantalla.
+ * @param {boolean} interactive
+ * @param {any} [s]
+ */
+function setStatusDotInteractive(interactive, s = null) {
+  const dot = document.getElementById("status-dot");
+  if (!dot) return;
+  dot.classList.toggle("static", !interactive);
+  if (interactive) {
+    dot.setAttribute("role", "button");
+    dot.setAttribute("tabindex", "0");
+    dot.title = t("terminal.diagnostics_title");
+    dot.removeAttribute("aria-label");
+    return;
+  }
+  const stateKey = tabStateKeys({ status: s?.status })[0];
+  const label = t("status.local_state", { state: stateKey ? t(stateKey) : "—" });
+  dot.setAttribute("role", "img");
+  dot.removeAttribute("tabindex");
+  dot.title = label;
+  dot.setAttribute("aria-label", label);
+}
+
 function refitVisibleTerminals() {
   requestAnimationFrame(() => {
     viewSelection.forEach((sid) => {
@@ -14933,8 +15037,8 @@ function renderStatusMetrics(s) {
 }
 
 /**
- * Refleja el estado on/off del monitor en el botón de la barra (visible solo en
- * sesiones SSH vivas).
+ * Refleja el estado on/off del monitor en el botón de la barra (en SSH y, donde
+ * el backend sabe muestrear este equipo, en la consola local).
  * @param {ReturnType<typeof sessions.get>} s
  */
 function updateMetricsToggle(s) {
@@ -14942,7 +15046,8 @@ function updateMetricsToggle(s) {
   if (!btn) return;
   // Shell hija: el monitor es de la conexión y sus muestras llegan bajo el id
   // de la pestaña raíz — el toggle aquí solo pisaría la cadencia de la raíz.
-  if (s?._parentSessionId) {
+  // Consola local fuera de Linux: no hay con qué muestrear.
+  if (!statusBarModelFor(s)?.metrics) {
     btn.classList.add("hidden");
     updateMetricsExpandBtn(s);
     return;
@@ -14957,12 +15062,12 @@ function updateMetricsToggle(s) {
   updateMetricsExpandBtn(s);
 }
 
-/** Estado del botón de expandir el panel (visible solo en sesión SSH viva). */
+/** Estado del botón de expandir el panel (donde hay monitor: ver `updateMetricsToggle`). */
 function updateMetricsExpandBtn(s) {
   const btn = document.getElementById("status-metrics-expand");
   if (!btn) return;
-  // Shell hija: sin monitor propio (ver `updateMetricsToggle`).
-  if (s?._parentSessionId) {
+  // Shell hija o consola local sin monitor (ver `updateMetricsToggle`).
+  if (!statusBarModelFor(s)?.metrics) {
     btn.classList.add("hidden");
     return;
   }
@@ -15156,18 +15261,22 @@ function renderMetricsPanel(s) {
   const disks = (m.disks || []).map((d) =>
     metricsBar(usagePct(d.usedKb, d.sizeKb), d.mount, `${formatKib(d.usedKb)} / ${formatKib(d.sizeKb)}`)
   ).join("");
+  // Terminar procesos solo en el servidor remoto: en la consola local sería
+  // una orden nueva del IPC para señalar cualquier proceso del usuario
+  // (modules/status-bar.js).
+  const canKill = !!statusBarModelFor(s)?.killProcess;
   const procs = (m.procs || []).map((p) => `
     <tr>
       <td class="metrics-proc-pid mono">${Number(p.pid) || 0}</td>
       <td class="metrics-proc-cmd" title="${escHtml(p.command)}">${escHtml(p.command)}</td>
       <td class="metrics-proc-num mono">${(Number(p.cpuPct) || 0).toFixed(1)}</td>
       <td class="metrics-proc-num mono">${(Number(p.memPct) || 0).toFixed(1)}</td>
-      <td class="metrics-proc-act">
+      <td class="metrics-proc-act">${canKill ? `
         <button type="button" class="metrics-proc-kill" data-kill-pid="${Number(p.pid) || 0}"
                 data-kill-cmd="${escHtml(p.command)}"
                 title="${escHtml(t("metrics.kill"))}" aria-label="${escHtml(t("metrics.kill"))}">
           <svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg>
-        </button>
+        </button>` : ""}
       </td>
     </tr>`).join("");
 
@@ -15215,7 +15324,9 @@ async function exportMetricsSnapshot(sessionId) {
     return;
   }
   const profile = profiles.find((p) => p.id === s.profileId);
-  const host = profile?.host || sessionId;
+  const host = isLocalShellSession(s)
+    ? localUserHost(null, localMachine.host)
+    : profile?.host || sessionId;
   const doc = {
     kind: "rustty-metrics-snapshot",
     version: 1,
@@ -15250,6 +15361,7 @@ async function exportMetricsSnapshot(sessionId) {
  */
 async function confirmKillRemoteProcess(sessionId, pid, command) {
   if (!Number.isInteger(pid) || pid < 2) return;
+  if (!statusBarModelFor(sessions.get(sessionId))?.killProcess) return;
   const ok = await confirmThemed({
     title: t("metrics.kill_title"),
     message: t("metrics.kill_message").replace("{cmd}", command).replace("{pid}", String(pid)),
@@ -15364,7 +15476,9 @@ function fillStatusOverflowPopover() {
   const hasCwd = Boolean(cwdWrap) && !cwdWrap.classList.contains("hidden");
   setRow("status-pop-cwd-row", "status-pop-cwd", hasCwd, cwdSrc?.title || cwdSrc?.textContent || "—");
   setRow("status-pop-dims-row", "status-pop-dims", true, document.getElementById("status-dims")?.textContent || "—");
-  setRow("status-pop-latency-row", "status-pop-latency", true, document.getElementById("status-latency")?.textContent || "—");
+  const latWrap = document.getElementById("status-latency-wrap");
+  const hasLatency = !latWrap || !latWrap.classList.contains("hidden");
+  setRow("status-pop-latency-row", "status-pop-latency", hasLatency, document.getElementById("status-latency")?.textContent || "—");
   const recWrap = document.getElementById("status-rec-wrap");
   const recActive = Boolean(recWrap) && !recWrap.classList.contains("hidden");
   setRow("status-pop-rec-row", "status-pop-rec", recActive, null);
@@ -15386,7 +15500,8 @@ function renderStatusConnectionLog() {
 
 function toggleActiveConnectionLogPanel() {
   const s = activeSessionId ? sessions.get(activeSessionId) : null;
-  if (!s || isExternalLauncherType(s.type)) return;
+  // La consola local no tiene conexión que diagnosticar (su punto es estático).
+  if (!s || isExternalLauncherType(s.type) || isLocalShellSession(s)) return;
   toggleConnectionLogPanel(activeSessionId);
 }
 
@@ -15410,9 +15525,10 @@ function collapseHomePath(path) {
  *     se muestra `~` como primer segmento, pero su `data-path` (y el de los
  *     segmentos siguientes) usa la base REAL del home, no `~`.
  * Cada segmento navega el panel SFTP a su ruta acumulada real al pulsar; con
- * Ctrl/Cmd+clic copia esa ruta. El icono 📂 copia la ruta completa.
+ * Ctrl/Cmd+clic copia esa ruta. El icono 📂 copia la ruta completa. Con
+ * `navigable: false` (la consola local, sin panel SFTP) el clic siempre copia.
  */
-function renderCwdBreadcrumb(sessionId, rawPath) {
+function renderCwdBreadcrumb(sessionId, rawPath, { navigable = true } = {}) {
   const cwdEl = document.getElementById("status-cwd");
   if (!cwdEl) return;
   cwdEl.innerHTML = "";
@@ -15487,13 +15603,19 @@ function renderCwdBreadcrumb(sessionId, rawPath) {
     btn.className = "cwd-seg";
     btn.dataset.path = seg.path;
     btn.textContent = seg.label;
-    btn.title = `${t("status.cwd_seg_nav", { path: seg.path })} · ${t("status.cwd_copy_seg")}`;
-    btn.setAttribute("aria-label", t("status.cwd_seg_nav", { path: seg.path }));
+    if (navigable) {
+      btn.title = `${t("status.cwd_seg_nav", { path: seg.path })} · ${t("status.cwd_copy_seg")}`;
+      btn.setAttribute("aria-label", t("status.cwd_seg_nav", { path: seg.path }));
+    } else {
+      btn.title = t("status.cwd_seg_copy", { path: seg.path });
+      btn.setAttribute("aria-label", t("status.cwd_seg_copy", { path: seg.path }));
+    }
     btn.addEventListener("click", async (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      // Ctrl/Cmd+clic copia la ruta acumulada del segmento en vez de navegar.
-      if (ev.ctrlKey || ev.metaKey) {
+      // Ctrl/Cmd+clic copia la ruta acumulada del segmento en vez de navegar
+      // (y sin panel SFTP al que ir, el clic solo copia).
+      if (!navigable || ev.ctrlKey || ev.metaKey) {
         await writeSystemClipboardText(seg.path);
         toast(t("status.cwd_copied"), "success");
         return;
@@ -15529,14 +15651,21 @@ function updateStatusBar() {
   const bar = document.getElementById("status-bar");
   if (!bar) return;
   const s = activeSessionId ? sessions.get(activeSessionId) : null;
-  const profile = s?.profileId ? profiles.find((p) => p.id === s.profileId) : null;
-  // Solo mostramos status bar para sesiones SSH (RDP no es interactivo;
-  // shell local no tiene host remoto).
-  if (!profile || (profile.connection_type || "ssh") !== "ssh") {
+  // Barra para las sesiones SSH y la consola local (RDP no es interactivo);
+  // qué lleva cada una lo decide modules/status-bar.js.
+  const model = statusBarModelFor(s);
+  if (!s || !model) {
     clearStatusBar();
     return;
   }
   setStatusBarVisible(true);
+  if (model.kind === "local") {
+    renderLocalStatusBar(s, model);
+    return;
+  }
+  const profile = profiles.find((p) => p.id === s.profileId);
+  setStatusDotInteractive(true);
+  setStatusLatencyVisible(true);
 
   const userHost = `${profile.username}@${profile.host}:${profile.port}`;
   const userHostEl = document.getElementById("status-user-host");
@@ -15551,64 +15680,10 @@ function updateStatusBar() {
 
   renderStatusRoute(s);
   renderStatusTunnels(profile);
-
-  const dot = document.getElementById("status-dot");
-  if (dot) {
-    dot.classList.remove("connected", "error", "reconnecting");
-    if (s.status === "connected") dot.classList.add("connected");
-    else if (s.status === "reconnecting") dot.classList.add("reconnecting");
-    else if (s.status === "error" || s.status === "closed") dot.classList.add("error");
-  }
-
+  renderStatusDot(s);
   // CWD remoto detectado vía OSC 7 (solo si el shell lo emite).
-  const cwdWrap = document.getElementById("status-cwd-wrap");
-  const cwdSep  = document.querySelector(".status-cwd-sep");
-  const cwdEl   = document.getElementById("status-cwd");
-  if (cwdWrap && cwdEl && cwdSep) {
-    if (s.remoteCwd) {
-      // Breadcrumb de segmentos clicables (navegan el panel SFTP).
-      renderCwdBreadcrumb(activeSessionId, s.remoteCwd);
-      cwdEl.title = s.remoteCwd; // tooltip con la ruta completa real
-      cwdWrap.classList.remove("hidden");
-      cwdSep.classList.remove("hidden");
-
-      // El icono 📂 copia la ruta completa real al portapapeles.
-      const cwdIcon = cwdWrap.querySelector(".status-cwd-icon");
-      if (cwdIcon && !cwdIcon.dataset.copyBound) {
-        cwdIcon.dataset.copyBound = "1";
-        cwdIcon.setAttribute("role", "button");
-        cwdIcon.setAttribute("tabindex", "0");
-        cwdIcon.title = t("status.cwd_copy");
-        cwdIcon.setAttribute("aria-label", t("status.cwd_copy"));
-        cwdIcon.addEventListener("click", async () => {
-          const cur = activeSessionId ? sessions.get(activeSessionId) : null;
-          if (!cur?.remoteCwd) return;
-          await writeSystemClipboardText(cur.remoteCwd);
-          toast(t("status.cwd_copied"), "success");
-        });
-      }
-    } else {
-      cwdEl.innerHTML = "";
-      cwdWrap.classList.add("hidden");
-      cwdSep.classList.add("hidden");
-    }
-  }
-
-  // Tamaño del terminal en píxeles (área real dibujada), más intuitivo que
-  // cols×rows para el usuario medio; el cols×rows —lo que ve el shell y a lo que
-  // se ajustan vim/htop/tmux— se conserva en el tooltip. Cae a cols×rows si el
-  // xterm aún no ha pintado su `.xterm-screen`.
-  const dimsEl = document.getElementById("status-dims");
-  if (dimsEl && s.terminal) {
-    const screen = s.terminal.element?.querySelector(".xterm-screen");
-    dimsEl.textContent = screen
-      ? `${Math.round(screen.clientWidth)}×${Math.round(screen.clientHeight)} px`
-      : `${s.terminal.cols}×${s.terminal.rows}`;
-    const dimsWrap = document.getElementById("status-dims-wrap");
-    if (dimsWrap) dimsWrap.title = `${s.terminal.cols}×${s.terminal.rows} ${t("status.cells")}`;
-  } else if (dimsEl) {
-    dimsEl.textContent = "—";
-  }
+  renderStatusCwd(s, model);
+  renderStatusDims(s);
 
   // Monitor de recursos: botón toggle (siempre visible en sesión SSH) e
   // indicadores compactos (solo con el monitor activo y una muestra recibida).
@@ -15623,9 +15698,8 @@ function updateStatusBar() {
   renderStatusConnectionLog();
 
   // Reanudar el probe de latencia cada vez que cambiamos de sesión activa
-  if (_statusLatencyTimer) { clearInterval(_statusLatencyTimer); _statusLatencyTimer = null; }
+  stopStatusLatency();
   const latEl = document.getElementById("status-latency");
-  if (latEl) latEl.textContent = "—";
   const probe = async () => {
     if (activeSessionId !== s.sessionId) return; // cambió la sesión activa
     // No sondear una sesión que ya no está viva: al caer (closed/error/canceled)
@@ -15652,6 +15726,119 @@ function updateStatusBar() {
 
   // El user-host, cwd o REC pueden haber cambiado el ancho necesario.
   updateStatusBarOverflow();
+}
+
+/**
+ * Barra de la consola local: usuario@equipo, carpeta (OSC 7), tamaño, estado
+ * y el monitor de recursos de este equipo donde lo hay. Cada segmento de la
+ * sesión SSH que se viera antes (latencia y su sondeo, túneles, ruta, entorno,
+ * REC, log de conexión) se oculta aquí: nada de restos de la otra pestaña.
+ * @param {any} s
+ * @param {import("./modules/status-bar.js").StatusBarModel} model
+ */
+function renderLocalStatusBar(s, model) {
+  stopStatusLatency();
+  setStatusLatencyVisible(false);
+  // Usuario y equipo llegan una vez del backend; mientras, `localhost`.
+  ensureLocalMachineInfo();
+  const userHostEl = document.getElementById("status-user-host");
+  if (userHostEl) userHostEl.textContent = localUserHost(localMachine.user, localMachine.host);
+  const envEl = document.getElementById("status-env");
+  if (envEl) { envEl.className = "env-badge hidden"; envEl.textContent = ""; }
+  const routeEl = document.getElementById("status-route");
+  if (routeEl) { routeEl.classList.add("hidden"); routeEl.title = ""; }
+  const routeText = document.getElementById("status-route-text");
+  if (routeText) routeText.textContent = "";
+  renderStatusTunnels(null);
+
+  renderStatusDot(s);
+  setStatusDotInteractive(false, s);
+  renderStatusCwd(s, model);
+  renderStatusDims(s);
+
+  updateMetricsToggle(s);
+  renderStatusMetrics(s);
+
+  document.getElementById("status-rec-wrap")?.classList.add("hidden");
+  renderStatusReadOnly(s);
+  const logTrigger = document.getElementById("status-log-trigger");
+  if (logTrigger) logTrigger.classList.add("hidden");
+  const logText = document.getElementById("status-log-text");
+  if (logText) logText.textContent = "—";
+
+  updateStatusBarOverflow();
+}
+
+/** Color del punto de estado según la sesión. */
+function renderStatusDot(s) {
+  const dot = document.getElementById("status-dot");
+  if (!dot) return;
+  dot.classList.remove("connected", "error", "reconnecting");
+  if (s.status === "connected") dot.classList.add("connected");
+  else if (s.status === "reconnecting") dot.classList.add("reconnecting");
+  else if (s.status === "error" || s.status === "closed") dot.classList.add("error");
+}
+
+/**
+ * Carpeta actual que anuncia el shell por OSC 7 (solo si lo emite). En SSH los
+ * segmentos navegan el panel SFTP; en la consola local, que no lo tiene,
+ * copian su ruta.
+ * @param {any} s
+ * @param {import("./modules/status-bar.js").StatusBarModel} model
+ */
+function renderStatusCwd(s, model) {
+  const cwdWrap = document.getElementById("status-cwd-wrap");
+  const cwdSep  = document.querySelector(".status-cwd-sep");
+  const cwdEl   = document.getElementById("status-cwd");
+  if (!cwdWrap || !cwdEl || !cwdSep) return;
+  cwdWrap.title = t(model.cwdNavigates ? "status.cwd_title" : "status.cwd_title_local");
+  if (!s.remoteCwd) {
+    cwdEl.innerHTML = "";
+    cwdWrap.classList.add("hidden");
+    cwdSep.classList.add("hidden");
+    return;
+  }
+  // Breadcrumb de segmentos clicables.
+  renderCwdBreadcrumb(activeSessionId, s.remoteCwd, { navigable: model.cwdNavigates });
+  cwdEl.title = s.remoteCwd; // tooltip con la ruta completa real
+  cwdWrap.classList.remove("hidden");
+  cwdSep.classList.remove("hidden");
+
+  // El icono de carpeta copia la ruta completa real al portapapeles.
+  const cwdIcon = cwdWrap.querySelector(".status-cwd-icon");
+  if (cwdIcon && !cwdIcon.dataset.copyBound) {
+    cwdIcon.dataset.copyBound = "1";
+    cwdIcon.setAttribute("role", "button");
+    cwdIcon.setAttribute("tabindex", "0");
+    cwdIcon.title = t("status.cwd_copy");
+    cwdIcon.setAttribute("aria-label", t("status.cwd_copy"));
+    cwdIcon.addEventListener("click", async () => {
+      const cur = activeSessionId ? sessions.get(activeSessionId) : null;
+      if (!cur?.remoteCwd) return;
+      await writeSystemClipboardText(cur.remoteCwd);
+      toast(t("status.cwd_copied"), "success");
+    });
+  }
+}
+
+/**
+ * Tamaño del terminal en píxeles (área real dibujada), más intuitivo que
+ * cols×rows para el usuario medio; el cols×rows —lo que ve el shell y a lo que
+ * se ajustan vim/htop/tmux— se conserva en el tooltip. Cae a cols×rows si el
+ * xterm aún no ha pintado su `.xterm-screen`.
+ */
+function renderStatusDims(s) {
+  const dimsEl = document.getElementById("status-dims");
+  if (dimsEl && s.terminal) {
+    const screen = s.terminal.element?.querySelector(".xterm-screen");
+    dimsEl.textContent = screen
+      ? `${Math.round(screen.clientWidth)}×${Math.round(screen.clientHeight)} px`
+      : `${s.terminal.cols}×${s.terminal.rows}`;
+    const dimsWrap = document.getElementById("status-dims-wrap");
+    if (dimsWrap) dimsWrap.title = `${s.terminal.cols}×${s.terminal.rows} ${t("status.cells")}`;
+  } else if (dimsEl) {
+    dimsEl.textContent = "—";
+  }
 }
 
 // Última vista pintada (true = dashboard). Permite disparar el fundido solo al
@@ -16828,26 +17015,113 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     if (isGlobalTunnelsModalOpen()) renderGlobalTunnelLists();
   }));
 
-  // Monitor de recursos: cada muestra guarda la última instantánea y empuja la
-  // historia (para futuros sparklines); si la sesión está activa, refresca la
-  // barra inferior. La primera muestra llega sin %CPU/tasas (aún no hay delta).
+  // Monitor de recursos: cada muestra la digiere `ingestMetricsSample`.
   ul.push(await listen(eventName("sshMetrics", sessionId), (/** @type {{ payload: SshMetricsEvent }} */ e) => {
     const s = sessions.get(sessionId);
-    if (!s) return;
-    const m = e.payload;
-    const st = s._metrics || (s._metrics = { latest: null, cpuHist: [], rxHist: [], txHist: [] });
-    st.latest = m;
-    if (m.cpuPct != null) st.cpuHist = pushHistory(st.cpuHist, m.cpuPct, METRICS_HISTORY_CAP);
-    if (m.netRxBps != null) st.rxHist = pushHistory(st.rxHist, m.netRxBps, METRICS_HISTORY_CAP);
-    if (m.netTxBps != null) st.txHist = pushHistory(st.txHist, m.netTxBps, METRICS_HISTORY_CAP);
-    checkMetricsAlerts(s, st, m);
-    if (sessionId === activeSessionId) {
-      renderStatusMetrics(s);
-      if (s._metricsPanelOpen) renderMetricsPanel(s);
-    }
+    if (s) ingestMetricsSample(s, e.payload);
   }));
 
   return ul;
+}
+
+/**
+ * Una muestra del monitor de recursos (del evento SSH o del sondeo de la
+ * consola local, con la misma forma): guarda la última instantánea, empuja la
+ * historia de los sparklines, evalúa las alertas y, si la sesión está activa,
+ * refresca la barra y el panel. La primera muestra llega sin %CPU/tasas (aún
+ * no hay delta).
+ * @param {any} s
+ * @param {SshMetricsEvent} m
+ */
+function ingestMetricsSample(s, m) {
+  if (!m) return;
+  const st = s._metrics || (s._metrics = { latest: null, cpuHist: [], rxHist: [], txHist: [] });
+  st.latest = m;
+  if (m.cpuPct != null) st.cpuHist = pushHistory(st.cpuHist, m.cpuPct, METRICS_HISTORY_CAP);
+  if (m.netRxBps != null) st.rxHist = pushHistory(st.rxHist, m.netRxBps, METRICS_HISTORY_CAP);
+  if (m.netTxBps != null) st.txHist = pushHistory(st.txHist, m.netTxBps, METRICS_HISTORY_CAP);
+  checkMetricsAlerts(s, st, m);
+  if (s.id === activeSessionId) {
+    renderStatusMetrics(s);
+    if (s._metricsPanelOpen) renderMetricsPanel(s);
+  }
+}
+
+/**
+ * Sondeo del monitor de la consola local: en local no hay evento del backend,
+ * el frontend pide cada muestra (`local_metrics_sample`) y al dejar de pedirla
+ * se deja de muestrear (modules/metrics-poller.js). Uno por consola.
+ * @param {any} s
+ */
+function localMetricsPoller(s) {
+  if (!s._localMetricsPoller) {
+    const sessionId = s.id;
+    // La pestaña ya no existe (cerrada por un camino que no pasó por su
+    // cierre): el sondeo se apaga solo en vez de seguir preguntando.
+    const gone = () => {
+      if (sessions.get(sessionId) === s) return false;
+      s._localMetricsPoller?.stop();
+      return true;
+    };
+    s._localMetricsPoller = createMetricsPoller({
+      sample: (fresh) => invoke("local_metrics_sample", { sessionId, fresh }),
+      onSample: (/** @type {any} */ m) => {
+        if (!gone()) ingestMetricsSample(s, m);
+      },
+      // Una muestra perdida (plazo agotado, consola recién cerrada) se salta;
+      // el cierre de la consola ya apaga el sondeo.
+      onError: (err) => {
+        if (!gone()) console.debug("[metrics] muestra local fallida", err);
+      },
+      intervalMs: () => Math.max(1, Number(prefs.metricsSecs) || 3) * 1000,
+    });
+  }
+  return s._localMetricsPoller;
+}
+
+/**
+ * Tras cambiar la preferencia de la barra inferior en la consola local: sin
+ * barra no hay dónde ver ni apagar su monitor, así que se apaga (y su panel se
+ * cierra); con ella, la barra vuelve a la pestaña activa.
+ */
+function applyLocalStatusBarPref() {
+  if (prefs.localShellStatusBar === false) {
+    for (const s of sessions.values()) {
+      if (!isLocalShellSession(s)) continue;
+      if (s._metricsPanelOpen) closeMetricsPanel(s.id);
+      if (s._metricsOn) setSessionMetrics(s.id, false);
+    }
+  }
+  updateStatusBar();
+}
+
+/**
+ * Arranca o para el sondeo local según lo que pide la consola: el monitor
+ * encendido, la consola abierta, la barra visible y un equipo que se pueda
+ * muestrear. Encendido sobrevive al cierre y la reapertura de la consola, como
+ * en SSH a la reconexión.
+ * @param {any} s
+ */
+function syncLocalMetricsPoller(s) {
+  if (!s) return;
+  const wanted = !!s._metricsOn
+    && s.status === "connected"
+    && localMachine.metrics
+    && prefs.localShellStatusBar !== false
+    && sessions.get(s.id) === s;
+  if (wanted) localMetricsPoller(s).start();
+  else s._localMetricsPoller?.stop();
+}
+
+/**
+ * Al abrir o reabrir una consola local: enciende su monitor si estaba
+ * encendido o si el usuario lo quiere siempre al conectar (como en SSH).
+ * @param {any} s
+ */
+async function resumeLocalMetrics(s) {
+  await ensureLocalMachineInfo();
+  if (!s || sessions.get(s.id) !== s || !statusBarModelFor(s)?.metrics) return;
+  if (prefs.metricsEnabled || s._metricsOn) setSessionMetrics(s.id, true);
 }
 
 /** Puntos de historia que se conservan por métrica (para los sparklines). */
@@ -16890,7 +17164,9 @@ function checkMetricsAlerts(s, st, m) {
   const res = computeMetricAlerts(st.alerts || {}, values, thresholds);
   st.alerts = res.active;
   if (!res.fired.length) return;
-  const name = profiles.find((p) => p.id === s.profileId)?.name || s.id;
+  const name = isLocalShellSession(s)
+    ? localUserHost(null, localMachine.host)
+    : profiles.find((p) => p.id === s.profileId)?.name || s.id;
   for (const key of res.fired) {
     toast(
       t(`metrics.alert_${key}`)
@@ -16912,9 +17188,14 @@ async function setSessionMetrics(sessionId, on) {
   if (!s) return;
   s._metricsOn = on;
   const secs = Math.max(1, Number(prefs.metricsSecs) || 3);
-  try {
-    await invoke("ssh_set_metrics", { sessionId, secs: on ? secs : null });
-  } catch { /* sesión ya cerrada */ }
+  if (isLocalShellSession(s)) {
+    // Consola local: muestrea este equipo con el sondeo del frontend.
+    syncLocalMetricsPoller(s);
+  } else {
+    try {
+      await invoke("ssh_set_metrics", { sessionId, secs: on ? secs : null });
+    } catch { /* sesión ya cerrada */ }
+  }
   if (!on && s._metrics) s._metrics.latest = null;
   if (sessionId === activeSessionId) {
     renderStatusMetrics(s);
@@ -20973,6 +21254,8 @@ async function openLocalShell() {
   const fakeProfile = { id: sessionId, name: `${shellName} #${localShellCounter}`, host: "local", port: 0, username: "" };
 
   createTerminalTab(sessionId, fakeProfile, "connecting", { sftp: false });
+  // Usuario y equipo para la barra inferior (una vez por arranque).
+  ensureLocalMachineInfo();
 
   const s = sessions.get(sessionId);
   // El resize de la consola local viaja por su propio comando IPC.
@@ -20989,11 +21272,6 @@ async function openLocalShell() {
         shellIntegration: prefs.localShellIntegration === true,
       },
     });
-    // Si el cierre no se adelantó al connect, marcamos la sesión como conectada.
-    if (s.status !== "closed") {
-      s.status = "connected";
-      updateTabStatus(sessionId, "connected");
-    }
 
     // Nota: el input ya lo enruta `handleTerminalInput` (registrado en createTerminalTab)
     // detectando el tipo de sesión por `_closeOverride`. El resize también lo
@@ -21001,14 +21279,25 @@ async function openLocalShell() {
     // enruta al comando correcto gracias a `_resizeCmd` (fijado arriba).
 
     // Sobreescribir el cierre de sesión para usar el comando de shell.
-    // closeSession llama a removeTab() tras ejecutar este override.
+    // closeSession llama a removeTab() tras ejecutar este override. Va antes
+    // de marcarla conectada: es lo que la reconoce como consola local, y el
+    // repintado de la barra inferior de ese momento tiene que verla así.
     s._closeOverride = async () => {
+      s._localMetricsPoller?.stop();
       for (const ul of s.unlisteners) { try { ul(); } catch {} }
       await invoke("local_shell_close", { sessionId }).catch(() => {});
       clearTerminalOutputQueue(s);
       s.terminal.dispose();
       sessions.delete(sessionId);
     };
+    // Si el cierre no se adelantó al connect, marcamos la sesión como conectada.
+    if (s.status !== "closed") {
+      s.status = "connected";
+      updateTabStatus(sessionId, "connected");
+      resumeLocalMetrics(s);
+    } else if (sessionId === activeSessionId) {
+      updateStatusBar();
+    }
   } catch (err) {
     for (const ul of s.unlisteners) { try { ul(); } catch {} }
     sessions.delete(sessionId);

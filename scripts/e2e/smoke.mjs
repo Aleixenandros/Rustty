@@ -34,6 +34,8 @@
 //      y no dejan el `title` nativo a la vez (`frames.mjs`).
 //   6d. El buscador de la barra lateral busca en el perfil actual, en uno
 //      concreto o en todos, y los perfiles se reordenan (`workspaces.mjs`).
+//   6e. La consola local tiene barra inferior y, en Linux, el monitor de
+//      recursos de este equipo (`local-status.mjs`).
 //   7. Salto activo y bastiones por la interfaz (`jump.mjs`), sin servidores:
 //      el formulario guarda el bastión elegido entre las conexiones guardadas,
 //      «Usar como salto activo» enciende la píldora de la barra lateral y su ✕
@@ -66,6 +68,7 @@ import { checkShortcuts } from "./shortcuts.mjs";
 import { checkDialogs } from "./dialogs.mjs";
 import { checkFrames, checkTooltips } from "./frames.mjs";
 import { checkWorkspaces } from "./workspaces.mjs";
+import { checkLocalStatusBar } from "./local-status.mjs";
 import { checkKeyboard } from "./keyboard.mjs";
 import { checkToasts } from "./toasts.mjs";
 import { checkTerminalLayers } from "./terminal-layers.mjs";
@@ -520,6 +523,7 @@ async function main() {
     await checkFrames(app, check);
     await checkTooltips(app, check);
     await checkWorkspaces(app, check);
+    await checkLocalStatusBar(app, check);
     await checkKeyboard(app, check);
     await checkToasts(app, check);
     await checkTerminalLayers(app, check);
