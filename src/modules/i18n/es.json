@@ -1290,6 +1290,8 @@
     "strong_focus_hint": "Aumenta el grosor y el contraste del anillo de foco en la navegación por teclado.",
     "native_selects": "Usar los desplegables del sistema",
     "native_selects_hint": "Deja los desplegables nativos del sistema en lugar de los de Rustty; algunos lectores de pantalla los manejan mejor. Los de Rustty también se manejan con el teclado: flechas, Inicio/Fin y tecleando el principio de una opción.",
+    "tooltips": "Mostrar una descripción al pasar el ratón",
+    "tooltips_hint": "Al dejar el ratón sobre un icono o un botón (o al llegar a él con el teclado) aparece qué hace. Desactivado, queda el comportamiento del sistema.",
     "toast_duration": "Duración de los avisos",
     "toast_duration_normal": "Normal",
     "toast_duration_long": "Larga",

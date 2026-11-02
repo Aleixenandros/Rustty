@@ -1290,6 +1290,8 @@
     "strong_focus_hint": "Menambah ketebalan dan kontras cincin fokus saat navigasi dengan keyboard.",
     "native_selects": "Gunakan menu tarik-turun sistem",
     "native_selects_hint": "Mempertahankan menu tarik-turun bawaan sistem alih-alih milik Rustty; beberapa pembaca layar menanganinya lebih baik. Menu milik Rustty juga dapat dipakai dengan keyboard: panah, Home/End, dan mengetik awal sebuah opsi.",
+    "tooltips": "Tampilkan keterangan saat kursor diarahkan",
+    "tooltips_hint": "Saat kursor berhenti di atas ikon atau tombol (atau dicapai dengan keyboard), akan muncul keterangan fungsinya. Jika dinonaktifkan, perilaku sistem yang berlaku.",
     "toast_duration": "Durasi notifikasi",
     "toast_duration_normal": "Normal",
     "toast_duration_long": "Lama",

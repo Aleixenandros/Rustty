@@ -1290,6 +1290,8 @@
     "strong_focus_hint": "Aumenta a espessura e o contraste do anel de foco na navegação por teclado.",
     "native_selects": "Usar as listas pendentes do sistema",
     "native_selects_hint": "Mantém as listas pendentes nativas do sistema em vez das do Rustty; alguns leitores de ecrã lidam melhor com elas. As do Rustty também se usam com o teclado: setas, Início/Fim e escrevendo o início de uma opção.",
+    "tooltips": "Mostrar uma descrição ao passar o rato",
+    "tooltips_hint": "Ao deixar o rato sobre um ícone ou um botão (ou ao chegar a ele com o teclado) aparece o que faz. Desativado, aplica-se o comportamento do sistema.",
     "toast_duration": "Duração dos avisos",
     "toast_duration_normal": "Normal",
     "toast_duration_long": "Longa",

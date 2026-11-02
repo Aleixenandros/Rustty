@@ -1290,6 +1290,8 @@
     "strong_focus_hint": "在鍵盤導覽時增加焦點框的粗細與對比。",
     "native_selects": "使用系統的下拉式選單",
     "native_selects_hint": "使用系統原生的下拉式選單，而非 Rustty 的；部分螢幕閱讀器對它們的支援較好。Rustty 的下拉式選單也能用鍵盤操作：方向鍵、Home/End，以及輸入選項的開頭。",
+    "tooltips": "滑鼠移到上方時顯示說明",
+    "tooltips_hint": "將滑鼠停在圖示或按鈕上（或用鍵盤移到上面）時，會顯示它的用途。關閉時，沿用系統的行為。",
     "toast_duration": "通知顯示時間",
     "toast_duration_normal": "一般",
     "toast_duration_long": "較長",

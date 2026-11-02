@@ -40,6 +40,16 @@ confirmación destructiva es `alertdialog` con el foco en «Cancelar». Como
 WebKitWebDriver no mueve el foco con eventos sintéticos, solo prueba lo que el
 controlador hace de forma explícita.
 
+La sección de marcos y tooltips (`frames.mjs`) arrastra la cabecera de
+Preferencias y su esquina con eventos de puntero sintéticos: comprueba que se
+mueve, que redimensionar deja quieto el borde opuesto, que el marco se recuerda
+al reabrir y que el doble clic en la cabecera lo devuelve a fábrica; estrecha,
+la barra de secciones se queda en iconos con tooltip. Después pasa el puntero
+por un icono del rail y por un botón con `title`: sale la burbuja propia
+(`#app-tooltip`), el atributo `title` se retira mientras dura (sin el nativo
+doble en Windows y macOS), `el.title` sigue leyendo y escribiendo y al salir el
+atributo vuelve con su último valor.
+
 La sección de teclado (`keyboard.mjs`) recorre los controles accesibles: el
 desplegable de Idioma de Preferencias es un combobox que se abre con ↓, elige
 con Enter, busca tecleando y cuyo Escape cierra la lista sin cerrar

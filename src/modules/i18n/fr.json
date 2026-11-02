@@ -1290,6 +1290,8 @@
     "strong_focus_hint": "Augmente l'épaisseur et le contraste de l'anneau de focus lors de la navigation au clavier.",
     "native_selects": "Utiliser les listes déroulantes du système",
     "native_selects_hint": "Conserve les listes déroulantes natives du système au lieu de celles de Rustty ; certains lecteurs d'écran les gèrent mieux. Celles de Rustty se manient aussi au clavier : flèches, Début/Fin et saisie du début d'une option.",
+    "tooltips": "Afficher une description au survol",
+    "tooltips_hint": "En laissant la souris sur une icône ou un bouton (ou en l'atteignant au clavier), une bulle indique ce qu'il fait. Désactivé, le comportement du système s'applique.",
     "toast_duration": "Durée des notifications",
     "toast_duration_normal": "Normale",
     "toast_duration_long": "Longue",

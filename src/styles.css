@@ -137,7 +137,6 @@
      parece un botón que no hace nada) y los desplegables por encima de los
      avisos (su lista nace dentro de un modal). */
   --z-base: 1;
-  --z-tooltip: 300;
   --z-zen-exit: 400;
   --z-drag-overlay: 600;
   --z-modal: 1000;            /* conexión, Preferencias, papelera */
@@ -154,6 +153,7 @@
   --z-modal-top: 11400;       /* cima de una pila de diálogos (la pone el controlador) */
   --z-toast: 11500;
   --z-dropdown: 12000;        /* lista de los desplegables */
+  --z-tooltip: 12300;         /* burbuja de ayuda: encima de modales, avisos y listas */
   --z-hud: 12500;             /* indicador de zoom */
   --z-flash: 20000;           /* destello de la campana visual */
   --z-boot: 30000;            /* pantalla de arranque */
@@ -4619,6 +4619,10 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
   top: 0;
   z-index: 4;
   background: var(--surface-panel);
+  /* La cabecera pinta su propio fondo: con esquinas rectas asomaba un pico
+     cuadrado sobre el borde redondeado del diálogo. Hereda las de arriba. */
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
 }
 
 .modal-header h2 {
@@ -6173,16 +6177,77 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 }
 
 #modal-prefs {
+  position: relative;
   background: var(--surface-panel);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  width: 720px;
-  max-width: 95vw;
-  height: 560px;
-  max-height: 85vh;
+  /* Tamaño de fábrica; el usuario lo cambia desde bordes y esquinas
+     (`modules/dialogs/frame.js`) y se recuerda en este equipo. */
+  width: 920px;
+  max-width: 94vw;
+  height: 660px;
+  max-height: 88vh;
   display: flex;
   flex-direction: column;
   box-shadow: var(--shadow-3);
+}
+
+/* Pie con aire: sin padding, «Guardar» quedaba pegado a la esquina
+   redondeada (y debajo del asa de redimensionar). */
+#modal-prefs > .modal-actions {
+  padding: 10px 18px 12px;
+}
+
+body.density-compact #modal-prefs > .modal-actions { padding: 8px 14px 10px; }
+body.density-spacious #modal-prefs > .modal-actions { padding: 12px 22px 14px; }
+
+/* La barra de secciones pinta fondo hasta la esquina inferior izquierda. */
+#modal-prefs .prefs-nav {
+  border-bottom-left-radius: calc(var(--radius-lg) - 1px);
+}
+
+/* Diálogo estrecho (redimensionado o ventana pequeña): la barra de secciones
+   se queda en iconos y el nombre de cada sección sale en su tooltip. */
+#modal-prefs.is-narrow .prefs-nav {
+  width: 52px;
+  padding: 10px 4px;
+}
+
+#modal-prefs.is-narrow .prefs-nav-item {
+  justify-content: center;
+  padding: 9px 0;
+}
+
+#modal-prefs.is-narrow .prefs-nav-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+#modal-prefs.is-narrow .prefs-content {
+  padding: 14px 16px 16px;
+}
+
+#modal-prefs.is-narrow .settings-row-inline label {
+  white-space: normal;
+}
+
+#modal-prefs.is-narrow .settings-row-inline > .custom-select {
+  width: auto;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+#modal-prefs.is-narrow .shortcut-row {
+  grid-template-columns: 1fr max-content;
+}
+
+#modal-prefs.is-narrow .shortcut-row-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
 }
 
 .prefs-layout {
@@ -6248,12 +6313,20 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 }
 
 .prefs-nav-icon {
-  width: 18px;
+  /* 22 px y sin saltos: el «A文» de Idioma no cabía en 18 y se partía en
+     dos líneas, descuadrando esa fila. */
+  width: 22px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  letter-spacing: -0.5px;
   text-align: center;
   color: var(--subtext0);
   font-size: 14px;
   transition: color var(--motion-fast) var(--motion-ease);
 }
+
+/* El de Idioma es texto («A文»), no un SVG: un punto menor para que quepa. */
+.prefs-nav-icon[translate="no"] { font-size: 12px; }
 
 .prefs-nav-item:hover .prefs-nav-icon { color: var(--text); }
 .prefs-nav-item.active .prefs-nav-icon { color: var(--blue); }
@@ -6482,9 +6555,10 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 
 .settings-row-inline {
   display: flex;
+  flex-wrap: wrap; /* si etiqueta y control no caben, el control baja de línea */
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 8px 16px;
   margin-bottom: 12px;
 }
 
@@ -10220,29 +10294,28 @@ body.zen-mode #zen-exit-btn {
   color: var(--text);
 }
 
-/* ─── Sistema de tooltips consistente — slice estético #18 ──────
-   Tooltip CSS-only basado en [data-tooltip]. Aparece tras 400 ms
-   de hover; convive con `title=""` (lo deja para a11y). Para evitar
-   el doble tooltip del navegador, los elementos que usan data-tooltip
-   pueden no tener title, o tener uno equivalente (a11y). */
+/* ─── Tooltips propios ────────────────────────────────────────
+   Una única burbuja en <body> (`modules/tooltips/`) que enseña el `title`,
+   el `data-tooltip` o el `aria-label` de los botones de solo icono. Sustituye
+   al tooltip nativo, que el webview de Linux no pinta, y a los de CSS
+   (`::after`), que recortaban los contenedores con `overflow`. Vive fuera de
+   la escala del chrome (`--ui-zoom`): se coloca en píxeles de la ventana. */
 :root {
-  --tooltip-bg: color-mix(in srgb, var(--crust) 92%, transparent);
+  --tooltip-bg: color-mix(in srgb, var(--crust) 94%, transparent);
   --tooltip-fg: var(--text);
   --tooltip-border: var(--surface1);
-  --tooltip-delay: 400ms;
 }
 
 [data-tooltip] {
   position: relative;
 }
 
-[data-tooltip]::after {
-  content: attr(data-tooltip);
-  position: absolute;
+.app-tooltip {
+  position: fixed;
+  left: 0;
+  top: 0;
   z-index: var(--z-tooltip);
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translate(-50%, 4px);
+  max-width: min(360px, calc(100vw - 12px));
   padding: 4px 8px;
   border: 1px solid var(--tooltip-border);
   border-radius: var(--radius-sm);
@@ -10251,54 +10324,33 @@ body.zen-mode #zen-exit-btn {
   font-family: var(--font-ui);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
-  white-space: nowrap;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--motion-ease),
-              transform var(--motion-fast) var(--motion-ease);
-  transition-delay: 0ms;
   box-shadow: var(--shadow-1);
   backdrop-filter: blur(4px);
+  animation: tooltip-in var(--motion-fast) var(--motion-ease-out);
 }
 
-[data-tooltip]:hover::after,
-[data-tooltip]:focus-visible::after {
-  opacity: 1;
-  transform: translate(-50%, 0);
-  transition-delay: var(--tooltip-delay);
+.app-tooltip[hidden] {
+  display: none;
 }
 
-/* Variante para tooltips que enumeran cosas (la lista de túneles activos): el
-   tooltip normal es de una línea y cortaría la enumeración en seco. */
-[data-tooltip].tooltip-multiline::after {
+/* Listas (los túneles activos): un elemento por línea. */
+.app-tooltip.is-multiline {
   white-space: pre-line;
   text-align: left;
-  max-width: 320px;
+  max-width: min(320px, calc(100vw - 12px));
 }
 
-/* Variante de posición: tooltips que deben aparecer abajo (cuando el
-   elemento está en la parte superior de la ventana, p. ej. la topbar). */
-[data-tooltip][data-tooltip-pos="bottom"]::after {
-  bottom: auto;
-  top: calc(100% + 6px);
-  transform: translate(-50%, -4px);
+@keyframes tooltip-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
-[data-tooltip][data-tooltip-pos="bottom"]:hover::after,
-[data-tooltip][data-tooltip-pos="bottom"]:focus-visible::after {
-  transform: translate(-50%, 0);
-}
-
-[data-tooltip][data-tooltip-pos="right"]::after {
-  left: calc(100% + 6px);
-  top: 50%;
-  bottom: auto;
-  transform: translate(-4px, -50%);
-}
-
-[data-tooltip][data-tooltip-pos="right"]:hover::after,
-[data-tooltip][data-tooltip-pos="right"]:focus-visible::after {
-  transform: translate(0, -50%);
+body.reduce-motion .app-tooltip {
+  animation: none;
 }
 
 /* ─── Modal de conexión rediseñado — slice estético #19 ────────
@@ -11172,6 +11224,58 @@ body.color-blind-safe .modal-summary-badge.warn::before {
     max-height: 100vh;
     border-radius: 0;
   }
+}
+
+/* ─── Diálogos movibles y redimensionables ───────────────────────
+   `modules/dialogs/frame.js`: la cabecera arrastra el diálogo y, si es
+   redimensionable, ocho tiradores invisibles en bordes y esquinas cambian su
+   tamaño. Los tiradores sobresalen un poco del borde para no tapar la barra
+   de desplazamiento del contenido. */
+.dialog-framed {
+  position: relative;
+}
+
+.dialog-drag-handle {
+  cursor: move;
+}
+
+.dialog-drag-handle :is(button, a, input, select, textarea, label, [role="tab"], [role="button"]) {
+  cursor: pointer;
+}
+
+.dialog-dragging,
+.dialog-dragging * {
+  user-select: none;
+}
+
+.dialog-resize-handle {
+  position: absolute;
+  z-index: 6;
+  touch-action: none;
+}
+
+.dialog-resize-handle[data-dir="n"]  { top: -4px; left: 12px; right: 12px; height: 8px; cursor: ns-resize; }
+.dialog-resize-handle[data-dir="s"]  { bottom: -4px; left: 12px; right: 12px; height: 8px; cursor: ns-resize; }
+.dialog-resize-handle[data-dir="e"]  { right: -4px; top: 12px; bottom: 12px; width: 8px; cursor: ew-resize; }
+.dialog-resize-handle[data-dir="w"]  { left: -4px; top: 12px; bottom: 12px; width: 8px; cursor: ew-resize; }
+.dialog-resize-handle[data-dir="ne"] { top: -5px; right: -5px; width: 16px; height: 16px; cursor: nesw-resize; }
+.dialog-resize-handle[data-dir="nw"] { top: -5px; left: -5px; width: 16px; height: 16px; cursor: nwse-resize; }
+.dialog-resize-handle[data-dir="se"] { bottom: -5px; right: -5px; width: 16px; height: 16px; cursor: nwse-resize; }
+.dialog-resize-handle[data-dir="sw"] { bottom: -5px; left: -5px; width: 16px; height: 16px; cursor: nesw-resize; }
+
+/* Asa visible en la esquina inferior derecha, la que se busca primero. */
+.dialog-resize-handle[data-dir="se"]::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, transparent 0 45%, var(--surface2) 45% 55%, transparent 55%),
+    linear-gradient(135deg, transparent 0 62%, var(--surface1) 62% 72%, transparent 72%);
+  opacity: 0.8;
 }
 
 /* ─── Tamaño mínimo del texto de la interfaz (Apariencia) ──────

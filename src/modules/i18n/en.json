@@ -1290,6 +1290,8 @@
     "strong_focus_hint": "Increases the thickness and contrast of the focus ring during keyboard navigation.",
     "native_selects": "Use the system drop-downs",
     "native_selects_hint": "Keeps the system's native drop-downs instead of Rustty's; some screen readers handle them better. Rustty's also work with the keyboard: arrows, Home/End and typing the start of an option.",
+    "tooltips": "Show a description on hover",
+    "tooltips_hint": "Resting the mouse on an icon or a button (or reaching it with the keyboard) shows what it does. When off, the system's own behaviour applies.",
     "toast_duration": "Notification duration",
     "toast_duration_normal": "Normal",
     "toast_duration_long": "Long",

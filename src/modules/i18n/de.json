@@ -1290,6 +1290,8 @@
     "strong_focus_hint": "Erhöht Dicke und Kontrast des Fokusrahmens bei der Tastaturnavigation.",
     "native_selects": "Auswahlfelder des Systems verwenden",
     "native_selects_hint": "Behält die nativen Auswahlfelder des Systems statt der von Rustty; manche Screenreader kommen damit besser zurecht. Die von Rustty lassen sich ebenfalls per Tastatur bedienen: Pfeile, Pos1/Ende und Eintippen des Anfangs einer Option.",
+    "tooltips": "Beim Überfahren mit der Maus eine Beschreibung anzeigen",
+    "tooltips_hint": "Wenn die Maus auf einem Symbol oder einer Schaltfläche ruht (oder sie per Tastatur erreicht wird), wird angezeigt, was sie tut. Deaktiviert gilt das Verhalten des Systems.",
     "toast_duration": "Anzeigedauer der Hinweise",
     "toast_duration_normal": "Normal",
     "toast_duration_long": "Lang",

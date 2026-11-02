@@ -83,6 +83,8 @@ import { leafIds } from "./modules/panes/tree.js";
 import { comboFromEvent } from "./modules/shortcuts/combo.js";
 import { createShortcutController } from "./modules/shortcuts/controller.js";
 import { createDialogController } from "./modules/dialogs/controller.js";
+import { attachDialogFrame } from "./modules/dialogs/frame.js";
+import { createTooltipController } from "./modules/tooltips/controller.js";
 import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { buildCheatsheet, filterCheatsheet } from "./modules/shortcuts/cheatsheet.js";
 import { formatAccelerator } from "./modules/platform.js";
@@ -645,6 +647,7 @@ function loadPrefs() {
   applyUiContrast(prefs.uiContrast);
   applyReduceMotion(prefs.reduceMotion);
   applyStrongFocus(prefs.strongFocus);
+  applyTooltips(prefs.tooltips !== false);
   applyViewFade(prefs.viewFade !== false);
   applyScrollbarStyle();
   if (loadZenMode()) applyZenMode(true);
@@ -1938,6 +1941,8 @@ function openSettingsModal() {
   if (_strongFocus) _strongFocus.checked = !!prefs.strongFocus;
   const _nativeSelects = document.getElementById("pref-native-selects");
   if (_nativeSelects) _nativeSelects.checked = !!prefs.nativeSelects;
+  const _tooltips = document.getElementById("pref-tooltips");
+  if (_tooltips) _tooltips.checked = prefs.tooltips !== false;
   const _toastDuration = document.getElementById("pref-toast-duration");
   if (_toastDuration) _toastDuration.value = TOAST_DURATIONS.includes(prefs.toastDuration) ? prefs.toastDuration : "normal";
   const _viewFade = document.getElementById("pref-view-fade");
@@ -2079,6 +2084,8 @@ function openSettingsModal() {
   // fuente solicitada, aunque el select aún no tenga sus opciones.
   _prefsFormSnapshot.fontFamily = prefs.fontFamily || "";
   document.getElementById("modal-prefs-overlay").classList.remove("hidden");
+  prefsDialogFrame?.apply();
+  updatePrefsNarrowLayout();
 }
 
 // ─── Sincronización: pestaña en Preferencias ────────────────────
@@ -4176,6 +4183,7 @@ function readPrefsFromModal() {
     reduceMotion:    !!document.getElementById("pref-reduce-motion")?.checked,
     strongFocus:     !!document.getElementById("pref-strong-focus")?.checked,
     nativeSelects:   !!document.getElementById("pref-native-selects")?.checked,
+    tooltips:        document.getElementById("pref-tooltips")?.checked ?? true,
     toastDuration:   (() => {
       const v = document.getElementById("pref-toast-duration")?.value;
       return TOAST_DURATIONS.includes(v) ? v : "normal";
@@ -4280,6 +4288,7 @@ function savePrefsFromModal() {
   applyReduceMotion(prefs.reduceMotion);
   applyStrongFocus(prefs.strongFocus);
   applyNativeSelects(prefs.nativeSelects);
+  applyTooltips(prefs.tooltips !== false);
   applyViewFade(prefs.viewFade !== false);
   applyScrollbarStyle();
   applyPrefsToAllTerminals();
@@ -8566,6 +8575,7 @@ function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiv
   renderConnectionSummary();
   applyConnectionModalSize();
   document.getElementById("modal-overlay").classList.remove("hidden");
+  connectionDialogFrame?.apply();
   document.getElementById("f-name").focus();
 }
 
@@ -8888,6 +8898,7 @@ function openEditConnectionModal(profileId) {
   renderConnectionSummary();
   applyConnectionModalSize();
   document.getElementById("modal-overlay").classList.remove("hidden");
+  connectionDialogFrame?.apply();
 }
 
 // ─── Usuarios adicionales (identidades múltiples por conexión) ──────────────
@@ -9395,6 +9406,68 @@ function resetConnectionModalSize() {
   if (!modal) return;
   modal.style.width = `${CONNECTION_MODAL_DEFAULT_WIDTH}px`;
   modal.style.height = "";
+}
+
+// ─── Diálogos movibles y redimensionables ───────────────────────
+// Preferencias se mueve arrastrando la cabecera y se redimensiona desde
+// cualquier borde o esquina; el de conexión se mueve (su tamaño ya lo maneja
+// el `resize` de CSS, con su propia persistencia). Posición y tamaño se
+// recuerdan en este equipo; doble clic en la cabecera los restablece.
+let prefsDialogFrame = null;
+let connectionDialogFrame = null;
+
+function initDialogFrames() {
+  const zoom = () => clampUiZoom(prefs.uiZoom ?? 1);
+  const prefsDialog = document.getElementById("modal-prefs");
+  const prefsHeader = prefsDialog?.querySelector(":scope > .modal-header");
+  if (prefsDialog && prefsHeader) {
+    prefsDialogFrame = attachDialogFrame(prefsDialog, {
+      handle: prefsHeader,
+      storageKey: "rustty-dialog-frame-prefs",
+      limits: { minWidth: 460, minHeight: 360 },
+      zoom,
+    });
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(() => updatePrefsNarrowLayout()).observe(prefsDialog);
+    }
+  }
+  const connDialog = document.getElementById("modal-connection");
+  const connHeader = connDialog?.querySelector(":scope > .modal-header");
+  if (connDialog && connHeader) {
+    connectionDialogFrame = attachDialogFrame(connDialog, {
+      handle: connHeader,
+      storageKey: "rustty-dialog-frame-connection",
+      limits: { minWidth: CONNECTION_MODAL_MIN_WIDTH, minHeight: CONNECTION_MODAL_MIN_HEIGHT },
+      resizable: false,
+      zoom,
+    });
+  }
+  window.addEventListener("resize", () => {
+    if (!document.getElementById("modal-prefs-overlay")?.classList.contains("hidden")) prefsDialogFrame?.apply();
+    if (!document.getElementById("modal-overlay")?.classList.contains("hidden")) connectionDialogFrame?.apply();
+  });
+}
+
+/**
+ * Preferencias estrecha (por debajo de 640 px del diálogo): la barra de
+ * secciones se queda en iconos y el nombre de cada una pasa a su tooltip.
+ */
+function updatePrefsNarrowLayout() {
+  const dialog = document.getElementById("modal-prefs");
+  if (!dialog || dialog.getClientRects().length === 0) return;
+  const width = dialog.getBoundingClientRect().width / clampUiZoom(prefs.uiZoom ?? 1);
+  const narrow = width < 640;
+  dialog.classList.toggle("is-narrow", narrow);
+  dialog.querySelectorAll(".prefs-nav-item").forEach((item) => {
+    const label = item.querySelector(".prefs-nav-label")?.textContent?.trim() || "";
+    if (narrow && label) {
+      item.setAttribute("data-tooltip", label);
+      item.setAttribute("data-tooltip-pos", "right");
+    } else {
+      item.removeAttribute("data-tooltip");
+      item.removeAttribute("data-tooltip-pos");
+    }
+  });
 }
 
 function initConnectionModalResizePersistence() {
@@ -26725,6 +26798,7 @@ function bindUIEvents() {
   });
   document.getElementById("btn-add-extra-cred")?.addEventListener("click", () => addExtraCredRow());
   initConnectionModalResizePersistence();
+  initDialogFrames();
 
   // Selector de carpeta: árbol navegable en un popover.
   setupFolderTreePicker();
@@ -30775,6 +30849,15 @@ function sweepOrphanSelectLists() {
  * desactivarla lo vuelve a montar. Los que se creen después la consultan
  * en `enhanceSelect`.
  */
+// Tooltips propios (`modules/tooltips/`): el `title` nativo no se pinta en el
+// webview de Linux. Con la preferencia desactivada queda el comportamiento del
+// sistema (el nativo en Windows y macOS; nada en Linux).
+const appTooltips = createTooltipController();
+
+function applyTooltips(enabled) {
+  appTooltips.setEnabled(!!enabled);
+}
+
 function applyNativeSelects(enabled) {
   sweepOrphanSelectLists();
   if (enabled) {
