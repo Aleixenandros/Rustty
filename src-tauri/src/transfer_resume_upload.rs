@@ -1,4 +1,4 @@
-//! Reanudación de subidas SFTP interrumpidas.
+//! Reanudación de subidas interrumpidas (SFTP y FTP/FTPS).
 //!
 //! La hermana de [`crate::transfer_resume`] (descargas), bajo la **misma
 //! preferencia** y con el mismo principio: ante la menor duda se empieza de
@@ -39,6 +39,19 @@
 //!
 //! La decisión son funciones puras ([`candidate`], [`probe_windows`],
 //! [`settle`]) que no tocan ni el disco ni la red.
+//!
+//! **FTP/FTPS (un solo flujo).** La misma ficha, el mismo temporal y las mismas
+//! reglas de publicación, pero otra fuente de verdad: una subida FTP va por un
+//! único canal de datos, en orden, así que lo que tiene el servidor es siempre
+//! un **prefijo** de lo enviado, sin huecos. Se continúa desde el tamaño que da
+//! el servidor (`SIZE`) y no desde lo apuntado en la ficha, que en FTP no se
+//! puede confirmar a mitad (el acuse solo llega al cerrar el canal). Antes de
+//! continuar se comparan los últimos [`PROBE_LEN`] bytes del temporal con los
+//! del fichero local (una descarga con `REST` que acaba sola en el final del
+//! fichero: leer el principio obligaría a interrumpir un `RETR`, y cada
+//! servidor contesta a eso a su manera). Las variantes son
+//! [`candidate_stream`], [`probe_window_stream`], [`settle_stream`] y
+//! [`stream_attempts`].
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -88,8 +101,8 @@ const SWEEP_EVERY_SECS: u64 = 3600;
 /// hubiera ficha (y por tanto no se toca su temporal).
 const META_VERSION: u32 = 1;
 
-/// Dónde guarda las fichas una sesión SFTP y de quién son: el perfil y el
-/// servidor al que está conectada.
+/// Dónde guarda las fichas una sesión SFTP o FTP/FTPS y de quién son: el
+/// perfil y el servidor al que está conectada.
 #[derive(Debug, Clone)]
 pub struct Scope {
     /// Carpeta de las fichas (`<datos>/upload-resume`).
@@ -228,14 +241,10 @@ pub enum UploadPlan {
 /// comprobar. Pura.
 #[must_use]
 pub fn candidate(meta: Option<&UploadMeta>, id: &Identity) -> Candidate {
-    let Some(meta) = meta else {
-        return Candidate::Fresh { stale: None };
+    let meta = match own_meta(meta, id) {
+        Ok(meta) => meta,
+        Err(fresh) => return fresh,
     };
-    // Una ficha que no entendemos, con un token que no es nuestro o de otro
-    // sitio no dice qué temporal es: no se continúa ni se borra nada.
-    if meta.version != META_VERSION || !valid_token(&meta.token) || !meta.same_place(id) {
-        return Candidate::Fresh { stale: None };
-    }
     let temp = meta.temp_path();
     // Mismo destino pero otro fichero local (o el mismo, cambiado): el temporal
     // es nuestro y ya no sirve.
@@ -245,6 +254,102 @@ pub fn candidate(meta: Option<&UploadMeta>, id: &Identity) -> Candidate {
     Candidate::Probe {
         temp,
         confirmed: meta.confirmed,
+    }
+}
+
+/// La ficha, si habla de un temporal **nuestro** de este mismo sitio; si no, la
+/// decisión de empezar de cero sin tocar nada.
+fn own_meta<'a>(meta: Option<&'a UploadMeta>, id: &Identity) -> Result<&'a UploadMeta, Candidate> {
+    let Some(meta) = meta else {
+        return Err(Candidate::Fresh { stale: None });
+    };
+    // Una ficha que no entendemos, con un token que no es nuestro o de otro
+    // sitio no dice qué temporal es: no se continúa ni se borra nada.
+    if meta.version != META_VERSION || !valid_token(&meta.token) || !meta.same_place(id) {
+        return Err(Candidate::Fresh { stale: None });
+    }
+    Ok(meta)
+}
+
+/// [`candidate`] para una subida de un solo flujo (FTP/FTPS). Lo confirmado de
+/// la ficha no es el punto de partida —ese lo da el tamaño del temporal— sino
+/// un suelo: puede ser 0 (en FTP no hay acuses a mitad) sin que eso impida
+/// comprobar el temporal. Pura.
+#[must_use]
+pub fn candidate_stream(meta: Option<&UploadMeta>, id: &Identity) -> Candidate {
+    let meta = match own_meta(meta, id) {
+        Ok(meta) => meta,
+        Err(fresh) => return fresh,
+    };
+    let temp = meta.temp_path();
+    if !meta.same_source(id) || meta.confirmed > id.local_size {
+        return Candidate::Fresh { stale: Some(temp) };
+    }
+    Candidate::Probe {
+        temp,
+        confirmed: meta.confirmed,
+    }
+}
+
+/// Tramo `(desplazamiento, longitud)` del temporal de un solo flujo que se
+/// compara con el fichero local antes de continuar: su final (o entero, si es
+/// corto). Llega hasta el final del temporal a propósito: la descarga que lo
+/// lee termina sola, sin tener que interrumpirla. Pura.
+#[must_use]
+pub fn probe_window_stream(temp_size: u64) -> Option<(u64, u64)> {
+    match temp_size {
+        0 => None,
+        size if size <= 2 * PROBE_LEN => Some((0, size)),
+        size => Some((size - PROBE_LEN, PROBE_LEN)),
+    }
+}
+
+/// [`settle`] para una subida de un solo flujo: se continúa desde el tamaño del
+/// temporal (lo que de verdad tiene el servidor, sin huecos), siempre que no
+/// sea menos de lo que la ficha dio por confirmado (alguien lo truncó), ni más
+/// que el fichero local, y que su final coincida con el local. Un temporal
+/// vacío no tiene nada que aprovechar. Pura.
+#[must_use]
+pub fn settle_stream(
+    confirmed: u64,
+    local_size: u64,
+    temp_size: Option<u64>,
+    tail_matches: bool,
+) -> UploadPlan {
+    let Some(temp_size) = temp_size else {
+        return UploadPlan::Fresh;
+    };
+    if temp_size == 0 || temp_size < confirmed || temp_size > local_size || !tail_matches {
+        return UploadPlan::Fresh;
+    }
+    if temp_size == local_size {
+        UploadPlan::Complete
+    } else {
+        UploadPlan::Continue(temp_size)
+    }
+}
+
+/// Cómo se escribe en el temporal de un solo flujo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamWrite {
+    /// `APPE`: añadir detrás de lo que ya tiene (el servidor sabe dónde acaba).
+    Append,
+    /// `REST <n>` + `STOR`: escribir desde el desplazamiento `n`.
+    RestStore,
+    /// `STOR` desde el principio: subida entera.
+    Store,
+}
+
+/// Qué se intenta, y en qué orden, para escribir desde `start`. Si el servidor
+/// rechaza un intento (no entiende `APPE`, no admite `REST`) se pasa al
+/// siguiente; el último, desde cero, siempre funciona donde funcionaría una
+/// subida normal. Pura.
+#[must_use]
+pub fn stream_attempts(start: u64) -> &'static [StreamWrite] {
+    if start == 0 {
+        &[StreamWrite::Store]
+    } else {
+        &[StreamWrite::Append, StreamWrite::RestStore, StreamWrite::Store]
     }
 }
 
@@ -729,6 +834,115 @@ mod tests {
             settle(4_000_000, 10_000_000, Some(6_000_000), false),
             UploadPlan::Fresh
         );
+    }
+
+    #[test]
+    fn en_un_solo_flujo_se_comprueba_el_temporal_aunque_no_haya_nada_confirmado() {
+        // En FTP no hay acuses a mitad: una ficha recién escrita (0 confirmado)
+        // también manda mirar el temporal.
+        let temp = "/srv/datos/iso.img.0123456789abcdef.rustty-part".to_string();
+        assert_eq!(
+            candidate_stream(Some(&meta(0)), &identity()),
+            Candidate::Probe {
+                temp: temp.clone(),
+                confirmed: 0,
+            }
+        );
+        assert_eq!(
+            candidate_stream(Some(&meta(4_000_000)), &identity()),
+            Candidate::Probe {
+                temp: temp.clone(),
+                confirmed: 4_000_000,
+            }
+        );
+        // Lo demás, como en SFTP: otro origen retira nuestro temporal; otro
+        // sitio o una ficha rara no autorizan a tocar nada.
+        assert_eq!(
+            candidate_stream(
+                Some(&meta(0)),
+                &Identity {
+                    local_size: 1,
+                    ..identity()
+                }
+            ),
+            Candidate::Fresh { stale: Some(temp) }
+        );
+        assert_eq!(
+            candidate_stream(
+                Some(&meta(0)),
+                &Identity {
+                    port: 21,
+                    ..identity()
+                }
+            ),
+            Candidate::Fresh { stale: None }
+        );
+        assert_eq!(
+            candidate_stream(
+                Some(&UploadMeta {
+                    token: "../../x".to_string(),
+                    ..meta(0)
+                }),
+                &identity()
+            ),
+            Candidate::Fresh { stale: None }
+        );
+        assert_eq!(candidate_stream(None, &identity()), Candidate::Fresh { stale: None });
+    }
+
+    #[test]
+    fn en_un_solo_flujo_se_compara_el_final_del_temporal() {
+        assert_eq!(probe_window_stream(0), None);
+        assert_eq!(probe_window_stream(1_000), Some((0, 1_000)));
+        assert_eq!(probe_window_stream(2 * PROBE_LEN), Some((0, 2 * PROBE_LEN)));
+        assert_eq!(
+            probe_window_stream(4_000_000),
+            Some((4_000_000 - PROBE_LEN, PROBE_LEN))
+        );
+    }
+
+    #[test]
+    fn en_un_solo_flujo_se_continua_desde_lo_que_tiene_el_servidor() {
+        // Sin huecos: el tamaño del temporal es lo que de verdad hay.
+        assert_eq!(
+            settle_stream(0, 10_000_000, Some(6_000_000), true),
+            UploadPlan::Continue(6_000_000)
+        );
+        assert_eq!(
+            settle_stream(4_000_000, 10_000_000, Some(6_000_000), true),
+            UploadPlan::Continue(6_000_000)
+        );
+        assert_eq!(
+            settle_stream(10_000_000, 10_000_000, Some(10_000_000), true),
+            UploadPlan::Complete
+        );
+        // Sin temporal, vacío, truncado por debajo de lo confirmado, más largo
+        // que el local o con el final distinto: de cero.
+        for (confirmed, temp, tail) in [
+            (0, None, true),
+            (0, Some(0), true),
+            (4_000_000, Some(3_999_999), true),
+            (0, Some(10_000_001), true),
+            (0, Some(6_000_000), false),
+        ] {
+            assert_eq!(
+                settle_stream(confirmed, 10_000_000, temp, tail),
+                UploadPlan::Fresh,
+                "{confirmed} {temp:?} {tail}"
+            );
+        }
+    }
+
+    #[test]
+    fn si_el_servidor_no_sabe_continuar_se_acaba_subiendo_entero() {
+        // Primero APPE, luego REST+STOR y, si el servidor no admite ninguno, la
+        // subida entera. Desde cero no hay nada que intentar antes.
+        assert_eq!(stream_attempts(0), &[StreamWrite::Store]);
+        assert_eq!(
+            stream_attempts(4_000_000),
+            &[StreamWrite::Append, StreamWrite::RestStore, StreamWrite::Store]
+        );
+        assert_eq!(stream_attempts(1).last(), Some(&StreamWrite::Store));
     }
 
     #[test]

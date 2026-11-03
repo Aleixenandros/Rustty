@@ -43,7 +43,7 @@ use crate::ipc::{event_name, EventKind};
 use crate::profiles::{AuthType, ConnectionProfile};
 use crate::transfer_batch::{self, Batch};
 use crate::transfer_resume;
-use crate::transfer_resume_upload;
+use crate::transfer_resume_upload::{self, StreamWrite};
 
 // ─── Tipos expuestos al frontend ─────────────────────────────────────────────
 
@@ -152,6 +152,14 @@ enum ProgressSink<'a> {
     App(&'a AppHandle),
     #[cfg(all(test, target_os = "linux"))]
     Record(&'a Mutex<Vec<serde_json::Value>>),
+    /// Como `Record`, y además avisa a `hook` de cada evento antes de
+    /// guardarlo: los tests cortan o cancelan una transferencia en un punto
+    /// exacto del progreso, sin depender de cuánto tarde en llegar a él.
+    #[cfg(all(test, target_os = "linux"))]
+    Watch(
+        &'a Mutex<Vec<serde_json::Value>>,
+        &'a (dyn Fn(&serde_json::Value) + Sync),
+    ),
 }
 
 impl ProgressSink<'_> {
@@ -160,6 +168,12 @@ impl ProgressSink<'_> {
             Self::App(app) => app.emit(event, payload),
             #[cfg(all(test, target_os = "linux"))]
             Self::Record(events) => {
+                events.lock_recover().push(payload);
+                Ok(())
+            }
+            #[cfg(all(test, target_os = "linux"))]
+            Self::Watch(events, hook) => {
+                hook(&payload);
                 events.lock_recover().push(payload);
                 Ok(())
             }
@@ -415,6 +429,9 @@ struct SftpBackend {
 
 struct FtpBackend {
     ftp: FtpConnection,
+    /// Fichas de las subidas reanudables, como en [`SftpBackend`]. Si se usan
+    /// lo decide la preferencia en cada subida.
+    resume: Option<transfer_resume_upload::Scope>,
 }
 
 struct SftpHandle {
@@ -976,7 +993,10 @@ async fn connect_and_open_backend(
                         "ok",
                         format!("{} listo", profile.connection_type.to_uppercase()),
                     );
-                    Ok(Box::new(FtpBackend { ftp }))
+                    Ok(Box::new(FtpBackend {
+                        ftp,
+                        resume: upload_resume_scope(app_handle, profile),
+                    }))
                 }
                 Err(e) => {
                     emit_sftp_log(app_handle, session_id, "error", "error", e.clone());
@@ -993,24 +1013,31 @@ async fn connect_and_open_backend(
             let (sftp, jump) =
                 connect_and_open_sftp(request, &log, &crate::ssh_transport::default_host_key_check)
                     .await?;
-            let resume = app_handle
-                .try_state::<crate::DataDir>()
-                .map(|data| transfer_resume_upload::Scope {
-                    dir: data.0.join(transfer_resume_upload::DIR_NAME),
-                    profile_id: profile.id.clone(),
-                    host: profile.host.clone(),
-                    port: profile.port,
-                    user: profile.username.clone(),
-                    checkpoint_every: transfer_resume_upload::CHECKPOINT_EVERY,
-                });
             Ok(Box::new(SftpBackend {
                 sftp,
                 max_parallelism,
                 _jump: jump,
-                resume,
+                resume: upload_resume_scope(app_handle, profile),
             }))
         }
     }
+}
+
+/// Dónde y para quién guarda una sesión las fichas de sus subidas reanudables.
+fn upload_resume_scope(
+    app_handle: &AppHandle,
+    profile: &ConnectionProfile,
+) -> Option<transfer_resume_upload::Scope> {
+    app_handle
+        .try_state::<crate::DataDir>()
+        .map(|data| transfer_resume_upload::Scope {
+            dir: data.0.join(transfer_resume_upload::DIR_NAME),
+            profile_id: profile.id.clone(),
+            host: profile.host.clone(),
+            port: profile.port,
+            user: profile.username.clone(),
+            checkpoint_every: transfer_resume_upload::CHECKPOINT_EVERY,
+        })
 }
 
 /// Registro de etapas de la conexión del panel: `(etapa, estado, mensaje)`. En
@@ -1603,6 +1630,25 @@ enum FtpCopyError {
     },
 }
 
+/// Por qué no se pudo escribir un fichero en el servidor FTP.
+enum FtpStoreError {
+    /// El servidor rechazó el comando al abrir (no entiende `APPE`, no admite
+    /// `REST`, sin permiso para crear): no se ha enviado nada y la conexión
+    /// sigue sana.
+    Refused(String),
+    /// Falló a mitad, se canceló o se perdió la conexión.
+    Failed(String),
+}
+
+/// Por qué no se pudo bajar un fichero del servidor FTP.
+enum FtpRetrError {
+    /// El servidor rechazó continuar desde un desplazamiento (`REST`): el
+    /// temporal local está intacto y se puede bajar entero.
+    Refused(String),
+    /// Cualquier otro fallo.
+    Failed(String),
+}
+
 /// Una conexión FTP/FTPS del panel, con su estado de salud.
 ///
 /// Cuando una operación agota su plazo o el socket de control falla, la
@@ -1844,28 +1890,82 @@ impl FtpConnection {
         Ok(dt.and_utc().timestamp().max(0) as u64)
     }
 
+    /// Descarga `remote` en `local`. Con `start > 0` continúa una descarga a
+    /// medias: el temporal local se corta en `start` y se pide desde ahí con
+    /// `REST`. Si el servidor rechaza el `REST` (o el `RETR` que lo sigue) se
+    /// devuelve [`FtpRetrError::Refused`] sin haber tocado el fichero local, y
+    /// quien llama decide si bajarlo entero.
     fn download_to(
         &mut self,
         remote: &str,
         local: &Path,
+        start: u64,
         total: u64,
         ctx: TransferCtx<'_>,
-    ) -> Result<(), String> {
-        self.check()?;
+    ) -> Result<(), FtpRetrError> {
+        use std::io::{Seek, SeekFrom};
+        self.check().map_err(FtpRetrError::Failed)?;
+        let failed = |e: std::io::Error| FtpRetrError::Failed(e.to_string());
         if let Some(parent) = local.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(parent).map_err(failed)?;
         }
-        let mut local_file = std::fs::File::create(local).map_err(|e| e.to_string())?;
-        self.run_data(|s, plazo| {
+        let offset = usize::try_from(start)
+            .map_err(|_| FtpRetrError::Refused("desplazamiento fuera de rango".to_string()))?;
+        // Al reanudar, el temporal se abre sin truncar y solo se corta en
+        // `start` cuando el servidor ha aceptado el `REST`: un rechazo no debe
+        // haber estropeado el trozo que se quería continuar.
+        let mut local_file = if start > 0 {
+            std::fs::OpenOptions::new().write(true).open(local)
+        } else {
+            std::fs::File::create(local)
+        }
+        .map_err(failed)?;
+        let mut refused = None;
+        let result = self.run_data(|s, plazo| {
             on_stream!(s, |ftp| {
-                let mut remote_file = ftp
-                    .retr_as_stream(remote)
-                    .map_err(|e| FtpFailure::from_ftp(e, plazo))?;
-                let copied =
-                    transfer_copy_blocking(&mut remote_file, &mut local_file, total, ctx, false);
+                if start > 0 {
+                    let _ = ftp.resume_transfer(offset);
+                }
+                let mut remote_file = match ftp.retr_as_stream(remote) {
+                    Ok(stream) => stream,
+                    Err(suppaftp::FtpError::UnexpectedResponse(r)) if start > 0 => {
+                        refused = Some(suppaftp::FtpError::UnexpectedResponse(r).to_string());
+                        return Ok(());
+                    }
+                    Err(e) => return Err(FtpFailure::from_ftp(e, plazo)),
+                };
+                // Se corta cualquier cola por detrás del punto de reanudación:
+                // el fichero no puede crecer por dos sitios.
+                let placed = if start > 0 {
+                    local_file
+                        .set_len(start)
+                        .and_then(|()| local_file.seek(SeekFrom::Start(start)).map(|_| ()))
+                } else {
+                    Ok(())
+                };
+                let copied = placed
+                    .map_err(|error| FtpCopyError::Io {
+                        error,
+                        canceled: false,
+                    })
+                    .and_then(|()| {
+                        transfer_copy_blocking(
+                            &mut remote_file,
+                            &mut local_file,
+                            start,
+                            total,
+                            ctx,
+                            false,
+                        )
+                    });
                 finish_ftp_transfer(ftp, remote_file, copied, plazo)
             })
-        })
+        });
+        match (result, refused) {
+            (Ok(()), Some(reason)) => Err(FtpRetrError::Refused(reason)),
+            (Ok(()), None) => Ok(()),
+            (Err(e), _) => Err(FtpRetrError::Failed(e)),
+        }
     }
 
     fn upload_from(
@@ -1887,15 +1987,95 @@ impl FtpConnection {
             );
             return Err("transferencia cancelada".to_string());
         }
-        let mut local_file = std::fs::File::open(local).map_err(|e| e.to_string())?;
+        self.store_from(local, remote, 0, total, ctx, StreamWrite::Store)
+            .map_err(|(FtpStoreError::Refused(e) | FtpStoreError::Failed(e))| e)
+    }
+
+    /// Escribe el fichero local, desde `start`, en `remote` con el comando que
+    /// diga `how` (ver [`transfer_resume_upload::stream_attempts`]). Un rechazo
+    /// del servidor al abrir (`APPE` o `REST` que no entiende, sin permiso para
+    /// crear) es [`FtpStoreError::Refused`]: no se ha enviado nada y la
+    /// conexión sigue sana para intentarlo de otra forma.
+    fn store_from(
+        &mut self,
+        local: &Path,
+        remote: &str,
+        start: u64,
+        total: u64,
+        ctx: TransferCtx<'_>,
+        how: StreamWrite,
+    ) -> Result<(), FtpStoreError> {
+        use std::io::{Seek, SeekFrom};
+        self.check().map_err(FtpStoreError::Failed)?;
+        let start = if how == StreamWrite::Store { 0 } else { start };
+        let offset = usize::try_from(start)
+            .map_err(|_| FtpStoreError::Refused("desplazamiento fuera de rango".to_string()))?;
+        let mut local_file = std::fs::File::open(local)
+            .and_then(|mut f| f.seek(SeekFrom::Start(start)).map(|_| f))
+            .map_err(|e| FtpStoreError::Failed(e.to_string()))?;
+        let mut refused = None;
+        let result = self.run_data(|s, plazo| {
+            on_stream!(s, |ftp| {
+                let opened = match how {
+                    StreamWrite::Append => ftp.append_with_stream(remote),
+                    StreamWrite::RestStore => {
+                        let _ = ftp.resume_transfer(offset);
+                        ftp.put_with_stream(remote)
+                    }
+                    StreamWrite::Store => ftp.put_with_stream(remote),
+                };
+                let mut remote_file = match opened {
+                    Ok(stream) => stream,
+                    Err(e @ suppaftp::FtpError::UnexpectedResponse(_)) => {
+                        refused = Some(e.to_string());
+                        return Ok(());
+                    }
+                    Err(e) => return Err(FtpFailure::from_ftp(e, plazo)),
+                };
+                let copied = transfer_copy_blocking(
+                    &mut local_file,
+                    &mut remote_file,
+                    start,
+                    total,
+                    ctx,
+                    true,
+                );
+                finish_ftp_transfer(ftp, remote_file, copied, plazo)
+            })
+        });
+        match (result, refused) {
+            (Ok(()), Some(reason)) => Err(FtpStoreError::Refused(reason)),
+            (Ok(()), None) => Ok(()),
+            (Err(e), _) => Err(FtpStoreError::Failed(e)),
+        }
+    }
+
+    /// Lee `len` bytes de `remote` desde `offset` (`REST` + `RETR`) para
+    /// compararlos. El tramo tiene que llegar hasta el final del fichero
+    /// ([`transfer_resume_upload::probe_window_stream`]): la descarga termina
+    /// sola. Si el servidor manda más de lo pedido (no respetó el `REST`, el
+    /// fichero creció) se corta y se da por no coincidente.
+    fn read_range(&mut self, remote: &str, offset: u64, len: u64) -> Result<Vec<u8>, String> {
+        let rest = usize::try_from(offset).map_err(|_| "desplazamiento fuera de rango".to_string())?;
         self.run_data(|s, plazo| {
             on_stream!(s, |ftp| {
-                let mut remote_file = ftp
-                    .put_with_stream(remote)
+                if rest > 0 {
+                    let _ = ftp.resume_transfer(rest);
+                }
+                let mut stream = ftp
+                    .retr_as_stream(remote)
                     .map_err(|e| FtpFailure::from_ftp(e, plazo))?;
-                let copied =
-                    transfer_copy_blocking(&mut local_file, &mut remote_file, total, ctx, true);
-                finish_ftp_transfer(ftp, remote_file, copied, plazo)
+                let mut out = Vec::new();
+                let copied = (&mut stream)
+                    .take(len.saturating_add(1))
+                    .read_to_end(&mut out)
+                    .map(|_| ())
+                    .map_err(|e| ftp_copy_error(e, false));
+                finish_ftp_transfer(ftp, stream, copied, plazo)?;
+                if out.len() as u64 > len {
+                    return Err(FtpFailure::plain("el servidor mandó más de lo pedido"));
+                }
+                Ok(out)
             })
         })
     }
@@ -2110,38 +2290,7 @@ impl FileTransfer for FtpBackend {
         local: &Path,
         ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
-        let entry = ftp_stat(&mut self.ftp, remote)?;
-        check_file_source(entry.is_dir, remote)?;
-        let total = entry.size;
-        // Mismo contrato que SFTP: el fichero se materializa en un `.part` y solo
-        // ocupa su nombre definitivo si la transferencia y la verificación van
-        // bien (ver `part_path`).
-        let part = part_path(local);
-        let result = self
-            .ftp
-            .download_to(remote, &part, total, ctx)
-            .and_then(|()| {
-                if !ctx.verify_size {
-                    return Ok(());
-                }
-                let written = std::fs::metadata(&part)
-                    .map_err(|e| format!("verificación local: {e}"))?
-                    .len();
-                if written != total {
-                    return Err(format!(
-                        "verificación fallida: tamaño local {written} B, esperado {total} B"
-                    ));
-                }
-                Ok(())
-            });
-        match result {
-            Ok(()) => std::fs::rename(&part, local)
-                .map_err(|e| format!("no se pudo publicar la descarga: {e}")),
-            Err(e) => {
-                let _ = std::fs::remove_file(&part);
-                Err(e)
-            }
-        }
+        ftp_download(&mut self.ftp, remote, local, ctx, transfer_resume::enabled()).await
     }
 
     async fn upload(
@@ -2150,27 +2299,145 @@ impl FileTransfer for FtpBackend {
         remote: &str,
         ctx: TransferCtx<'_>,
     ) -> Result<(), String> {
-        let meta = std::fs::metadata(local).map_err(|e| e.to_string())?;
-        check_file_source(meta.is_dir(), &local.display().to_string())?;
-        let total = meta.len();
-        self.ftp.upload_from(local, remote, total, ctx)?;
-        if ctx.verify_size {
-            let written = self
-                .ftp
-                .size(remote)
-                .map_err(|e| format!("verificación remota: {e}"))?;
-            if written != total {
-                return Err(format!(
-                    "verificación fallida: tamaño remoto {written} B, esperado {total} B"
-                ));
-            }
-        }
-        Ok(())
+        let resume = self.resume.as_ref().map(|scope| UploadResume {
+            scope,
+            enabled: transfer_resume::enabled(),
+        });
+        ftp_upload(&mut self.ftp, local, remote, ctx, resume).await
     }
 
     async fn close(&mut self) {
         self.ftp.quit();
     }
+}
+
+/// Descarga FTP/FTPS de un fichero. `resume` = la preferencia «Reanudar
+/// transferencias interrumpidas» (se pasa en vez de leerla aquí para que los
+/// tests no dependan del estado global).
+async fn ftp_download(
+    ftp: &mut FtpConnection,
+    remote: &str,
+    local: &Path,
+    ctx: TransferCtx<'_>,
+    resume: bool,
+) -> Result<(), String> {
+    let entry = ftp_stat(ftp, remote)?;
+    check_file_source(entry.is_dir, remote)?;
+    let total = entry.size;
+    // Mismo contrato que SFTP: el fichero se materializa en un `.part` y solo
+    // ocupa su nombre definitivo si la transferencia y la verificación van
+    // bien (ver `part_path`). Con la reanudación activada, un `.part` de este
+    // mismo fichero remoto, sin cambios, se continúa con `REST`.
+    let part = part_path(local);
+    let plan = if resume {
+        transfer_resume::plan_on_disk(&part, remote, total, entry.modified).await
+    } else {
+        transfer_resume::ResumePlan::Fresh
+    };
+    if resume {
+        // La ficha va antes de bajar nada: si la app muere a mitad, el
+        // intento siguiente sabrá de qué era este temporal.
+        transfer_resume::write_meta(
+            &part,
+            &transfer_resume::PartMeta {
+                remote: remote.to_string(),
+                size: total,
+                mtime: entry.modified,
+            },
+        )
+        .await;
+    }
+    let fetched = match plan {
+        // Ya está entero en el temporal: no se vuelve a pedir ni un byte.
+        transfer_resume::ResumePlan::Complete => {
+            let event = event_name(EventKind::SftpProgress, ctx.transfer_id);
+            let _ = ctx.app.emit(
+                &event,
+                serde_json::json!({ "transferred": total, "total": total, "done": true }),
+            );
+            Ok(())
+        }
+        transfer_resume::ResumePlan::Continue(start) => {
+            match ftp.download_to(remote, &part, start, total, ctx) {
+                // El servidor no sabe continuar (`REST`): se baja entero.
+                Err(FtpRetrError::Refused(_)) => {
+                    ftp.download_to(remote, &part, 0, total, ctx)
+                }
+                other => other,
+            }
+        }
+        transfer_resume::ResumePlan::Fresh => ftp.download_to(remote, &part, 0, total, ctx),
+    };
+    let result = fetched
+        .map_err(|(FtpRetrError::Refused(e) | FtpRetrError::Failed(e))| e)
+        .and_then(|()| {
+            if !ctx.verify_size {
+                return Ok(());
+            }
+            let written = std::fs::metadata(&part)
+                .map_err(|e| format!("verificación local: {e}"))?
+                .len();
+            if written != total {
+                return Err(format!(
+                    "verificación fallida: tamaño local {written} B, esperado {total} B"
+                ));
+            }
+            Ok(())
+        });
+    match result {
+        Ok(()) => {
+            transfer_resume::remove_meta(&part).await;
+            std::fs::rename(&part, local)
+                .map_err(|e| format!("no se pudo publicar la descarga: {e}"))
+        }
+        Err(e) => {
+            if !resume {
+                let _ = std::fs::remove_file(&part);
+                transfer_resume::remove_meta(&part).await;
+            }
+            // Con la reanudación activada el temporal y su ficha se quedan
+            // a propósito: son lo que permite continuar después.
+            Err(e)
+        }
+    }
+}
+
+/// Subida FTP/FTPS de un fichero: por el temporal reanudable si `resume` lo
+/// pide y la subida cumple sus condiciones, directa si no.
+async fn ftp_upload(
+    ftp: &mut FtpConnection,
+    local: &Path,
+    remote: &str,
+    ctx: TransferCtx<'_>,
+    resume: Option<UploadResume<'_>>,
+) -> Result<(), String> {
+    let meta = std::fs::metadata(local).map_err(|e| e.to_string())?;
+    check_file_source(meta.is_dir(), &local.display().to_string())?;
+    let total = meta.len();
+    // Como en SFTP, un fichero pequeño va directo: el temporal solo le
+    // añadiría viajes de ida y vuelta.
+    if let Some(resume) = resume.filter(|_| total > SFTP_CHUNK) {
+        let source = UploadSource {
+            path: local,
+            size: total,
+            mtime_ns: transfer_resume_upload::mtime_ns(&meta),
+        };
+        if let Some(result) = ftp_resumable_upload(ftp, &source, remote, ctx, resume).await {
+            return result;
+        }
+    }
+    ftp.upload_from(local, remote, total, ctx)?;
+    if ctx.verify_size {
+        let written = ftp
+            .size(remote)
+            .map_err(|e| format!("verificación remota: {e}"))?;
+        if written != total {
+            return Err(format!(
+                "verificación fallida: tamaño remoto {written} B, esperado {total} B"
+            ));
+        }
+    }
+    Ok(())
 }
 
 // ─── Operaciones ────────────────────────────────────────────────────────────
@@ -2302,6 +2569,292 @@ fn ftp_file_entry(base: &str, file: &FtpListFile) -> FileEntry {
             .map(|d| d.as_secs()),
         permissions: None,
     }
+}
+
+// ─── Subidas FTP/FTPS reanudables ────────────────────────────────────────────
+
+/// ¿Existe `path` en el servidor FTP? `Ok(None)` si no (o el servidor no sabe
+/// decirlo); `Err` solo si la conexión se ha perdido por el camino.
+fn ftp_lookup(ftp: &mut FtpConnection, path: &str) -> Result<Option<FileEntry>, String> {
+    match ftp_stat(ftp, path) {
+        Ok(entry) => Ok(Some(entry)),
+        Err(_) => ftp.check().map(|()| None),
+    }
+}
+
+/// Tamaño de un fichero del servidor FTP: `SIZE` (exacto en binario) y, si el
+/// servidor no lo tiene, lo que diga su listado. `Ok(None)` si no existe o no es
+/// un fichero.
+fn ftp_remote_size(ftp: &mut FtpConnection, path: &str) -> Result<Option<u64>, String> {
+    if let Ok(size) = ftp.size(path) {
+        return Ok(Some(size));
+    }
+    Ok(ftp_lookup(ftp, path)?
+        .filter(|entry| !entry.is_dir && !entry.is_symlink)
+        .map(|entry| entry.size))
+}
+
+/// Subida FTP/FTPS por un temporal reanudable (ver
+/// [`crate::transfer_resume_upload`], apartado de un solo flujo). Mismas reglas
+/// que [`resumable_upload`]: temporal hermano con el token de una ficha local,
+/// nombre definitivo solo al terminar y verificar, un destino que aparece a
+/// mitad no se pisa, y lo que no sale de una ficha no se toca.
+///
+/// `None` = va por el camino de siempre, directa al destino: con la preferencia
+/// apagada (tras retirar el temporal que quedara), si otra subida al mismo
+/// destino está en marcha, si el destino es una carpeta o un enlace, si el
+/// servidor no deja crear el temporal ahí y —a diferencia de SFTP— si haría
+/// falta un temporal **nuevo** para sustituir un fichero que ya existe: FTP no
+/// tiene forma portable de darle al temporal los permisos y el dueño del
+/// destino, y escribir encima los conservaba. Un temporal empezado para un
+/// destino que no existía sí se termina y se publica aunque el destino haya
+/// aparecido después y el usuario haya elegido sustituirlo.
+async fn ftp_resumable_upload(
+    ftp: &mut FtpConnection,
+    source: &UploadSource<'_>,
+    remote: &str,
+    ctx: TransferCtx<'_>,
+    resume: UploadResume<'_>,
+) -> Option<Result<(), String>> {
+    use transfer_resume_upload::{self as tru, Candidate, UploadPlan};
+
+    let scope = resume.scope;
+    let meta_file = tru::meta_file(&scope.dir, &scope.profile_id, remote);
+    // Otra subida a este mismo destino es dueña de su ficha y de su temporal.
+    let _active = tru::claim(&meta_file)?;
+    let local_id = tokio::fs::canonicalize(source.path)
+        .await
+        .unwrap_or_else(|_| source.path.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    let identity = tru::Identity::new(scope, remote, local_id, source.size, source.mtime_ns);
+    let stored = tru::read_meta(&meta_file).await;
+    let candidate = tru::candidate_stream(stored.as_ref(), &identity);
+    // El temporal que es nuestro según la ficha, si lo hay: el único fichero
+    // del servidor que este camino puede borrar.
+    let ours = match &candidate {
+        Candidate::Fresh { stale } => stale.clone(),
+        Candidate::Probe { temp, .. } => Some(temp.clone()),
+    };
+
+    if !resume.enabled {
+        if stored.is_some() {
+            ftp_discard_upload_temp(ftp, ours.as_deref(), &meta_file).await;
+        }
+        return None;
+    }
+    let dest = match ftp_lookup(ftp, remote) {
+        Ok(dest) => dest,
+        Err(e) => return Some(Err(e)),
+    };
+    if dest.as_ref().is_some_and(|d| d.is_dir || d.is_symlink) {
+        if stored.is_some() {
+            ftp_discard_upload_temp(ftp, ours.as_deref(), &meta_file).await;
+        }
+        return None;
+    }
+    tru::sweep_if_due(&scope.dir).await;
+
+    // Cancelada mientras esperaba turno: no se crea ni se toca nada.
+    if ctx.cancel_requested() {
+        let _ = ctx.app.emit(
+            &event_name(EventKind::SftpProgress, ctx.transfer_id),
+            serde_json::json!({
+                "transferred": 0u64, "total": source.size, "done": true, "canceled": true,
+            }),
+        );
+        return Some(Err("transferencia cancelada".to_string()));
+    }
+
+    let plan = match &candidate {
+        Candidate::Probe { temp, confirmed } => {
+            ftp_probe_upload_temp(ftp, temp, source, *confirmed)
+        }
+        Candidate::Fresh { .. } => UploadPlan::Fresh,
+    };
+    if let Err(e) = ftp.check() {
+        return Some(Err(e));
+    }
+    let (mut meta, start) = match (plan, stored) {
+        (UploadPlan::Continue(offset), Some(meta)) => (meta, offset),
+        (UploadPlan::Complete, Some(meta)) => (meta, source.size),
+        _ => {
+            ftp_discard_upload_temp(ftp, ours.as_deref(), &meta_file).await;
+            if dest.is_some() {
+                return None;
+            }
+            let meta = tru::UploadMeta::new(&identity, tru::new_token());
+            // FTP no crea en exclusiva: si ese nombre ya existe no es nuestro, y
+            // no se toca.
+            match ftp_lookup(ftp, &meta.temp_path()) {
+                Ok(None) => {}
+                Ok(Some(_)) => return None,
+                Err(e) => return Some(Err(e)),
+            }
+            // La ficha va antes que el temporal: si algo corta a mitad, el
+            // intento siguiente sabrá de quién es lo que quede en el servidor.
+            if tru::write_meta(&meta_file, &meta).await.is_err() {
+                return None;
+            }
+            (meta, 0)
+        }
+    };
+    let temp = meta.temp_path();
+
+    if start < source.size {
+        let mut written = false;
+        for &how in tru::stream_attempts(start) {
+            match ftp.store_from(source.path, &temp, start, source.size, ctx, how) {
+                Ok(()) => {
+                    written = true;
+                    break;
+                }
+                // El servidor no admite esta forma de continuar: la siguiente.
+                Err(FtpStoreError::Refused(_)) => {}
+                // Un error deja el temporal y la ficha a propósito: son lo que
+                // permite continuar después.
+                Err(FtpStoreError::Failed(e)) => return Some(Err(e)),
+            }
+        }
+        if !written {
+            // Ni un `STOR` desde cero sobre el temporal: el servidor no deja
+            // crearlo en esa carpeta. La subida directa dirá por qué.
+            ftp_discard_upload_temp(ftp, Some(&temp), &meta_file).await;
+            return None;
+        }
+    } else {
+        // Ya está entero en el servidor: solo falta publicarlo.
+        let event = event_name(EventKind::SftpProgress, ctx.transfer_id);
+        let total = source.size;
+        let _ = ctx.app.emit(
+            &event,
+            serde_json::json!({ "transferred": total, "total": total, "done": false }),
+        );
+        let _ = ctx.app.emit(
+            &event,
+            serde_json::json!({ "transferred": total, "total": total, "done": true }),
+        );
+    }
+
+    // Nunca se publica un temporal que no mide lo que el fichero local.
+    match ftp_remote_size(ftp, &temp) {
+        Ok(Some(written)) if written == source.size => {}
+        Ok(Some(written)) => {
+            ftp_discard_upload_temp(ftp, Some(&temp), &meta_file).await;
+            return Some(Err(format!(
+                "verificación fallida: tamaño remoto {written} B, esperado {} B",
+                source.size
+            )));
+        }
+        Ok(None) => {
+            return Some(Err(format!(
+                "verificación remota: {temp} no aparece en el servidor"
+            )))
+        }
+        Err(e) => return Some(Err(e)),
+    }
+    // Entero y verificado: si publicar falla, el reintento solo tendrá que
+    // publicarlo.
+    meta.confirmed = source.size;
+    let _ = tru::write_meta(&meta_file, &meta).await;
+
+    match ftp_publish_upload(ftp, &temp, remote, dest.is_some(), &meta.token) {
+        Ok(()) => {
+            tru::remove_meta(&meta_file).await;
+            Some(Ok(()))
+        }
+        // El panel solo pregunta por el conflicto de un fichero suelto: dentro
+        // de una carpeta se cuenta con palabras.
+        Err(e) if ctx.parent_id.is_some() && e.starts_with(TRANSFER_EXISTS_MARKER) => Some(Err(
+            format!("{remote} apareció en el servidor mientras se subía y no se ha sustituido"),
+        )),
+        Err(e) => Some(Err(e)),
+    }
+}
+
+/// Comprueba el temporal de una ficha antes de continuar (ver
+/// [`transfer_resume_upload::settle_stream`]).
+fn ftp_probe_upload_temp(
+    ftp: &mut FtpConnection,
+    temp: &str,
+    source: &UploadSource<'_>,
+    confirmed: u64,
+) -> transfer_resume_upload::UploadPlan {
+    let temp_size = ftp_remote_size(ftp, temp).ok().flatten();
+    let tail_matches = match temp_size {
+        Some(size) if size >= confirmed && size <= source.size => {
+            ftp_tail_matches(ftp, temp, source.path, size)
+        }
+        _ => false,
+    };
+    transfer_resume_upload::settle_stream(confirmed, source.size, temp_size, tail_matches)
+}
+
+/// ¿Coincide el final del temporal con el fichero local en el mismo sitio?
+/// Cualquier error cuenta como que no.
+fn ftp_tail_matches(ftp: &mut FtpConnection, temp: &str, local: &Path, temp_size: u64) -> bool {
+    use std::io::{Seek, SeekFrom};
+    let Some((offset, len)) = transfer_resume_upload::probe_window_stream(temp_size) else {
+        return false;
+    };
+    let Ok(len_usize) = usize::try_from(len) else {
+        return false;
+    };
+    let Ok(theirs) = ftp.read_range(temp, offset, len) else {
+        return false;
+    };
+    let mut ours = vec![0u8; len_usize];
+    let read = std::fs::File::open(local).and_then(|mut f| {
+        f.seek(SeekFrom::Start(offset))?;
+        f.read_exact(&mut ours)
+    });
+    read.is_ok() && theirs == ours
+}
+
+/// Retira el temporal **nuestro** de una ficha, si lo hay, y la ficha.
+async fn ftp_discard_upload_temp(ftp: &mut FtpConnection, temp: Option<&str>, meta_file: &Path) {
+    if let Some(temp) = temp {
+        let _ = ftp.remove(temp, false);
+    }
+    transfer_resume_upload::remove_meta(meta_file).await;
+}
+
+/// Publica el temporal con el nombre definitivo, con las reglas de
+/// [`publish_upload`]: `replace` = el destino existía al empezar y ya se decidió
+/// sustituirlo; uno que **aparece** mientras se subía no se pisa. El `RNTO` de
+/// FTP sustituye un fichero existente en unos servidores y falla en otros
+/// (Windows/IIS): en esos, el destino se aparta un momento y vuelve a su sitio
+/// si el temporal no llega a ocuparlo.
+fn ftp_publish_upload(
+    ftp: &mut FtpConnection,
+    temp: &str,
+    dest: &str,
+    replace: bool,
+    token: &str,
+) -> Result<(), String> {
+    // Hay servidores cuyo `RNTO` sí pisa: sin permiso, se mira antes.
+    if !replace && ftp_lookup(ftp, dest)?.is_some() {
+        return Err(format!("{TRANSFER_EXISTS_MARKER} {dest}"));
+    }
+    let first = match ftp.rename(temp, dest) {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    if ftp_lookup(ftp, dest)?.is_none() {
+        return Err(format!("no se pudo publicar la subida: {first}"));
+    }
+    if !replace {
+        return Err(format!("{TRANSFER_EXISTS_MARKER} {dest}"));
+    }
+    let backup = transfer_resume_upload::backup_path(dest, token);
+    ftp.rename(dest, &backup)
+        .map_err(|e| format!("no se pudo apartar el destino anterior: {e}"))?;
+    if let Err(e) = ftp.rename(temp, dest) {
+        let _ = ftp.rename(&backup, dest);
+        return Err(format!("no se pudo publicar la subida: {e}"));
+    }
+    let _ = ftp.remove(&backup, false);
+    Ok(())
 }
 
 // Tamaño de cada petición SFTP (read/write). El máximo del cliente russh-sftp
@@ -3468,9 +4021,13 @@ fn effective_parallelism(total: u64, cap: usize) -> usize {
     chunks.min(cap).max(1)
 }
 
+/// Copia serie de una transferencia FTP/FTPS. `start` es lo que ya estaba hecho
+/// antes de empezar (una reanudación): los dos extremos llegan colocados ahí y
+/// el progreso lo cuenta como hecho, igual que en SFTP.
 fn transfer_copy_blocking<R, W>(
     src: &mut R,
     dst: &mut W,
+    start: u64,
     total: u64,
     ctx: TransferCtx<'_>,
     // `upload`: `true` si los bytes salen. Decide contra qué techo se cuentan.
@@ -3484,14 +4041,14 @@ where
         transfer_id, app, ..
     } = ctx;
     let mut buf = vec![0u8; 256 * 1024];
-    let mut transferred: u64 = 0;
-    let mut last_emit: u64 = 0;
+    let mut transferred: u64 = start;
+    let mut last_emit: u64 = start;
     let event = event_name(EventKind::SftpProgress, transfer_id);
 
     let _ = app.emit(
         &event,
         serde_json::json!({
-            "transferred": 0u64, "total": total, "done": false,
+            "transferred": start, "total": total, "done": false,
         }),
     );
 
@@ -5469,6 +6026,624 @@ mod tests {
         assert!(conn.broken_reason().is_none());
         assert_eq!(conn.pwd().expect("la conexión sigue viva"), "/");
         conn.quit();
+    }
+
+    // ─── Subidas y descargas FTP/FTPS reanudables ───────────────────────────
+
+    /// Corre un futuro del camino de transferencia FTP en un runtime propio.
+    /// Los tests FTP son `#[test]` normales: el fixture tiene su propio runtime
+    /// y soltarlo dentro de otro (un `#[tokio::test]`) no está permitido.
+    #[cfg(target_os = "linux")]
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(f)
+    }
+
+    /// Huella del contenido: el destino tiene que ser **idéntico** al local.
+    #[cfg(target_os = "linux")]
+    fn sha256(data: &[u8]) -> Vec<u8> {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(data).to_vec()
+    }
+
+    /// Escenario de una subida FTP: el fichero local y la carpeta de fichas bajo
+    /// una raíz propia; el «remoto» es la raíz del servidor del fixture.
+    #[cfg(target_os = "linux")]
+    struct FtpScene {
+        root: PathBuf,
+        server_root: PathBuf,
+        local: PathBuf,
+        remote: String,
+        data: Vec<u8>,
+        scope: transfer_resume_upload::Scope,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl FtpScene {
+        /// 8 MiB: 32 trozos de copia, de sobra para cortar a media altura.
+        const SIZE: usize = 8 * 1024 * 1024;
+
+        fn new(server: &crate::ftp_fixture::FakeFtpServer) -> Self {
+            let root = std::env::temp_dir().join(format!("rustty-ftpr-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&root).expect("carpeta local");
+            let data = pseudo_random_bytes(Self::SIZE, 0x0f7b_5eed_1234_abcd);
+            let local = root.join("origen.bin");
+            std::fs::write(&local, &data).expect("fichero local");
+            let scope = transfer_resume_upload::Scope {
+                dir: root.join("datos").join(transfer_resume_upload::DIR_NAME),
+                profile_id: "perfil-ftpr".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: server.port,
+                user: String::new(),
+                checkpoint_every: transfer_resume_upload::CHECKPOINT_EVERY,
+            };
+            Self {
+                root,
+                server_root: server.root.clone(),
+                local,
+                remote: "/destino.bin".to_string(),
+                data,
+                scope,
+            }
+        }
+
+        fn total(&self) -> u64 {
+            self.data.len() as u64
+        }
+
+        fn ficha(&self) -> Option<transfer_resume_upload::UploadMeta> {
+            let file = transfer_resume_upload::meta_file(
+                &self.scope.dir,
+                &self.scope.profile_id,
+                &self.remote,
+            );
+            serde_json::from_slice(&std::fs::read(file).ok()?).ok()
+        }
+
+        /// Temporales y apartados que quedan en el servidor.
+        fn leftovers(&self) -> Vec<String> {
+            let mut names: Vec<String> = std::fs::read_dir(&self.server_root)
+                .expect("listar el servidor")
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".rustty-part") || n.ends_with(".rustty-old"))
+                .collect();
+            names.sort();
+            names
+        }
+
+        fn destination_path(&self) -> PathBuf {
+            self.server_root.join("destino.bin")
+        }
+
+        fn destination(&self) -> Option<Vec<u8>> {
+            std::fs::read(self.destination_path()).ok()
+        }
+
+        fn assert_destination_identical(&self) {
+            let got = self.destination().expect("el destino existe");
+            assert_eq!(got.len(), self.data.len(), "tamaño del destino");
+            assert!(sha256(&got) == sha256(&self.data), "el destino no es idéntico al local");
+        }
+
+        /// Lo que mide el temporal de la ficha en el servidor, si existe.
+        fn temp_len(&self) -> Option<u64> {
+            let ficha = self.ficha()?;
+            let name = ficha.temp_path().rsplit_once('/')?.1.to_string();
+            std::fs::metadata(self.server_root.join(name)).ok().map(|m| m.len())
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for FtpScene {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// Conexión FTP (o FTPS) del panel contra `port` con plazos cortos.
+    #[cfg(target_os = "linux")]
+    fn ftp_conn(port: u16, ftps: bool, cert_store: PathBuf) -> FtpConnection {
+        let mut profile = ftp_profile(port);
+        if ftps {
+            crate::ftps_certs::set_strict_first_connect(false);
+            profile.connection_type = "ftps".to_string();
+        }
+        FtpConnection::connect_with_timeouts(
+            &profile,
+            None,
+            cert_store,
+            FtpTimeouts::uniform(Duration::from_secs(5)),
+        )
+        .expect("conectar con el servidor FTP")
+    }
+
+    /// Sube el fichero del escenario por `ftp_upload`, el camino de
+    /// producción. `hook` ve cada evento de progreso.
+    #[cfg(target_os = "linux")]
+    fn ftp_scene_upload(
+        conn: &mut FtpConnection,
+        scene: &FtpScene,
+        enabled: bool,
+        controls: &Arc<TransferControls>,
+        events: &Mutex<Vec<serde_json::Value>>,
+        hook: Option<&(dyn Fn(&serde_json::Value) + Sync)>,
+    ) -> Result<(), String> {
+        let app = match hook {
+            Some(hook) => ProgressSink::Watch(events, hook),
+            None => ProgressSink::Record(events),
+        };
+        let ctx = TransferCtx {
+            transfer_id: UPR_ID,
+            parent_id: None,
+            app,
+            controls,
+            verify_size: true,
+        };
+        let resume = UploadResume {
+            scope: &scene.scope,
+            enabled,
+        };
+        block_on(ftp_upload(conn, &scene.local, &scene.remote, ctx, Some(resume)))
+    }
+
+    /// `true` si el evento ya pasa de la mitad.
+    #[cfg(target_os = "linux")]
+    fn past_half(event: &serde_json::Value, total: u64) -> bool {
+        event["transferred"].as_u64().is_some_and(|n| n >= total / 2 && n < total)
+    }
+
+    /// Proxy FTP de pruebas delante del fixture: reenvía el canal de control
+    /// línea a línea (reescribiendo el `227` para que también los datos pasen
+    /// por él), puede **rechazar** comandos con un `502` como un servidor que
+    /// no los implementa, y puede **cortar** de golpe todas las conexiones, como
+    /// una caída de la red. Solo FTP plano: con TLS no se ven las líneas.
+    #[cfg(target_os = "linux")]
+    struct FtpProxy {
+        port: u16,
+        state: Arc<FtpProxyState>,
+    }
+
+    #[cfg(target_os = "linux")]
+    struct FtpProxyState {
+        upstream: u16,
+        refuse: Vec<&'static str>,
+        sockets: Mutex<Vec<std::net::TcpStream>>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl FtpProxyState {
+        fn keep(&self, socket: &std::net::TcpStream) {
+            if let Ok(clone) = socket.try_clone() {
+                self.sockets.lock_recover().push(clone);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl FtpProxy {
+        fn start(upstream: u16, refuse: &[&'static str]) -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("escuchar");
+            let port = listener.local_addr().expect("puerto").port();
+            let state = Arc::new(FtpProxyState {
+                upstream,
+                refuse: refuse.to_vec(),
+                sockets: Mutex::new(Vec::new()),
+            });
+            let st = Arc::clone(&state);
+            thread::spawn(move || {
+                for client in listener.incoming().flatten() {
+                    let st = Arc::clone(&st);
+                    thread::spawn(move || proxy_control(&st, client));
+                }
+            });
+            Self { port, state }
+        }
+
+        /// Corta todas las conexiones vivas (control y datos) por los dos lados.
+        fn cut(&self) {
+            for socket in self.state.sockets.lock_recover().drain(..) {
+                let _ = socket.shutdown(std::net::Shutdown::Both);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn proxy_control(st: &Arc<FtpProxyState>, client: std::net::TcpStream) {
+        use std::io::{BufRead, BufReader};
+        let Ok(upstream) = std::net::TcpStream::connect(("127.0.0.1", st.upstream)) else {
+            return;
+        };
+        st.keep(&client);
+        st.keep(&upstream);
+        let (Ok(mut to_client), Ok(from_upstream), Ok(mut replies)) =
+            (client.try_clone(), upstream.try_clone(), client.try_clone())
+        else {
+            return;
+        };
+        let st_down = Arc::clone(st);
+        thread::spawn(move || {
+            let mut lines = BufReader::new(from_upstream);
+            let mut line = String::new();
+            while lines.read_line(&mut line).is_ok_and(|n| n > 0) {
+                let out = if line.starts_with("227") {
+                    proxy_pasv(&st_down, &line).unwrap_or_else(|| line.clone())
+                } else {
+                    line.clone()
+                };
+                line.clear();
+                if to_client.write_all(out.as_bytes()).is_err() {
+                    break;
+                }
+            }
+            let _ = to_client.shutdown(std::net::Shutdown::Both);
+        });
+        let mut to_upstream = upstream;
+        let mut lines = BufReader::new(client);
+        let mut line = String::new();
+        while lines.read_line(&mut line).is_ok_and(|n| n > 0) {
+            let verb = line
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_ascii_uppercase();
+            let sent = if st.refuse.contains(&verb.as_str()) {
+                replies.write_all(b"502 Command not implemented\r\n")
+            } else {
+                to_upstream.write_all(line.as_bytes())
+            };
+            line.clear();
+            if sent.is_err() {
+                break;
+            }
+        }
+        let _ = to_upstream.shutdown(std::net::Shutdown::Both);
+    }
+
+    /// Pone un oyente propio en lugar del puerto de datos que anuncia el
+    /// servidor y reenvía por él la conexión de datos en los dos sentidos.
+    #[cfg(target_os = "linux")]
+    fn proxy_pasv(st: &Arc<FtpProxyState>, line: &str) -> Option<String> {
+        let inner = line.split_once('(')?.1.split_once(')')?.0;
+        let nums: Vec<u16> = inner.split(',').filter_map(|n| n.trim().parse().ok()).collect();
+        let [.., p1, p2] = nums[..] else { return None };
+        let upstream_port = p1 * 256 + p2;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+        let port = listener.local_addr().ok()?.port();
+        let st = Arc::clone(st);
+        thread::spawn(move || {
+            let Ok((client, _)) = listener.accept() else { return };
+            let Ok(upstream) = std::net::TcpStream::connect(("127.0.0.1", upstream_port)) else {
+                return;
+            };
+            st.keep(&client);
+            st.keep(&upstream);
+            let pipe = |mut from: std::net::TcpStream, mut to: std::net::TcpStream| {
+                thread::spawn(move || {
+                    let _ = std::io::copy(&mut from, &mut to);
+                    let _ = to.shutdown(std::net::Shutdown::Write);
+                })
+            };
+            if let (Ok(c2), Ok(u2)) = (client.try_clone(), upstream.try_clone()) {
+                pipe(client, upstream);
+                pipe(u2, c2);
+            }
+        });
+        Some(format!(
+            "227 Entering Passive Mode (127,0,0,1,{},{})\r\n",
+            port / 256,
+            port % 256
+        ))
+    }
+
+    /// Corta la red a media subida (proxy) y devuelve lo que llegó a escribir el
+    /// servidor en el temporal.
+    #[cfg(target_os = "linux")]
+    fn ftp_scene_upload_cut(server: &crate::ftp_fixture::FakeFtpServer, scene: &FtpScene) -> u64 {
+        let proxy = FtpProxy::start(server.port, &[]);
+        let mut conn = ftp_conn(proxy.port, false, scene.root.join("c.json"));
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        let total = scene.total();
+        let cut = std::sync::Once::new();
+        let hook = |e: &serde_json::Value| {
+            if past_half(e, total) {
+                cut.call_once(|| proxy.cut());
+            }
+        };
+        let err = ftp_scene_upload(&mut conn, scene, true, &controls, &events, Some(&hook))
+            .expect_err("la subida cortada tiene que fallar");
+        assert!(!err.contains("cancel"), "un corte no es una cancelación: {err}");
+        // El servidor termina de escribir lo que le llegó.
+        thread::sleep(Duration::from_millis(300));
+        scene.temp_len().expect("el temporal queda en el servidor")
+    }
+
+    /// **Integración**: una subida FTP cortada a mitad (caída de la red) se
+    /// reanuda con otra conexión desde lo que tiene el servidor (`SIZE` + final
+    /// comprobado + `APPE`), y el destino queda idéntico al local. Sin temporales
+    /// ni ficha al acabar, y el destino no aparece hasta el final.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor FTP efímero; se corre con --ignored"]
+    #[test]
+    fn ftp_una_subida_cortada_se_reanuda_y_llega_entera() {
+        let server = crate::ftp_fixture::start().expect("arrancar el servidor FTP");
+        let scene = FtpScene::new(&server);
+
+        let partial = ftp_scene_upload_cut(&server, &scene);
+        assert!(
+            partial > 0 && partial < scene.total(),
+            "el temporal debía quedarse a medias: {partial}"
+        );
+        assert_eq!(scene.leftovers().len(), 1, "{:?}", scene.leftovers());
+        assert!(scene.destination().is_none(), "el destino no aparece hasta el final");
+
+        let mut conn = ftp_conn(server.port, false, scene.root.join("c.json"));
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        ftp_scene_upload(&mut conn, &scene, true, &controls, &events, None)
+            .expect("la subida reanudada termina");
+        conn.quit();
+
+        assert_eq!(
+            started_at(&events),
+            partial,
+            "debía continuar desde lo que tenía el servidor, no desde cero"
+        );
+        scene.assert_destination_identical();
+        assert!(scene.ficha().is_none(), "la ficha se borra al publicar");
+        assert!(scene.leftovers().is_empty(), "sobran: {:?}", scene.leftovers());
+    }
+
+    /// **Integración**: lo mismo por **FTPS** (TLS explícito, también en los
+    /// canales de datos y en la lectura del final con `REST`), cortando con
+    /// «Cancelar» a media subida: el temporal se queda y la subida siguiente,
+    /// por otra conexión, continúa y llega entera.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor FTPS efímero; se corre con --ignored"]
+    #[test]
+    fn ftps_una_subida_cancelada_se_reanuda_y_llega_entera() {
+        let server = crate::ftp_fixture::start_ftps().expect("arrancar el servidor FTPS");
+        let scene = FtpScene::new(&server);
+        let store = scene.root.join("ftps_known_certs.json");
+
+        let mut conn = ftp_conn(server.port, true, store.clone());
+        assert!(matches!(conn.stream, FtpStreamKind::ExplicitTls(_)));
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        let total = scene.total();
+        let hook = |e: &serde_json::Value| {
+            if past_half(e, total) {
+                controls.cancel(UPR_ID.to_string());
+            }
+        };
+        let result = ftp_scene_upload(&mut conn, &scene, true, &controls, &events, Some(&hook));
+        assert_eq!(result, Err("transferencia cancelada".to_string()));
+        conn.quit();
+        let partial = scene.temp_len().expect("el temporal se queda al cancelar");
+        assert!(partial > 0 && partial < total, "{partial}");
+        assert!(scene.ficha().is_some(), "la ficha se queda al cancelar");
+        assert!(scene.destination().is_none());
+
+        let mut conn = ftp_conn(server.port, true, store);
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        ftp_scene_upload(&mut conn, &scene, true, &controls, &events, None)
+            .expect("la subida reanudada termina");
+        conn.quit();
+        assert_eq!(started_at(&events), partial);
+        scene.assert_destination_identical();
+        assert!(scene.ficha().is_none());
+        assert!(scene.leftovers().is_empty(), "sobran: {:?}", scene.leftovers());
+    }
+
+    /// **Integración**: si el final del temporal no coincide con el fichero
+    /// local (un byte cambiado justo antes de su final), no se pega nada detrás:
+    /// se empieza de cero, se retira ese temporal —que es nuestro— y un fichero
+    /// con pinta de temporal que no sale de ninguna ficha no se toca.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor FTP efímero; se corre con --ignored"]
+    #[test]
+    fn ftp_un_temporal_alterado_obliga_a_empezar_de_cero() {
+        use std::os::unix::fs::FileExt;
+        let server = crate::ftp_fixture::start().expect("arrancar el servidor FTP");
+        let scene = FtpScene::new(&server);
+        let ajeno = scene.server_root.join("destino.bin.0123456789abcdef.rustty-part");
+        std::fs::write(&ajeno, b"no es nuestro").unwrap();
+
+        let partial = ftp_scene_upload_cut(&server, &scene);
+        let ficha = scene.ficha().expect("la ficha queda tras el corte");
+        let temp = scene
+            .server_root
+            .join(ficha.temp_path().rsplit_once('/').unwrap().1);
+        let file = std::fs::OpenOptions::new().read(true).write(true).open(&temp).unwrap();
+        let mut byte = [0u8; 1];
+        file.read_exact_at(&mut byte, partial - 10).unwrap();
+        file.write_all_at(&[byte[0] ^ 0xff], partial - 10).unwrap();
+        drop(file);
+
+        let mut conn = ftp_conn(server.port, false, scene.root.join("c.json"));
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        ftp_scene_upload(&mut conn, &scene, true, &controls, &events, None)
+            .expect("la subida de cero termina");
+        conn.quit();
+
+        assert_eq!(started_at(&events), 0, "con el temporal alterado se empieza de cero");
+        scene.assert_destination_identical();
+        assert!(!temp.exists(), "el temporal alterado era nuestro y se retira");
+        assert_eq!(std::fs::read(&ajeno).unwrap(), b"no es nuestro", "lo ajeno no se toca");
+        assert_eq!(scene.leftovers(), vec![ajeno.file_name().unwrap().to_string_lossy().into_owned()]);
+        assert!(scene.ficha().is_none());
+    }
+
+    /// **Integración**: un destino que aparece mientras se sube no se pisa: la
+    /// subida acaba con el marcador de conflicto y el temporal entero se queda.
+    /// El reintento con permiso para sobrescribir —lo que hace el panel si el
+    /// usuario lo elige— solo publica: no vuelve a mandar nada.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor FTP efímero; se corre con --ignored"]
+    #[test]
+    fn ftp_un_destino_que_aparece_a_mitad_no_se_pisa() {
+        let server = crate::ftp_fixture::start().expect("arrancar el servidor FTP");
+        let scene = FtpScene::new(&server);
+        let mut conn = ftp_conn(server.port, false, scene.root.join("c.json"));
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        let total = scene.total();
+        let intruder = std::sync::Once::new();
+        let hook = |e: &serde_json::Value| {
+            if past_half(e, total) {
+                intruder.call_once(|| std::fs::write(scene.destination_path(), b"de otro").unwrap());
+            }
+        };
+        let err = ftp_scene_upload(&mut conn, &scene, true, &controls, &events, Some(&hook))
+            .expect_err("no debía pisar el destino que apareció");
+        assert!(err.starts_with(TRANSFER_EXISTS_MARKER), "{err}");
+        assert_eq!(scene.destination().as_deref(), Some(&b"de otro"[..]));
+        let ficha = scene.ficha().expect("la ficha se queda");
+        assert_eq!(ficha.confirmed, total, "el temporal quedó entero y verificado");
+        assert_eq!(scene.temp_len(), Some(total));
+
+        let events = Mutex::new(Vec::new());
+        ftp_scene_upload(&mut conn, &scene, true, &controls, &events, None)
+            .expect("el reintento publica");
+        conn.quit();
+        assert_eq!(started_at(&events), total, "no se vuelve a subir nada");
+        scene.assert_destination_identical();
+        assert!(scene.leftovers().is_empty(), "sobran: {:?}", scene.leftovers());
+        assert!(scene.ficha().is_none());
+    }
+
+    /// **Integración**: servidores que no saben continuar. Sin `APPE` se
+    /// continúa con `REST` + `STOR`; sin `REST` tampoco se puede comprobar el
+    /// final del temporal, así que se sube entero (retirando el temporal viejo,
+    /// que es nuestro). En los dos casos el destino llega idéntico.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor FTP efímero; se corre con --ignored"]
+    #[test]
+    fn ftp_un_servidor_sin_rest_o_sin_appe_acaba_subiendo_entero_o_por_otro_camino() {
+        for (refuse, resumes) in [(&["APPE"][..], true), (&["APPE", "REST"][..], false)] {
+            let server = crate::ftp_fixture::start().expect("arrancar el servidor FTP");
+            let scene = FtpScene::new(&server);
+            let partial = ftp_scene_upload_cut(&server, &scene);
+            assert!(partial > 0 && partial < scene.total(), "{partial}");
+            let old_temp = scene.leftovers();
+
+            let proxy = FtpProxy::start(server.port, refuse);
+            let mut conn = ftp_conn(proxy.port, false, scene.root.join("c.json"));
+            let events = Mutex::new(Vec::new());
+            let controls = Arc::new(TransferControls::new());
+            ftp_scene_upload(&mut conn, &scene, true, &controls, &events, None)
+                .unwrap_or_else(|e| panic!("sin {refuse:?} la subida tiene que terminar: {e}"));
+            conn.quit();
+
+            let expected = if resumes { partial } else { 0 };
+            assert_eq!(started_at(&events), expected, "sin {refuse:?}");
+            scene.assert_destination_identical();
+            assert!(scene.ficha().is_none(), "sin {refuse:?}");
+            assert!(
+                scene.leftovers().is_empty(),
+                "sin {refuse:?} sobran {:?} (antes: {old_temp:?})",
+                scene.leftovers()
+            );
+        }
+    }
+
+    /// **Integración**: con la preferencia apagada la subida va directa al
+    /// destino, como siempre, y retira el temporal y la ficha que quedaron de
+    /// cuando estaba encendida. Y con ella encendida, un destino que ya existía
+    /// también va directo (escribir encima conserva sus permisos; un temporal
+    /// publicado con `RNTO` no podría).
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor FTP efímero; se corre con --ignored"]
+    #[test]
+    fn ftp_sin_la_preferencia_o_sobre_un_destino_existente_la_subida_va_directa() {
+        use std::os::unix::fs::PermissionsExt;
+        let server = crate::ftp_fixture::start().expect("arrancar el servidor FTP");
+        let scene = FtpScene::new(&server);
+        ftp_scene_upload_cut(&server, &scene);
+        assert!(scene.ficha().is_some());
+        assert_eq!(scene.leftovers().len(), 1);
+
+        let mut conn = ftp_conn(server.port, false, scene.root.join("c.json"));
+        let events = Mutex::new(Vec::new());
+        let controls = Arc::new(TransferControls::new());
+        ftp_scene_upload(&mut conn, &scene, false, &controls, &events, None)
+            .expect("la subida directa termina");
+        assert_eq!(started_at(&events), 0);
+        scene.assert_destination_identical();
+        assert!(scene.ficha().is_none(), "la ficha vieja se retira");
+        assert!(scene.leftovers().is_empty(), "sobran: {:?}", scene.leftovers());
+
+        std::fs::set_permissions(scene.destination_path(), std::fs::Permissions::from_mode(0o640))
+            .unwrap();
+        std::fs::write(scene.destination_path(), b"version vieja").unwrap();
+        let events = Mutex::new(Vec::new());
+        ftp_scene_upload(&mut conn, &scene, true, &controls, &events, None)
+            .expect("la subida sobre un destino existente termina");
+        conn.quit();
+        scene.assert_destination_identical();
+        let mode = std::fs::metadata(scene.destination_path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o640, "escribir encima conserva los permisos");
+        assert!(scene.ficha().is_none());
+        assert!(scene.leftovers().is_empty(), "sobran: {:?}", scene.leftovers());
+    }
+
+    /// **Integración**: una descarga FTP con su `.part` a medias (y la ficha que
+    /// dice de qué fichero es) continúa con `REST`; si el servidor no admite
+    /// `REST`, se baja entera. En los dos casos el fichero local es idéntico.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor FTP efímero; se corre con --ignored"]
+    #[test]
+    fn ftp_una_descarga_a_medias_se_reanuda_o_se_baja_entera() {
+        for refuse_rest in [false, true] {
+            let server = crate::ftp_fixture::start().expect("arrancar el servidor FTP");
+            let data = pseudo_random_bytes(3 * 1024 * 1024 + 17, 0xd0d0_cafe_0000_0001);
+            std::fs::write(server.root.join("origen.bin"), &data).unwrap();
+            let dir = std::env::temp_dir().join(format!("rustty-ftpd-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let local = dir.join("bajado.bin");
+            let part = part_path(&local);
+            let half = data.len() / 2;
+            std::fs::write(&part, &data[..half]).unwrap();
+
+            let proxy = FtpProxy::start(server.port, if refuse_rest { &["REST"] } else { &[] });
+            let mut conn = ftp_conn(proxy.port, false, dir.join("c.json"));
+            let entry = ftp_stat(&mut conn, "/origen.bin").expect("stat del origen");
+            block_on(transfer_resume::write_meta(
+                &part,
+                &transfer_resume::PartMeta {
+                    remote: "/origen.bin".to_string(),
+                    size: entry.size,
+                    mtime: entry.modified,
+                },
+            ));
+
+            let events = Mutex::new(Vec::new());
+            let controls = Arc::new(TransferControls::new());
+            let ctx = TransferCtx {
+                transfer_id: "ftpd",
+                parent_id: None,
+                app: ProgressSink::Record(&events),
+                controls: &controls,
+                verify_size: true,
+            };
+            block_on(ftp_download(&mut conn, "/origen.bin", &local, ctx, true))
+                .expect("la descarga termina");
+            conn.quit();
+
+            let expected = if refuse_rest { 0 } else { half as u64 };
+            assert_eq!(started_at(&events), expected, "REST rechazado: {refuse_rest}");
+            let got = std::fs::read(&local).expect("fichero publicado");
+            assert!(sha256(&got) == sha256(&data), "la descarga no es idéntica");
+            assert!(!part.exists(), "el temporal se publica");
+            assert!(!transfer_resume::meta_path(&part).exists(), "la ficha se borra");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     /// Backend de mentira para las reglas del worker: solo sabe qué rutas

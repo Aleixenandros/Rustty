@@ -1600,7 +1600,7 @@
     "max_concurrent": "Transferencias a la vez (todas las sesiones)",
     "max_concurrent_hint": "0 = sin techo (lo de siempre). Cuenta las copias en marcha en toda la aplicación, no las peticiones de cada una: las que sobren esperan turno y el panel las marca «En cola». Una carpeta entera ocupa un solo turno.",
     "resume": "Reanudar transferencias interrumpidas",
-    "resume_hint": "Conserva lo ya copiado cuando una transferencia falla o se cancela y continúa desde ahí la próxima vez. Una descarga solo se reanuda si el fichero del servidor sigue igual —misma ruta, tamaño y fecha—, y una subida, si el fichero local sigue igual y lo que hay en el servidor coincide con él; si algo cambió, empieza de cero. Las subidas van a un temporal en el servidor y solo ocupan su nombre al terminar. El precio es que un fallo deja un temporal «.rustty-part» junto al destino, en tu equipo o en el servidor, en vez de borrarlo. Solo SFTP."
+    "resume_hint": "Conserva lo ya copiado cuando una transferencia falla o se cancela y continúa desde ahí la próxima vez. Una descarga solo se reanuda si el fichero del servidor sigue igual —misma ruta, tamaño y fecha—, y una subida, si el fichero local sigue igual y lo que hay en el servidor coincide con él; si algo cambió, empieza de cero. Las subidas van a un temporal en el servidor y solo ocupan su nombre al terminar. El precio es que un fallo deja un temporal «.rustty-part» junto al destino, en tu equipo o en el servidor, en vez de borrarlo. Vale para SFTP, FTP y FTPS."
   },
   "prefs_language": {
     "title": "Idioma",
