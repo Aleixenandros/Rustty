@@ -33,6 +33,7 @@ use std::time::Duration;
 
 use russh::client::{self, AuthResult};
 
+use crate::cli_lang::tr;
 use crate::host_keys::{self, KnownHostsClient};
 use crate::jump_pool::{JumpLease, JumpPool};
 use crate::jump_route::{JumpRoute, ResolvedHop};
@@ -224,7 +225,7 @@ fn hop_error(
 
 /// «Salto 1/2 (oficina-win)», para los mensajes de error.
 fn hop_label(info: &HopInfo<'_>) -> String {
-    format!("Salto {}/{} ({})", info.index, info.total, info.name)
+    tr!("Salto {}/{} ({})", "Jump {}/{} ({})", info.index, info.total, info.name)
 }
 
 /// Config de russh de un salto. Ventana grande y sin rekey por bytes, como el
@@ -372,8 +373,10 @@ pub(crate) async fn open_tunnel_within(
         Ok(Err(err)) => Err(ConnectError {
             hop: via_hop,
             failure: ConnectFailure::Transport,
-            message: format!(
+            message: tr!(
                 "Se perdió la conexión con el salto {via_name} al abrir el túnel hacia \
+                 {host}:{port}: {err}",
+                "The connection with jump {via_name} was lost while opening the tunnel to \
                  {host}:{port}: {err}"
             ),
         }),
@@ -385,8 +388,9 @@ pub(crate) async fn open_tunnel_within(
         Err(_) => Err(ConnectError {
             hop: via_hop,
             failure: ConnectFailure::Transport,
-            message: format!(
+            message: tr!(
                 "El salto {via_name} no contesta: no abrió el túnel hacia {host}:{port} en {} s",
+                "Jump {via_name} does not answer: it did not open the tunnel to {host}:{port} in {} s",
                 limit.as_secs()
             ),
         }),
@@ -395,9 +399,11 @@ pub(crate) async fn open_tunnel_within(
 
 /// El salto vive pero no llegó a `host:port` a tiempo.
 fn unreachable_through_message(via_name: &str, host: &str, port: u16, limit: Duration) -> String {
-    format!(
+    tr!(
         "El salto {via_name} no consiguió llegar a {host}:{port} en {} s: el servidor está \
          apagado o un cortafuegos descarta la conexión.",
+        "Jump {via_name} could not reach {host}:{port} in {} s: the server is down or a \
+         firewall drops the connection.",
         limit.as_secs()
     )
 }
@@ -442,15 +448,22 @@ pub(crate) fn tunnel_error_message(
     err: &russh::Error,
 ) -> String {
     match err {
-        err if is_forwarding_prohibited(err) => format!(
+        err if is_forwarding_prohibited(err) => tr!(
             "El salto {via_name} no deja abrir túneles hacia {host}:{port}: su servidor SSH los \
-             tiene prohibidos. Activa AllowTcpForwarding en su sshd_config (o usa otro salto)."
+             tiene prohibidos. Activa AllowTcpForwarding en su sshd_config (o usa otro salto).",
+            "Jump {via_name} does not allow tunnels to {host}:{port}: its SSH server forbids \
+             them. Enable AllowTcpForwarding in its sshd_config (or use another jump)."
         ),
-        russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed) => format!(
+        russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed) => tr!(
             "El salto {via_name} no pudo llegar a {host}:{port}: ¿la dirección es correcta y \
-             accesible desde el salto?"
+             accesible desde el salto?",
+            "Jump {via_name} could not reach {host}:{port}: is the address correct and \
+             reachable from the jump?"
         ),
-        other => format!("El salto {via_name} no pudo abrir el túnel hacia {host}:{port}: {other}"),
+        other => tr!(
+            "El salto {via_name} no pudo abrir el túnel hacia {host}:{port}: {other}",
+            "Jump {via_name} could not open the tunnel to {host}:{port}: {other}"
+        ),
     }
 }
 
@@ -478,8 +491,9 @@ pub(crate) async fn open_hop(
     let handshake_timeout = || ConnectError {
         hop: tag,
         failure: ConnectFailure::Transport,
-        message: format!(
+        message: tr!(
             "El salto {} ({addr}) no completó el saludo SSH en {} s",
+            "Jump {} ({addr}) did not complete the SSH handshake in {} s",
             info.name,
             JUMP_HANDSHAKE_TIMEOUT.as_secs()
         ),
@@ -500,8 +514,9 @@ pub(crate) async fn open_hop(
                     tag,
                     Some(&label),
                     &failure,
-                    format!(
+                    tr!(
                         "No se puede conectar al salto {} ({addr}): {err}",
+                        "Cannot connect to jump {} ({addr}): {err}",
                         info.name
                     ),
                 )
@@ -528,8 +543,10 @@ pub(crate) async fn open_hop(
                     tag,
                     Some(&label),
                     &failure,
-                    format!(
+                    tr!(
                         "No se puede establecer SSH con el salto {} ({addr}) a través de \
+                         {previous_name}: {err}",
+                        "Cannot establish SSH with jump {} ({addr}) through \
                          {previous_name}: {err}",
                         info.name
                     ),
@@ -553,8 +570,9 @@ pub(crate) async fn open_hop(
     // «Se requiere contraseña».
     if hop.auth_type == AuthType::Password && hop.secrets.password.is_none() {
         if let Some(reason) = &hop.secrets.unavailable {
-            return Err(auth_error(format!(
+            return Err(auth_error(tr!(
                 "{label}: no hay contraseña para {}: {reason}",
+                "{label}: there is no password for {}: {reason}",
                 hop.username
             )));
         }
@@ -569,13 +587,14 @@ pub(crate) async fn open_hop(
         hop.key_path.as_deref(),
     )
     .await
-    .map_err(|e| auth_error(format!("{label}: {e}")))?;
+    .map_err(|e| auth_error(format!("{label}: {}", e.localized())))?;
     if let AuthResult::Failure {
         remaining_methods, ..
     } = auth
     {
-        return Err(auth_error(format!(
+        return Err(auth_error(tr!(
             "{label}: autenticación como {} fallida. Métodos restantes: {remaining_methods:?}",
+            "{label}: authentication as {} failed. Remaining methods: {remaining_methods:?}",
             hop.username
         )));
     }
@@ -636,7 +655,7 @@ pub(crate) async fn connect_routed(
                     Hop::Target,
                     None,
                     &failure,
-                    format!("No se puede conectar a {addr}: {err}"),
+                    tr!("No se puede conectar a {addr}: {err}", "Cannot connect to {addr}: {err}"),
                 )
             })?;
         return Ok(RoutedHandle {
@@ -676,8 +695,9 @@ pub(crate) async fn connect_routed(
                 Hop::Target,
                 None,
                 &failure,
-                format!(
+                tr!(
                     "No se puede establecer SSH con {addr} a través de {}: {err}",
+                    "Cannot establish SSH with {addr} through {}: {err}",
                     route.describe()
                 ),
             )

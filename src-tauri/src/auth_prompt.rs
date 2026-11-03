@@ -26,6 +26,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::oneshot;
 
+use crate::cli_lang::tr;
 use crate::ipc::SSH_AUTH_PROMPT;
 use crate::locks::MutexExt;
 
@@ -110,8 +111,9 @@ pub async fn ask(
     prompts: &[AuthPromptField],
 ) -> Result<Option<Vec<String>>, String> {
     if prompts.len() > MAX_PROMPTS {
-        return Err(format!(
+        return Err(tr!(
             "el servidor pide {} respuestas de una vez; se rechaza por seguridad",
+            "the server asks for {} answers at once; rejected for safety",
             prompts.len()
         ));
     }
@@ -189,10 +191,13 @@ fn ask_on_terminal(
 
     let stdin = std::io::stdin();
     if !stdin.is_terminal() {
-        return Err(format!(
+        return Err(tr!(
             "{username}@{host} pide autenticación interactiva por teclado (un código de \
              verificación o una contraseña que el servidor pregunta) y no hay terminal ni \
-             interfaz gráfica donde contestar"
+             interfaz gráfica donde contestar",
+            "{username}@{host} asks for keyboard-interactive authentication (a verification \
+             code or a password the server asks for) and there is no terminal or graphical \
+             interface to answer on"
         ));
     }
     for line in [name, instructions] {
@@ -209,10 +214,11 @@ fn ask_on_terminal(
             stdin
                 .lock()
                 .read_line(&mut line)
-                .map_err(|e| format!("no se pudo leer la respuesta: {e}"))?;
+                .map_err(|e| tr!("no se pudo leer la respuesta: {e}", "could not read the answer: {e}"))?;
             line.trim_end_matches(['\r', '\n']).to_string()
         } else {
-            rpassword::read_password().map_err(|e| format!("no se pudo leer la respuesta: {e}"))?
+            rpassword::read_password()
+                .map_err(|e| tr!("no se pudo leer la respuesta: {e}", "could not read the answer: {e}"))?
         };
         answers.push(answer);
     }

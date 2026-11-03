@@ -755,6 +755,23 @@ function savePrefs() {
   writeSavedPrefs(localStorage, prefs);
   scheduleTrayQuickLauncherUpdate();
   syncWorkspaceIndex();
+  syncCliLanguage();
+}
+
+let _cliLanguageSent = null;
+
+/**
+ * Deja el idioma de la interfaz al backend (`cli-language.json`) para que
+ * `rustty -c`/`-l` hable el mismo: `lang` = el elegido (null = «Sistema») y
+ * `detected` = el que se detectó para «Sistema», respaldo de la CLI cuando el
+ * entorno no tiene locale. Solo viaja cuando cambia.
+ */
+function syncCliLanguage() {
+  const payload = { lang: prefs.lang || null, detected: detectLanguage() };
+  const key = JSON.stringify(payload);
+  if (key === _cliLanguageSent) return;
+  _cliLanguageSent = key;
+  invoke("save_cli_language", payload).catch((e) => console.debug("[cli] language", e));
 }
 
 let _workspaceIndexSent = null;
@@ -4690,6 +4707,7 @@ async function initMain() {
     new Map((Array.isArray(workspaceIndex) ? workspaceIndex : []).map((w) => [String(w?.id || ""), String(w?.name || "")])),
   );
   syncWorkspaceIndex();
+  syncCliLanguage();
   await refreshNotesIndex();
   loadSnapshotIndex();
 

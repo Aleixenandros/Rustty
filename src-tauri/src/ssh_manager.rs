@@ -36,6 +36,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::auth_prompt;
+use crate::cli_lang::tr;
 use crate::channel_pump::{finish_channel, pump_tunnel};
 use crate::error::AppError;
 use crate::host_keys;
@@ -93,7 +94,7 @@ const TUNNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) async fn tcp_connect_robust(addr: &str) -> Result<TcpStream, String> {
     let stream = tokio::time::timeout(TCP_CONNECT_TIMEOUT, TcpStream::connect(addr))
         .await
-        .map_err(|_| format!("Timeout TCP conectando a {addr}"))?
+        .map_err(|_| tr!("Timeout TCP conectando a {addr}", "TCP timeout connecting to {addr}"))?
         .map_err(|e| format!("TCP {addr}: {e}"))?;
     apply_socket_keepalive(&stream);
     Ok(stream)
@@ -3257,16 +3258,17 @@ async fn authenticate_with_agent(
 
     let mut agent = AgentClient::connect_env()
         .await
-        .map_err(|e| AppError::Auth(format!("No se pudo contactar con el agente SSH: {e}")))?
+        .map_err(|e| AppError::Auth(tr!("No se pudo contactar con el agente SSH: {e}", "Could not reach the SSH agent: {e}")))?
         .dynamic();
     let identities = agent.request_identities().await.map_err(|e| {
-        AppError::Auth(format!("No se pudieron listar identidades del agente: {e}"))
+        AppError::Auth(tr!("No se pudieron listar identidades del agente: {e}", "Could not list the agent identities: {e}"))
     })?;
 
     if identities.is_empty() {
-        return Err(AppError::Auth(
-            "El agente SSH no tiene claves cargadas".into(),
-        ));
+        return Err(AppError::Auth(tr!(
+            "El agente SSH no tiene claves cargadas",
+            "The SSH agent has no keys loaded"
+        )));
     }
 
     let hash_alg = handle
@@ -3284,7 +3286,7 @@ async fn authenticate_with_agent(
         match res {
             Ok(AuthResult::Success) => return Ok(AuthResult::Success),
             Ok(other) => last_failure = Some(other),
-            Err(e) => return Err(AppError::Auth(format!("Error al firmar con agente: {e}"))),
+            Err(e) => return Err(AppError::Auth(tr!("Error al firmar con agente: {e}", "Error signing with the agent: {e}"))),
         }
     }
     Ok(last_failure.unwrap_or(AuthResult::Failure {
@@ -3298,9 +3300,10 @@ async fn authenticate_with_agent(
     _handle: &mut client::Handle<host_keys::KnownHostsClient>,
     _username: &str,
 ) -> Result<AuthResult, AppError> {
-    Err(AppError::Auth(
-        "Autenticación vía agente SSH no soportada en esta plataforma".into(),
-    ))
+    Err(AppError::Auth(tr!(
+        "Autenticación vía agente SSH no soportada en esta plataforma",
+        "SSH agent authentication is not supported on this platform"
+    )))
 }
 
 /// Tipo de un algoritmo legacy del catálogo, ligado a la lista de `Preferred`
@@ -3570,7 +3573,7 @@ pub(crate) async fn password_auth_with_fallback(
     let result = handle
         .authenticate_password(username.to_string(), password.clone())
         .await
-        .map_err(|e| AppError::Auth(format!("Autenticación por contraseña fallida: {e}")))?;
+        .map_err(|e| AppError::Auth(tr!("Autenticación por contraseña fallida: {e}", "Password authentication failed: {e}")))?;
     if let AuthResult::Failure {
         ref remaining_methods,
         partial_success: false,
@@ -3607,14 +3610,14 @@ async fn authenticate_first_factor(
         AuthType::Password => {
             let pass = password
                 .cloned()
-                .ok_or_else(|| AppError::Auth("Se requiere contraseña".into()))?;
+                .ok_or_else(|| AppError::Auth(tr!("Se requiere contraseña", "A password is required")))?;
             password_auth_with_fallback(handle, username, host, pass).await
         }
         AuthType::PublicKey => {
             let key_path = key_path
-                .ok_or_else(|| AppError::Auth("Se requiere ruta de clave privada".into()))?;
+                .ok_or_else(|| AppError::Auth(tr!("Se requiere ruta de clave privada", "A private key path is required")))?;
             let key = load_secret_key(Path::new(key_path), passphrase.map(|s| s.as_str()))
-                .map_err(|e| AppError::Auth(format!("Clave inválida: {e}")))?;
+                .map_err(|e| AppError::Auth(tr!("Clave inválida: {e}", "Invalid key: {e}")))?;
             let hash_alg = handle
                 .best_supported_rsa_hash()
                 .await
@@ -3627,7 +3630,7 @@ async fn authenticate_first_factor(
                     PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
                 )
                 .await
-                .map_err(|e| AppError::Auth(format!("Autenticación por clave fallida: {e}")))
+                .map_err(|e| AppError::Auth(tr!("Autenticación por clave fallida: {e}", "Key authentication failed: {e}")))
         }
         AuthType::Agent => authenticate_with_agent(handle, username).await,
         AuthType::KeyboardInteractive => {
@@ -3666,7 +3669,7 @@ pub(crate) async fn keyboard_interactive_auth(
     let mut response = handle
         .authenticate_keyboard_interactive_start(username.to_string(), None)
         .await
-        .map_err(|e| AppError::Auth(format!("Autenticación interactiva fallida: {e}")))?;
+        .map_err(|e| AppError::Auth(tr!("Autenticación interactiva fallida: {e}", "Interactive authentication failed: {e}")))?;
 
     for round in 0..MAX_INTERACTIVE_ROUNDS {
         let (name, instructions, prompts) = match response {
@@ -3700,17 +3703,18 @@ pub(crate) async fn keyboard_interactive_auth(
             None => auth_prompt::ask(host, username, &name, &instructions, &fields)
                 .await
                 .map_err(AppError::Auth)?
-                .ok_or_else(|| AppError::Auth("Autenticación interactiva cancelada".to_string()))?,
+                .ok_or_else(|| AppError::Auth(tr!("Autenticación interactiva cancelada", "Interactive authentication cancelled")))?,
         };
 
         response = handle
             .authenticate_keyboard_interactive_respond(answers)
             .await
-            .map_err(|e| AppError::Auth(format!("Autenticación interactiva fallida: {e}")))?;
+            .map_err(|e| AppError::Auth(tr!("Autenticación interactiva fallida: {e}", "Interactive authentication failed: {e}")))?;
     }
 
-    Err(AppError::Auth(format!(
-        "El servidor pidió más de {MAX_INTERACTIVE_ROUNDS} rondas de preguntas; conexión abortada"
+    Err(AppError::Auth(tr!(
+        "El servidor pidió más de {MAX_INTERACTIVE_ROUNDS} rondas de preguntas; conexión abortada",
+        "The server asked more than {MAX_INTERACTIVE_ROUNDS} rounds of questions; connection aborted"
     )))
 }
 

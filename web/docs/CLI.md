@@ -240,6 +240,16 @@ rustty -c produccion --host-key SHA256:uQAtx5MA1iF9jq547yBEjEJYlWBFUsApAs9ILZLdZ
 - **`--host-key <huella>`** es la opción segura para automatizar: tú declaras qué huella esperas y Rustty acepta solo esa, sin estado. La huella se admite tal como la muestran Rustty, `ssh-keygen -lf` (`256 SHA256:… usuario@equipo (ED25519)`) o plink (`ssh-ed25519 255 SHA256:…`), con o sin el prefijo `SHA256:`. Solo con `-c`; con saltos se aplica al servidor de destino y cada salto se verifica contra `known_hosts` como siempre. Si la huella no coincide, la conexión se rechaza mostrando las dos y `known_hosts` queda intacto.
 - Sin opciones, la CLI aplica lo que tengas en **Preferencias → Seguridad** (confirmar la huella en la primera conexión; preguntar si cambia): la interfaz lo deja guardado para la CLI cada vez que se abre o se guardan las preferencias, así que hasta que la abras una vez con esta versión rige el modo estricto.
 
+## Idioma
+
+La CLI habla **español o inglés**: los avisos, las preguntas (también la de la huella, que acepta `sí`/`si`/`s` y `yes`/`y`), los errores, los resúmenes y `--help`. Elige así:
+
+1. El idioma que hayas elegido en la interfaz (**Preferencias → Idioma**), que la interfaz deja guardado para la CLI al abrirse y al guardar las preferencias.
+2. Con «Sistema» (o si la interfaz aún no se ha abierto con esta versión), el del entorno: `LC_ALL`, después `LC_MESSAGES` y después `LANG` (`es_ES.UTF-8` → español).
+3. Español si el resultado es español; **inglés para cualquier otro idioma** (francés, portugués, alemán, chino tradicional e indonesio incluidos).
+
+La salida para máquinas no cambia con el idioma: las claves de `--json`/`--ndjson` y los códigos de salida son siempre los mismos.
+
 ## Limitaciones
 
 - Solo funciona con perfiles SSH y SFTP guardados (RDP, VNC, Telnet y FTP quedan fuera).

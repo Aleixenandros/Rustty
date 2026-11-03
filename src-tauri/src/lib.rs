@@ -5,6 +5,7 @@ mod atomic_file;
 mod auth_prompt;
 mod channel_pump;
 pub mod cli;
+mod cli_lang;
 mod commands;
 mod credentials;
 mod error;
@@ -440,6 +441,7 @@ pub fn run() {
             commands::is_launched_minimized,
             commands::reveal_main_window,
             commands::save_workspace_index,
+            commands::save_cli_language,
             commands::load_workspace_index,
             commands::is_appimage,
             commands::is_flatpak,

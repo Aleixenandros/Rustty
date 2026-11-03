@@ -31,6 +31,24 @@ pub enum AppError {
     Store(String),
 }
 
+impl AppError {
+    /// El mensaje en el idioma de la CLI (`cli_lang`). El `Display` de arriba
+    /// es el que ve la interfaz y sigue en español; en la app gráfica los dos
+    /// coinciden, porque allí `cli_lang` siempre es español.
+    pub fn localized(&self) -> String {
+        use crate::cli_lang::tr;
+        match self {
+            AppError::Ssh(m) => tr!("Error SSH: {m}", "SSH error: {m}"),
+            AppError::Io(m) => tr!("Error de E/S: {m}", "I/O error: {m}"),
+            AppError::SessionNotFound(m) => tr!("Sesión no encontrada: {m}", "Session not found: {m}"),
+            AppError::Serialization(m) => tr!("Error de serialización: {m}", "Serialization error: {m}"),
+            AppError::Auth(m) => tr!("Error de autenticación: {m}", "Authentication error: {m}"),
+            AppError::Sync(m) => tr!("Error de sincronización: {m}", "Sync error: {m}"),
+            AppError::Store(m) => m.clone(),
+        }
+    }
+}
+
 impl From<std::io::Error> for AppError {
     fn from(e: std::io::Error) -> Self {
         AppError::Io(e.to_string())

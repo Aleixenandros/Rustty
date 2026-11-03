@@ -4163,6 +4163,22 @@ pub fn save_workspace_index(
         .map_err(|e| e.to_string())
 }
 
+/// Deja el idioma de la interfaz en el directorio de datos (`cli-language.json`)
+/// para que la CLI hable el mismo: `lang` es el elegido en Preferencias
+/// (`None` = «Sistema») y `detected`, el que la interfaz detectó para
+/// «Sistema». La CLI solo habla español e inglés (ver `cli_lang`). La interfaz
+/// lo llama al arrancar y al guardar preferencias, solo cuando cambia.
+#[tauri::command]
+pub fn save_cli_language(
+    data_dir: State<'_, DataDir>,
+    lang: Option<String>,
+    detected: Option<String>,
+) -> Result<(), String> {
+    crate::cli_lang::save(&data_dir.0, &crate::cli_lang::SavedLanguage { lang, detected })
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// Índice de workspaces tal como está en disco. La interfaz lo consulta al
 /// arrancar para dar nombre a los workspaces que solo existen en los perfiles
 /// (p. ej. uno creado por `rustty --import`).

@@ -30,6 +30,7 @@ use serde::Serialize;
 use tokio::io::AsyncWriteExt;
 
 use crate::channel_pump::{copy_to_channel, finish_channel, CopyError};
+use crate::cli_lang::tr;
 use crate::credentials::{self, CredentialKind, CredentialStore};
 use crate::host_keys;
 use crate::jump_route::{self, HopSecrets, JumpRoute, RouteChoice};
@@ -286,7 +287,7 @@ struct RawModeGuard;
 
 impl RawModeGuard {
     fn enter() -> Result<Self, String> {
-        enable_raw_mode().map_err(|e| format!("No se pudo activar modo raw del terminal: {e}"))?;
+        enable_raw_mode().map_err(|e| tr!("No se pudo activar modo raw del terminal: {e}", "Could not switch the terminal to raw mode: {e}"))?;
         Ok(Self)
     }
 }
@@ -332,6 +333,11 @@ impl Catalog {
 
 pub fn try_run_from_env() -> Option<i32> {
     let args: Vec<String> = env::args().skip(1).collect();
+    if !is_cli_invocation(&args) {
+        return None;
+    }
+    // Antes de parsear: los errores de uso ya salen en el idioma del usuario.
+    crate::cli_lang::init_for_cli(&crate::resolve_data_dir());
     let command = parse_cli_command(&args)?;
     let code = match run_cli(command) {
         Ok(code) => code,
@@ -358,9 +364,13 @@ const CLI_ENTRY_FLAGS: &[&str] = &[
     "--import",
 ];
 
+fn is_cli_invocation(args: &[String]) -> bool {
+    args.first()
+        .is_some_and(|first| CLI_ENTRY_FLAGS.contains(&first.as_str()))
+}
+
 fn parse_cli_command(args: &[String]) -> Option<CliCommand> {
-    let first = args.first()?.as_str();
-    if !CLI_ENTRY_FLAGS.contains(&first) {
+    if !is_cli_invocation(args) {
         return None;
     }
     Some(parse_cli_args(args))
@@ -389,7 +399,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
     fn value<'a>(args: &[&'a str], i: usize, flag: &str) -> Result<&'a str, String> {
         match args.get(i) {
             Some(v) if !v.is_empty() => Ok(v),
-            _ => Err(format!("{flag} necesita un valor.")),
+            _ => Err(tr!("{flag} necesita un valor.", "{flag} needs a value.")),
         }
     }
 
@@ -411,7 +421,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
             "--accept-host-key" => opts.accept_host_key = true,
             "--direct" => {
                 if matches!(opts.jump, CliJump::Via(_)) {
-                    return invalid("-J y --direct son excluyentes.");
+                    return invalid(tr!("-J y --direct son excluyentes.", "-J and --direct are mutually exclusive."));
                 }
                 opts.jump = CliJump::Direct;
             }
@@ -422,16 +432,17 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
                     Err(e) => return invalid(e),
                 };
                 match opts.jump {
-                    CliJump::Direct => return invalid("-J y --direct son excluyentes."),
+                    CliJump::Direct => return invalid(tr!("-J y --direct son excluyentes.", "-J and --direct are mutually exclusive.")),
                     CliJump::Via(_) => {
-                        return invalid(
+                        return invalid(tr!(
                             "Solo se admite un -J: para una cadena, dale al perfil del salto su propio bastion.",
-                        )
+                            "Only one -J is allowed: for a chain, give the jump profile its own bastion.",
+                        ))
                     }
                     CliJump::Auto => {}
                 }
                 if raw.is_empty() {
-                    return invalid("-J necesita un valor.");
+                    return invalid(tr!("-J necesita un valor.", "-J needs a value."));
                 }
                 opts.jump = CliJump::Via(raw.to_string());
             }
@@ -444,10 +455,12 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
                 match host_keys::normalize_fingerprint(raw) {
                     Some(fp) => opts.host_key = Some(fp),
                     None => {
-                        return invalid(
+                        return invalid(tr!(
                             "--host-key espera una huella SHA256 (SHA256:..., como la muestra \
                              Rustty o ssh-keygen -lf).",
-                        )
+                            "--host-key expects a SHA256 fingerprint (SHA256:..., as shown by \
+                             Rustty or ssh-keygen -lf).",
+                        ))
                     }
                 }
             }
@@ -462,7 +475,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
                 i += 1;
                 match value(&args, i, "-c") {
                     Ok(v) => query = Some(v.to_string()),
-                    Err(_) => return invalid("Indica una busqueda para -c."),
+                    Err(_) => return invalid(tr!("Indica una busqueda para -c.", "Give a search term for -c.")),
                 }
             }
             "--workspace" | "-w" => {
@@ -487,7 +500,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
                 };
                 match raw.parse::<u64>() {
                     Ok(secs) if secs > 0 => opts.timeout = Some(Duration::from_secs(secs)),
-                    _ => return invalid("--timeout espera un numero de segundos mayor que 0."),
+                    _ => return invalid(tr!("--timeout espera un numero de segundos mayor que 0.", "--timeout expects a number of seconds greater than 0.")),
                 }
             }
             "--parallel" => {
@@ -498,7 +511,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
                 };
                 match raw.parse::<usize>() {
                     Ok(n) if n > 0 => opts.parallel = n,
-                    _ => return invalid("--parallel espera un numero mayor que 0."),
+                    _ => return invalid(tr!("--parallel espera un numero mayor que 0.", "--parallel expects a number greater than 0.")),
                 }
             }
             "--script" => {
@@ -512,18 +525,20 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
                 let (a, b) = match (args.get(i + 1), args.get(i + 2)) {
                     (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => (*a, *b),
                     _ => {
-                        return invalid(format!(
-                            "{arg} necesita dos rutas: {}.",
-                            if arg == "--get" {
-                                "--get <remoto> <local>"
-                            } else {
-                                "--put <local> <remoto>"
-                            }
+                        let usage = match (arg == "--get", crate::cli_lang::current()) {
+                            (true, crate::cli_lang::Lang::Es) => "--get <remoto> <local>",
+                            (true, crate::cli_lang::Lang::En) => "--get <remote> <local>",
+                            (false, crate::cli_lang::Lang::Es) => "--put <local> <remoto>",
+                            (false, crate::cli_lang::Lang::En) => "--put <local> <remote>",
+                        };
+                        return invalid(tr!(
+                            "{arg} necesita dos rutas: {usage}.",
+                            "{arg} needs two paths: {usage}."
                         ))
                     }
                 };
                 if transfer.is_some() {
-                    return invalid("Solo se admite una operacion --get/--put por invocacion.");
+                    return invalid(tr!("Solo se admite una operacion --get/--put por invocacion.", "Only one --get/--put operation is allowed per invocation."));
                 }
                 transfer = Some(if arg == "--get" {
                     TransferOp::Get {
@@ -542,19 +557,19 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
                 i += 1;
                 match value(&args, i, "--exec") {
                     Ok(v) => command = Some(v.to_string()),
-                    Err(_) => return invalid("Indica el comando remoto despues de --exec o --."),
+                    Err(_) => return invalid(tr!("Indica el comando remoto despues de --exec o --.", "Give the remote command after --exec or --.")),
                 }
             }
             "--" => {
                 let rest = args[i + 1..].join(" ");
                 if rest.trim().is_empty() {
-                    return invalid("Indica el comando remoto despues de --exec o --.");
+                    return invalid(tr!("Indica el comando remoto despues de --exec o --.", "Give the remote command after --exec or --."));
                 }
                 command = Some(rest.trim().to_string());
                 break;
             }
             other if other.starts_with('-') && other.len() > 1 => {
-                return invalid(format!("Opcion CLI desconocida: {other}"));
+                return invalid(tr!("Opcion CLI desconocida: {other}", "Unknown CLI option: {other}"));
             }
             positional => {
                 // Alias breve (`rustty -c prod "df -h"`) o palabras sueltas tras
@@ -567,7 +582,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
                     None if query.is_some() && !list => {
                         command = Some(positional.to_string());
                     }
-                    None => return invalid(format!("Argumento inesperado: {positional}")),
+                    None => return invalid(tr!("Argumento inesperado: {positional}", "Unexpected argument: {positional}")),
                 }
             }
         }
@@ -579,7 +594,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
     }
     if let Some(path) = import {
         if list || query.is_some() || command.is_some() || script.is_some() || transfer.is_some() || selector.group.is_some() || selector.all || opts.ndjson || opts.recursive || opts.accept_host_key || opts.host_key.is_some() || opts.jump != CliJump::Auto {
-            return invalid("--import solo se combina con --workspace, --dry-run, --json y -q.");
+            return invalid(tr!("--import solo se combina con --workspace, --dry-run, --json y -q.", "--import can only be combined with --workspace, --dry-run, --json and -q."));
         }
         return CliCommand::Import {
             path,
@@ -589,34 +604,34 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
         };
     }
     if dry_run {
-        return invalid("--dry-run solo vale con --import.");
+        return invalid(tr!("--dry-run solo vale con --import.", "--dry-run only works with --import."));
     }
     if opts.json && opts.ndjson {
-        return invalid("--json y --ndjson son excluyentes: elige un formato.");
+        return invalid(tr!("--json y --ndjson son excluyentes: elige un formato.", "--json and --ndjson are mutually exclusive: pick one format."));
     }
     if opts.recursive && transfer.is_none() {
-        return invalid("--recursive solo vale con --get o --put.");
+        return invalid(tr!("--recursive solo vale con --get o --put.", "--recursive only works with --get or --put."));
     }
     if list && (opts.accept_host_key || opts.host_key.is_some()) {
-        return invalid("-l no conecta a nada: --accept-host-key y --host-key no pintan aqui.");
+        return invalid(tr!("-l no conecta a nada: --accept-host-key y --host-key no pintan aqui.", "-l does not connect to anything: --accept-host-key and --host-key make no sense here."));
     }
     if list && opts.jump != CliJump::Auto {
-        return invalid("-l no conecta a nada: -J y --direct no pintan aqui.");
+        return invalid(tr!("-l no conecta a nada: -J y --direct no pintan aqui.", "-l does not connect to anything: -J and --direct make no sense here."));
     }
     if opts.host_key.is_some() && query.is_none() {
-        return invalid("--host-key solo vale con -c <perfil>: una huella es de un unico servidor.");
+        return invalid(tr!("--host-key solo vale con -c <perfil>: una huella es de un unico servidor.", "--host-key only works with -c <profile>: a fingerprint belongs to a single server."));
     }
     if let Some(cmd) = &command {
         if cmd.trim().is_empty() {
-            return invalid("El comando remoto no puede estar vacio.");
+            return invalid(tr!("El comando remoto no puede estar vacio.", "The remote command cannot be empty."));
         }
     }
     if list {
         if command.is_some() || script.is_some() || transfer.is_some() {
-            return invalid("-l no se combina con --exec, --script, --get ni --put.");
+            return invalid(tr!("-l no se combina con --exec, --script, --get ni --put.", "-l cannot be combined with --exec, --script, --get or --put."));
         }
         if opts.ndjson {
-            return invalid("-l no admite --ndjson: el listado es un unico documento, usa --json.");
+            return invalid(tr!("-l no admite --ndjson: el listado es un unico documento, usa --json.", "-l does not support --ndjson: the listing is a single document, use --json."));
         }
         return CliCommand::List {
             json: opts.json,
@@ -625,10 +640,10 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
     }
     if let Some(op) = transfer {
         if command.is_some() || script.is_some() {
-            return invalid("--get/--put no se combinan con --exec ni --script.");
+            return invalid(tr!("--get/--put no se combinan con --exec ni --script.", "--get/--put cannot be combined with --exec or --script."));
         }
         let Some(query) = query else {
-            return invalid("--get/--put necesitan -c <perfil>.");
+            return invalid(tr!("--get/--put necesitan -c <perfil>.", "--get/--put need -c <profile>."));
         };
         return CliCommand::Transfer {
             query,
@@ -639,7 +654,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
     }
     let remote_command = match (command, script) {
         (Some(_), Some(_)) => {
-            return invalid("--script y --exec son excluyentes: el script ya es el comando.")
+            return invalid(tr!("--script y --exec son excluyentes: el script ya es el comando.", "--script and --exec are mutually exclusive: the script already is the command."))
         }
         (Some(command), None) => Some(RemoteCommand {
             command: command.trim().to_string(),
@@ -662,7 +677,7 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
         },
         (None, Some(remote_command)) if !selector.is_empty() => {
             if tty {
-                return invalid("--tty solo vale con -c <perfil>, no en multi-host.");
+                return invalid(tr!("--tty solo vale con -c <perfil>, no en multi-host.", "--tty only works with -c <profile>, not with multiple hosts."));
             }
             CliCommand::Run {
                 selector,
@@ -670,8 +685,8 @@ fn parse_cli_args(args: &[String]) -> CliCommand {
                 opts,
             }
         }
-        (None, Some(_)) => invalid("Indica -c <perfil>, --workspace <x>, --group <x> o --all."),
-        (None, None) => invalid("Con --workspace, --group o --all hace falta --exec o --script."),
+        (None, Some(_)) => invalid(tr!("Indica -c <perfil>, --workspace <x>, --group <x> o --all.", "Give -c <profile>, --workspace <x>, --group <x> or --all.")),
+        (None, None) => invalid(tr!("Con --workspace, --group o --all hace falta --exec o --script.", "--workspace, --group or --all need --exec or --script.")),
     }
 }
 
@@ -735,7 +750,13 @@ fn apply_host_key_policy(opts: &RunOptions) {
 }
 
 fn print_help() {
-    println!(
+    println!("{}", help_text());
+}
+
+/// La ayuda de `--help`, en el idioma de la CLI.
+fn help_text() -> String {
+    match crate::cli_lang::current() {
+        crate::cli_lang::Lang::Es => format!(
         r#"Rustty CLI (SSH/SFTP)
 
 Uso:
@@ -792,8 +813,74 @@ keyboard-interactive (PAM); un segundo factor se pregunta por la terminal.
 Saltos: sin -J ni --direct, la conexion sale por el salto activo de la app (si hay uno y el
 perfil no lo excluye) y despues por el bastion del perfil (de perfil o de texto). Cada salto se
 autentica con sus propias credenciales guardadas (keyring o credencial maestra; si faltan, se
-preguntan por la terminal) y su host key se verifica contra known_hosts."#
-    );
+preguntan por la terminal) y su host key se verifica contra known_hosts.
+
+Idioma: el elegido en la app (Preferencias) o, si no, LC_ALL / LC_MESSAGES / LANG; espanol o
+ingles."#
+        ),
+        crate::cli_lang::Lang::En => format!(
+        r#"Rustty CLI (SSH/SFTP)
+
+Usage:
+  rustty -l | --list [--json]                 Lists saved SSH/SFTP connections, with their workspace
+  rustty -l --workspace <w> | --group <g>     Only those in that workspace (name or id) or folder
+  rustty -c <name|id|ip|host>                 Connects without opening the GUI; exits with the shell's code
+  rustty -c <profile> --exec "cmd"            Runs a remote command and exits with its code
+  rustty -c <profile> -- cmd                  Runs a remote command and exits
+  rustty -c <profile> --tty -- cmd            Runs with a pseudo-terminal (interactive stdin)
+  rustty -c <profile> --script f.sh           Sends the local script through stdin to bash -s
+  rustty -c <profile> --get <remote> <local>  Downloads a file over SFTP
+  rustty -c <profile> --put <local> <remote>  Uploads a file over SFTP
+  rustty -c <profile> -r --get <dir> <local>  ...or a whole folder with -r (also --put)
+  rustty -c <profile> -J <jump>               Connects through a jump host (profile or [user@]host[:port])
+  rustty -c <profile> --direct                Connects without any jump (neither the active one nor the profile's)
+  rustty --workspace <w> --exec "cmd"         Runs on every SSH profile in the workspace
+  rustty --group <g> --exec "cmd"             ...or in the folder (and subfolders); --all = all of them
+  rustty --import <file.json|->               Imports profiles into a NEW workspace import_<date>
+  rustty --import f.json --workspace <w>      ...or into that workspace (existing, or new with that name)
+  rustty --import f.json --dry-run            Only counts what it would do, without writing anything
+
+Options:
+  --json          JSON output: the listing, or one object per server (output, code, duration)
+  --ndjson        The same, one line per object and, with several hosts, as each server finishes
+  -r, --recursive --get/--put copy folders; symbolic links are skipped and counted
+  -q, --quiet     No notices on stderr ("Connecting to...", summaries)
+  --timeout <s>   Limit per server, in seconds; when it runs out the exit code is 124
+  --parallel <n>  Simultaneous connections with several hosts (default {DEFAULT_PARALLEL})
+  --sudo          Runs with sudo -n (without --tty it requires NOPASSWD)
+  -n, --no-stdin  Does not forward stdin to the remote command (like ssh -n)
+  --accept-host-key   Learns the key of an unknown server without asking (TOFU); a key
+                      that has CHANGED is still rejected
+  --host-key <sha256> Only accepts that SHA256 fingerprint from the server (with -c); does
+                      not read or write known_hosts, like plink -hostkey
+  -J, --jump <jump>   Through that SSH/SFTP profile (exact name or id; its own bastion goes
+                      first) or, if it is not a profile, through that address [user@]host[:port]
+                      with the target's credentials, like ssh -J
+  --direct            No jumps: neither the app's active jump nor the profile's bastion
+
+Exit codes: the remote command's; 255 if it cannot connect; 124 on --timeout; 2 on wrong
+usage. With several hosts, 0 if all of them ended with 0 and 1 if any did not; in a copy with
+-r, 1 if some file could not be copied (the rest is copied anyway). Without --tty, a stdin that
+is a terminal is closed at once; a pipe or a file is forwarded.
+
+Profile: -c without --exec runs the profile's on-connect command (or a shell); --exec and
+--script replace it. The profile's environment variables and terminal type apply in both cases
+(with no type chosen, the local TERM is used); ${{ask:}} values are asked on the terminal.
+
+Host keys: a new fingerprint is asked on the terminal; without a terminal (script, cron, pipe)
+it is rejected, unless --accept-host-key, --host-key, or the confirmation is turned off in
+Preferences > Security. The profile's password also works on servers that only allow
+keyboard-interactive (PAM); a second factor is asked on the terminal.
+
+Jumps: without -J or --direct, the connection goes out through the app's active jump (if there
+is one and the profile does not exclude it) and then through the profile's bastion (profile or
+text). Each jump authenticates with its own saved credentials (keyring or master credential;
+if missing, they are asked on the terminal) and its host key is checked against known_hosts.
+
+Language: the one chosen in the app (Preferences), or else LC_ALL / LC_MESSAGES / LANG;
+Spanish or English."#
+        ),
+    }
 }
 
 // ─── Catálogo y selección ─────────────────────────────────────────────────────
@@ -802,7 +889,7 @@ fn load_catalog() -> Result<Catalog, String> {
     let data_dir = crate::resolve_data_dir();
     let profiles = ProfileManager::new(data_dir.clone())
         .load_all()
-        .map_err(|e| format!("No se pudieron cargar los perfiles: {e}"))?;
+        .map_err(|e| tr!("No se pudieron cargar los perfiles: {e}", "Could not load the profiles: {e}"))?;
     let workspace_names = workspace_index::name_map(&workspace_index::load(&data_dir));
     Ok(Catalog {
         profiles,
@@ -898,8 +985,9 @@ fn select_profiles<'a>(
                     .collect();
                 names.sort_by_key(|n| n.to_ascii_lowercase());
                 names.dedup();
-                return Err(format!(
+                return Err(tr!(
                     "No existe el workspace '{ws}'. Disponibles: {}",
+                    "There is no workspace '{ws}'. Available: {}",
                     names.join(", ")
                 ));
             }
@@ -926,13 +1014,13 @@ fn list_profiles(json: bool, selector: &HostSelector) -> Result<(), String> {
             })
             .collect();
         let payload = serde_json::to_string_pretty(&items)
-            .map_err(|e| format!("No se pudo generar JSON: {e}"))?;
+            .map_err(|e| tr!("No se pudo generar JSON: {e}", "Could not generate JSON: {e}"))?;
         println!("{payload}");
         return Ok(());
     }
 
     if profiles.is_empty() {
-        println!("No hay conexiones SSH/SFTP guardadas que casen.");
+        println!("{}", tr!("No hay conexiones SSH/SFTP guardadas que casen.", "No saved SSH/SFTP connections match."));
         return Ok(());
     }
 
@@ -944,9 +1032,13 @@ fn list_profiles(json: bool, selector: &HostSelector) -> Result<(), String> {
     let user_w = width(7, &|p| p.username.chars().count());
     let ws_w = width(9, &|p| catalog.workspace_ref(p).name.chars().count());
 
+    let [name_h, user_h, port_h, kind_h, group_h] = match crate::cli_lang::current() {
+        crate::cli_lang::Lang::Es => ["NOMBRE", "USUARIO", "PUERTO", "TIPO", "GRUPO"],
+        crate::cli_lang::Lang::En => ["NAME", "USER", "PORT", "TYPE", "GROUP"],
+    };
     println!(
-        "{:<name_w$}  {:<host_w$}  {:<user_w$}  {:>6}  {:<4}  {:<ws_w$}  GRUPO",
-        "NOMBRE", "HOST/IP", "USUARIO", "PUERTO", "TIPO", "WORKSPACE",
+        "{name_h:<name_w$}  {:<host_w$}  {user_h:<user_w$}  {port_h:>6}  {kind_h:<4}  {:<ws_w$}  {group_h}",
+        "HOST/IP", "WORKSPACE",
     );
     println!(
         "{:-<name_w$}  {:-<host_w$}  {:-<user_w$}  ------  ----  {:-<ws_w$}  -----",
@@ -973,10 +1065,10 @@ fn find_profile<'a>(
 ) -> Result<&'a ConnectionProfile, String> {
     let query = query.trim();
     if query.is_empty() {
-        return Err("Indica una busqueda para -c.".into());
+        return Err(tr!("Indica una busqueda para -c.", "Give a search term for -c."));
     }
     if candidates.is_empty() {
-        return Err("No hay conexiones SSH/SFTP guardadas que casen.".into());
+        return Err(tr!("No hay conexiones SSH/SFTP guardadas que casen.", "No saved SSH/SFTP connections match."));
     }
 
     let query_l = query.to_ascii_lowercase();
@@ -1011,8 +1103,9 @@ fn find_profile<'a>(
         return Ok(profile);
     }
 
-    Err(format!(
-        "No se encontro ninguna conexion SSH/SFTP para '{query}'."
+    Err(tr!(
+        "No se encontro ninguna conexion SSH/SFTP para '{query}'.",
+        "No SSH/SFTP connection found for '{query}'."
     ))
 }
 
@@ -1024,17 +1117,20 @@ fn single_or_ambiguous<'a>(
         [] => Ok(None),
         [profile] => Ok(Some(*profile)),
         many => {
-            let mut message =
-                format!("La busqueda '{query}' coincide con varias conexiones:\n");
+            let mut message = tr!(
+                "La busqueda '{query}' coincide con varias conexiones:\n",
+                "The search '{query}' matches several connections:\n"
+            );
             for profile in many.iter().take(12) {
                 message.push_str(&format!(
                     "  - {}  {}@{}:{}\n",
                     profile.name, profile.username, profile.host, profile.port
                 ));
             }
-            message.push_str(
+            message.push_str(&tr!(
                 "Afina la busqueda usando el nombre completo, id o host/IP, o acota con --workspace/--group.",
-            );
+                "Narrow the search with the full name, id or host/IP, or limit it with --workspace/--group.",
+            ));
             Err(message)
         }
     }
@@ -1052,11 +1148,15 @@ fn resolve_secrets(profile: &ConnectionProfile) -> Result<CliSecrets, String> {
                 Some(resolve_master_secret(profile)?)
             } else {
                 let stored = read_keyring_secret(&format!("password:{}", profile.id));
-                let prompt = format!("Contrasena para {}@{}: ", profile.username, profile.host);
+                let prompt = tr!("Contrasena para {}@{}: ", "Password for {}@{}: ", profile.username, profile.host);
                 let value = stored
                     .unwrap_or_else(|| prompt_secret(&prompt))
                     .map_err(|e| {
-                        format!("No se pudo obtener la contrasena de {}: {e}", profile.name)
+                        tr!(
+                            "No se pudo obtener la contrasena de {}: {e}",
+                            "Could not get the password for {}: {e}",
+                            profile.name
+                        )
                     })?;
                 // La contraseña propia pasa por el motor de sustitución, igual que
                 // en la GUI: soporta `${var:}`/`${secret:}`/`${master:}`. Sin este
@@ -1099,9 +1199,11 @@ fn resolve_cli_launch(
             continue;
         }
         if !std::io::stdin().is_terminal() {
-            return Err(format!(
+            return Err(tr!(
                 "El perfil {} pide «{}» al conectar y no hay terminal donde preguntarlo.",
-                profile.name, ask.label
+                "Profile {} asks for \"{}\" when connecting and there is no terminal to ask on.",
+                profile.name,
+                ask.label
             ));
         }
         let value = prompt_line(&ask.label, &ask.options)?;
@@ -1126,7 +1228,7 @@ fn prompt_line(label: &str, options: &[String]) -> Result<String, String> {
     let mut line = String::new();
     std::io::stdin()
         .read_line(&mut line)
-        .map_err(|e| format!("Error leyendo stdin: {e}"))?;
+        .map_err(|e| tr!("Error leyendo stdin: {e}", "Error reading stdin: {e}"))?;
     Ok(line.trim_end_matches(['\r', '\n']).to_string())
 }
 
@@ -1169,8 +1271,9 @@ fn resolve_master_secret(profile: &ConnectionProfile) -> Result<String, String> 
         .as_deref()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| {
-            format!(
+            tr!(
                 "El perfil {} no referencia ninguna credencial maestra",
+                "Profile {} does not reference any master credential",
                 profile.name
             )
         })?;
@@ -1180,9 +1283,9 @@ fn resolve_master_secret(profile: &ConnectionProfile) -> Result<String, String> 
     let cred = catalog
         .iter()
         .find(|c| c.id == id && c.kind == CredentialKind::Master)
-        .ok_or_else(|| "Credencial maestra no encontrada".to_string())?;
+        .ok_or_else(|| tr!("Credencial maestra no encontrada", "Master credential not found"))?;
     credentials::resolve_master(&catalog, &cred.name)
-        .ok_or_else(|| "Credencial maestra no encontrada".to_string())
+        .ok_or_else(|| tr!("Credencial maestra no encontrada", "Master credential not found"))
 }
 
 fn resolve_passphrase(profile: &ConnectionProfile) -> Result<Option<String>, String> {
@@ -1197,7 +1300,7 @@ fn resolve_passphrase(profile: &ConnectionProfile) -> Result<Option<String>, Str
         return Ok(None);
     }
 
-    let prompt = format!("Passphrase para la clave de {}: ", profile.name);
+    let prompt = tr!("Passphrase para la clave de {}: ", "Passphrase for the key of {}: ", profile.name);
     prompt_secret(&prompt).map(Some)
 }
 
@@ -1256,17 +1359,28 @@ fn announce(profile: &ConnectionProfile, route: &JumpRoute, opts: &RunOptions) {
     }
     if route.is_empty() {
         eprintln!(
-            "Conectando a {} ({}@{}:{})...",
-            profile.name, profile.username, profile.host, profile.port
+            "{}",
+            tr!(
+                "Conectando a {} ({}@{}:{})...",
+                "Connecting to {} ({}@{}:{})...",
+                profile.name,
+                profile.username,
+                profile.host,
+                profile.port
+            )
         );
     } else {
         eprintln!(
-            "Conectando a {} ({}@{}:{}) a traves de {}...",
-            profile.name,
-            profile.username,
-            profile.host,
-            profile.port,
-            route.describe()
+            "{}",
+            tr!(
+                "Conectando a {} ({}@{}:{}) a traves de {}...",
+                "Connecting to {} ({}@{}:{}) via {}...",
+                profile.name,
+                profile.username,
+                profile.host,
+                profile.port,
+                route.describe()
+            )
         );
     }
 }
@@ -1298,14 +1412,20 @@ fn jump_profile_named<'a>(
         [] => Ok(None),
         [one] => Ok(Some(*one)),
         many => {
-            let mut message = format!("-J '{value}' coincide con varias conexiones:\n");
+            let mut message = tr!(
+                "-J '{value}' coincide con varias conexiones:\n",
+                "-J '{value}' matches several connections:\n"
+            );
             for profile in many.iter().take(12) {
                 message.push_str(&format!(
                     "  - {}  {}  {}@{}:{}\n",
                     profile.id, profile.name, profile.username, profile.host, profile.port
                 ));
             }
-            message.push_str("Indica el id del perfil del salto en lugar del nombre.");
+            message.push_str(&tr!(
+                "Indica el id del perfil del salto en lugar del nombre.",
+                "Give the id of the jump profile instead of its name."
+            ));
             Err(message)
         }
     }
@@ -1366,7 +1486,10 @@ impl<'a> CliRouter<'a> {
             )
             .map_err(|e| {
                 if self.active.is_some() {
-                    format!("{e} (salto activo de la app; usa --direct o -J para conectar de otra forma)")
+                    tr!(
+                        "{e} (salto activo de la app; usa --direct o -J para conectar de otra forma)",
+                        "{e} (the app's active jump; use --direct or -J to connect another way)"
+                    )
                 } else {
                     e.to_string()
                 }
@@ -1420,7 +1543,7 @@ fn build_runtime() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|e| format!("No se pudo crear runtime tokio: {e}"))
+        .map_err(|e| tr!("No se pudo crear runtime tokio: {e}", "Could not create the tokio runtime: {e}"))
 }
 
 /// Plazo que se concede a los hilos bloqueantes del runtime al terminar una
@@ -1484,7 +1607,7 @@ async fn run_ssh_session(
     let mut channel = handle
         .channel_open_session()
         .await
-        .map_err(|e| format!("No se pudo abrir canal SSH: {e}"))?;
+        .map_err(|e| tr!("No se pudo abrir canal SSH: {e}", "Could not open an SSH channel: {e}"))?;
 
     if profile.agent_forwarding {
         let _ = channel.agent_forward(false).await;
@@ -1498,18 +1621,18 @@ async fn run_ssh_session(
     channel
         .request_pty(true, &term, cols as u32, rows as u32, 0, 0, &[])
         .await
-        .map_err(|e| format!("No se pudo solicitar PTY: {e}"))?;
+        .map_err(|e| tr!("No se pudo solicitar PTY: {e}", "Could not request a PTY: {e}"))?;
     // `rustty -c X` sin `--exec` respeta el comando al conectar del perfil
     // (la CLI no reengancha sesiones persistentes ni el modo control).
     match secrets.launch.command.as_deref() {
         Some(command) => channel
             .exec(true, command)
             .await
-            .map_err(|e| format!("No se pudo ejecutar el comando al conectar: {e}"))?,
+            .map_err(|e| tr!("No se pudo ejecutar el comando al conectar: {e}", "Could not run the on-connect command: {e}"))?,
         None => channel
             .request_shell(true)
             .await
-            .map_err(|e| format!("No se pudo abrir shell: {e}"))?,
+            .map_err(|e| tr!("No se pudo abrir shell: {e}", "Could not open a shell: {e}"))?,
     }
 
     let _raw = RawModeGuard::enter()?;
@@ -1555,8 +1678,8 @@ where
             sent = &mut up, if !stdin_done => {
                 stdin_done = true;
                 sent.map_err(|err| match err {
-                    CopyError::Read(e) => format!("Error leyendo stdin: {e}"),
-                    CopyError::Send(e) => format!("Error enviando datos al servidor: {e}"),
+                    CopyError::Read(e) => tr!("Error leyendo stdin: {e}", "Error reading stdin: {e}"),
+                    CopyError::Send(e) => tr!("Error enviando datos al servidor: {e}", "Error sending data to the server: {e}"),
                 })?;
             }
             msg = read.wait() => {
@@ -1565,11 +1688,11 @@ where
                         stdout
                             .write_all(&data)
                             .await
-                            .map_err(|e| format!("Error escribiendo stdout: {e}"))?;
+                            .map_err(|e| tr!("Error escribiendo stdout: {e}", "Error writing stdout: {e}"))?;
                         stdout
                             .flush()
                             .await
-                            .map_err(|e| format!("Error vaciando stdout: {e}"))?;
+                            .map_err(|e| tr!("Error vaciando stdout: {e}", "Error flushing stdout: {e}"))?;
                     }
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
                         exit = ShellExit::Status(exit_status);
@@ -1632,7 +1755,7 @@ fn shell_single_quote(text: &str) -> String {
 fn stdin_mode(remote: &RemoteCommand, opts: &RunOptions, many: bool) -> Result<StdinMode, String> {
     if let Some(path) = &remote.script {
         let bytes = std::fs::read(path)
-            .map_err(|e| format!("No se pudo leer el script {}: {e}", path.display()))?;
+            .map_err(|e| tr!("No se pudo leer el script {}: {e}", "Could not read the script {}: {e}", path.display()))?;
         return Ok(StdinMode::Bytes(bytes));
     }
     if opts.no_stdin {
@@ -1652,7 +1775,7 @@ fn stdin_mode(remote: &RemoteCommand, opts: &RunOptions, many: bool) -> Result<S
         let mut bytes = Vec::new();
         std::io::stdin()
             .read_to_end(&mut bytes)
-            .map_err(|e| format!("Error leyendo stdin: {e}"))?;
+            .map_err(|e| tr!("Error leyendo stdin: {e}", "Error reading stdin: {e}"))?;
         return Ok(StdinMode::Bytes(bytes));
     }
     Ok(StdinMode::Inherit)
@@ -1712,7 +1835,7 @@ async fn exec_on_handle(
     let mut channel = handle
         .channel_open_session()
         .await
-        .map_err(|e| ExecError::Connect(format!("No se pudo abrir canal SSH: {e}")))?;
+        .map_err(|e| ExecError::Connect(tr!("No se pudo abrir canal SSH: {e}", "Could not open an SSH channel: {e}")))?;
 
     if agent_forwarding {
         let _ = channel.agent_forward(false).await;
@@ -1725,7 +1848,7 @@ async fn exec_on_handle(
         channel
             .request_pty(true, &term, cols as u32, rows as u32, 0, 0, &[])
             .await
-            .map_err(|e| ExecError::Connect(format!("No se pudo solicitar PTY: {e}")))?;
+            .map_err(|e| ExecError::Connect(tr!("No se pudo solicitar PTY: {e}", "Could not request a PTY: {e}")))?;
         Some(RawModeGuard::enter().map_err(ExecError::Io)?)
     } else {
         None
@@ -1734,7 +1857,7 @@ async fn exec_on_handle(
     channel
         .exec(true, command)
         .await
-        .map_err(|e| ExecError::Connect(format!("No se pudo ejecutar el comando remoto: {e}")))?;
+        .map_err(|e| ExecError::Connect(tr!("No se pudo ejecutar el comando remoto: {e}", "Could not run the remote command: {e}")))?;
 
     // El stdin sube como futuro aparte del que lee el canal (ver
     // [`crate::channel_pump`]), también los bytes de `--script` y del
@@ -1774,8 +1897,8 @@ async fn exec_on_handle(
             sent = &mut up, if !stdin_done => {
                 stdin_done = true;
                 sent.map_err(|err| ExecError::Io(match err {
-                    CopyError::Read(e) => format!("Error leyendo stdin: {e}"),
-                    CopyError::Send(e) => format!("Error enviando stdin al comando remoto: {e}"),
+                    CopyError::Read(e) => tr!("Error leyendo stdin: {e}", "Error reading stdin: {e}"),
+                    CopyError::Send(e) => tr!("Error enviando stdin al comando remoto: {e}", "Error sending stdin to the remote command: {e}"),
                 }))?;
             }
             msg = read.wait() => {
@@ -1784,16 +1907,16 @@ async fn exec_on_handle(
                         if capture {
                             outcome.stdout.extend_from_slice(&data);
                         } else {
-                            stdout.write_all(&data).await.map_err(|e| ExecError::Io(format!("Error escribiendo stdout: {e}")))?;
-                            stdout.flush().await.map_err(|e| ExecError::Io(format!("Error vaciando stdout: {e}")))?;
+                            stdout.write_all(&data).await.map_err(|e| ExecError::Io(tr!("Error escribiendo stdout: {e}", "Error writing stdout: {e}")))?;
+                            stdout.flush().await.map_err(|e| ExecError::Io(tr!("Error vaciando stdout: {e}", "Error flushing stdout: {e}")))?;
                         }
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
                         if capture {
                             outcome.stderr.extend_from_slice(&data);
                         } else {
-                            stderr.write_all(&data).await.map_err(|e| ExecError::Io(format!("Error escribiendo stderr: {e}")))?;
-                            stderr.flush().await.map_err(|e| ExecError::Io(format!("Error vaciando stderr: {e}")))?;
+                            stderr.write_all(&data).await.map_err(|e| ExecError::Io(tr!("Error escribiendo stderr: {e}", "Error writing stderr: {e}")))?;
+                            stderr.flush().await.map_err(|e| ExecError::Io(tr!("Error vaciando stderr: {e}", "Error flushing stderr: {e}")))?;
                         }
                     }
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
@@ -1890,7 +2013,7 @@ async fn run_host(
             result.exit_code = Some(EXIT_CONNECT_FAILED);
         }
         Err(ExecError::Timeout(limit)) => {
-            result.error = Some(format!("Tiempo agotado tras {} s", limit.as_secs()));
+            result.error = Some(tr!("Tiempo agotado tras {} s", "Timed out after {} s", limit.as_secs()));
             result.exit_code = Some(EXIT_TIMEOUT);
         }
         Err(ExecError::Io(err)) => {
@@ -1903,7 +2026,7 @@ async fn run_host(
 
 fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
     let payload = serde_json::to_string_pretty(value)
-        .map_err(|e| format!("No se pudo generar JSON: {e}"))?;
+        .map_err(|e| tr!("No se pudo generar JSON: {e}", "Could not generate JSON: {e}"))?;
     println!("{payload}");
     Ok(())
 }
@@ -1913,7 +2036,7 @@ fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
 /// acaban a la vez no se entremezclan.
 fn print_json_line<T: Serialize>(value: &T) -> Result<(), String> {
     let payload =
-        serde_json::to_string(value).map_err(|e| format!("No se pudo generar JSON: {e}"))?;
+        serde_json::to_string(value).map_err(|e| tr!("No se pudo generar JSON: {e}", "Could not generate JSON: {e}"))?;
     println!("{payload}");
     Ok(())
 }
@@ -1939,14 +2062,18 @@ fn print_grouped(result: &HostResult, quiet: bool) {
         eprintln!("{}: {error}", result.name);
     }
     if !quiet {
+        let code = result
+            .exit_code
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "?".to_string());
         eprintln!(
-            "<== {}: codigo {} en {} ms",
-            result.name,
-            result
-                .exit_code
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "?".to_string()),
-            result.duration_ms
+            "{}",
+            tr!(
+                "<== {}: codigo {code} en {} ms",
+                "<== {}: exit code {code} in {} ms",
+                result.name,
+                result.duration_ms
+            )
         );
     }
 }
@@ -1994,8 +2121,9 @@ fn connect_single(
     let store = cli_credential_store();
     let profile = prepare_profile(find_profile(&candidates, query)?, &store);
     if remote_command.is_some() && !is_ssh_profile(&profile) {
-        return Err(format!(
+        return Err(tr!(
             "'{}' es un perfil SFTP sin shell: usa --get/--put.",
+            "'{}' is an SFTP profile without a shell: use --get/--put.",
             profile.name
         ));
     }
@@ -2004,8 +2132,9 @@ fn connect_single(
     match remote_command {
         None => {
             if !is_ssh_profile(&profile) {
-                return Err(format!(
+                return Err(tr!(
                     "'{}' es un perfil SFTP sin shell: usa --get/--put.",
+                    "'{}' is an SFTP profile without a shell: use --get/--put.",
                     profile.name
                 ));
             }
@@ -2063,7 +2192,7 @@ fn run_many(
         .cloned()
         .collect();
     if profiles.is_empty() {
-        return Err("Ningun perfil SSH casa con la seleccion.".into());
+        return Err(tr!("Ningun perfil SSH casa con la seleccion.", "No SSH profile matches the selection."));
     }
     let stdin = stdin_mode(&remote, &opts, true)?;
     // Los secretos se resuelven en serie ANTES de conectar: pueden preguntar por
@@ -2081,9 +2210,13 @@ fn run_many(
         .collect();
     if !opts.quiet && !opts.machine() {
         eprintln!(
-            "Ejecutando en {} servidores ({} a la vez)...",
-            jobs.len(),
-            opts.parallel.min(jobs.len())
+            "{}",
+            tr!(
+                "Ejecutando en {} servidores ({} a la vez)...",
+                "Running on {} servers ({} at a time)...",
+                jobs.len(),
+                opts.parallel.min(jobs.len())
+            )
         );
     }
 
@@ -2122,7 +2255,7 @@ fn run_many(
                     }
                     results.push(result);
                 }
-                Err(err) => eprintln!("Tarea de ejecucion cancelada: {err}"),
+                Err(err) => eprintln!("{}", tr!("Tarea de ejecucion cancelada: {err}", "Execution task cancelled: {err}")),
             }
         }
         results
@@ -2139,9 +2272,13 @@ fn run_many(
         .count();
     if !quiet && !json && !ndjson {
         eprintln!(
-            "{} servidores, {} con fallo.",
-            results.len(),
-            failed
+            "{}",
+            tr!(
+                "{} servidores, {} con fallo.",
+                "{} servers, {} failed.",
+                results.len(),
+                failed
+            )
         );
     }
     Ok(if failed == 0 { 0 } else { 1 })
@@ -2203,10 +2340,11 @@ fn run_import(path: &str, dry_run: bool, workspace: Option<&str>, opts: &RunOpti
         let mut buf = String::new();
         std::io::stdin()
             .read_to_string(&mut buf)
-            .map_err(|e| format!("Error leyendo stdin: {e}"))?;
+            .map_err(|e| tr!("Error leyendo stdin: {e}", "Error reading stdin: {e}"))?;
         buf
     } else {
-        std::fs::read_to_string(path).map_err(|e| format!("No se pudo leer {path}: {e}"))?
+        std::fs::read_to_string(path)
+            .map_err(|e| tr!("No se pudo leer {path}: {e}", "Could not read {path}: {e}"))?
     };
     let entries = imp::parse_entries(&raw)?;
     let catalog = load_catalog()?;
@@ -2225,7 +2363,7 @@ fn run_import(path: &str, dry_run: bool, workspace: Option<&str>, opts: &RunOpti
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| format!("entrada #{}", idx + 1));
+            .unwrap_or_else(|| tr!("entrada #{}", "entry #{}", idx + 1));
         match imp::prepare(entry, &import_opts) {
             Ok(p) => prepared.push(p),
             Err(reason) => invalid_entries.push(imp::Skipped { name, reason }),
@@ -2257,36 +2395,64 @@ fn run_import(path: &str, dry_run: bool, workspace: Option<&str>, opts: &RunOpti
                 name: target.name.clone(),
             },
         )
-        .map_err(|e| format!("No se pudo anotar el workspace nuevo: {e}"))?;
+        .map_err(|e| tr!("No se pudo anotar el workspace nuevo: {e}", "Could not record the new workspace: {e}"))?;
     }
     summary.workspace = Some(target.clone());
 
     if opts.json {
         print_json(&summary)?;
     } else if !opts.quiet {
+        let dry = if dry_run {
+            tr!("[simulacion] ", "[dry run] ")
+        } else {
+            String::new()
+        };
+        let state = if target.created {
+            tr!("nuevo", "new")
+        } else {
+            tr!("existente", "existing")
+        };
         eprintln!(
-            "{}Workspace destino: {} ({}).",
-            if dry_run { "[simulacion] " } else { "" },
-            target.name,
-            if target.created { "nuevo" } else { "existente" }
+            "{}",
+            tr!(
+                "{dry}Workspace destino: {} ({state}).",
+                "{dry}Target workspace: {} ({state}).",
+                target.name
+            )
         );
+        let not_stored = if summary.secrets_failed.is_empty() {
+            String::new()
+        } else {
+            tr!(
+                ", {} NO guardadas",
+                ", {} NOT stored",
+                summary.secrets_failed.len()
+            )
+        };
         eprintln!(
-            "{} importadas, {} actualizadas, {} omitidas; {} contrasenas guardadas{}.",
-            summary.imported,
-            summary.updated,
-            summary.skipped.len(),
-            summary.secrets_stored,
-            if summary.secrets_failed.is_empty() {
-                String::new()
-            } else {
-                format!(", {} NO guardadas", summary.secrets_failed.len())
-            }
+            "{}",
+            tr!(
+                "{} importadas, {} actualizadas, {} omitidas; {} contrasenas guardadas{not_stored}.",
+                "{} imported, {} updated, {} skipped; {} passwords stored{not_stored}.",
+                summary.imported,
+                summary.updated,
+                summary.skipped.len(),
+                summary.secrets_stored
+            )
         );
         for s in &summary.skipped {
-            eprintln!("  omitida: {} ({})", s.name, s.reason);
+            eprintln!("{}", tr!("  omitida: {} ({})", "  skipped: {} ({})", s.name, s.reason));
         }
         for s in &summary.secrets_failed {
-            eprintln!("  contrasena no guardada: {} ({})", s.name, s.reason);
+            eprintln!(
+                "{}",
+                tr!(
+                    "  contrasena no guardada: {} ({})",
+                    "  password not stored: {} ({})",
+                    s.name,
+                    s.reason
+                )
+            );
         }
     }
     let failed = !invalid_entries.is_empty() || !summary.secrets_failed.is_empty();
@@ -2320,7 +2486,7 @@ fn run_transfer_command(
             Ok(r) => r,
             Err(_) => Err((
                 EXIT_TIMEOUT,
-                format!("Tiempo agotado tras {} s", limit.as_secs()),
+                tr!("Tiempo agotado tras {} s", "Timed out after {} s", limit.as_secs()),
             )),
         },
         None => runtime.block_on(fut),
@@ -2368,20 +2534,28 @@ fn run_transfer_command(
 /// Resumen humano de una transferencia, por stderr.
 fn transfer_summary(stats: &TransferStats, duration_ms: u128) -> String {
     if stats.dirs == 0 && stats.files <= 1 && stats.skipped == 0 && stats.errors.is_empty() {
-        return format!("{} bytes copiados en {duration_ms} ms.", stats.bytes);
+        return tr!(
+            "{} bytes copiados en {duration_ms} ms.",
+            "{} bytes copied in {duration_ms} ms.",
+            stats.bytes
+        );
     }
-    let mut text = format!(
+    let mut text = tr!(
         "{} ficheros ({} bytes) en {} carpetas, {duration_ms} ms.",
-        stats.files, stats.bytes, stats.dirs
+        "{} files ({} bytes) in {} folders, {duration_ms} ms.",
+        stats.files,
+        stats.bytes,
+        stats.dirs
     );
     if stats.skipped > 0 {
-        text.push_str(&format!(
+        text.push_str(&tr!(
             " {} omitidos (enlaces simbolicos o ficheros especiales).",
+            " {} skipped (symbolic links or special files).",
             stats.skipped
         ));
     }
     if !stats.errors.is_empty() {
-        text.push_str(&format!(" {} con error.", stats.errors.len()));
+        text.push_str(&tr!(" {} con error.", " {} failed.", stats.errors.len()));
     }
     text
 }
@@ -2431,14 +2605,14 @@ async fn open_sftp<H: client::Handler>(
     let channel = handle
         .channel_open_session()
         .await
-        .map_err(|e| format!("No se pudo abrir canal SSH: {e}"))?;
+        .map_err(|e| tr!("No se pudo abrir canal SSH: {e}", "Could not open an SSH channel: {e}"))?;
     channel
         .request_subsystem(true, "sftp")
         .await
-        .map_err(|e| format!("No se pudo abrir el subsistema SFTP: {e}"))?;
+        .map_err(|e| tr!("No se pudo abrir el subsistema SFTP: {e}", "Could not open the SFTP subsystem: {e}"))?;
     russh_sftp::client::SftpSession::new(channel.into_stream())
         .await
-        .map_err(|e| format!("No se pudo iniciar SFTP: {e}"))
+        .map_err(|e| tr!("No se pudo iniciar SFTP: {e}", "Could not start SFTP: {e}"))
 }
 
 /// Núcleo de `--get`/`--put` sobre una sesión SFTP abierta (lo que prueban los
@@ -2454,10 +2628,10 @@ async fn run_transfer(
             let meta = sftp
                 .metadata(remote.clone())
                 .await
-                .map_err(|e| format!("No se pudo leer el remoto {remote}: {e}"))?;
+                .map_err(|e| tr!("No se pudo leer el remoto {remote}: {e}", "Could not read the remote {remote}: {e}"))?;
             if meta.is_dir() {
                 if !recursive {
-                    return Err(format!("{remote} es una carpeta: anade --recursive (-r)."));
+                    return Err(tr!("{remote} es una carpeta: anade --recursive (-r).", "{remote} is a folder: add --recursive (-r)."));
                 }
                 let root = tree_root(Path::new(local), local.ends_with('/'), remote);
                 get_tree(sftp, remote, &root, &mut stats).await?;
@@ -2468,7 +2642,7 @@ async fn run_transfer(
                     if local.ends_with('/') || p.is_dir() {
                         match file_name_of(remote) {
                             Some(name) => p.join(name),
-                            None => return Err(format!("Ruta remota sin nombre de fichero: {remote}")),
+                            None => return Err(tr!("Ruta remota sin nombre de fichero: {remote}", "Remote path without a file name: {remote}")),
                         }
                     } else {
                         p
@@ -2480,10 +2654,10 @@ async fn run_transfer(
         }
         TransferOp::Put { local, remote } => {
             let meta = std::fs::metadata(local)
-                .map_err(|e| format!("No se pudo abrir {local}: {e}"))?;
+                .map_err(|e| tr!("No se pudo abrir {local}: {e}", "Could not open {local}: {e}"))?;
             if meta.is_dir() {
                 if !recursive {
-                    return Err(format!("{local} es una carpeta: anade --recursive (-r)."));
+                    return Err(tr!("{local} es una carpeta: anade --recursive (-r).", "{local} is a folder: add --recursive (-r)."));
                 }
                 let remote_is_dir = remote.ends_with('/')
                     || sftp
@@ -2497,7 +2671,7 @@ async fn run_transfer(
                 let remote_path = if remote.ends_with('/') {
                     match file_name_of(local) {
                         Some(name) => format!("{remote}{name}"),
-                        None => return Err(format!("Ruta local sin nombre de fichero: {local}")),
+                        None => return Err(tr!("Ruta local sin nombre de fichero: {local}", "Local path without a file name: {local}")),
                     }
                 } else {
                     remote.clone()
@@ -2552,17 +2726,17 @@ async fn get_file(
     let mut source = sftp
         .open(remote.to_string())
         .await
-        .map_err(|e| format!("No se pudo abrir el remoto {remote}: {e}"))?;
+        .map_err(|e| tr!("No se pudo abrir el remoto {remote}: {e}", "Could not open the remote {remote}: {e}"))?;
     let mut target = tokio::fs::File::create(local_path)
         .await
-        .map_err(|e| format!("No se pudo crear {}: {e}", local_path.display()))?;
+        .map_err(|e| tr!("No se pudo crear {}: {e}", "Could not create {}: {e}", local_path.display()))?;
     let n = tokio::io::copy(&mut source, &mut target)
         .await
-        .map_err(|e| format!("Error copiando {remote}: {e}"))?;
+        .map_err(|e| tr!("Error copiando {remote}: {e}", "Error copying {remote}: {e}"))?;
     target
         .flush()
         .await
-        .map_err(|e| format!("Error escribiendo {}: {e}", local_path.display()))?;
+        .map_err(|e| tr!("Error escribiendo {}: {e}", "Error writing {}: {e}", local_path.display()))?;
     Ok(n)
 }
 
@@ -2573,18 +2747,18 @@ async fn put_file(
 ) -> Result<u64, String> {
     let mut source = tokio::fs::File::open(local)
         .await
-        .map_err(|e| format!("No se pudo abrir {}: {e}", local.display()))?;
+        .map_err(|e| tr!("No se pudo abrir {}: {e}", "Could not open {}: {e}", local.display()))?;
     let mut target = sftp
         .create(remote_path.to_string())
         .await
-        .map_err(|e| format!("No se pudo crear el remoto {remote_path}: {e}"))?;
+        .map_err(|e| tr!("No se pudo crear el remoto {remote_path}: {e}", "Could not create the remote {remote_path}: {e}"))?;
     let n = tokio::io::copy(&mut source, &mut target)
         .await
-        .map_err(|e| format!("Error copiando a {remote_path}: {e}"))?;
+        .map_err(|e| tr!("Error copiando a {remote_path}: {e}", "Error copying to {remote_path}: {e}"))?;
     target
         .shutdown()
         .await
-        .map_err(|e| format!("Error cerrando el remoto {remote_path}: {e}"))?;
+        .map_err(|e| tr!("Error cerrando el remoto {remote_path}: {e}", "Error closing the remote {remote_path}: {e}"))?;
     Ok(n)
 }
 
@@ -2608,26 +2782,27 @@ async fn get_tree(
     let mut stack = vec![(remote_root.trim_end_matches('/').to_string(), local_root.to_path_buf(), 0usize)];
     while let Some((remote_dir, local_dir, depth)) = stack.pop() {
         if depth > MAX_TRANSFER_DEPTH {
-            return Err(format!(
-                "El arbol remoto supera {MAX_TRANSFER_DEPTH} niveles en {remote_dir}: copia abortada."
+            return Err(tr!(
+                "El arbol remoto supera {MAX_TRANSFER_DEPTH} niveles en {remote_dir}: copia abortada.",
+                "The remote tree is deeper than {MAX_TRANSFER_DEPTH} levels at {remote_dir}: copy aborted."
             ));
         }
         tokio::fs::create_dir_all(&local_dir)
             .await
-            .map_err(|e| format!("No se pudo crear {}: {e}", local_dir.display()))?;
+            .map_err(|e| tr!("No se pudo crear {}: {e}", "Could not create {}: {e}", local_dir.display()))?;
         stats.dirs += 1;
         let listing_path = if remote_dir.is_empty() { "/".to_string() } else { remote_dir.clone() };
         let entries = match sftp.read_dir(listing_path).await {
             Ok(entries) => entries,
             Err(e) => {
-                stats.errors.push(format!("No se pudo listar {remote_dir}: {e}"));
+                stats.errors.push(tr!("No se pudo listar {remote_dir}: {e}", "Could not list {remote_dir}: {e}"));
                 continue;
             }
         };
         for entry in entries {
             let name = entry.file_name();
             crate::sftp_manager::safe_entry_name(&name)
-                .map_err(|e| format!("Copia abortada en {remote_dir}: {e}"))?;
+                .map_err(|e| tr!("Copia abortada en {remote_dir}: {e}", "Copy aborted at {remote_dir}: {e}"))?;
             let remote_path = join_remote(&remote_dir, &name);
             let local_path = local_dir.join(&name);
             let kind = entry.file_type();
@@ -2661,8 +2836,9 @@ async fn put_tree(
     let mut stack = vec![(local_root.to_path_buf(), remote_root.trim_end_matches('/').to_string(), 0usize)];
     while let Some((local_dir, remote_dir, depth)) = stack.pop() {
         if depth > MAX_TRANSFER_DEPTH {
-            return Err(format!(
+            return Err(tr!(
                 "El arbol local supera {MAX_TRANSFER_DEPTH} niveles en {}: copia abortada.",
+                "The local tree is deeper than {MAX_TRANSFER_DEPTH} levels at {}: copy aborted.",
                 local_dir.display()
             ));
         }
@@ -2679,7 +2855,7 @@ async fn put_tree(
         let entries = match std::fs::read_dir(&local_dir) {
             Ok(entries) => entries,
             Err(e) => {
-                stats.errors.push(format!("No se pudo listar {}: {e}", local_dir.display()));
+                stats.errors.push(tr!("No se pudo listar {}: {e}", "Could not list {}: {e}", local_dir.display()));
                 continue;
             }
         };
@@ -2687,14 +2863,15 @@ async fn put_tree(
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(e) => {
-                    stats.errors.push(format!("Entrada ilegible en {}: {e}", local_dir.display()));
+                    stats.errors.push(tr!("Entrada ilegible en {}: {e}", "Unreadable entry in {}: {e}", local_dir.display()));
                     continue;
                 }
             };
             let local_path = entry.path();
             let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-                stats.errors.push(format!(
+                stats.errors.push(tr!(
                     "Nombre no UTF-8, no se puede enviar por SFTP: {}",
+                    "Name is not UTF-8, it cannot be sent over SFTP: {}",
                     local_path.display()
                 ));
                 continue;
@@ -2704,7 +2881,7 @@ async fn put_tree(
             let kind = match std::fs::symlink_metadata(&local_path) {
                 Ok(meta) => meta.file_type(),
                 Err(e) => {
-                    stats.errors.push(format!("No se pudo leer {}: {e}", local_path.display()));
+                    stats.errors.push(tr!("No se pudo leer {}: {e}", "Could not read {}: {e}", local_path.display()));
                     continue;
                 }
             };
@@ -2738,7 +2915,7 @@ async fn ensure_remote_dir(
         Ok(()) => Ok(()),
         Err(create_err) => match sftp.metadata(target.to_string()).await {
             Ok(meta) if meta.is_dir() => Ok(()),
-            _ => Err(format!("No se pudo crear la carpeta remota {target}: {create_err}")),
+            _ => Err(tr!("No se pudo crear la carpeta remota {target}: {create_err}", "Could not create the remote folder {target}: {create_err}")),
         },
     }
 }
@@ -2791,13 +2968,14 @@ async fn authenticate_target(
         profile.key_path.as_deref(),
     )
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.localized())?
     {
         AuthResult::Success => Ok(()),
         AuthResult::Failure {
             remaining_methods, ..
-        } => Err(format!(
+        } => Err(tr!(
             "Autenticacion fallida. Metodos restantes: {:?}",
+            "Authentication failed. Remaining methods: {:?}",
             remaining_methods
         )),
     }
@@ -2806,6 +2984,50 @@ async fn authenticate_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `--help` y los errores de uso salen en el idioma de la CLI; lo que lee
+    /// una máquina (el JSON) no depende de él.
+    #[test]
+    fn la_ayuda_y_los_errores_de_uso_salen_en_el_idioma_de_la_cli() {
+        use crate::cli_lang::{with_lang, Lang};
+        let en = with_lang(Lang::En, help_text);
+        assert!(en.contains("Usage:") && en.contains("Exit codes:"), "{en}");
+        assert!(en.contains(&format!("(default {DEFAULT_PARALLEL})")), "{en}");
+        assert!(en.contains("${ask:}"), "{en}");
+        assert!(!en.contains("Uso:"), "{en}");
+        let es = with_lang(Lang::Es, help_text);
+        assert!(es.contains("Uso:") && es.contains("Codigos de salida:"), "{es}");
+
+        let parse = |lang, items: &[&str]| with_lang(lang, || parse_cli_args(&args(items)));
+        assert_eq!(
+            parse(Lang::En, &["-c", "x", "--bogus"]),
+            CliCommand::Invalid("Unknown CLI option: --bogus".into())
+        );
+        assert_eq!(
+            parse(Lang::Es, &["-c", "x", "--bogus"]),
+            CliCommand::Invalid("Opcion CLI desconocida: --bogus".into())
+        );
+        assert_eq!(
+            parse(Lang::En, &["-c", "x", "--get", "a"]),
+            CliCommand::Invalid("--get needs two paths: --get <remote> <local>.".into())
+        );
+        assert_eq!(
+            parse(Lang::En, &["--timeout"]),
+            CliCommand::Invalid("--timeout needs a value.".into())
+        );
+
+        let stats = TransferStats {
+            bytes: 10,
+            files: 2,
+            dirs: 1,
+            skipped: 1,
+            errors: vec!["x".into()],
+        };
+        assert_eq!(
+            with_lang(Lang::En, || transfer_summary(&stats, 5)),
+            "2 files (10 bytes) in 1 folders, 5 ms. 1 skipped (symbolic links or special files). 1 failed."
+        );
+    }
 
     fn args(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()

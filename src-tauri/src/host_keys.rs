@@ -9,6 +9,8 @@ use russh::client;
 use russh::keys::{known_hosts, ssh_key::PublicKey, PublicKeyOrCertificate};
 use russh::Channel;
 use serde::{Deserialize, Serialize};
+
+use crate::cli_lang::tr;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::oneshot;
@@ -270,21 +272,75 @@ fn write_host_key_question(
     key_type: &str,
     previous: &[(usize, String)],
 ) -> std::io::Result<()> {
+    let yes_no = crate::cli_lang::yes_no();
     if previous.is_empty() {
-        writeln!(out, "La autenticidad del host {host}:{port} no se puede establecer.")?;
-        writeln!(out, "Huella de la clave {key_type}: {fingerprint}")?;
-        write!(out, "¿Confiar en este host y guardar su clave? (sí/no): ")
-    } else {
-        writeln!(out, "¡ALERTA! La host key de {host}:{port} HA CAMBIADO.")?;
-        for (line, prev) in previous {
-            writeln!(out, "  registrada (known_hosts línea {line}): {prev}")?;
-        }
-        writeln!(out, "  recibida ahora ({key_type}): {fingerprint}")?;
         writeln!(
             out,
-            "Esto puede indicar un ataque de intermediario. Acepta SOLO si el cambio es esperado."
+            "{}",
+            tr!(
+                "La autenticidad del host {host}:{port} no se puede establecer.",
+                "The authenticity of host {host}:{port} can't be established."
+            )
         )?;
-        write!(out, "¿Reemplazar la clave registrada y continuar? (sí/no): ")
+        writeln!(
+            out,
+            "{}",
+            tr!(
+                "Huella de la clave {key_type}: {fingerprint}",
+                "{key_type} key fingerprint: {fingerprint}"
+            )
+        )?;
+        write!(
+            out,
+            "{}",
+            tr!(
+                "¿Confiar en este host y guardar su clave? {yes_no}: ",
+                "Trust this host and save its key? {yes_no}: "
+            )
+        )
+    } else {
+        writeln!(
+            out,
+            "{}",
+            tr!(
+                "¡ALERTA! La host key de {host}:{port} HA CAMBIADO.",
+                "WARNING! The host key of {host}:{port} HAS CHANGED."
+            )
+        )?;
+        for (line, prev) in previous {
+            writeln!(
+                out,
+                "{}",
+                tr!(
+                    "  registrada (known_hosts línea {line}): {prev}",
+                    "  recorded (known_hosts line {line}): {prev}"
+                )
+            )?;
+        }
+        writeln!(
+            out,
+            "{}",
+            tr!(
+                "  recibida ahora ({key_type}): {fingerprint}",
+                "  received now ({key_type}): {fingerprint}"
+            )
+        )?;
+        writeln!(
+            out,
+            "{}",
+            tr!(
+                "Esto puede indicar un ataque de intermediario. Acepta SOLO si el cambio es esperado.",
+                "This may mean a man-in-the-middle attack. Accept ONLY if the change is expected."
+            )
+        )?;
+        write!(
+            out,
+            "{}",
+            tr!(
+                "¿Reemplazar la clave registrada y continuar? {yes_no}: ",
+                "Replace the recorded key and continue? {yes_no}: "
+            )
+        )
     }
 }
 
@@ -307,20 +363,30 @@ fn confirm_on_stdin(
         // seguro. El mensaje enumera las salidas, con la huella recibida ya
         // puesta en `--host-key` para que un script pueda fijarla tal cual.
         if changed {
-            return Err(format!(
+            return Err(tr!(
                 "ALERTA: la host key de {host}:{port} ha cambiado ({key_type}, {fingerprint}). \
                  Sin terminal interactiva no se puede confirmar el cambio: conecta desde la \
                  app para revisarlo y decidir. Si el cambio es esperado, --host-key \
-                 {fingerprint} acepta solo esa huella sin tocar known_hosts."
+                 {fingerprint} acepta solo esa huella sin tocar known_hosts.",
+                "WARNING: the host key of {host}:{port} has changed ({key_type}, {fingerprint}). \
+                 Without an interactive terminal the change cannot be confirmed: connect from \
+                 the app to review it and decide. If the change is expected, --host-key \
+                 {fingerprint} accepts only that fingerprint without touching known_hosts."
             ));
         }
-        return Err(format!(
+        return Err(tr!(
             "host key desconocida de {host}:{port} ({key_type}, {fingerprint}). \
              Sin terminal interactiva no se puede confirmar. Opciones: conecta una vez \
              desde la app o desde una terminal; --host-key {fingerprint} acepta solo esa \
              huella (sin tocar known_hosts); --accept-host-key la aprende sin preguntar; \
              o desactiva «Confirmar la huella en la primera conexión» en Preferencias → \
-             Seguridad."
+             Seguridad.",
+            "unknown host key for {host}:{port} ({key_type}, {fingerprint}). \
+             Without an interactive terminal it cannot be confirmed. Options: connect once \
+             from the app or from a terminal; --host-key {fingerprint} accepts only that \
+             fingerprint (without touching known_hosts); --accept-host-key learns it without \
+             asking; or turn off \"Confirm the fingerprint on first connection\" in \
+             Preferences → Security."
         ));
     }
     // La pregunta va por stderr, como el resto de avisos y preguntas de la CLI
@@ -337,8 +403,7 @@ fn confirm_on_stdin(
     if stdin.lock().read_line(&mut line).is_err() {
         return Ok(false);
     }
-    let answer = line.trim().to_lowercase();
-    Ok(matches!(answer.as_str(), "si" | "sí" | "s" | "yes" | "y"))
+    Ok(crate::cli_lang::is_yes(&line))
 }
 
 /// Handler TOFU para russh:
@@ -496,9 +561,11 @@ impl KnownHostsClient {
     ) -> Result<(), String> {
         let _guard = KNOWN_HOSTS_LOCK.lock_recover();
         let changed_meanwhile = || {
-            format!(
+            tr!(
                 "known_hosts ha cambiado mientras decidías y no se ha tocado; vuelve a \
                  conectar a {}:{} para revisar la clave otra vez",
+                "known_hosts changed while you were deciding and was not touched; connect \
+                 to {}:{} again to review the key once more",
                 self.host, self.port
             )
         };
@@ -707,19 +774,25 @@ impl KnownHostsClient {
         let new_fp = fingerprint_sha256(key);
         let prev_desc = previous
             .iter()
-            .map(|(line, fp)| format!("línea {line}: {fp}"))
+            .map(|(line, fp)| tr!("línea {line}: {fp}", "line {line}: {fp}"))
             .collect::<Vec<_>>()
             .join("; ");
 
         if !prompt_on_key_change() {
             // Política clásica: rechazo con instrucciones manuales.
-            self.set_failure(format!(
+            self.set_failure(tr!(
                 "{} ALERTA: la host key de {}:{} ha cambiado. \
                  Fingerprint recibido: {new_fp}. \
                  Entradas previas en known_hosts → {prev_desc}. \
                  Si reconoces el cambio, elimina las líneas correspondientes de \
                  ~/.ssh/known_hosts y vuelve a conectar (o activa la pregunta de \
                  cambio de clave en Preferencias → Seguridad).",
+                "{} WARNING: the host key of {}:{} has changed. \
+                 Received fingerprint: {new_fp}. \
+                 Previous entries in known_hosts → {prev_desc}. \
+                 If you recognise the change, remove those lines from \
+                 ~/.ssh/known_hosts and connect again (or turn on the key change \
+                 question in Preferences → Security).",
                 crate::ipc_error::HOSTKEY_CHANGED_MARKER,
                 self.host,
                 self.port,
@@ -736,9 +809,11 @@ impl KnownHostsClient {
                 match self.replace_known_hosts_entries(&previous, key) {
                     Ok(()) => true,
                     Err(err) => {
-                        self.set_failure(format!(
+                        self.set_failure(tr!(
                             "Aceptaste la clave nueva de {}:{} pero no se pudo \
                              actualizar known_hosts: {err}",
+                            "You accepted the new key of {}:{} but known_hosts \
+                             could not be updated: {err}",
                             self.host, self.port,
                         ));
                         false
@@ -746,10 +821,13 @@ impl KnownHostsClient {
                 }
             }
             Ok(false) => {
-                self.set_failure(format!(
+                self.set_failure(tr!(
                     "{} ALERTA: la host key de {}:{} ha cambiado y se ha RECHAZADO. \
                      Fingerprint recibido: {new_fp}; registrado → {prev_desc}. \
                      known_hosts queda intacto.",
+                    "{} WARNING: the host key of {}:{} has changed and was REJECTED. \
+                     Received fingerprint: {new_fp}; recorded → {prev_desc}. \
+                     known_hosts is left untouched.",
                     crate::ipc_error::HOSTKEY_CHANGED_MARKER,
                     self.host,
                     self.port,
@@ -782,10 +860,13 @@ impl client::Handler for KnownHostsClient {
         let server_public_key = match server_public_key {
             PublicKeyOrCertificate::PublicKey { key, .. } => key,
             PublicKeyOrCertificate::Certificate(cert) => {
-                self.set_failure(format!(
+                self.set_failure(tr!(
                     "{} {}:{} ha presentado un CERTIFICADO de host ({}), y Rustty \
                      todavía no verifica certificados: solo claves en known_hosts. \
                      Conexión rechazada.",
+                    "{} {}:{} presented a host CERTIFICATE ({}), and Rustty does \
+                     not verify certificates yet: only keys in known_hosts. \
+                     Connection rejected.",
                     crate::ipc_error::HOSTKEY_UNKNOWN_MARKER,
                     self.host,
                     self.port,
@@ -802,10 +883,13 @@ impl client::Handler for KnownHostsClient {
             if received == *expected {
                 return Ok(true);
             }
-            self.set_failure(format!(
+            self.set_failure(tr!(
                 "La host key de {}:{} ({}) no coincide con la huella indicada en --host-key: \
                  esperada {expected}, recibida {received}. Conexión rechazada; known_hosts \
                  no se ha tocado.",
+                "The host key of {}:{} ({}) does not match the fingerprint given in --host-key: \
+                 expected {expected}, received {received}. Connection rejected; known_hosts \
+                 was not touched.",
                 self.host,
                 self.port,
                 server_public_key.algorithm().as_str(),
@@ -850,9 +934,11 @@ impl client::Handler for KnownHostsClient {
                             match asked {
                                 Ok(true) => {}
                                 Ok(false) => {
-                                    self.set_failure(format!(
+                                    self.set_failure(tr!(
                                         "{} Host key de {}:{} rechazada: no se ha confirmado la huella {}. \
                                          La clave no se ha guardado.",
+                                        "{} Host key of {}:{} rejected: fingerprint {} was not confirmed. \
+                                         The key was not saved.",
                                         crate::ipc_error::HOSTKEY_UNKNOWN_MARKER,
                                         self.host,
                                         self.port,
@@ -875,8 +961,9 @@ impl client::Handler for KnownHostsClient {
                         match learned {
                             Ok(()) => Ok(true),
                             Err(err) => {
-                                self.set_failure(format!(
+                                self.set_failure(tr!(
                                     "No se pudo guardar la host key de {}:{} en known_hosts: {err}",
+                                    "Could not save the host key of {}:{} to known_hosts: {err}",
                                     self.host, self.port
                                 ));
                                 Ok(false)
@@ -891,13 +978,14 @@ impl client::Handler for KnownHostsClient {
                 // la línea que denuncia russh (traducida a la física).
                 let mut previous = self.recorded_entries();
                 if previous.is_empty() {
-                    previous.push((self.physical_line_of(line), "(no legible)".to_string()));
+                    previous.push((self.physical_line_of(line), tr!("(no legible)", "(unreadable)")));
                 }
                 Ok(self.handle_changed_key(server_public_key, previous).await)
             }
             Err(err) => {
-                self.set_failure(format!(
+                self.set_failure(tr!(
                     "No se pudo verificar la host key de {}:{}: {err}",
+                    "Could not verify the host key of {}:{}: {err}",
                     self.host, self.port
                 ));
                 Ok(false)
@@ -1461,6 +1549,48 @@ mod tests {
         let changed = String::from_utf8(out).unwrap();
         assert!(changed.contains("HA CAMBIADO"), "{changed}");
         assert!(changed.contains("línea 7): SHA256:vieja"), "{changed}");
+    }
+
+    /// La pregunta y la ALERTA salen en el idioma de la CLI, con su (sí/no) o
+    /// (yes/no), y la respuesta vale en los dos idiomas.
+    #[test]
+    fn la_pregunta_de_la_cli_sale_en_espanol_o_en_ingles() {
+        use crate::cli_lang::{with_lang, Lang};
+        let render = |lang, previous: &[(usize, String)]| {
+            with_lang(lang, || {
+                let mut out = Vec::new();
+                write_host_key_question(&mut out, "h.example", 22, "SHA256:nueva", "ssh-ed25519", previous)
+                    .unwrap();
+                String::from_utf8(out).unwrap()
+            })
+        };
+        let previous = vec![(7, "SHA256:vieja".to_string())];
+
+        let first = render(Lang::En, &[]);
+        assert!(first.contains("The authenticity of host h.example:22 can't be established."), "{first}");
+        assert!(first.contains("ssh-ed25519 key fingerprint: SHA256:nueva"), "{first}");
+        assert!(first.ends_with("Trust this host and save its key? (yes/no): "), "{first}");
+        let changed = render(Lang::En, &previous);
+        assert!(changed.contains("WARNING! The host key of h.example:22 HAS CHANGED."), "{changed}");
+        assert!(changed.contains("recorded (known_hosts line 7): SHA256:vieja"), "{changed}");
+        assert!(changed.ends_with("Replace the recorded key and continue? (yes/no): "), "{changed}");
+
+        let first = render(Lang::Es, &[]);
+        assert!(first.ends_with("¿Confiar en este host y guardar su clave? (sí/no): "), "{first}");
+        let changed = render(Lang::Es, &previous);
+        assert!(changed.contains("HA CAMBIADO"), "{changed}");
+        assert!(changed.ends_with("¿Reemplazar la clave registrada y continuar? (sí/no): "), "{changed}");
+
+        // Sin terminal, el rechazo también sale en inglés.
+        let err = with_lang(Lang::En, || {
+            confirm_on_stdin("host.example", 22, "SHA256:abc", "ssh-ed25519", &[]).unwrap_err()
+        });
+        assert!(err.starts_with("unknown host key for host.example:22"), "{err}");
+        assert!(err.contains("--host-key SHA256:abc"), "{err}");
+        let err = with_lang(Lang::En, || {
+            confirm_on_stdin("host.example", 22, "SHA256:abc", "ssh-ed25519", &previous).unwrap_err()
+        });
+        assert!(err.contains("has changed"), "{err}");
     }
 
     /// La pregunta de host key de la CLI no puede ir por stdout: es el canal de

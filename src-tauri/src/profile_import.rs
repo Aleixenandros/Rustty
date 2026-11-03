@@ -35,6 +35,7 @@ use std::collections::HashSet;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
+use crate::cli_lang::tr;
 use crate::profiles::ConnectionProfile;
 
 /// Tipos que la interfaz sabe abrir, con sus alias de otros clientes.
@@ -159,16 +160,19 @@ pub struct Options {
 /// Parsea el fichero: un array de perfiles, **un solo perfil** (objeto con
 /// `name`) o un envoltorio `{"profiles": [...]}`.
 pub fn parse_entries(raw: &str) -> Result<Vec<Value>, String> {
-    let value: Value = serde_json::from_str(raw).map_err(|e| format!("JSON invalido: {e}"))?;
+    let value: Value = serde_json::from_str(raw).map_err(|e| tr!("JSON invalido: {e}", "Invalid JSON: {e}"))?;
     match value {
         Value::Array(items) => Ok(items),
         Value::Object(mut obj) => match obj.remove("profiles") {
             Some(Value::Array(items)) => Ok(items),
-            Some(_) => Err("\"profiles\" debe ser un array de perfiles.".into()),
+            Some(_) => Err(tr!("\"profiles\" debe ser un array de perfiles.", "\"profiles\" must be an array of profiles.")),
             None if obj.contains_key("name") => Ok(vec![Value::Object(obj)]),
-            None => Err("Se esperaba un perfil, un array de perfiles o un objeto con \"profiles\".".into()),
+            None => Err(tr!(
+                "Se esperaba un perfil, un array de perfiles o un objeto con \"profiles\".",
+                "Expected a profile, an array of profiles or an object with \"profiles\"."
+            )),
         },
-        _ => Err("Se esperaba un perfil o un array de perfiles.".into()),
+        _ => Err(tr!("Se esperaba un perfil o un array de perfiles.", "Expected a profile or an array of profiles.")),
     }
 }
 
@@ -207,19 +211,19 @@ fn string_field(obj: &Map<String, Value>, key: &str) -> String {
 /// Valida y completa una entrada. El error lleva el motivo para el resumen.
 pub fn prepare(entry: Value, opts: &Options) -> Result<Prepared, String> {
     let Value::Object(mut obj) = entry else {
-        return Err("la entrada no es un objeto".into());
+        return Err(tr!("la entrada no es un objeto", "the entry is not an object"));
     };
     let name = string_field(&obj, "name");
     if name.is_empty() {
-        return Err("falta el nombre (name)".into());
+        return Err(tr!("falta el nombre (name)", "the name (name) is missing"));
     }
     if string_field(&obj, "host").is_empty() {
-        return Err("falta el host".into());
+        return Err(tr!("falta el host", "the host is missing"));
     }
 
     let kind_raw = string_field(&obj, "connection_type");
     let kind = normalize_connection_type(&kind_raw)
-        .ok_or_else(|| format!("tipo de conexion desconocido: {kind_raw}"))?;
+        .ok_or_else(|| tr!("tipo de conexion desconocido: {kind_raw}", "unknown connection type: {kind_raw}"))?;
     obj.insert("connection_type".into(), Value::String(kind.to_string()));
 
     // Secretos fuera del perfil antes de deserializarlo: `ConnectionProfile` no
@@ -285,7 +289,7 @@ pub fn prepare(entry: Value, opts: &Options) -> Result<Prepared, String> {
     }
 
     let profile: ConnectionProfile =
-        serde_json::from_value(Value::Object(obj)).map_err(|e| format!("perfil invalido: {e}"))?;
+        serde_json::from_value(Value::Object(obj)).map_err(|e| tr!("perfil invalido: {e}", "invalid profile: {e}"))?;
     Ok(Prepared {
         profile,
         password,
@@ -349,14 +353,14 @@ pub fn plan(existing: &[ConnectionProfile], entries: Vec<Prepared>) -> Plan {
                 if !touched.insert(current.id.clone()) {
                     plan.skipped.push(Skipped {
                         name: entry.profile.name.clone(),
-                        reason: "duplicado en el fichero".into(),
+                        reason: tr!("duplicado en el fichero", "duplicated in the file"),
                     });
                     continue;
                 }
                 if same_profile(current, &entry.profile) && entry.secrets().is_empty() {
                     plan.skipped.push(Skipped {
                         name: entry.profile.name.clone(),
-                        reason: "sin cambios".into(),
+                        reason: tr!("sin cambios", "unchanged"),
                     });
                     continue;
                 }
@@ -372,7 +376,7 @@ pub fn plan(existing: &[ConnectionProfile], entries: Vec<Prepared>) -> Plan {
                 if !touched.insert(key) {
                     plan.skipped.push(Skipped {
                         name: entry.profile.name.clone(),
-                        reason: "duplicado en el fichero".into(),
+                        reason: tr!("duplicado en el fichero", "duplicated in the file"),
                     });
                     continue;
                 }
