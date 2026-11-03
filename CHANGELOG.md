@@ -2,6 +2,24 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.25.0] - 2026-11-03
+
+### Añadido
+
+- El escritorio remoto dentro de la pestaña se ajusta al tamaño de la ventana: al redimensionarla, maximizarla, plegar la barra lateral, dividir la vista o cambiar el zoom, el servidor recibe el tamaño nuevo sin reconectar. Con clic derecho en la pestaña → «Resolución» se elige «Ajustar a la pestaña» o un tamaño fijo (de 1024×768 a 2560×1440), que se ve entero y sin deformar; con servidores que no admiten el cambio en caliente, la elección reconecta la pestaña con ese tamaño.
+- Preferencias tiene una sección RDP propia con todas las opciones del escritorio remoto, que antes estaban repartidas entre Sistema y Seguridad.
+- Con «Reanudar transferencias interrumpidas» activado, las subidas y las descargas por FTP y FTPS que se cortan continúan donde se quedaron, como en SFTP; la subida se escribe en un temporal que solo ocupa su nombre al terminar, y con servidores que no saben continuar se repite entera.
+- La línea de órdenes (`rustty -c`, `-l`, `--exec`, `--get`/`--put`…) habla también inglés: ayuda, errores, resúmenes y preguntas de huella salen en el idioma de la interfaz o, si no hay, en el del sistema.
+
+### Cambiado
+
+- La librería de SSH pasa a su versión 0.65, que corrige las conexiones que dejaban de enviar cuando un canal se quedaba sin ventana; también se actualizan Tauri y sus complementos, la librería de SFTP y la de KeePass, y el actualizador automático deja atrás los avisos de seguridad de su librería de compresión.
+
+### Corregido
+
+- La conexión SSH ya no puede congelarse al mantenerla activa, al leer el monitor de recursos, al abrir o cerrar un túnel remoto ni al abrir una pestaña nueva cuando el servidor deja de leer lo que se le manda.
+- Al reconectar el escritorio remoto en su misma pestaña, el cierre de la sesión anterior ya no marcaba la nueva como cerrada.
+
 ## [2.24.0] - 2026-11-02
 
 ### Añadido
