@@ -123,6 +123,31 @@ export async function checkDialogs(app, check) {
     await visible("modal-prefs-overlay")
     && await app.exec('return document.activeElement?.id === "btn-manage-known-hosts";'), await activeId());
 
+  // ── Preferencias → RDP: sección propia, alcanzable con las flechas ──
+  await app.jsClick('[data-prefs-tab="transfer"]');
+  await app.exec('document.querySelector(\'[data-prefs-tab="transfer"]\').focus(); return true;');
+  await press("ArrowRight", "ArrowRight");
+  check("tras FTP/SFTP, la flecha lleva a la sección RDP y le pasa el foco",
+    await app.exec(`const tab = document.activeElement;
+      return tab?.dataset?.prefsTab === "rdp" && tab.getAttribute("aria-selected") === "true"
+        && !document.querySelector('.prefs-panel[data-prefs-panel="rdp"]').hidden;`), await activeId());
+  const rdpIds = ["pref-rdp-mode", "pref-rdp-display", "pref-rdp-perf", "pref-rdp-clipboard",
+    "pref-rdp-clipboard-files", "pref-rdp-shared-folder", "btn-rdp-shared-folder-pick", "pref-rdp-cert-change-prompt"];
+  check("todas las opciones del escritorio remoto viven en la sección RDP",
+    await app.exec(`const panel = document.querySelector('.prefs-panel[data-prefs-panel="rdp"]');
+      return arguments[0].every((id) => panel.contains(document.getElementById(id)))
+        && !document.querySelector('.prefs-panel[data-prefs-panel="system"] [id^="pref-rdp-"]')
+        && !document.querySelector('.prefs-panel[data-prefs-panel="security"] [id^="pref-rdp-"]');`, [rdpIds]));
+  check("en la ventana externa, lo que solo usa el cliente integrado queda desactivado",
+    await app.exec(`const mode = document.getElementById("pref-rdp-mode");
+      const prev = mode.value;
+      mode.value = "external"; mode.dispatchEvent(new Event("change"));
+      const off = ["pref-rdp-perf", "pref-rdp-clipboard", "btn-rdp-shared-folder-pick"]
+        .every((id) => document.getElementById(id).disabled);
+      mode.value = prev; mode.dispatchEvent(new Event("change"));
+      return off && !document.getElementById("pref-rdp-display").disabled
+        && !document.getElementById("pref-rdp-cert-change-prompt").disabled;`));
+
   // ── Confirmación destructiva ────────────────────────────────────
   await app.jsClick('[data-prefs-tab="shortcuts"]');
   await app.exec('document.getElementById("shortcuts-preset-select").value = "vim"; document.getElementById("btn-shortcuts-apply-preset").focus(); return true;');

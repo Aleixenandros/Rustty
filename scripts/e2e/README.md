@@ -35,8 +35,10 @@ entra al abrir Nueva conexión y vuelve a quien la abrió al cerrar, el fondo
 queda inerte (salvo los tiradores de la ventana), Escape en el selector de
 carpeta no cierra el formulario ni borra lo escrito, Tab y Shift+Tab dan la
 vuelta en los extremos, Ctrl+W y Ctrl+, no actúan detrás de un modal (el zoom
-de la interfaz sí), Escape en known_hosts no cierra Preferencias y una
-confirmación destructiva es `alertdialog` con el foco en «Cancelar». Como
+de la interfaz sí), Escape en known_hosts no cierra Preferencias, la sección
+RDP de Preferencias se alcanza con las flechas desde FTP/SFTP, reúne todas las
+opciones del escritorio remoto y, con la ventana externa, desactiva las que
+solo usa el cliente integrado, y una confirmación destructiva es `alertdialog` con el foco en «Cancelar». Como
 WebKitWebDriver no mueve el foco con eventos sintéticos, solo prueba lo que el
 controlador hace de forma explícita.
 

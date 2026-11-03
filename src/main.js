@@ -12713,7 +12713,7 @@ let rdpEmbedAvailable = false;
 /**
  * ¿Abrir este perfil RDP en la pestaña (IronRDP) en vez de en el cliente
  * externo? En el externo por defecto: el integrado es nuevo y se elige en
- * Ajustes › Sistema (`prefs.rdpMode`). Sin él en la build, siempre externo.
+ * Preferencias › RDP (`prefs.rdpMode`). Sin él en la build, siempre externo.
  * @param {any} _profile
  */
 function useEmbeddedRdp(_profile) {
@@ -12784,12 +12784,12 @@ function syncRdpEmbeddedPrefsUi() {
 /** @param {string|null} path */
 function showRdpSharedFolder(path) {
   const el = document.getElementById("rdp-shared-folder-path");
-  if (el) el.textContent = path || t("prefs_system.rdp_shared_folder_none");
+  if (el) el.textContent = path || t("prefs_rdp.shared_folder_none");
 }
 
 async function pickRdpSharedFolder() {
   try {
-    const r = await invoke("rdp_shared_folder_pick", { title: t("prefs_system.rdp_shared_folder_pick") });
+    const r = await invoke("rdp_shared_folder_pick", { title: t("prefs_rdp.shared_folder_pick") });
     if (!r) return;
     showRdpSharedFolder(r.path ?? null);
     const folderEl = /** @type {HTMLInputElement|null} */ (document.getElementById("pref-rdp-shared-folder"));

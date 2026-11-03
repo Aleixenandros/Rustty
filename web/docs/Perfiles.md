@@ -120,7 +120,7 @@ Si tu shell remoto emite las marcas semánticas **OSC 133** (bash, zsh y fish mo
 - **FTP**: panel de ficheros para servidores FTP heredados.
 - **FTPS**: FTP explícito sobre TLS para servidores que no ofrecen SFTP.
 
-RDP se abre por defecto en una ventana externa (mstsc / xfreerdp), con una pestaña de estado en la app. En Preferencias → Sistema puedes elegir verlo **dentro de la pestaña**, con el cliente integrado, que comparte el portapapeles (texto y, si lo activas, ficheros) y, si la eliges, una carpeta local como unidad del remoto: detalles en [Clientes externos](?page=ClientesExternos). VNC y Telnet se abren siempre como [clientes externos](?page=ClientesExternos).
+RDP se abre por defecto en una ventana externa (mstsc / xfreerdp), con una pestaña de estado en la app. En Preferencias → RDP puedes elegir verlo **dentro de la pestaña**, con el cliente integrado, que comparte el portapapeles (texto y, si lo activas, ficheros) y, si la eliges, una carpeta local como unidad del remoto: detalles en [Clientes externos](?page=ClientesExternos). VNC y Telnet se abren siempre como [clientes externos](?page=ClientesExternos).
 
 ## Credenciales
 

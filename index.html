@@ -2399,6 +2399,10 @@
               <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v13"/><path d="M4 7l3-3 3 3"/><path d="M17 20V7"/><path d="M14 17l3 3 3-3"/></svg></span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_transfer">FTP/SFTP</span>
             </button>
+            <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="rdp">
+              <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/><path d="M9 13l5.5-5.5M10 7.5h4.5V12"/></svg></span>
+              <span class="prefs-nav-label" data-i18n="modal_prefs.tab_rdp">RDP</span>
+            </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="language">
               <span class="prefs-nav-icon" translate="no">A文</span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_language">Idioma</span>
@@ -3163,6 +3167,84 @@
                 <p class="settings-hint" data-i18n="prefs_transfer.resume_hint">Conserva lo ya copiado cuando una transferencia falla o se cancela y continúa desde ahí la próxima vez. Una descarga solo se reanuda si el fichero del servidor sigue igual —misma ruta, tamaño y fecha—, y una subida, si el fichero local sigue igual y lo que hay en el servidor coincide con él; si algo cambió, empieza de cero. Las subidas van a un temporal en el servidor y solo ocupan su nombre al terminar. El precio es que un fallo deja un temporal «.rustty-part» junto al destino, en tu equipo o en el servidor, en vez de borrarlo. Solo SFTP.</p>
             </section>
 
+            <!-- ── RDP ── -->
+            <section class="prefs-panel" role="tabpanel" data-prefs-panel="rdp">
+              <h3 class="prefs-panel-title" data-i18n="prefs_rdp.title">Escritorio remoto (RDP)</h3>
+              <p class="prefs-panel-hint" data-i18n="prefs_rdp.hint">Cómo se abre el escritorio remoto y qué comparte con este equipo. El rendimiento, el portapapeles y la carpeta compartida solo se aplican al cliente integrado, en la pestaña.</p>
+
+              <h4 class="prefs-subhead" data-i18n="prefs_rdp.group_window">Ventana y modo</h4>
+              <div class="settings-row settings-row-inline">
+                <label for="pref-rdp-mode" data-i18n="prefs_rdp.mode">Abrir el escritorio remoto (RDP)</label>
+                <select id="pref-rdp-mode">
+                  <option value="external" data-i18n="rdp_mode.external">En una ventana externa (mstsc / xfreerdp)</option>
+                  <option value="embedded" data-i18n="rdp_mode.embedded">En la pestaña</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="prefs_rdp.mode_hint">La ventana externa (por defecto) usa el cliente de escritorio remoto del sistema (mstsc en Windows, xfreerdp en Linux) y admite lo que ese cliente admita (audio, impresoras, varios monitores…). En la pestaña, el escritorio se ve dentro de Rustty con el cliente integrado, que es nuevo: si algo no funciona con tu servidor, vuelve a la ventana externa.</p>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-rdp-display" data-i18n="prefs_rdp.display">Ventana del escritorio remoto (RDP)</label>
+                <select id="pref-rdp-display">
+                  <option value="window" data-i18n="rdp_display.window">Ventana redimensionable</option>
+                  <option value="fullscreen" data-i18n="rdp_display.fullscreen">Pantalla completa</option>
+                  <option value="workarea" data-i18n="rdp_display.workarea">Área de trabajo</option>
+                  <option value="fixed" data-i18n="rdp_display.fixed">Tamaño fijo (servidores antiguos)</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="prefs_rdp.display_hint">Valor por defecto de las sesiones RDP; cada perfil puede llevar el suyo. La ventana redimensionable deja maximizar y arrastrar, y el escritorio remoto sigue el tamaño: necesita Windows 8 / Server 2012 o superior. «Tamaño fijo» es el comportamiento anterior, para servidores que no lo admiten.</p>
+
+              <h4 class="prefs-subhead" data-i18n="prefs_rdp.group_perf">Rendimiento</h4>
+              <div class="settings-row" data-rdp-embedded-only>
+                <div class="settings-row-inline">
+                  <label for="pref-rdp-perf" data-i18n="prefs_rdp.perf">Rendimiento del escritorio remoto</label>
+                  <select id="pref-rdp-perf">
+                    <option value="speed" data-i18n="rdp_perf.speed">Velocidad</option>
+                    <option value="balanced" data-i18n="rdp_perf.balanced">Equilibrado</option>
+                    <option value="quality" data-i18n="rdp_perf.quality">Calidad</option>
+                  </select>
+                </div>
+                <p class="settings-hint" data-i18n="prefs_rdp.perf_hint">Se aplica a las conexiones nuevas. «Velocidad» quita en el remoto el fondo, los temas y las animaciones, y comprime al máximo: para enlaces lentos. «Equilibrado» quita el fondo y las animaciones pero mantiene las fuentes suavizadas. «Calidad» muestra el escritorio tal cual, para redes locales.</p>
+              </div>
+
+              <h4 class="prefs-subhead" data-i18n="prefs_rdp.group_sharing">Portapapeles y carpeta compartida</h4>
+              <div class="settings-row" data-rdp-embedded-only>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-rdp-clipboard" />
+                  <span data-i18n="prefs_rdp.clipboard">Compartir el portapapeles con el escritorio remoto</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_rdp.clipboard_hint">Copiar en un lado y pegar en el otro. Lo copiado en local se envía al remoto al volver a la pestaña o al pegar.</p>
+              </div>
+
+              <div class="settings-row" data-rdp-embedded-only>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-rdp-clipboard-files" />
+                  <span data-i18n="prefs_rdp.clipboard_files">Copiar y pegar también ficheros y carpetas</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_rdp.clipboard_files_hint">Los ficheros copiados en el remoto no se descargan solos: Rustty avisa y los guarda en la carpeta que elijas. Lo copiado en local se ofrece al remoto al volver a la pestaña (el remoto puede leerlo desde ese momento) y, si parece sensible —una clave privada, algo de ~/.ssh—, se pregunta antes.</p>
+              </div>
+
+              <div class="settings-row" data-rdp-embedded-only>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-rdp-shared-folder" />
+                  <span data-i18n="prefs_rdp.shared_folder">Compartir una carpeta local como unidad del remoto</span>
+                </label>
+                <div class="data-actions">
+                  <code id="rdp-shared-folder-path" class="settings-hint"></code>
+                  <button type="button" class="btn-secondary" id="btn-rdp-shared-folder-pick" data-i18n="prefs_rdp.shared_folder_pick">Elegir carpeta…</button>
+                </div>
+                <p class="settings-hint" data-i18n="prefs_rdp.shared_folder_hint">La carpeta aparece en el Explorador del remoto, con lectura y escritura. Solo esa carpeta: nada fuera de ella. No se puede compartir la carpeta personal entera ni ninguna que contenga tus claves SSH o los datos de Rustty. Se aplica a las conexiones nuevas.</p>
+              </div>
+
+              <h4 class="prefs-subhead" data-i18n="prefs_rdp.group_cert">Seguridad del certificado</h4>
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-rdp-cert-change-prompt" />
+                  <span data-i18n="prefs_rdp.cert_change_prompt">Preguntar si el certificado de un servidor RDP cambia</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_rdp.cert_change_prompt_hint">El cliente externo recuerda el certificado de cada servidor y, si cambia, cancela la conexión sin poder preguntar nada. Con esto activo, Rustty muestra las dos huellas y deja decidir: aceptar olvida el certificado guardado y reconecta en la misma pestaña; rechazar no toca nada. Si lo desactivas, el aviso se limita a explicar cómo borrarlo a mano. Con el cliente integrado en la pestaña se pregunta antes de enviar ninguna credencial; desactivado, el cambio se rechaza.</p>
+              </div>
+            </section>
+
             <!-- ── Idioma ── -->
             <section class="prefs-panel" role="tabpanel" data-prefs-panel="language">
               <h3 class="prefs-panel-title" data-i18n="prefs_language.title">Idioma</h3>
@@ -3437,14 +3519,6 @@
                   <span data-i18n="prefs_security.host_key_change_prompt">Preguntar si la clave de un servidor cambia</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_security.host_key_change_prompt_hint">Si la clave de un servidor ya conocido cambia (señal típica de un intermediario, pero también de una reinstalación), muestra un aviso con las huellas y deja decidir: aceptar reemplaza la entrada antigua y la conexión continúa; rechazar no toca nada. Si lo desactivas, el cambio se rechaza siempre y hay que editar known_hosts a mano.</p>
-              </div>
-
-              <div class="settings-row">
-                <label class="checkbox-label">
-                  <input type="checkbox" id="pref-rdp-cert-change-prompt" />
-                  <span data-i18n="prefs_security.rdp_cert_change_prompt">Preguntar si el certificado de un servidor RDP cambia</span>
-                </label>
-                <p class="settings-hint" data-i18n="prefs_security.rdp_cert_change_prompt_hint">Equivalente para RDP: el cliente externo recuerda el certificado de cada servidor y, si cambia, cancela la conexión sin poder preguntar nada. Con esto activo, Rustty muestra las dos huellas y deja decidir: aceptar olvida el certificado guardado y reconecta en la misma pestaña; rechazar no toca nada. Si lo desactivas, el aviso se limita a explicar cómo borrarlo a mano. Con el cliente integrado en la pestaña se pregunta antes de enviar ninguna credencial; desactivado, el cambio se rechaza.</p>
               </div>
 
               <div class="settings-row">
@@ -3893,66 +3967,6 @@
                   <span data-i18n="prefs_system.autostart">Iniciar Rustty con el sistema</span>
                 </label>
                 <p class="settings-hint" data-i18n="prefs_system.autostart_hint">Añade Rustty a los programas que se lanzan automáticamente al iniciar sesión.</p>
-              </div>
-
-              <div class="settings-row settings-row-inline">
-                <label for="pref-rdp-display" data-i18n="prefs_system.rdp_display">Ventana del escritorio remoto (RDP)</label>
-                <select id="pref-rdp-display">
-                  <option value="window" data-i18n="rdp_display.window">Ventana redimensionable</option>
-                  <option value="fullscreen" data-i18n="rdp_display.fullscreen">Pantalla completa</option>
-                  <option value="workarea" data-i18n="rdp_display.workarea">Área de trabajo</option>
-                  <option value="fixed" data-i18n="rdp_display.fixed">Tamaño fijo (servidores antiguos)</option>
-                </select>
-              </div>
-              <p class="settings-hint" data-i18n="prefs_system.rdp_display_hint">Valor por defecto de las sesiones RDP; cada perfil puede llevar el suyo. La ventana redimensionable deja maximizar y arrastrar, y el escritorio remoto sigue el tamaño: necesita Windows 8 / Server 2012 o superior. «Tamaño fijo» es el comportamiento anterior, para servidores que no lo admiten.</p>
-
-              <div class="settings-row settings-row-inline">
-                <label for="pref-rdp-mode" data-i18n="prefs_system.rdp_mode">Abrir el escritorio remoto (RDP)</label>
-                <select id="pref-rdp-mode">
-                  <option value="external" data-i18n="rdp_mode.external">En una ventana externa (mstsc / xfreerdp)</option>
-                  <option value="embedded" data-i18n="rdp_mode.embedded">En la pestaña</option>
-                </select>
-              </div>
-              <p class="settings-hint" data-i18n="prefs_system.rdp_mode_hint">La ventana externa (por defecto) usa el cliente de escritorio remoto del sistema (mstsc en Windows, xfreerdp en Linux) y admite lo que ese cliente admita (audio, impresoras, varios monitores…). En la pestaña, el escritorio se ve dentro de Rustty con el cliente integrado, que es nuevo: si algo no funciona con tu servidor, vuelve a la ventana externa.</p>
-
-              <div class="settings-row" data-rdp-embedded-only>
-                <div class="settings-row-inline">
-                  <label for="pref-rdp-perf" data-i18n="prefs_system.rdp_perf">Rendimiento del escritorio remoto</label>
-                  <select id="pref-rdp-perf">
-                    <option value="speed" data-i18n="rdp_perf.speed">Velocidad</option>
-                    <option value="balanced" data-i18n="rdp_perf.balanced">Equilibrado</option>
-                    <option value="quality" data-i18n="rdp_perf.quality">Calidad</option>
-                  </select>
-                </div>
-                <p class="settings-hint" data-i18n="prefs_system.rdp_perf_hint">Se aplica a las conexiones nuevas. «Velocidad» quita en el remoto el fondo, los temas y las animaciones, y comprime al máximo: para enlaces lentos. «Equilibrado» quita el fondo y las animaciones pero mantiene las fuentes suavizadas. «Calidad» muestra el escritorio tal cual, para redes locales.</p>
-              </div>
-
-              <div class="settings-row" data-rdp-embedded-only>
-                <label class="checkbox-label">
-                  <input type="checkbox" id="pref-rdp-clipboard" />
-                  <span data-i18n="prefs_system.rdp_clipboard">Compartir el portapapeles con el escritorio remoto</span>
-                </label>
-                <p class="settings-hint" data-i18n="prefs_system.rdp_clipboard_hint">Copiar en un lado y pegar en el otro. Lo copiado en local se envía al remoto al volver a la pestaña o al pegar.</p>
-              </div>
-
-              <div class="settings-row" data-rdp-embedded-only>
-                <label class="checkbox-label">
-                  <input type="checkbox" id="pref-rdp-clipboard-files" />
-                  <span data-i18n="prefs_system.rdp_clipboard_files">Copiar y pegar también ficheros y carpetas</span>
-                </label>
-                <p class="settings-hint" data-i18n="prefs_system.rdp_clipboard_files_hint">Los ficheros copiados en el remoto no se descargan solos: Rustty avisa y los guarda en la carpeta que elijas. Lo copiado en local se ofrece al remoto al volver a la pestaña (el remoto puede leerlo desde ese momento) y, si parece sensible —una clave privada, algo de ~/.ssh—, se pregunta antes.</p>
-              </div>
-
-              <div class="settings-row" data-rdp-embedded-only>
-                <label class="checkbox-label">
-                  <input type="checkbox" id="pref-rdp-shared-folder" />
-                  <span data-i18n="prefs_system.rdp_shared_folder">Compartir una carpeta local como unidad del remoto</span>
-                </label>
-                <div class="data-actions">
-                  <code id="rdp-shared-folder-path" class="settings-hint"></code>
-                  <button type="button" class="btn-secondary" id="btn-rdp-shared-folder-pick" data-i18n="prefs_system.rdp_shared_folder_pick">Elegir carpeta…</button>
-                </div>
-                <p class="settings-hint" data-i18n="prefs_system.rdp_shared_folder_hint">La carpeta aparece en el Explorador del remoto, con lectura y escritura. Solo esa carpeta: nada fuera de ella. No se puede compartir la carpeta personal entera ni ninguna que contenga tus claves SSH o los datos de Rustty. Se aplica a las conexiones nuevas.</p>
               </div>
 
               <div class="settings-row">

@@ -82,6 +82,7 @@ export async function checkFrames(app, check, { shot } = {}) {
       const d = document.getElementById("modal-prefs");
       const item = d.querySelector(".prefs-nav-item");
       return d.classList.contains("is-narrow") && !!item.getAttribute("data-tooltip")
+        && d.querySelector('.prefs-nav-item[data-prefs-tab="rdp"]').getAttribute("data-tooltip") === "RDP"
         && d.querySelector(".prefs-nav").getBoundingClientRect().width < 80;
     `));
   if (shot) await shot("prefs-narrow");
