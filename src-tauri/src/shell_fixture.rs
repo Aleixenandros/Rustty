@@ -33,6 +33,10 @@ pub const PASSWORD: &str = "clave-de-prueba";
 /// Ventana por defecto de un servidor russh: la de un servidor que sí lee.
 const NORMAL_WINDOW: u32 = 2 * 1024 * 1024;
 
+/// Retraso por defecto de la ráfaga: deja que la confirmación de apertura
+/// salga antes que los datos.
+const BURST_DELAY: Duration = Duration::from_millis(50);
+
 /// Cómo se comporta el servidor.
 #[derive(Clone, Copy, Debug)]
 pub struct ShellServerOptions {
@@ -47,6 +51,8 @@ pub struct ShellServerOptions {
     /// código de salida y luego EOF y cierre; en un `direct-tcpip`, EOF y
     /// cierre. `None` = el canal sigue abierto.
     pub exit: Option<u32>,
+    /// Espera entre abrir el canal y empezar la ráfaga.
+    pub burst_delay: Duration,
 }
 
 impl ShellServerOptions {
@@ -56,6 +62,7 @@ impl ShellServerOptions {
             window_size: NORMAL_WINDOW,
             burst,
             exit: None,
+            burst_delay: BURST_DELAY,
         }
     }
 
@@ -65,6 +72,16 @@ impl ShellServerOptions {
             window_size: 0,
             burst,
             exit: None,
+            burst_delay: BURST_DELAY,
+        }
+    }
+
+    /// Retrasa la ráfaga `delay` desde que se abre el canal (p. ej. para que
+    /// llegue cuando el test ya ha atascado la conexión).
+    pub fn with_burst_delay(self, delay: Duration) -> Self {
+        Self {
+            burst_delay: delay,
+            ..self
         }
     }
 
@@ -195,17 +212,21 @@ struct Handler {
 impl Handler {
     /// Vuelca la ráfaga configurada por `channel` y, si se pidió, termina el
     /// canal, en su propia tarea (la sesión sigue atendiendo al cliente
-    /// mientras tanto). El pequeño retardo deja que la confirmación de
-    /// apertura salga antes que los datos. `session_channel` = shell o `exec`
+    /// mientras tanto), pasado `burst_delay`. `session_channel` = shell o `exec`
     /// (los que llevan código de salida).
     fn burst(&self, channel: ChannelId, session: &Session, session_channel: bool) {
-        let ShellServerOptions { burst, exit, .. } = self.opts;
+        let ShellServerOptions {
+            burst,
+            exit,
+            burst_delay,
+            ..
+        } = self.opts;
         if burst.is_none() && exit.is_none() {
             return;
         }
         let handle = session.handle();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::time::sleep(burst_delay).await;
             if let Some((count, size)) = burst {
                 let chunk = vec![b'#'; size];
                 for _ in 0..count {

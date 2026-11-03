@@ -44,6 +44,9 @@ use crate::ipc::{event_name, EventKind};
 use crate::metrics;
 use crate::mux;
 use crate::profiles::{AuthType, ConnectionProfile, SshTunnelType};
+use crate::session_ops::{
+    self, ForwardStep, KeepaliveOutcome, OpDone, OpLimits, SessionOps, SharedHandle, ShellRequest,
+};
 use crate::tmux::bridge::{BridgeOut, ControlBridge};
 use crate::tunnel_throttle::TunnelTraffic;
 
@@ -83,9 +86,9 @@ const SSH_DATA_FLUSH_QUIET: Duration = Duration::from_millis(4);
 /// (preconexión de navegador, escáner de puertos) acumularía tareas y sockets
 /// abiertos indefinidamente.
 const SOCKS5_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-/// Tiempo máximo de espera del open de canal direct-tcpip. Se espera dentro del
-/// bucle de sesión (el `Handle` russh no es clonable), así que debe estar
-/// acotado para que un servidor que no responde al open no congele el terminal.
+/// Tiempo máximo de espera del open de canal direct-tcpip. Se espera en una
+/// tarea aparte (ver `crate::session_ops`), pero acotado: un servidor que no
+/// responde al open no debe dejar la tarea, el socket y el handle retenidos.
 const TUNNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Abre un `TcpStream` al destino con SO_KEEPALIVE activo y timeout. La
@@ -1369,46 +1372,19 @@ fn make_periodic_timer(secs: u32) -> Option<tokio::time::Interval> {
     Some(it)
 }
 
-/// Plazo máximo para leer la salida de una muestra del monitor. Si el servidor
-/// tarda más (muy cargado, red mala), se descarta esa muestra y la siguiente lo
-/// reintenta —nunca se acumula ni bloquea el canal indefinidamente—.
-const METRICS_READ_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Lee la salida de un `exec` de muestreo ya lanzado, la parsea, deriva las
-/// métricas contra la muestra previa (compartida) y las emite al frontend. Corre
-/// en su **propia tarea**, fuera del bucle de sesión, para no frenar el terminal.
-async fn collect_and_emit_metrics(
-    mut channel: russh::Channel<client::Msg>,
-    session_id: String,
-    app_handle: AppHandle,
-    prev: Arc<Mutex<Option<metrics::RawSample>>>,
+/// Parsea la salida de una muestra del monitor, deriva las métricas contra la
+/// muestra previa y las emite al frontend. El canal `exec` y su lectura van en
+/// una tarea de `crate::session_ops`; aquí, en el bucle, solo lo que no espera.
+fn emit_metrics_sample(
+    text: &str,
+    prev: &mut Option<metrics::RawSample>,
+    app_handle: &AppHandle,
+    session_id: &str,
 ) {
-    let mut buf = Vec::new();
-    let read = async {
-        while let Some(msg) = channel.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => buf.extend_from_slice(data),
-                ChannelMsg::Eof
-                | ChannelMsg::Close
-                | ChannelMsg::ExitStatus { .. }
-                | ChannelMsg::ExitSignal { .. } => break,
-                _ => {}
-            }
-        }
-    };
-    if tokio::time::timeout(METRICS_READ_TIMEOUT, read).await.is_err() {
-        return; // muestra demasiado lenta: se salta.
-    }
-
-    let text = String::from_utf8_lossy(&buf);
-    let cur = metrics::RawSample::parse(&text);
-    let derived = {
-        let mut guard = prev.lock_recover();
-        let m = metrics::Metrics::derive(guard.as_ref(), &cur);
-        *guard = Some(cur);
-        m
-    };
-    let _ = app_handle.emit(&event_name(EventKind::SshMetrics, &session_id), derived);
+    let cur = metrics::RawSample::parse(text);
+    let derived = metrics::Metrics::derive(prev.as_ref(), &cur);
+    *prev = Some(cur);
+    let _ = app_handle.emit(&event_name(EventKind::SshMetrics, session_id), derived);
 }
 
 /// Plazo del sondeo de binario en el remoto (sesiones persistentes). Si el
@@ -1599,45 +1575,6 @@ fn dispatch_bridge_outs(
     ended
 }
 
-/// Lee el desenlace de un `kill` remoto ya lanzado y lo devuelve por `reply`:
-/// estado de salida 0 → `Ok`; cualquier otro estado o el plazo agotado → `Err`
-/// con lo que el remoto haya impreso (p. ej. «Operation not permitted» o «No
-/// such process»). Corre en su propia tarea, fuera del bucle de sesión.
-async fn kill_remote_process(
-    mut channel: russh::Channel<client::Msg>,
-    reply: oneshot::Sender<Result<(), String>>,
-) {
-    let mut out = Vec::new();
-    let mut status: Option<u32> = None;
-    let read = async {
-        while let Some(msg) = channel.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => out.extend_from_slice(data),
-                ChannelMsg::ExtendedData { ref data, .. } => out.extend_from_slice(data),
-                ChannelMsg::ExitStatus { exit_status } => status = Some(exit_status),
-                ChannelMsg::Eof | ChannelMsg::Close | ChannelMsg::ExitSignal { .. } => break,
-                _ => {}
-            }
-        }
-    };
-    let result = if tokio::time::timeout(METRICS_READ_TIMEOUT, read).await.is_err() {
-        Err("El servidor no respondió al kill a tiempo".to_string())
-    } else {
-        match status {
-            Some(0) => Ok(()),
-            other => {
-                let text = String::from_utf8_lossy(&out).trim().to_string();
-                if text.is_empty() {
-                    Err(format!("kill terminó con estado {}", other.map_or_else(|| "desconocido".to_string(), |s| s.to_string())))
-                } else {
-                    Err(text)
-                }
-            }
-        }
-    };
-    let _ = reply.send(result);
-}
-
 /// Plazo para las respuestas del servidor a las variables de entorno pedidas
 /// con respuesta: llegan enseguida; si no, se sigue sin saber cuáles rechazó.
 const ENV_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1685,36 +1622,48 @@ pub(crate) async fn send_env_vars(
     refused
 }
 
-/// Abre una shell hija (F0.3) sobre el handle ya autenticado: canal nuevo +
-/// PTY + shell, y su tarea de E/S propia. Siempre un shell **pelado**, aunque
-/// el perfil tenga sesión persistente o comando al conectar: un segundo
-/// `attach -A` a la misma sesión tmux/screen duplicaría la misma pantalla, no
-/// daría otra terminal, y «Nueva pestaña en esta conexión» promete un shell.
-/// Sí hereda el TERM y las variables de entorno del perfil (sin esperar
-/// respuesta: lo que el servidor rechace ya lo anotó la conexión principal).
-async fn open_extra_shell(
+/// Abre el canal de una shell hija (F0.3) sobre el handle ya autenticado:
+/// canal nuevo + PTY + shell. Siempre un shell **pelado**, aunque el perfil
+/// tenga sesión persistente o comando al conectar: un segundo `attach -A` a la
+/// misma sesión tmux/screen duplicaría la misma pantalla, no daría otra
+/// terminal, y «Nueva pestaña en esta conexión» promete un shell. Sí hereda el
+/// TERM y las variables de entorno del perfil (sin esperar respuesta: lo que
+/// el servidor rechace ya lo anotó la conexión principal).
+///
+/// Lo espera una tarea de `crate::session_ops`, nunca el bucle raíz; el canal
+/// abierto vuelve al bucle, que lo arranca con [`start_extra_shell`].
+pub(crate) async fn open_extra_shell_channel(
     handle: &client::Handle<host_keys::KnownHostsClient>,
-    shell_id: &str,
-    on_data: Channel<Response>,
     (cols, rows): (u32, u32),
-    launch: &crate::remote_launch::SessionLaunch,
-    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
-    shells: &mut HashMap<String, mpsc::UnboundedSender<ShellMsg>>,
-) -> Result<(), String> {
+    env: &[(String, String)],
+    term: &str,
+) -> Result<russh::Channel<client::Msg>, String> {
     let (cols, rows) = if cols == 0 || rows == 0 { (80, 24) } else { (cols, rows) };
     let mut channel = handle
         .channel_open_session()
         .await
         .map_err(|e| format!("No se pudo abrir el canal: {e}"))?;
-    send_env_vars(&mut channel, &launch.env, false).await;
+    send_env_vars(&mut channel, env, false).await;
     channel
-        .request_pty(true, launch.term(), cols, rows, 0, 0, &[])
+        .request_pty(true, term, cols, rows, 0, 0, &[])
         .await
         .map_err(|e| format!("No se pudo solicitar PTY: {e}"))?;
     channel
         .request_shell(true)
         .await
         .map_err(|e| format!("No se pudo abrir shell: {e}"))?;
+    Ok(channel)
+}
+
+/// Arranca la tarea de E/S de una shell hija ya abierta y la registra en el
+/// mapa de shells de la conexión.
+fn start_extra_shell(
+    shell_id: &str,
+    channel: russh::Channel<client::Msg>,
+    on_data: Channel<Response>,
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    shells: &mut HashMap<String, mpsc::UnboundedSender<ShellMsg>>,
+) {
     let (tx, rx) = mpsc::unbounded_channel();
     shells.insert(shell_id.to_string(), tx);
     tokio::spawn(run_extra_shell(
@@ -1724,7 +1673,6 @@ async fn open_extra_shell(
         rx,
         cmd_tx,
     ));
-    Ok(())
 }
 
 /// E/S de una shell hija, en su propia tarea del mismo runtime: lee el canal
@@ -2365,9 +2313,20 @@ async fn run_session(
         }
     }
 
-    // 4. Bucle de E/S: multiplexa datos del servidor y comandos del frontend
+    // 4. Bucle de E/S: multiplexa datos del servidor y comandos del frontend.
+    // INVARIANTE: aquí no se espera ninguna llamada del `Handle` (keepalive,
+    // abrir canales, forwards): con la cola de salida de russh atascada no
+    // volverían y el bucle dejaría de leer, congelando la conexión entera. Las
+    // lanza `ops` en tareas propias y sus resultados vuelven por `ops.next()`
+    // (ver `crate::session_ops`). El `&mut` del handle ya no hace falta.
+    let handle: SharedHandle = Arc::new(handle);
+    let mut ops = SessionOps::new(OpLimits::DEFAULT);
+    // Entorno que heredan las pestañas nuevas (una copia para todas).
+    let shell_env = Arc::new(launch.env.clone());
     let mut exit_kind = SessionExit::ServerClosed { stable: false };
     let mut tunnels: HashMap<String, ActiveTunnel> = HashMap::new();
+    // Túneles remotos esperando su forward (ver `PendingForward`).
+    let mut pending_forwards: HashMap<String, PendingForward> = HashMap::new();
     // Shells hijas multiplexadas sobre este mismo handle (F0.3): cada una vive
     // en su propia tarea con su canal russh; aquí solo queda su buzón.
     let mut shells: HashMap<String, mpsc::UnboundedSender<ShellMsg>> = HashMap::new();
@@ -2379,15 +2338,17 @@ async fn run_session(
     // Keepalive de aplicación togglable en vivo (ver `SessionCommand::SetKeepAlive`).
     // A 0 el temporizador queda inerte y su rama del `select!` se desactiva.
     let mut ka_timer = make_periodic_timer(keepalive_secs.load(Ordering::Relaxed));
+    // Un keepalive que no sale en su plazo se anota una vez por atasco.
+    let mut ka_stalled = false;
     // Con modo control activo, un tick por segundo para vencer comandos
     // pendientes (`ControlClient::check_timeouts`); sin él, timer apagado.
     let mut control_timer = make_periodic_timer(u32::from(control.is_some()));
     // Monitor de recursos: temporizador (misma mecánica que el keepalive) y la
-    // muestra anterior, para derivar %CPU y tasas de red por delta. Se comparte
-    // con las tareas de recogida por `Arc<Mutex>`; se reinicia al cambiar el
-    // intervalo para no calcular una tasa con una muestra de otra cadencia.
+    // muestra anterior, para derivar %CPU y tasas de red por delta. Se reinicia
+    // al cambiar el intervalo para no calcular una tasa con una muestra de otra
+    // cadencia.
     let mut metrics_timer = make_periodic_timer(metrics_secs.load(Ordering::Relaxed));
-    let metrics_prev: Arc<Mutex<Option<metrics::RawSample>>> = Arc::new(Mutex::new(None));
+    let mut metrics_prev: Option<metrics::RawSample> = None;
     // Con modo control, la entrada dirigida a la raíz se descarta (ver el brazo
     // de `Input`); se anota una sola vez en el log de conexión.
     let mut root_input_dropped = false;
@@ -2466,8 +2427,12 @@ async fn run_session(
             // El `unwrap` lo cubre la guarda: `tokio::select!` evalúa la
             // precondición ANTES de construir el futuro de la rama, así que
             // aquí el Option siempre es Some.
+            //
+            // Lo envía una tarea (ver el invariante de arriba); si el anterior
+            // aún no ha salido, este tic se salta. Un fallo no se cuenta aquí:
+            // si la sesión cayó, lo ve el lector del canal raíz.
             _ = async { ka_timer.as_mut().unwrap().tick().await }, if ka_timer.is_some() => {
-                let _ = handle.send_keepalive(false).await;
+                ops.keepalive(&handle);
             }
             // Vencimiento de comandos del modo control: un comando sin
             // respuesta en su plazo cierra la sesión de control entera (si
@@ -2482,23 +2447,93 @@ async fn run_session(
                     }
                 }
             }
-            // Muestra del monitor de recursos: abrimos un canal `exec` (round-trip
-            // corto, como el open de un túnel) y delegamos la **lectura** de su
-            // salida a una tarea aparte, para no congelar el terminal mientras se
-            // lee. La tarea parsea, deriva contra la muestra previa y emite.
+            // Muestra del monitor de recursos: el canal `exec`, su lectura y su
+            // cierre van en una tarea (una muestra a la vez); la salida vuelve
+            // por `ops.next()` y aquí se deriva contra la previa y se emite.
             // Mismo invariante que el keepalive: lo garantiza la guarda.
             _ = async { metrics_timer.as_mut().unwrap().tick().await }, if metrics_timer.is_some() => {
-                if let Ok(channel) = handle.channel_open_session().await {
-                    if channel.exec(false, metrics::linux_sample_command()).await.is_ok() {
-                        tokio::spawn(collect_and_emit_metrics(
-                            channel,
-                            session_id.clone(),
-                            app_handle.clone(),
-                            metrics_prev.clone(),
-                        ));
+                ops.metrics_sample(&handle, metrics::linux_sample_command());
+            }
+            // Resultados de las operaciones lanzadas por `ops`.
+            Some(done) = ops.next(), if !ops.is_idle() => match done {
+                OpDone::Keepalive(KeepaliveOutcome::TimedOut) => {
+                    if !ka_stalled {
+                        ka_stalled = true;
+                        emit_connection_log(
+                            &app_handle,
+                            &session_id,
+                            "keepalive",
+                            "warning",
+                            "El keepalive lleva un rato sin poder salir: la conexión no \
+                             está enviando nada al servidor",
+                        );
                     }
                 }
-            }
+                OpDone::Keepalive(_) => ka_stalled = false,
+                OpDone::MetricsSample { generation, text } => {
+                    // De antes de apagar o cambiar el intervalo: ya no vale.
+                    if generation == ops.metrics_generation() && metrics_timer.is_some() {
+                        emit_metrics_sample(&text, &mut metrics_prev, &app_handle, &session_id);
+                    }
+                }
+                OpDone::ShellOpened { shell_id, on_data, reply, result } => {
+                    let result = result.map(|channel| {
+                        start_extra_shell(&shell_id, channel, on_data, cmd_tx.clone(), &mut shells);
+                        // `ssh-connected` ANTES de responder al invoke: el
+                        // frontend registra sus listeners antes de invocar
+                        // y así nunca se pierde el evento de vida.
+                        let _ = app_handle.emit(
+                            &event_name(EventKind::SshConnected, &shell_id),
+                            &profile.name,
+                        );
+                    });
+                    let _ = reply.send(result);
+                }
+                OpDone::RemoteForward { tunnel_id, result } => {
+                    // Un pendiente solo sale del mapa aquí (o al cerrar la
+                    // sesión, ya fuera del bucle): siempre está.
+                    let Some(pending) = pending_forwards.remove(&tunnel_id) else {
+                        continue;
+                    };
+                    let PendingForward { plan, reply, cancelled, stop_replies } = pending;
+                    let requested = u32::from(plan.remote_port);
+                    match session_ops::forward_step(requested, result, cancelled) {
+                        ForwardStep::Register { port } => {
+                            let info = register_remote_forward(
+                                plan,
+                                port,
+                                &session_id,
+                                &app_handle,
+                                &remote_forwards,
+                                &mut tunnels,
+                            );
+                            let _ = reply.send(Ok(info));
+                            // Nadie lo cerró mientras se abría (si no, sería
+                            // `Abandon`): no hay cierres que contestar.
+                            for stop in stop_replies {
+                                let _ = stop.send(Ok(()));
+                            }
+                        }
+                        ForwardStep::Abandon { cancel_port, error } => {
+                            let _ = reply.send(Err(error));
+                            match cancel_port {
+                                Some(port) => ops.cancel_remote_forward(
+                                    &handle,
+                                    plan.bind_host,
+                                    port,
+                                    stop_replies,
+                                ),
+                                None => {
+                                    for stop in stop_replies {
+                                        let _ = stop.send(Ok(()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                OpDone::Idle => {}
+            },
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(SessionCommand::Input { data, shell }) => match shell {
@@ -2547,26 +2582,21 @@ async fn run_session(
                             }
                         }
                     },
+                    // El canal, su PTY y su shell los abre una tarea; el
+                    // registro, `ssh-connected` y la respuesta, al volver
+                    // (`OpDone::ShellOpened`). La hija aún no está en el mapa
+                    // de sesiones hasta esa respuesta: nada puede cerrarla ni
+                    // escribirle antes.
                     Some(SessionCommand::OpenShell { shell_id, on_data, cols, rows, reply }) => {
-                        let result = open_extra_shell(
-                            &handle,
-                            &shell_id,
+                        ops.open_shell(&handle, ShellRequest {
+                            shell_id,
                             on_data,
-                            (cols, rows),
-                            &launch,
-                            cmd_tx.clone(),
-                            &mut shells,
-                        ).await;
-                        if result.is_ok() {
-                            // `ssh-connected` ANTES de responder al invoke: el
-                            // frontend registra sus listeners antes de invocar
-                            // y así nunca se pierde el evento de vida.
-                            let _ = app_handle.emit(
-                                &event_name(EventKind::SshConnected, &shell_id),
-                                &profile.name,
-                            );
-                        }
-                        let _ = reply.send(result);
+                            cols,
+                            rows,
+                            env: shell_env.clone(),
+                            term: launch.term(),
+                            reply,
+                        });
                     }
                     Some(SessionCommand::CloseShell { shell_id }) => {
                         if let Some(tx) = shells.get(&shell_id) {
@@ -2578,7 +2608,16 @@ async fn run_session(
                         // pestaña dejan de escuchar (la interfaz ya los retira
                         // de la lista al recibir su `ssh-closed`).
                         for tunnel in detach_shell_tunnels(&mut tunnels, &shell_id) {
-                            teardown_tunnel(&mut handle, &remote_forwards, tunnel).await;
+                            if let Some((bind_host, port)) = teardown_tunnel(&remote_forwards, tunnel) {
+                                ops.cancel_remote_forward(&handle, bind_host, port, Vec::new());
+                            }
+                        }
+                        // Y los suyos que aún esperaban su forward no llegan a
+                        // abrirse.
+                        for pending in pending_forwards.values_mut() {
+                            if pending.plan.owner.as_deref() == Some(shell_id.as_str()) {
+                                pending.cancelled = true;
+                            }
                         }
                         // Único punto de emisión del cierre de una hija (la
                         // tarea no emite): así el drain final no duplica.
@@ -2650,8 +2689,10 @@ async fn run_session(
                         metrics_secs.store(n, Ordering::Relaxed);
                         metrics_timer = make_periodic_timer(n);
                         // La cadencia cambió: la muestra previa ya no sirve para
-                        // el delta (daría una tasa disparatada). Se reinicia.
-                        *metrics_prev.lock_recover() = None;
+                        // el delta (daría una tasa disparatada). Se reinicia, y
+                        // la que estuviera en vuelo ya no cuenta.
+                        metrics_prev = None;
+                        ops.reset_metrics();
                     }
                     Some(SessionCommand::KillProcess { pid, force, reply }) => {
                         // PID 0 mataría el grupo de procesos del propio kill y
@@ -2660,45 +2701,60 @@ async fn run_session(
                         if pid < 2 {
                             let _ = reply.send(Err(format!("PID no válido: {pid}")));
                         } else {
-                            match handle.channel_open_session().await {
-                                Ok(kill_channel) => {
-                                    let sig = if force { "KILL" } else { "TERM" };
-                                    // Solo literales y un entero: sin datos del
-                                    // usuario que escapar hacia el shell remoto.
-                                    let kill_cmd = format!("kill -{sig} {pid}");
-                                    if kill_channel.exec(false, kill_cmd.as_str()).await.is_ok() {
-                                        tokio::spawn(kill_remote_process(kill_channel, reply));
-                                    } else {
-                                        let _ = reply.send(Err("No se pudo lanzar el kill remoto".to_string()));
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = reply.send(Err(format!("No se pudo abrir el canal: {e}")));
-                                }
-                            }
+                            let sig = if force { "KILL" } else { "TERM" };
+                            // Solo literales y un entero: sin datos del usuario
+                            // que escapar hacia el shell remoto. El `exec` y su
+                            // veredicto, en una tarea que contesta a `reply`.
+                            ops.kill(&handle, format!("kill -{sig} {pid}"), reply);
                         }
                     }
                     Some(SessionCommand::StartTunnel { config, owner, reply }) => {
-                        let result = start_tunnel_runtime(
+                        match start_tunnel_runtime(
                             &session_id,
                             config,
                             owner,
-                            &mut handle,
                             &mut tunnels,
+                            &pending_forwards,
                             cmd_tx.clone(),
                             app_handle.clone(),
-                            remote_forwards.clone(),
-                        ).await;
-                        let _ = reply.send(result);
+                        ).await {
+                            TunnelStart::Done(result) => {
+                                let _ = reply.send(result);
+                            }
+                            // Remoto: el forward lo pide una tarea y el túnel
+                            // no se da por abierto (ni se contesta) hasta que el
+                            // servidor lo conceda (`OpDone::RemoteForward`).
+                            TunnelStart::Forward(plan) => {
+                                ops.remote_forward(
+                                    &handle,
+                                    plan.id.clone(),
+                                    plan.bind_host.clone(),
+                                    u32::from(plan.remote_port),
+                                );
+                                pending_forwards.insert(plan.id.clone(), PendingForward {
+                                    plan,
+                                    reply,
+                                    cancelled: false,
+                                    stop_replies: Vec::new(),
+                                });
+                            }
+                        }
                     }
                     Some(SessionCommand::StopTunnel { tunnel_id, reply }) => {
-                        let result = stop_tunnel_runtime(
-                            &mut handle,
-                            &mut tunnels,
-                            remote_forwards.clone(),
-                            &tunnel_id,
-                        ).await;
-                        let _ = reply.send(result);
+                        if let Some(pending) = pending_forwards.get_mut(&tunnel_id) {
+                            // Aún abriéndose: se contesta cuando llegue la
+                            // respuesta del servidor y se haya deshecho.
+                            pending.cancelled = true;
+                            pending.stop_replies.push(reply);
+                        } else if let Some((bind_host, port)) = tunnels
+                            .remove(&tunnel_id)
+                            .and_then(|tunnel| teardown_tunnel(&remote_forwards, tunnel))
+                        {
+                            // Remoto: se contesta con el forward ya cancelado.
+                            ops.cancel_remote_forward(&handle, bind_host, port, vec![reply]);
+                        } else {
+                            let _ = reply.send(Ok(()));
+                        }
                     }
                     Some(SessionCommand::TunnelAccepted { tunnel_id, stream, peer_host, peer_port }) => {
                         if let Some(tunnel) = tunnels.get(&tunnel_id) {
@@ -2733,20 +2789,19 @@ async fn run_session(
                                 if let Some((host, port)) =
                                     info.remote_host.clone().zip(info.remote_port)
                                 {
-                                    open_tunnel_channel(
-                                        &mut handle,
-                                        &session_id,
-                                        &tunnel_id,
+                                    ops.spawn(open_tunnel_channel(
+                                        handle.clone(),
+                                        session_id.clone(),
+                                        tunnel_id,
                                         stream,
                                         host,
                                         port,
                                         peer_host,
                                         peer_port,
-                                        &app_handle,
+                                        app_handle.clone(),
                                         tunnel.traffic.clone(),
                                         false,
-                                    )
-                                    .await;
+                                    ));
                                 }
                             }
                         }
@@ -2762,20 +2817,19 @@ async fn run_session(
                         // El túnel puede haberse cerrado mientras se negociaba
                         // el handshake; en ese caso se descarta la conexión.
                         if let Some(traffic) = tunnels.get(&tunnel_id).map(|t| t.traffic.clone()) {
-                            open_tunnel_channel(
-                                &mut handle,
-                                &session_id,
-                                &tunnel_id,
+                            ops.spawn(open_tunnel_channel(
+                                handle.clone(),
+                                session_id.clone(),
+                                tunnel_id,
                                 stream,
                                 target_host,
                                 target_port,
                                 peer_host,
                                 peer_port,
-                                &app_handle,
+                                app_handle.clone(),
                                 traffic,
                                 true,
-                            )
-                            .await;
+                            ));
                         }
                     }
                     Some(SessionCommand::Disconnect) | None => {
@@ -2788,6 +2842,17 @@ async fn run_session(
     }
 
     // 5. Cierre limpio
+    // Lo que quedara en vuelo se aborta (y suelta el handle). Los túneles
+    // remotos que esperaban su forward no llegan a abrirse.
+    drop(ops);
+    for (_, pending) in pending_forwards.drain() {
+        let _ = pending
+            .reply
+            .send(Err("La sesión SSH se cerró antes de abrir el túnel".to_string()));
+        for stop in pending.stop_replies {
+            let _ = stop.send(Ok(()));
+        }
+    }
     // Vaciar cualquier resto del buffer de coalescing antes de cerrar, para no
     // perder el último tramo de salida si el loop terminó con datos pendientes.
     if !out_buf.is_empty() {
@@ -2816,22 +2881,133 @@ async fn run_session(
     exit_kind
 }
 
-#[allow(clippy::too_many_arguments)] // el worker le pasa su estado tal cual
+/// Cómo sigue un `StartTunnel`.
+enum TunnelStart {
+    /// Ya resuelto: túnel local o SOCKS escuchando, o un error.
+    Done(Result<SshTunnelInfo, String>),
+    /// Túnel remoto válido: falta que el servidor conceda el forward, que se
+    /// pide fuera del bucle (`SessionOps::remote_forward`).
+    Forward(RemoteForwardPlan),
+}
+
+/// Túnel remoto validado, a falta del forward del servidor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RemoteForwardPlan {
+    id: String,
+    name: Option<String>,
+    bind_host: String,
+    remote_port: u16,
+    /// Destino local de las conexiones que lleguen por el forward.
+    local_host: String,
+    local_port: u16,
+    owner: Option<String>,
+}
+
+/// Valida un túnel remoto ya con su id y su `bind_host` resueltos.
+fn plan_remote_forward(
+    id: String,
+    bind_host: String,
+    config: SshTunnelConfig,
+    owner: Option<String>,
+) -> Result<RemoteForwardPlan, String> {
+    let remote_port = config
+        .remote_port
+        .filter(|p| *p > 0)
+        .ok_or_else(|| "El túnel remoto requiere puerto remoto".to_string())?;
+    let local_host = config
+        .remote_host
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("127.0.0.1")
+        .to_string();
+    if config.local_port == 0 {
+        return Err("El túnel remoto requiere puerto local de destino".into());
+    }
+    Ok(RemoteForwardPlan {
+        id,
+        name: config.name,
+        bind_host,
+        remote_port,
+        local_host,
+        local_port: config.local_port,
+        owner,
+    })
+}
+
+/// Túnel remoto pedido al servidor y aún sin respuesta. No cuenta como activo
+/// (nadie lo ve abierto antes de que el servidor lo conceda), pero sí ocupa su
+/// id y se puede cerrar: entonces queda `cancelled` y, cuando llegue la
+/// respuesta, lo concedido se cancela y `stop_replies` se contesta.
+struct PendingForward {
+    plan: RemoteForwardPlan,
+    reply: oneshot::Sender<Result<SshTunnelInfo, String>>,
+    cancelled: bool,
+    stop_replies: Vec<oneshot::Sender<Result<(), String>>>,
+}
+
+/// Da por abierto un túnel remoto que el servidor concedió en `port`: lo
+/// apunta en el mapa de forwards (por donde `host_keys` enruta las conexiones
+/// que lleguen) y en el de túneles activos.
+fn register_remote_forward(
+    plan: RemoteForwardPlan,
+    port: u32,
+    session_id: &str,
+    app_handle: &AppHandle,
+    remote_forwards: &host_keys::RemoteForwardMap,
+    tunnels: &mut HashMap<String, ActiveTunnel>,
+) -> SshTunnelInfo {
+    let traffic = Arc::new(TunnelTraffic::default());
+    if let Ok(mut map) = remote_forwards.lock() {
+        map.insert(
+            (plan.bind_host.clone(), port),
+            host_keys::RemoteForwardTarget {
+                host: plan.local_host.clone(),
+                port: plan.local_port,
+                session_id: session_id.to_string(),
+                tunnel_id: plan.id.clone(),
+                app_handle: app_handle.clone(),
+                traffic: traffic.clone(),
+            },
+        );
+    }
+    let info = SshTunnelInfo {
+        id: plan.id.clone(),
+        name: plan.name,
+        tunnel_type: SshTunnelType::Remote,
+        bind_host: plan.bind_host,
+        local_port: plan.local_port,
+        remote_host: Some(plan.local_host),
+        remote_port: Some(port as u16),
+        status: "running".into(),
+        bytes_up: 0,
+        bytes_down: 0,
+    };
+    tunnels.insert(
+        plan.id,
+        ActiveTunnel::from_info(info.clone(), None, traffic, plan.owner),
+    );
+    info
+}
+
+/// Arranca un túnel. Los locales y SOCKS solo escuchan en un puerto local y
+/// quedan listos aquí; los remotos se validan y vuelven como
+/// [`TunnelStart::Forward`]: el forward lo pide una tarea, no el bucle.
 async fn start_tunnel_runtime(
     session_id: &str,
     config: SshTunnelConfig,
     owner: Option<String>,
-    handle: &mut client::Handle<host_keys::KnownHostsClient>,
     tunnels: &mut HashMap<String, ActiveTunnel>,
+    pending_forwards: &HashMap<String, PendingForward>,
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     app_handle: AppHandle,
-    remote_forwards: host_keys::RemoteForwardMap,
-) -> Result<SshTunnelInfo, String> {
+) -> TunnelStart {
     let id = config
         .id
+        .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    if tunnels.contains_key(&id) {
-        return Err(format!("El túnel {id} ya está activo"));
+    if tunnels.contains_key(&id) || pending_forwards.contains_key(&id) {
+        return TunnelStart::Done(Err(format!("El túnel {id} ya está activo")));
     }
 
     let bind_host = config
@@ -2842,229 +3018,179 @@ async fn start_tunnel_runtime(
         .unwrap_or("127.0.0.1")
         .to_string();
 
-    match config.tunnel_type {
-        SshTunnelType::Local | SshTunnelType::Dynamic => {
-            if config.local_port == 0 {
-                return Err("El puerto local debe ser mayor que 0".into());
-            }
-            if config.tunnel_type == SshTunnelType::Local
-                && (config
-                    .remote_host
-                    .as_deref()
-                    .unwrap_or("")
-                    .trim()
-                    .is_empty()
-                    || config.remote_port.unwrap_or(0) == 0)
-            {
-                return Err("El túnel local requiere host y puerto remotos".into());
-            }
-
-            let listener = TcpListener::bind((bind_host.as_str(), config.local_port))
-                .await
-                .map_err(|e| {
-                    format!(
-                        "No se pudo escuchar en {bind_host}:{}: {e}",
-                        config.local_port
-                    )
-                })?;
-            let local_addr = listener
-                .local_addr()
-                .map_err(|e| format!("No se pudo leer el puerto local: {e}"))?;
-            let tunnel_id = id.clone();
-            let task_tx = cmd_tx.clone();
-            let task_session_id = session_id.to_string();
-            let local_task = tokio::spawn(async move {
-                // Fallos de `accept()` seguidos. Casi siempre son pasajeros
-                // (EMFILE con un navegador abriendo cientos de conexiones por
-                // un SOCKS, ECONNABORTED): se espera y se sigue escuchando; el
-                // túnel solo se da por roto tras una racha larga.
-                let mut accept_failures: u32 = 0;
-                loop {
-                    match listener.accept().await {
-                        Ok((stream, peer)) => {
-                            accept_failures = 0;
-                            let msg = SessionCommand::TunnelAccepted {
-                                tunnel_id: tunnel_id.clone(),
-                                stream,
-                                peer_host: peer.ip().to_string(),
-                                peer_port: peer.port() as u32,
-                            };
-                            if task_tx.send(msg).is_err() {
-                                break;
-                            }
-                        }
-                        Err(err) => {
-                            // Al log de conexión, NO como `ssh-error`: la sesión
-                            // sigue viva y la interfaz trata todo `ssh-error`
-                            // como fatal (la daba por muerta y, al reconectar,
-                            // dejaba huérfana esta conexión con sus puertos).
-                            accept_failures += 1;
-                            if accept_failures >= TUNNEL_ACCEPT_MAX_FAILURES {
-                                emit_connection_log(
-                                    &app_handle,
-                                    &task_session_id,
-                                    "tunnel",
-                                    "error",
-                                    format!("Listener de túnel cerrado: {err}"),
-                                );
-                                break;
-                            }
-                            if accept_failures == 1 {
-                                emit_connection_log(
-                                    &app_handle,
-                                    &task_session_id,
-                                    "tunnel",
-                                    "warning",
-                                    format!("El túnel no pudo aceptar una conexión: {err}"),
-                                );
-                            }
-                            tokio::time::sleep(Duration::from_millis(
-                                100 * u64::from(accept_failures.min(10)),
-                            ))
-                            .await;
-                        }
-                    }
-                }
-            });
-
-            let info = SshTunnelInfo {
-                id: id.clone(),
-                name: config.name,
-                tunnel_type: config.tunnel_type,
-                bind_host,
-                local_port: local_addr.port(),
-                remote_host: config.remote_host,
-                remote_port: config.remote_port,
-                status: "running".into(),
-                bytes_up: 0,
-                bytes_down: 0,
-            };
-            tunnels.insert(
-                id,
-                ActiveTunnel::from_info(
-                    info.clone(),
-                    Some(local_task),
-                    Arc::new(TunnelTraffic::default()),
-                    owner,
-                ),
-            );
-            Ok(info)
-        }
-        SshTunnelType::Remote => {
-            let remote_port = config
-                .remote_port
-                .filter(|p| *p > 0)
-                .ok_or_else(|| "El túnel remoto requiere puerto remoto".to_string())?;
-            let local_host = config
-                .remote_host
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .unwrap_or("127.0.0.1")
-                .to_string();
-            if config.local_port == 0 {
-                return Err("El túnel remoto requiere puerto local de destino".into());
-            }
-
-            let returned_port = handle
-                .tcpip_forward(bind_host.clone(), remote_port as u32)
-                .await
-                .map_err(|e| format!("El servidor rechazó el túnel remoto: {e}"))?;
-            let returned_port = if returned_port == 0 {
-                remote_port as u32
-            } else {
-                returned_port
-            };
-
-            let traffic = Arc::new(TunnelTraffic::default());
-            if let Ok(mut map) = remote_forwards.lock() {
-                map.insert(
-                    (bind_host.clone(), returned_port),
-                    host_keys::RemoteForwardTarget {
-                        host: local_host.clone(),
-                        port: config.local_port,
-                        session_id: session_id.to_string(),
-                        tunnel_id: id.clone(),
-                        app_handle: app_handle.clone(),
-                        traffic: traffic.clone(),
-                    },
-                );
-            }
-
-            let info = SshTunnelInfo {
-                id: id.clone(),
-                name: config.name,
-                tunnel_type: SshTunnelType::Remote,
-                bind_host,
-                local_port: config.local_port,
-                remote_host: Some(local_host),
-                remote_port: Some(returned_port as u16),
-                status: "running".into(),
-                bytes_up: 0,
-                bytes_down: 0,
-            };
-            tunnels.insert(
-                id,
-                ActiveTunnel::from_info(info.clone(), None, traffic, owner),
-            );
-            Ok(info)
-        }
+    if config.tunnel_type == SshTunnelType::Remote {
+        return match plan_remote_forward(id, bind_host, config, owner) {
+            Ok(plan) => TunnelStart::Forward(plan),
+            Err(err) => TunnelStart::Done(Err(err)),
+        };
     }
+    TunnelStart::Done(
+        start_local_tunnel(session_id, id, bind_host, config, owner, tunnels, cmd_tx, app_handle)
+            .await,
+    )
 }
 
-async fn stop_tunnel_runtime(
-    handle: &mut client::Handle<host_keys::KnownHostsClient>,
+/// Túnel local (`-L`) o SOCKS: escucha en el puerto local y cada conexión
+/// aceptada vuelve al bucle como `TunnelAccepted`.
+#[allow(clippy::too_many_arguments)] // el worker le pasa su estado tal cual
+async fn start_local_tunnel(
+    session_id: &str,
+    id: String,
+    bind_host: String,
+    config: SshTunnelConfig,
+    owner: Option<String>,
     tunnels: &mut HashMap<String, ActiveTunnel>,
-    remote_forwards: host_keys::RemoteForwardMap,
-    tunnel_id: &str,
-) -> Result<(), String> {
-    let Some(tunnel) = tunnels.remove(tunnel_id) else {
-        return Ok(());
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    app_handle: AppHandle,
+) -> Result<SshTunnelInfo, String> {
+    if config.local_port == 0 {
+        return Err("El puerto local debe ser mayor que 0".into());
+    }
+    if config.tunnel_type == SshTunnelType::Local
+        && (config
+            .remote_host
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+            || config.remote_port.unwrap_or(0) == 0)
+    {
+        return Err("El túnel local requiere host y puerto remotos".into());
+    }
+
+    let listener = TcpListener::bind((bind_host.as_str(), config.local_port))
+        .await
+        .map_err(|e| {
+            format!(
+                "No se pudo escuchar en {bind_host}:{}: {e}",
+                config.local_port
+            )
+        })?;
+    let local_addr = listener
+        .local_addr()
+        .map_err(|e| format!("No se pudo leer el puerto local: {e}"))?;
+    let tunnel_id = id.clone();
+    let task_tx = cmd_tx.clone();
+    let task_session_id = session_id.to_string();
+    let local_task = tokio::spawn(async move {
+        // Fallos de `accept()` seguidos. Casi siempre son pasajeros
+        // (EMFILE con un navegador abriendo cientos de conexiones por
+        // un SOCKS, ECONNABORTED): se espera y se sigue escuchando; el
+        // túnel solo se da por roto tras una racha larga.
+        let mut accept_failures: u32 = 0;
+        loop {
+            match listener.accept().await {
+                Ok((stream, peer)) => {
+                    accept_failures = 0;
+                    let msg = SessionCommand::TunnelAccepted {
+                        tunnel_id: tunnel_id.clone(),
+                        stream,
+                        peer_host: peer.ip().to_string(),
+                        peer_port: peer.port() as u32,
+                    };
+                    if task_tx.send(msg).is_err() {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    // Al log de conexión, NO como `ssh-error`: la sesión
+                    // sigue viva y la interfaz trata todo `ssh-error`
+                    // como fatal (la daba por muerta y, al reconectar,
+                    // dejaba huérfana esta conexión con sus puertos).
+                    accept_failures += 1;
+                    if accept_failures >= TUNNEL_ACCEPT_MAX_FAILURES {
+                        emit_connection_log(
+                            &app_handle,
+                            &task_session_id,
+                            "tunnel",
+                            "error",
+                            format!("Listener de túnel cerrado: {err}"),
+                        );
+                        break;
+                    }
+                    if accept_failures == 1 {
+                        emit_connection_log(
+                            &app_handle,
+                            &task_session_id,
+                            "tunnel",
+                            "warning",
+                            format!("El túnel no pudo aceptar una conexión: {err}"),
+                        );
+                    }
+                    tokio::time::sleep(Duration::from_millis(
+                        100 * u64::from(accept_failures.min(10)),
+                    ))
+                    .await;
+                }
+            }
+        }
+    });
+
+    let info = SshTunnelInfo {
+        id: id.clone(),
+        name: config.name,
+        tunnel_type: config.tunnel_type,
+        bind_host,
+        local_port: local_addr.port(),
+        remote_host: config.remote_host,
+        remote_port: config.remote_port,
+        status: "running".into(),
+        bytes_up: 0,
+        bytes_down: 0,
     };
-    teardown_tunnel(handle, &remote_forwards, tunnel).await;
-    Ok(())
+    tunnels.insert(
+        id,
+        ActiveTunnel::from_info(
+            info.clone(),
+            Some(local_task),
+            Arc::new(TunnelTraffic::default()),
+            owner,
+        ),
+    );
+    Ok(info)
 }
 
 /// Para un túnel ya retirado del mapa: aborta su listener local y, si es
-/// remoto, cancela el forward en el servidor y lo olvida en el mapa de forwards.
-async fn teardown_tunnel(
-    handle: &mut client::Handle<host_keys::KnownHostsClient>,
+/// remoto, lo olvida en el mapa de forwards (desde ya, las conexiones que
+/// lleguen por él se rechazan). Devuelve el forward `(bind_host, puerto)` que
+/// queda por cancelar en el servidor: eso espera una respuesta y lo hace una
+/// tarea (`SessionOps::cancel_remote_forward`), no el bucle.
+fn teardown_tunnel(
     remote_forwards: &host_keys::RemoteForwardMap,
     tunnel: ActiveTunnel,
-) {
+) -> Option<(String, u32)> {
     if let Some(task) = tunnel.local_task {
         task.abort();
     }
-    if tunnel.info.tunnel_type == SshTunnelType::Remote {
-        if let Some(remote_port) = tunnel.info.remote_port {
-            let _ = handle
-                .cancel_tcpip_forward(tunnel.info.bind_host.clone(), remote_port as u32)
-                .await;
-            if let Ok(mut map) = remote_forwards.lock() {
-                map.remove(&(tunnel.info.bind_host, remote_port as u32));
-            }
-        }
+    if tunnel.info.tunnel_type != SshTunnelType::Remote {
+        return None;
     }
+    let remote_port = u32::from(tunnel.info.remote_port?);
+    if let Ok(mut map) = remote_forwards.lock() {
+        map.remove(&(tunnel.info.bind_host.clone(), remote_port));
+    }
+    Some((tunnel.info.bind_host, remote_port))
 }
 
 /// Abre el canal direct-tcpip de una conexión de túnel ya resuelta y arranca el
-/// bombeo de bytes. La espera del open corre dentro del bucle de sesión (el
-/// `Handle` russh no es clonable), por eso se acota con `TUNNEL_OPEN_TIMEOUT`.
+/// bombeo de bytes. Corre en una tarea de `crate::session_ops` (nunca en el
+/// bucle de sesión: con la cola de salida atascada el open no volvería) y se
+/// acota con `TUNNEL_OPEN_TIMEOUT`.
 ///
 /// Con `socks`, el cliente SOCKS5 todavía espera la respuesta a su CONNECT: oye
 /// «conectado» solo cuando el canal está abierto de verdad y, si no se pudo,
 /// recibe el código de error que corresponde en vez de un cierre sin explicar.
 #[allow(clippy::too_many_arguments)]
 async fn open_tunnel_channel(
-    handle: &mut client::Handle<host_keys::KnownHostsClient>,
-    session_id: &str,
-    tunnel_id: &str,
+    handle: SharedHandle,
+    session_id: String,
+    tunnel_id: String,
     stream: TcpStream,
     target_host: String,
     target_port: u16,
     peer_host: String,
     peer_port: u32,
-    app_handle: &AppHandle,
+    app_handle: AppHandle,
     traffic: Arc<TunnelTraffic>,
     socks: bool,
 ) {
@@ -3078,7 +3204,7 @@ async fn open_tunnel_channel(
     .await
     {
         Ok(Ok(channel)) => {
-            let on_traffic = tunnel_traffic_emitter(app_handle.clone(), session_id, tunnel_id);
+            let on_traffic = tunnel_traffic_emitter(app_handle.clone(), &session_id, &tunnel_id);
             tokio::spawn(async move {
                 let mut stream = stream;
                 if socks
@@ -3109,7 +3235,7 @@ async fn open_tunnel_channel(
             format!("Tiempo agotado abriendo el canal del túnel hacia {target}")
         }
     };
-    emit_connection_log(app_handle, session_id, "tunnel", "warning", message);
+    emit_connection_log(&app_handle, &session_id, "tunnel", "warning", message);
     if socks {
         socks5_reject(stream, socks5_failure_code(&failure));
     }
@@ -4185,10 +4311,108 @@ mod tests {
             .expect("cancelar el tcpip-forward");
     }
 
+    /// **Integración**: las operaciones que el bucle raíz ya no espera, por
+    /// `SessionOps` contra un `sshd` real: muestra del monitor (la salida se
+    /// parsea), `kill` de un PID inexistente (el error del remoto vuelve),
+    /// pestaña nueva (el canal abierto tiene shell viva), túnel remoto concedido
+    /// y su cierre, que contesta con el puerto ya suelto en el servidor.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn ssh_operaciones_del_bucle_raiz_en_tareas_contra_sshd_real() {
+        let _guard = SSH_IT_LOCK.lock().await;
+        use crate::ssh_fixture;
+
+        let Some(server) = ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        host_keys::set_strict_first_connect(false);
+        let handle: SharedHandle = Arc::new(connect_and_auth(&server).await);
+        let mut ops = SessionOps::new(OpLimits::DEFAULT);
+        async fn siguiente(ops: &mut SessionOps) -> OpDone {
+            tokio::time::timeout(Duration::from_secs(20), ops.next())
+                .await
+                .expect("la operación acaba en su plazo")
+                .expect("hay una operación en vuelo")
+        }
+
+        // Monitor: una muestra de /proc que se parsea entera.
+        assert!(ops.metrics_sample(&handle, metrics::linux_sample_command()));
+        let OpDone::MetricsSample { generation, text } = siguiente(&mut ops).await else {
+            panic!("se esperaba la muestra del monitor");
+        };
+        assert_eq!(generation, ops.metrics_generation());
+        let sample = metrics::RawSample::parse(&text);
+        assert!(sample.cpu.is_some(), "muestra sin CPU: {text:?}");
+        assert!(!sample.procs.is_empty(), "muestra sin procesos: {text:?}");
+
+        // Kill de un PID que no existe: el remoto lo explica.
+        let (kill_tx, kill_rx) = oneshot::channel();
+        ops.kill(&handle, "kill -TERM 2147483646".to_string(), kill_tx);
+        assert!(matches!(siguiente(&mut ops).await, OpDone::Idle));
+        let err = kill_rx.await.expect("el kill contesta").expect_err("el PID no existe");
+        assert!(!err.is_empty());
+
+        // Pestaña nueva: el canal llega con PTY y shell.
+        let (shell_tx, _shell_rx) = oneshot::channel();
+        ops.open_shell(
+            &handle,
+            ShellRequest {
+                shell_id: "hija".to_string(),
+                on_data: Channel::new(|_| Ok(())),
+                cols: 100,
+                rows: 30,
+                env: Arc::new(Vec::new()),
+                term: "xterm",
+                reply: shell_tx,
+            },
+        );
+        let OpDone::ShellOpened { shell_id, result, .. } = siguiente(&mut ops).await else {
+            panic!("se esperaba la pestaña nueva");
+        };
+        assert_eq!(shell_id, "hija");
+        let mut shell = result.expect("la pestaña abre");
+        shell.data(&b"echo vive-$((6*7))\n"[..]).await.expect("escribir");
+        let mut salida = String::new();
+        let lectura = async {
+            while let Some(msg) = shell.wait().await {
+                if let ChannelMsg::Data { data } = msg {
+                    salida.push_str(&String::from_utf8_lossy(&data));
+                    if salida.contains("vive-42") {
+                        break;
+                    }
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(15), lectura)
+            .await
+            .unwrap_or_else(|_| panic!("la shell no contestó: {salida:?}"));
+
+        // Túnel remoto: concedido en el puerto que asigne el servidor...
+        ops.remote_forward(&handle, "t1".to_string(), "127.0.0.1".to_string(), 0);
+        let OpDone::RemoteForward { tunnel_id, result } = siguiente(&mut ops).await else {
+            panic!("se esperaba la respuesta al forward");
+        };
+        assert_eq!(tunnel_id, "t1");
+        let session_ops::ForwardResult::Granted(port) = result else {
+            panic!("el servidor debió conceder el forward: {result:?}");
+        };
+        assert!(port > 0);
+        assert!(TcpStream::connect(("127.0.0.1", port as u16)).await.is_ok());
+        // ...y su cierre contesta con el puerto ya suelto.
+        let (stop_tx, stop_rx) = oneshot::channel();
+        ops.cancel_remote_forward(&handle, "127.0.0.1".to_string(), port, vec![stop_tx]);
+        assert!(matches!(siguiente(&mut ops).await, OpDone::Idle));
+        assert_eq!(stop_rx.await.expect("el cierre contesta"), Ok(()));
+        assert!(TcpStream::connect(("127.0.0.1", port as u16)).await.is_err());
+        assert!(ops.is_idle());
+    }
+
     /// **Integración**: el primitivo de F0.3 («varias shells sobre una única
     /// conexión SSH», la base de «Nueva pestaña en esta conexión»): dos
     /// `channel_open_session` + PTY + shell sobre el MISMO handle autenticado
-    /// —exactamente lo que hace `open_extra_shell`— contra un `sshd` real, y
+    /// —exactamente lo que hace `open_extra_shell_channel`— contra un `sshd` real, y
     /// cada shell ejecuta lo suyo y responde por su canal sin cruzarse con la
     /// otra. Los marcadores usan `$((…))`: el eco del tecleo contiene la
     /// expresión sin evaluar, así que el marcador evaluado solo puede venir de
@@ -4426,7 +4650,7 @@ mod tests {
         assert!(salida.contains("con-tty"), "el comando corre sobre el PTY: {salida:?}");
     }
 
-    /// **Integración**: «Nueva pestaña en esta conexión» por `open_extra_shell`
+    /// **Integración**: «Nueva pestaña en esta conexión» por `open_extra_shell_channel`
     /// contra un `sshd` real: hereda el entorno y el TERM del perfil, pero abre
     /// un **shell** aunque el perfil tenga comando al conectar. El marcador usa
     /// `$((…))`: solo una shell viva lo evalúa.
@@ -4456,9 +4680,10 @@ mod tests {
         });
         let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
         let mut shells = HashMap::new();
-        open_extra_shell(&handle, "hija", on_data, (80, 24), &launch, cmd_tx, &mut shells)
+        let channel = open_extra_shell_channel(&handle, (80, 24), &launch.env, launch.term())
             .await
             .expect("abrir la shell hija");
+        start_extra_shell("hija", channel, on_data, cmd_tx, &mut shells);
         shells["hija"]
             .send(ShellMsg::Input(
                 b"echo marca-$RUSTTY_PRUEBA-$TERM-$((6*7))\n".to_vec(),
@@ -5327,7 +5552,7 @@ mod tests {
         (on_data, rx)
     }
 
-    /// Shell con PTY sobre el handle, como hace `open_extra_shell`.
+    /// Shell con PTY sobre el handle, como hace `open_extra_shell_channel`.
     async fn open_shell_channel(
         handle: &client::Handle<host_keys::KnownHostsClient>,
     ) -> russh::Channel<client::Msg> {
@@ -5613,6 +5838,44 @@ mod tests {
         let (_keep, shell_tx, task, mut cmd_rx) = shell_with_stalled_outbound().await;
         shell_tx.send(ShellMsg::Close).unwrap();
         expect_shell_closed(task, &mut cmd_rx).await;
+    }
+
+    /// Un túnel remoto se valida antes de pedir nada al servidor: sin puerto
+    /// remoto o sin puerto local de destino no sale ningún forward, y el
+    /// destino vacío es `127.0.0.1`.
+    #[test]
+    fn un_tunel_remoto_se_valida_antes_de_pedir_el_forward() {
+        let config = |remote_port: Option<u16>, local_port: u16, destino: Option<&str>| {
+            SshTunnelConfig {
+                id: None,
+                name: Some("web".to_string()),
+                tunnel_type: SshTunnelType::Remote,
+                bind_host: None,
+                local_port,
+                remote_host: destino.map(str::to_string),
+                remote_port,
+            }
+        };
+        let plan = |c| plan_remote_forward("t".into(), "0.0.0.0".into(), c, Some("hija".into()));
+        assert!(plan(config(None, 3000, None)).is_err());
+        assert!(plan(config(Some(0), 3000, None)).is_err());
+        assert!(plan(config(Some(8080), 0, None)).is_err());
+        assert_eq!(
+            plan(config(Some(8080), 3000, Some("  "))),
+            Ok(RemoteForwardPlan {
+                id: "t".into(),
+                name: Some("web".into()),
+                bind_host: "0.0.0.0".into(),
+                remote_port: 8080,
+                local_host: "127.0.0.1".into(),
+                local_port: 3000,
+                owner: Some("hija".into()),
+            })
+        );
+        assert_eq!(
+            plan(config(Some(8080), 3000, Some(" db.local "))).map(|p| p.local_host),
+            Ok("db.local".to_string())
+        );
     }
 
     /// Invariante: al cerrar una shell hija caen SOLO los túneles abiertos

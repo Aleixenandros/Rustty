@@ -64,6 +64,7 @@ mod ssh_fixture;
 mod webdav_fixture;
 mod sandbox;
 mod scripts;
+mod session_ops;
 mod sftp_manager;
 mod shell_integration;
 mod ssh_manager;
