@@ -7737,8 +7737,9 @@ body.density-spacious #modal-prefs > .modal-actions { padding: 12px 22px 14px; }
   display: none;
 }
 
-/* Sin tamaño CSS propio, el canvas mide su resolución en píxeles CSS; el tope
-   del panel lo reduce a 1:1 en píxeles físicos (`devicePixelRatio`). */
+/* El tamaño CSS lo pone `canvas-view.js` (`fitCanvasCss`): el escritorio
+   entero dentro del panel, centrado y sin deformar, 1:1 en píxeles físicos
+   cuando coincide con el panel. Los topes cubren el instante antes de medir. */
 .rdp-canvas {
   display: block;
   max-width: 100%;

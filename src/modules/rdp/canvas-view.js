@@ -12,6 +12,7 @@
 
 import { decodeFrame } from "./protocol.js";
 import { attachInput } from "./input.js";
+import { fitCanvasCss } from "./resolution.js";
 
 /**
  * @typedef {object} RdpCanvasView
@@ -21,6 +22,10 @@ import { attachInput } from "./input.js";
  * @property {(connected: boolean) => void} setActive
  * @property {() => { width: number, height: number, scale: number }} measure
  *   tamaño en píxeles físicos del hueco disponible y escala en %
+ * @property {() => import("./resolution.js").PaneBox|null} paneBox
+ *   hueco del panel en píxeles CSS (`null` si no se ve: pestaña oculta)
+ * @property {() => { width: number, height: number }|null} desktopSize
+ *   tamaño actual del escritorio remoto (`null` hasta el primero)
  * @property {() => void} dispose
  */
 
@@ -30,9 +35,12 @@ import { attachInput } from "./input.js";
  * @param {(cmd: string, args?: any, opts?: any) => Promise<any>} deps.invoke
  * @param {new () => any} deps.Channel
  * @param {(size: { width: number, height: number }) => void} [deps.onDesktopSize]
+ * @param {() => void} [deps.onPaneResize] el hueco del panel cambió (tamaño o
+ *   `devicePixelRatio`), también al volver a verse la pestaña
+ * @param {() => void} [deps.onDispose] al cerrar la vista (antes de soltarla)
  * @returns {RdpCanvasView}
  */
-export function createRdpCanvasView({ sessionId, invoke, Channel, onDesktopSize }) {
+export function createRdpCanvasView({ sessionId, invoke, Channel, onDesktopSize, onPaneResize, onDispose }) {
   const element = document.createElement("div");
   element.className = "rdp-canvas-host";
   const canvas = document.createElement("canvas");
@@ -51,6 +59,51 @@ export function createRdpCanvasView({ sessionId, invoke, Channel, onDesktopSize 
   const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d", { alpha: false }));
   let active = false;
   let disposed = false;
+  /** @type {{ width: number, height: number }|null} */
+  let desktop = null;
+
+  /** Hueco del panel; el contenedor del canvas está oculto hasta conectar. */
+  const paneBox = () => {
+    const r = (element.parentElement ?? element).getBoundingClientRect();
+    if (!(r.width > 0) || !(r.height > 0)) return null;
+    return { width: r.width, height: r.height, dpr: window.devicePixelRatio || 1 };
+  };
+
+  /** El canvas, entero dentro del panel, centrado y sin deformar. */
+  const layout = () => {
+    if (disposed || !desktop) return;
+    const css = fitCanvasCss(desktop, paneBox());
+    if (!css) return;
+    canvas.style.width = `${css.width}px`;
+    canvas.style.height = `${css.height}px`;
+  };
+
+  const onResize = () => {
+    if (disposed) return;
+    layout();
+    onPaneResize?.();
+  };
+  // El contenedor ocupa el panel: cambia con la ventana, la barra lateral, la
+  // división de la vista y al mostrarse u ocultarse la pestaña.
+  const observer = typeof ResizeObserver === "function" ? new ResizeObserver(onResize) : null;
+  observer?.observe(element);
+  // Un cambio de `devicePixelRatio` (otra pantalla, zoom del sistema) no
+  // cambia el tamaño CSS: se vigila aparte y se vuelve a armar en cada cambio.
+  /** @type {MediaQueryList|null} */
+  let dprQuery = null;
+  const watchDpr = () => {
+    dprQuery?.removeEventListener("change", onDprChange);
+    dprQuery = typeof window.matchMedia === "function"
+      ? window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`)
+      : null;
+    dprQuery?.addEventListener("change", onDprChange);
+  };
+  /** Cambió el `devicePixelRatio`: volver a vigilar el nuevo y medir. */
+  function onDprChange() {
+    watchDpr();
+    onResize();
+  }
+  watchDpr();
 
   /** @type {Uint8Array[]} */
   let queue = [];
@@ -86,6 +139,8 @@ export function createRdpCanvasView({ sessionId, invoke, Channel, onDesktopSize 
           // tras una reactivación, así que no hace falta conservar nada.
           canvas.width = frame.width;
           canvas.height = frame.height;
+          desktop = { width: frame.width, height: frame.height };
+          layout();
           onDesktopSize?.({ width: frame.width, height: frame.height });
           break;
         case "pointer-bitmap":
@@ -156,7 +211,11 @@ export function createRdpCanvasView({ sessionId, invoke, Channel, onDesktopSize 
     setActive: (connected) => {
       active = connected;
       element.classList.toggle("is-active", connected);
+      // El contenedor se acaba de mostrar: ya hay hueco que medir.
+      if (connected) layout();
     },
+    paneBox,
+    desktopSize: () => desktop,
     measure: () => {
       const dpr = window.devicePixelRatio || 1;
       // El hueco es el del panel: el contenedor del canvas está oculto hasta
@@ -169,9 +228,13 @@ export function createRdpCanvasView({ sessionId, invoke, Channel, onDesktopSize 
       };
     },
     dispose: () => {
+      if (disposed) return;
+      onDispose?.();
       disposed = true;
       active = false;
       queue = [];
+      observer?.disconnect();
+      dprQuery?.removeEventListener("change", onDprChange);
       detachInput();
       keyTarget.removeEventListener("focus", syncClipboard);
       keyTarget.removeEventListener("keydown", onPasteKey, true);

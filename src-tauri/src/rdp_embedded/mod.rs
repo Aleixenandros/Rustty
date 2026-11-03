@@ -33,6 +33,7 @@ pub mod drive;
 pub mod frames;
 pub mod input;
 mod perf;
+mod resize;
 mod session;
 mod tls;
 
@@ -103,7 +104,7 @@ impl EmbeddedRdpManager {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StatusEvent {
-    /// `connecting` | `connected` | `closed` | `error`.
+    /// `connecting` | `connected` | `display-control` | `closed` | `error`.
     state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<&'static str>,
@@ -113,6 +114,10 @@ struct StatusEvent {
     width: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     height: Option<u16>,
+    /// Con `display-control`: el servidor admite cambiar el tamaño del
+    /// escritorio sin reconectar (Display Control).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_control: Option<bool>,
 }
 
 impl StatusEvent {
@@ -123,6 +128,7 @@ impl StatusEvent {
             message: None,
             width: None,
             height: None,
+            display_control: None,
         }
     }
 }
@@ -140,6 +146,16 @@ impl session::Reporter for EventReporter {
                 width: Some(width),
                 height: Some(height),
                 ..StatusEvent::bare("connected")
+            },
+        );
+    }
+
+    fn display_control(&self, supported: bool) {
+        let _ = self.app.emit(
+            &self.event,
+            StatusEvent {
+                display_control: Some(supported),
+                ..StatusEvent::bare("display-control")
             },
         );
     }
@@ -409,14 +425,19 @@ pub async fn rdp_embed_connect(
         };
         let manager = tauri::Manager::state::<EmbeddedRdpManager>(&app_task);
         let mut sessions = manager.sessions.lock_recover();
-        if sessions
+        let current = sessions
             .get(&session_id)
-            .is_some_and(|h| h.generation == generation)
-        {
+            .is_some_and(|h| h.generation == generation);
+        if current {
             sessions.remove(&session_id);
         }
         drop(sessions);
-        let _ = app_task.emit(&event, status);
+        // Reconectar en la pestaña (p. ej. a otra resolución) reutiliza el id
+        // con la sesión vieja aún viva: su cierre no debe llegar a la nueva,
+        // que escucha el mismo evento.
+        if current {
+            let _ = app_task.emit(&event, status);
+        }
     });
 
     Ok(ConnectReply {
@@ -451,7 +472,10 @@ pub fn rdp_embed_input(
     Ok(())
 }
 
-/// Pide un tamaño nuevo del escritorio (píxeles físicos y escala en %).
+/// Pide un tamaño nuevo del escritorio (píxeles físicos y escala en %) por
+/// Display Control. Si el canal aún no está listo, la sesión guarda la última
+/// petición y la manda en cuanto lo esté; si el servidor no lo ofrece, lo avisa
+/// con `display-control` (`displayControl: false`) y el frontend reconecta.
 #[tauri::command]
 pub fn rdp_embed_resize(
     manager: State<'_, EmbeddedRdpManager>,

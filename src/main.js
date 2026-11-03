@@ -143,6 +143,13 @@ import { createPromptQueue } from "./modules/dialogs/prompt-queue.js";
 import { reconnectRoute, runReconnectOnce } from "./modules/sessions/reconnect.js";
 import { createRdpCanvasView } from "./modules/rdp/canvas-view.js";
 import {
+  FIT as RDP_FIT,
+  createResizeController as createRdpResizeController,
+  desiredDesktopSize as rdpDesiredDesktopSize,
+  parseResolution as parseRdpResolution,
+  resolutionMenuModel as rdpResolutionMenuModel,
+} from "./modules/rdp/resolution.js";
+import {
   MAX_JUMPS, allowsTextBastion, bastionChoices, bastionLinksOf, bastionReferrers, clampIdleSecs, relinkRestoredBastion,
   withBastionOverride, describeRoute, detachDeletedBastions, filterJumpProfiles,
   isJumpCapable, jumpCandidates, jumpChain, jumpSettingsPayload, pushRecentJump, resolveJumpRoute,
@@ -12934,12 +12941,36 @@ async function connectRdpEmbedded(profileId, { credId = null, reuse = null, rout
   updateTabRoute(sessionId);
 
   const pane = sessionObj.pane;
-  const rdpView = createRdpCanvasView({ sessionId, invoke, Channel });
+  // Resolución de la pestaña: «Ajustar a la pestaña» o la fija elegida en su
+  // menú, que se conserva al reconectar en la misma pestaña.
+  const resolution = sessionObj.rdpResolution || RDP_FIT;
+  /** @type {ReturnType<typeof createRdpResizeController>|null} */
+  let resizer = null;
+  const rdpView = createRdpCanvasView({
+    sessionId,
+    invoke,
+    Channel,
+    onDesktopSize: () => resizer?.desktopChanged(),
+    onPaneResize: () => resizer?.paneChanged(),
+    onDispose: () => resizer?.dispose(),
+  });
+  resizer = createRdpResizeController({
+    resolution,
+    measure: () => rdpView.paneBox(),
+    desktopSize: () => rdpView.desktopSize(),
+    sendResize: (req) => {
+      invoke("rdp_embed_resize", { sessionId, width: req.width, height: req.height, scale: req.scale })
+        .catch(() => {});
+    },
+    reconnect: (req, res) => reconnectRdpEmbeddedAt(sessionId, req, res),
+  });
   sessionObj.rdpView = rdpView;
+  sessionObj.rdpResizer = resizer;
   pane?.appendChild(rdpView.element);
 
   const markClosed = () => {
     sessionObj.status = "closed";
+    resizer?.setConnected(false);
     rdpView.setActive(false);
     pane?.classList.remove("rdp-embedded-live");
     updateTabStatus(sessionId, "error");
@@ -12955,9 +12986,12 @@ async function connectRdpEmbedded(profileId, { credId = null, reuse = null, rout
       updateTabStatus(sessionId, "connected");
       pane?.classList.add("rdp-embedded-live");
       rdpView.setActive(true);
+      resizer?.setConnected(true);
       if (activeSessionId === sessionId) rdpView.focus();
       if (!sessionObj.private) recordRecentConnection(profileId);
       renderConnectionList();
+    } else if (info.state === "display-control") {
+      resizer?.setDisplayControl(typeof info.displayControl === "boolean" ? info.displayControl : null);
     } else if (info.state === "closed") {
       markClosed();
       toast(t("toast.rdp_closed", { name: profile.name }), "info");
@@ -12987,7 +13021,9 @@ async function connectRdpEmbedded(profileId, { credId = null, reuse = null, rout
   };
 
   try {
-    const size = rdpView.measure();
+    // Fuera de la vista (pestaña de fondo) el panel mide 0: entonces el hueco
+    // mínimo, y el ajuste lo corrige al verse.
+    const size = rdpDesiredDesktopSize(resolution, rdpView.paneBox()) ?? rdpView.measure();
     const args = {
       sessionId,
       profileId,
@@ -13023,6 +13059,68 @@ async function connectRdpEmbedded(profileId, { credId = null, reuse = null, rout
   } catch (err) {
     fail(err);
   }
+}
+
+/**
+ * El servidor no admite cambiar el tamaño en caliente (sin Display Control):
+ * la resolución elegida en el menú se aplica reconectando en la misma pestaña.
+ * @param {string} sessionId
+ * @param {{ width: number, height: number }} req
+ * @param {import("./modules/rdp/resolution.js").RdpResolution} res
+ */
+function reconnectRdpEmbeddedAt(sessionId, req, res) {
+  const s = sessions.get(sessionId);
+  if (!s?.embedded || s.status !== "connected") return;
+  s.rdpResolution = res;
+  toast(t("toast.rdp_resolution_reconnect", { width: req.width, height: req.height }), "info", 6000);
+  connectRdpEmbedded(s.profileId, { credId: s.credentialId || null, reuse: sessionId });
+}
+
+/**
+ * Rellena el submenú «Resolución» de una pestaña RDP integrada.
+ * @param {HTMLElement} submenu
+ * @param {any} session
+ */
+function fillRdpResolutionSubmenu(submenu, session) {
+  submenu.innerHTML = "";
+  const current = session.rdpResizer?.resolution ?? session.rdpResolution ?? RDP_FIT;
+  for (const entry of rdpResolutionMenuModel(current)) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.setAttribute("role", "menuitemradio");
+    item.setAttribute("aria-checked", entry.checked ? "true" : "false");
+    item.className = entry.checked ? "ctx-item active" : "ctx-item";
+    item.dataset.tabctx = "rdp-resolution";
+    item.dataset.rdpRes = entry.key;
+    const icon = document.createElement("span");
+    icon.className = "ctx-icon";
+    if (entry.checked) icon.innerHTML = '<svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-check"/></svg>';
+    const label = document.createElement("span");
+    label.textContent = entry.fit
+      ? t("tabctx.rdp_resolution_fit")
+      : t("tabctx.rdp_resolution_size", { width: entry.width, height: entry.height });
+    item.append(icon, label);
+    submenu.appendChild(item);
+    if (entry.fit) {
+      const sep = document.createElement("div");
+      sep.className = "ctx-sep";
+      submenu.appendChild(sep);
+    }
+  }
+}
+
+/**
+ * Elección del submenú «Resolución». Con Display Control se pide sin cortar;
+ * sin él, reconecta. Desconectada, solo se recuerda para la próxima conexión.
+ * @param {string} sessionId
+ * @param {string|undefined} key
+ */
+function chooseRdpResolution(sessionId, key) {
+  const s = sessions.get(sessionId);
+  const res = parseRdpResolution(key);
+  if (!s?.embedded || !res) return;
+  s.rdpResolution = res;
+  s.rdpResizer?.choose(res);
 }
 
 /**
@@ -27881,7 +27979,7 @@ function bindUIEvents() {
 
   document.getElementById("tab-context-menu").addEventListener("click", (e) => {
     const btn = e.target.closest("[data-tabctx]");
-    if (btn) handleTabContextAction(btn.dataset.tabctx);
+    if (btn) handleTabContextAction(btn.dataset.tabctx, btn.dataset);
   });
 
   document.getElementById("sftp-context-menu")?.addEventListener("click", (e) => {
@@ -31866,12 +31964,28 @@ function showTabContextMenu(x, y, sessionId) {
     roItem.setAttribute("aria-checked", on ? "true" : "false");
   }
 
+  // «Resolución ▸»: solo en el RDP integrado.
+  const resItem = document.getElementById("tabctx-rdp-res");
+  const resSubmenu = document.getElementById("tabctx-rdp-res-submenu");
+  const isEmbeddedRdp = ctxSession?.type === "rdp" && !!ctxSession.embedded;
+  if (resItem && resSubmenu) {
+    if (isEmbeddedRdp) fillRdpResolutionSubmenu(resSubmenu, ctxSession);
+    else resSubmenu.innerHTML = "";
+    resItem.classList.toggle("hidden", !isEmbeddedRdp);
+  }
+
   const targetTab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
   const isPinned = !!targetTab?.classList.contains("is-pinned");
   const pinLabel = menu.querySelector(".tabctx-pin-label");
   if (pinLabel) pinLabel.textContent = isPinned ? t("tabctx.unpin") : t("tabctx.pin");
 
-  positionFloatingMenu(menu, x, y);
+  const { left: finalX, width } = positionFloatingMenu(menu, x, y);
+  // Como en el menú lateral: el submenú se abre hacia donde quepa.
+  if (resItem && resSubmenu && isEmbeddedRdp) {
+    resSubmenu.classList.toggle("open-left", finalX + width + 190 > window.innerWidth);
+    const itemRect = resItem.getBoundingClientRect();
+    resSubmenu.classList.toggle("open-up", itemRect.top + itemRect.height / 2 > window.innerHeight / 2);
+  }
   onFloatingMenuOpened(menu);
 }
 
@@ -31881,10 +31995,15 @@ function hideTabContextMenu() {
   tabCtxTargetId = null;
 }
 
-async function handleTabContextAction(action) {
+async function handleTabContextAction(action, data = {}) {
   const targetId = tabCtxTargetId;
   hideTabContextMenu();
   if (!targetId) return;
+
+  if (action === "rdp-resolution") {
+    chooseRdpResolution(targetId, data.rdpRes);
+    return;
+  }
 
   if (action === "pin") {
     const tab = document.querySelector(`.tab[data-session="${CSS.escape(targetId)}"]`);

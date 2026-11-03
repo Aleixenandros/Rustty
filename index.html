@@ -494,6 +494,8 @@
         <symbol id="ci-arrow-left" viewBox="0 0 16 16"><path d="M13 8H3.5M6.7 4.8 3.5 8l3.2 3.2"/></symbol>
         <symbol id="ci-home" viewBox="0 0 16 16"><path d="M2.8 7.8 8 3.2l5.2 4.6"/><path d="M4.4 7.4v5.4h7.2V7.4"/></symbol>
         <symbol id="ci-ban" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.2"/><path d="M4.3 4.3l7.4 7.4"/></symbol>
+        <symbol id="ci-monitor" viewBox="0 0 16 16"><rect x="2.2" y="3" width="11.6" height="7.8" rx="1"/><path d="M6 13.4h4M8 10.8v2.6"/></symbol>
+        <symbol id="ci-check" viewBox="0 0 16 16"><path d="M3.6 8.4l2.9 2.9 5.9-6.6"/></symbol>
         <symbol id="ci-script" viewBox="0 0 16 16"><path d="M4.2 2.6h5.2l2.8 2.8v7.2a.8.8 0 0 1-.8.8H4.2a.8.8 0 0 1-.8-.8V3.4a.8.8 0 0 1 .8-.8z"/><path d="M9.1 2.7v3h3"/><path d="M6.6 8l2.9 1.9-2.9 1.9z"/></symbol>
       </defs>
     </svg>
@@ -775,6 +777,12 @@
       <button class="ctx-item tabctx-read-only hidden" data-tabctx="toggle-read-only">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-lock"/></svg></span><span data-i18n="tabctx.read_only">Solo lectura</span>
       </button>
+      <!-- Solo en el RDP integrado: el submenú lo rellena showTabContextMenu -->
+      <div class="ctx-item ctx-has-submenu tabctx-rdp-res hidden" id="tabctx-rdp-res" role="menuitem" tabindex="-1" aria-haspopup="menu" aria-expanded="false" aria-labelledby="tabctx-rdp-res-label">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-monitor"/></svg></span><span id="tabctx-rdp-res-label" data-i18n="tabctx.rdp_resolution">Resolución</span>
+        <span class="ctx-submenu-arrow" aria-hidden="true">▸</span>
+        <div class="ctx-submenu" id="tabctx-rdp-res-submenu" role="menu" aria-labelledby="tabctx-rdp-res-label"></div>
+      </div>
 
       <!-- Grupo 2 · Acciones de división/vista (visibilidad calculada al abrir el menú) -->
       <div class="ctx-sep tabctx-view-sep hidden"></div>

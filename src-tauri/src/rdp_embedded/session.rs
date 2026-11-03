@@ -34,6 +34,7 @@ use super::drive;
 use super::frames::{self, Damage, Flow, Rect};
 use super::input::InputEvent;
 use super::perf::PerfProfile;
+use super::resize::{self, ResizeRequest, Resizer};
 use super::tls;
 
 /// Plazo para abrir el TCP y para cada etapa de la negociación.
@@ -132,6 +133,8 @@ pub enum Ended {
 /// Avisos de la sesión hacia el gestor (que los convierte en eventos).
 pub trait Reporter: Send + Sync {
     fn connected(&self, width: u16, height: u16);
+    /// El servidor admite (o no) cambiar el tamaño del escritorio en caliente.
+    fn display_control(&self, supported: bool);
 }
 
 type Framed = TokioFramed<tokio_rustls::client::TlsStream<TcpStream>>;
@@ -460,6 +463,8 @@ struct Sink {
     flow: Flow,
     damage: Damage,
     stats: SinkStats,
+    /// Tamaño del escritorio que conoce el canvas.
+    size: (u16, u16),
 }
 
 impl Sink {
@@ -468,6 +473,37 @@ impl Sink {
         self.stats.messages += 1;
         self.stats.maybe_log();
         self.channel.send(Response::new(bytes)).is_ok()
+    }
+
+    /// Avisa al canvas del tamaño del escritorio y lo repinta entero.
+    fn send_desktop_size(&mut self, width: u16, height: u16) {
+        self.size = (width, height);
+        self.damage.clear();
+        let seq = self.flow.next_seq();
+        self.send(frames::encode_desktop_size(seq, width, height));
+    }
+
+    /// Sigue un cambio de tamaño del framebuffer que no pasó por una
+    /// reactivación: con el canal gráfico, el servidor cambia de resolución con
+    /// un `ResetGraphics` que IronRDP aplica dentro de `process`. `true` si
+    /// cambió.
+    fn follow_size(&mut self, image: &DecodedImage) -> bool {
+        let (width, height) = (image.width(), image.height());
+        if self.size == (width, height) {
+            return false;
+        }
+        log::debug!(
+            "RDP integrado: el escritorio pasa de {}x{} a {width}x{height}",
+            self.size.0,
+            self.size.1
+        );
+        self.send_desktop_size(width, height);
+        if let Some(full) =
+            Rect::from_inclusive(0, 0, width.saturating_sub(1), height.saturating_sub(1))
+        {
+            self.damage.add(full);
+        }
+        true
     }
 
     fn control(&mut self, kind: u8) -> bool {
@@ -538,16 +574,15 @@ pub async fn run(
         flow: Flow::default(),
         damage: Damage::default(),
         stats: SinkStats::default(),
+        size: (0, 0),
     };
     let mut input_db = Database::new();
 
-    let seq = sink.flow.next_seq();
-    sink.send(frames::encode_desktop_size(
-        seq,
-        image.width(),
-        image.height(),
-    ));
+    sink.send_desktop_size(image.width(), image.height());
     reporter.connected(image.width(), image.height());
+
+    let mut resizer = Resizer::default();
+    let mut dc_deadline = Some(tokio::time::Instant::now() + resize::GRACE);
 
     let mut tick = tokio::time::interval(CHANNEL_TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -579,8 +614,15 @@ pub async fn run(
                     }
                 }
                 Some(SessionCmd::Resize { width, height, scale }) => {
-                    // Fase 2: Display Control. Hasta entonces el canvas escala.
-                    let _ = (width, height, scale);
+                    let req = ResizeRequest::normalized(width, height, scale);
+                    match resizer.request(req) {
+                        Some(req) => send_resize(&mut stage, &mut resizer, &mut framed, req).await?,
+                        None => log::debug!(
+                            "RDP integrado: tamaño {}x{} pendiente (Display Control aún no está listo)",
+                            req.width,
+                            req.height
+                        ),
+                    }
                 }
                 Some(SessionCmd::ClipboardSync) => {
                     if let Some(clip) = channels.clipboard.as_ref() {
@@ -616,6 +658,13 @@ pub async fn run(
             () = shared.ack_notify.notified() => {
                 sink.flow.ack(shared.acked.load(Ordering::Acquire));
             }
+            () = sleep_until_opt(dc_deadline), if resizer.awaiting() => {
+                dc_deadline = None;
+                if let Some(supported) = resizer.give_up() {
+                    log::debug!("RDP integrado: el servidor no ofrece Display Control");
+                    reporter.display_control(supported);
+                }
+            }
             pdu = framed.read_pdu() => {
                 let (action, payload) = match pdu {
                     Ok(v) => v,
@@ -628,10 +677,78 @@ pub async fn run(
                 let outputs = stage
                     .process(&mut image, action, &payload, received_at)
                     .map_err(|e| SessionError::new("protocol", e.to_string()))?;
+                // Un `ResetGraphics` del canal gráfico ya cambió el tamaño de
+                // `image`: el canvas lo sabe antes de los rectángulos nuevos.
+                sink.follow_size(&image);
                 if let Some(end) = handle_outputs(outputs, &mut framed, &mut sink, &mut image, &mut stage, &activation_factory).await? {
                     return Ok(end);
                 }
+                if resizer.needs_poll() {
+                    poll_display_control(&mut stage, &mut resizer, reporter.as_ref(), &mut framed).await?;
+                }
             }
+        }
+    }
+}
+
+/// Duerme hasta `deadline`; sin plazo, nunca vuelve.
+async fn sleep_until_opt(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(d) => tokio::time::sleep_until(d).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Mira si el canal Display Control ya tiene las capacidades del servidor: lo
+/// avisa al frontend y manda la petición que estuviera guardada.
+async fn poll_display_control(
+    stage: &mut ActiveStage,
+    resizer: &mut Resizer,
+    reporter: &dyn Reporter,
+    framed: &mut Framed,
+) -> Result<(), SessionError> {
+    let ready = stage.display_control_ready() == Some(true);
+    let observed = resizer.observe(ready);
+    if let Some(supported) = observed.report {
+        if supported {
+            log::debug!(
+                "RDP integrado: Display Control listo ({:?})",
+                stage.display_control_capabilities()
+            );
+        }
+        reporter.display_control(supported);
+    }
+    if let Some(req) = observed.send {
+        send_resize(stage, resizer, framed, req).await?;
+    }
+    Ok(())
+}
+
+/// Pide al servidor el tamaño `req` por Display Control. Un fallo al
+/// codificarlo no tumba la sesión; si el canal no está, queda guardada.
+async fn send_resize(
+    stage: &mut ActiveStage,
+    resizer: &mut Resizer,
+    framed: &mut Framed,
+    req: ResizeRequest,
+) -> Result<(), SessionError> {
+    match stage.encode_resize(req.width, req.height, req.scale, None) {
+        Some(Ok(frame)) => {
+            log::debug!(
+                "RDP integrado: se pide el tamaño {}x{} (escala {:?})",
+                req.width,
+                req.height,
+                req.scale
+            );
+            write_frame(framed, frame).await
+        }
+        Some(Err(e)) => {
+            log::debug!("RDP integrado: no se pudo pedir el tamaño nuevo: {e}");
+            Ok(())
+        }
+        None => {
+            resizer.requeue(req);
+            Ok(())
         }
     }
 }
@@ -893,9 +1010,7 @@ async fn reactivate(
         ));
     }
     stage.set_window_support_level(window_level);
-    sink.damage.clear();
-    let seq_no = sink.flow.next_seq();
-    sink.send(frames::encode_desktop_size(seq_no, size.width, size.height));
+    sink.send_desktop_size(size.width, size.height);
     Ok(())
 }
 
@@ -920,6 +1035,7 @@ mod tests {
         fn connected(&self, width: u16, height: u16) {
             *self.0.lock().unwrap() = Some((width, height));
         }
+        fn display_control(&self, _supported: bool) {}
     }
 
     /// Conexión de punta a punta contra un servidor RDP **real**: TCP, TLS con

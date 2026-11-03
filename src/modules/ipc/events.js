@@ -216,7 +216,7 @@ export function eventName(kind, suffix) {
 
 /**
  * @typedef {object} RdpEmbedStatusEvent Estado de una sesión RDP integrada.
- * @property {"connecting"|"connected"|"closed"|"error"} state
+ * @property {"connecting"|"connected"|"display-control"|"closed"|"error"} state
  * @property {string} [code] Con `error` (y `closed` por el servidor): motivo
  *   estable (`auth-failed`, `cert-rejected`, `cert-changed`, `unreachable`,
  *   `timeout`, `tls`, `unsupported`, `protocol`, `network`, `redirect`,
@@ -224,6 +224,9 @@ export function eventName(kind, suffix) {
  * @property {string} [message] Detalle técnico (no se traduce).
  * @property {number} [width] Con `connected`: ancho del escritorio remoto.
  * @property {number} [height] Con `connected`: alto del escritorio remoto.
+ * @property {boolean} [displayControl] Con `display-control`: el servidor admite
+ *   cambiar el tamaño del escritorio sin reconectar (`true`), o pasó el margen
+ *   tras conectar sin ofrecerlo (`false`; si llega más tarde, otro `true`).
  */
 
 /**
