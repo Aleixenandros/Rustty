@@ -133,7 +133,7 @@ import { createMetricsPoller } from "./modules/metrics-poller.js";
 import { localUserHost, statusBarModel } from "./modules/status-bar.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
 import { inkTokens, ringColor } from "./modules/themes/ink.js";
-import { isHighContrastThemeId, toneFor, toneForId } from "./modules/themes/tone.js";
+import { galleryTone, isHighContrastThemeId, matchesToneFilter, toneFor } from "./modules/themes/tone.js";
 import { compileHighlightRules, applyHighlightRules } from "./modules/terminal/highlight.js";
 import { createChunkDecoder } from "./modules/terminal/chunk-decoder.js";
 import { createShellCloseGate } from "./modules/terminal/shell-close.js";
@@ -1145,6 +1145,9 @@ function appendCustomSwatch(picker, theme) {
   }
   label.className = "theme-option";
   label.dataset.theme = theme.id;
+  // Tono del filtro de la galería, una vez y a partir de la paleta: el mismo
+  // criterio que `applyThemeTone()` usa al aplicar el tema.
+  label.dataset.themeTone = galleryTone(theme.id, theme.name, theme.ui);
   const inputName = picker === "ui" ? "pref-theme" : "pref-terminal-theme";
   label.innerHTML = `
     <input type="radio" class="visually-hidden" name="${inputName}" value="${escHtml(theme.id)}" />
@@ -1155,7 +1158,9 @@ function appendCustomSwatch(picker, theme) {
     if (picker === "ui") selectUiTheme(theme.id);
     else selectTerminalTheme(theme.id);
   });
-  filterThemePickerOptions(root);
+  // Solo esta tarjeta: al registrar los 221 temas del bundle, refiltrar la
+  // galería entera por cada uno era cuadrático.
+  applyThemeOptionFilter(root, label);
   updateThemePickerButton(picker, picker === "ui" ? prefs.theme : (prefs.terminalTheme || "inherit"));
 }
 
@@ -1209,6 +1214,10 @@ function renderThemeTermLinesHtml(term, ui = {}) {
  */
 function upgradeStaticThemePreviews() {
   document.querySelectorAll(".theme-picker .theme-option").forEach((opt) => {
+    // Tono del filtro de la galería: las tarjetas de la hoja no tienen paleta
+    // en JS y deciden por id (un test lo ata a sus tokens de styles.css); las
+    // del bundle y las personalizadas lo traen de `appendCustomSwatch`.
+    if (!opt.dataset.themeTone) opt.dataset.themeTone = galleryTone(opt.dataset.theme, getThemeOptionLabel(opt));
     const term = TERMINAL_THEMES[opt.dataset.theme];
     const main = opt.querySelector(".theme-preview-main");
     if (!term || !main || main.querySelector(".theme-preview-term")) return;
@@ -1234,37 +1243,26 @@ function updateThemePickerButton(picker, value) {
 
 function filterThemePickerOptions(root) {
   if (!root) return;
-  const query = root.querySelector(".theme-picker-search")?.value.trim().toLowerCase() || "";
-  const tone = root.dataset.themeTone || "all";
-  root.querySelectorAll(".theme-option").forEach((option) => {
-    if (!option.dataset.themeTone) option.dataset.themeTone = detectThemeOptionTone(option);
-    const haystack = `${getThemeOptionLabel(option)} ${option.dataset.theme || ""}`.toLowerCase();
-    const matchesText = !query || haystack.includes(query);
-    const matchesTone = tone === "all" || option.dataset.themeTone === tone;
-    option.classList.toggle("is-filtered-out", !(matchesText && matchesTone));
-  });
+  const query = themePickerQuery(root);
+  root.querySelectorAll(".theme-option").forEach((option) => applyThemeOptionFilter(root, option, query));
+}
+
+function themePickerQuery(root) {
+  return root.querySelector(".theme-picker-search")?.value.trim().toLowerCase() || "";
 }
 
 /**
- * Detecta tonalidad de una option. Devuelve "light", "dark" o "hc"
- * (alto contraste). La detección de alto contraste se basa en el id/nombre
- * porque depende de la intención del autor del tema, no de un umbral
- * automático de luminancia.
+ * Enseña u oculta una tarjeta según la búsqueda y el chip de tono de su
+ * galería. El tono es el anotado al crearla (`data-theme-tone`): aquí no se
+ * mide nada, que con 221 tarjetas cada `getComputedStyle` se notaba al abrir
+ * y al teclear.
  */
-function detectThemeOptionTone(option) {
-  const id = (option.dataset.theme || "").toLowerCase();
-  const label = (option.querySelector(".theme-label")?.textContent || "").toLowerCase();
-  if (isHighContrastThemeId(id + " " + label)) return "hc";
-  // El mismo criterio que decide el esquema de color al aplicar el tema
-  // (`toneFor`: texto frente a fondo, y el fondo solo si no hay texto): antes
-  // la galería usaba un umbral propio y un tema podía filtrarse como oscuro y
-  // aplicarse como claro.
-  const preview = option.querySelector(".theme-preview-main") || option.querySelector(".theme-preview");
-  if (preview) {
-    const text = preview.querySelector(".theme-preview-term");
-    return toneFor(getComputedStyle(preview).backgroundColor, id, text ? getComputedStyle(text).color : undefined);
-  }
-  return toneForId(id);
+function applyThemeOptionFilter(root, option, query = themePickerQuery(root)) {
+  if (!option.dataset.themeTone) option.dataset.themeTone = galleryTone(option.dataset.theme, getThemeOptionLabel(option));
+  const haystack = `${getThemeOptionLabel(option)} ${option.dataset.theme || ""}`.toLowerCase();
+  const matchesText = !query || haystack.includes(query);
+  const matchesTone = matchesToneFilter(option.dataset.themeTone, root.dataset.themeTone || "all");
+  option.classList.toggle("is-filtered-out", !(matchesText && matchesTone));
 }
 
 function setThemePickerOpen(root, open) {

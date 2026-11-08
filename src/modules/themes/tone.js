@@ -124,3 +124,43 @@ export function toneFor(baseColor, themeId, textColor) {
   if (!Number.isNaN(text)) return text < base ? "light" : "dark";
   return base > TONE_LUMINANCE_SPLIT ? "light" : "dark";
 }
+
+/**
+ * Opciones de la galería que no son una paleta: «Sistema» (sigue al SO) y
+ * «Heredar» (el terminal toma el tema de la interfaz). No tienen tono propio.
+ */
+export const META_THEME_IDS = /** @type {const} */ (["system", "inherit"]);
+
+/**
+ * Categoría de un tema en el filtro de la galería: `"hc"` (alto contraste, por
+ * id o nombre), `"light"`/`"dark"` con el **mismo** criterio que decide el
+ * esquema al aplicarlo ({@link toneFor} sobre `ui.base` y `ui.text`, los
+ * valores que acaban en `--base`/`--text`) o `"any"` para las opciones meta,
+ * que salen con cualquier filtro. Sin paleta (los temas de la hoja, cuyos
+ * tokens viven en `styles.css`), decide el id: un test comprueba que coincide
+ * con lo que mide `toneFor` sobre la hoja.
+ *
+ * Se calcula una vez al crear o actualizar la tarjeta, sin `getComputedStyle`.
+ * @param {unknown} themeId
+ * @param {unknown} [name] Nombre visible (puede anunciar alto contraste).
+ * @param {{ base?: unknown, text?: unknown }|null} [ui] Paleta de la interfaz, si se conoce.
+ * @returns {"light"|"dark"|"hc"|"any"}
+ */
+export function galleryTone(themeId, name, ui) {
+  const id = String(themeId ?? "").toLowerCase();
+  if (/** @type {readonly string[]} */ (META_THEME_IDS).includes(id)) return "any";
+  if (isHighContrastThemeId(`${id} ${String(name ?? "").toLowerCase()}`)) return "hc";
+  if (ui) return toneFor(ui.base, id, ui.text);
+  return toneForId(id);
+}
+
+/**
+ * ¿Sale la tarjeta con el filtro de tono elegido? `"all"` lo enseña todo y las
+ * opciones meta (`"any"`) salen siempre.
+ * @param {string|undefined} optionTone Tono anotado en la tarjeta.
+ * @param {string|undefined} filter Chip activo (`all`, `dark`, `light`, `hc`).
+ */
+export function matchesToneFilter(optionTone, filter) {
+  if (!filter || filter === "all") return true;
+  return optionTone === "any" || optionTone === filter;
+}

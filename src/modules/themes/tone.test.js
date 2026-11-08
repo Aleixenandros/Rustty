@@ -5,7 +5,9 @@ import {
   LIGHT_THEME_ID,
   TONE_LUMINANCE_SPLIT,
   colorLuminance,
+  galleryTone,
   isHighContrastThemeId,
+  matchesToneFilter,
   parseColor,
   relativeLuminance,
   toneFor,
@@ -138,6 +140,81 @@ describe("temas del bundle", () => {
   it("los dos temas de alto contraste del bundle se reconocen", () => {
     const hc = themes.filter((theme) => isHighContrastThemeId(theme.id)).map((theme) => theme.id);
     expect(hc).toEqual(["github-dark-high-contrast", "github-light-high-contrast"]);
+  });
+
+  it("la galería los clasifica igual que el esquema que se aplica", () => {
+    for (const theme of themes) {
+      const tone = galleryTone(theme.id, theme.name, theme.ui);
+      if (tone === "hc") continue;
+      expect(tone, theme.id).toBe(toneFor(theme.ui.base, theme.id, theme.ui.text));
+    }
+  });
+});
+
+describe("galleryTone (filtro de la galería)", () => {
+  it("las opciones meta no tienen tono y salen con cualquier filtro", () => {
+    expect(galleryTone("system", "Sistema")).toBe("any");
+    expect(galleryTone("inherit", "Heredar")).toBe("any");
+    for (const filter of ["all", "dark", "light", "hc"]) {
+      expect(matchesToneFilter("any", filter)).toBe(true);
+    }
+  });
+
+  it("alto contraste por id o por nombre, antes que el color", () => {
+    expect(galleryTone("mi-tema", "Mi tema high contrast", LATTE)).toBe("hc");
+    expect(galleryTone("github-dark-high-contrast", "", XTERM)).toBe("hc");
+  });
+
+  it("con paleta manda toneFor; sin ella, el id", () => {
+    expect(galleryTone("my-dark-theme", "x", LATTE)).toBe("light");
+    expect(galleryTone("solarized-light", "Solarized Light")).toBe("light");
+    expect(galleryTone("monokai", "Monokai")).toBe("dark");
+  });
+
+  it("el filtro deja pasar solo el tono elegido", () => {
+    expect(matchesToneFilter("dark", "all")).toBe(true);
+    expect(matchesToneFilter("dark", undefined)).toBe(true);
+    expect(matchesToneFilter("dark", "dark")).toBe(true);
+    expect(matchesToneFilter("dark", "light")).toBe(false);
+    expect(matchesToneFilter("hc", "dark")).toBe(false);
+  });
+
+  it("los temas de la hoja: el id da el mismo tono que sus tokens --base/--text", () => {
+    // Los doce temas de styles.css no tienen paleta en JS: la galería los
+    // clasifica por id. Si un tema de la hoja cambiara de tono sin que su id lo
+    // dijera, el filtro y el esquema aplicado dejarían de coincidir.
+    const css = read("../../styles.css");
+    const block = (selector) => {
+      let from = 0;
+      for (;;) {
+        const start = css.indexOf(`${selector} {`, from);
+        if (start === -1) return null;
+        const open = css.indexOf("{", start);
+        const close = css.indexOf("}", open);
+        const body = css.slice(open + 1, close);
+        if (/--base\s*:/.test(body)) {
+          /** @type {Record<string, string>} */
+          const tokens = {};
+          for (const m of body.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/gi)) tokens[m[1]] = m[2].trim();
+          return tokens;
+        }
+        from = close + 1;
+      }
+    };
+    const root = block(":root");
+    expect(root).not.toBeNull();
+    expect(galleryTone("dark", "")).toBe(toneFor(root["--base"], "dark", root["--text"]));
+    const names = [...new Set([...css.matchAll(/html\.theme-([a-z0-9-]+)\s*[,{]/gi)].map((m) => m[1]))];
+    let checked = 0;
+    for (const name of names) {
+      const tokens = block(`html.theme-${name}`);
+      if (!tokens) continue;
+      checked++;
+      const base = tokens["--base"] ?? root["--base"];
+      const text = tokens["--text"] ?? root["--text"];
+      expect(galleryTone(name, ""), name).toBe(toneFor(base, name, text));
+    }
+    expect(checked).toBeGreaterThanOrEqual(11);
   });
 });
 
