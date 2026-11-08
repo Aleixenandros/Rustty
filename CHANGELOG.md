@@ -2,6 +2,28 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.26.0] - 2026-11-08
+
+### Añadido
+
+- Las notas de conexión se pueden ver sin abrir el editor: el clic derecho sobre una conexión con nota ofrece «Nota ▸» con Ver, Editar y Eliminar; la vista de lectura muestra el texto con formato, el título y las etiquetas, deja marcar las casillas de tarea y pasa al editor con «Editar». El icono de nota de la barra lateral y la paleta de comandos abren también esa vista.
+- Los campos de texto de toda la aplicación recuperan el menú del botón derecho: Deshacer, Rehacer, Cortar, Copiar, Pegar, Eliminar y Seleccionar todo. En la nota se añade «Formato ▸» con negrita, cursiva, código, bloque de código, enlace, encabezado, listas, casilla y cita; si el texto ya lleva ese formato, se lo quita, y Ctrl+Z deshace cada cambio. La barra del editor de notas gana la lista numerada, la cita y el bloque de código.
+- Al pasar el ratón por una conexión de la barra lateral aparecen «Conectar» y, si tiene nota, «Ver nota» junto a favorito, editar y eliminar, para poder pulsarlos aunque la barra sea estrecha.
+- Cada túnel muestra cuántas conexiones tiene abiertas en ese momento, y los túneles locales permiten copiar su dirección o abrirla en el navegador.
+- La tabla de procesos del monitor de recursos se filtra por nombre, PID o usuario, se ordena por columna y se puede pausar para mirar un pico sin que salte; al terminar un proceso se elige entre un cierre limpio (SIGTERM) o forzado (SIGKILL).
+- Los botones de cada pestaña (SFTP, túneles, nota) se pueden mostrar siempre, solo en la pestaña activa o nunca (Preferencias → Apariencia); sus paneles también se abren desde el menú del clic derecho de la pestaña.
+
+### Cambiado
+
+- Duplicar una conexión abre el formulario relleno con los datos del original y la copia solo se crea al pulsar Guardar; cancelar ya no deja ningún clon.
+- Las operaciones del panel de archivos esperan su respuesta sin dejar un hilo del sistema bloqueado mientras dura cada transferencia.
+- La galería de temas sabe de antemano si cada tema es claro u oscuro, con el mismo criterio que al aplicarlo, y ya no lo mide tarjeta a tarjeta al abrirla o filtrarla.
+
+### Corregido
+
+- La comprobación de salud de los hosts ya no se queda colgada cuando el DNS no responde: la resolución tiene un plazo de tres segundos y da un error claro.
+- Crear un fichero nuevo desde el panel SFTP espera la confirmación del servidor y avisa si falla al cerrarlo.
+
 ## [2.25.0] - 2026-11-03
 
 ### Añadido

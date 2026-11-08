@@ -56,6 +56,9 @@ export default defineConfig({
     // proyecto decidió trocear solo donde el perfilador demuestre ganancia
     // (tareas.md, «Presupuesto de bundle y arranque»), así que el tope avisa de
     // un crecimiento brusco. Si salta, mirar qué ha entrado antes de subirlo.
-    chunkSizeWarningLimit: 1800,
+    // Subido de 1.800 a 2.000 el 2026-11-08 con el chunk en 1.777 kB tras una
+    // tanda normal (notas, menú de texto, monitor, túneles): el crecimiento era
+    // el esperado, no un fallo.
+    chunkSizeWarningLimit: 2000,
   },
 });
