@@ -1018,7 +1018,8 @@
     "test_checking_port": "Vérification du port {proto} {host}:{port}",
     "test_port_ok": "Port {proto} accessible ({ms} ms)",
     "test_ok_activity": "Test {proto} OK : {name}",
-    "test_failed_activity": "Échec du test : {name}"
+    "test_failed_activity": "Échec du test : {name}",
+    "title_duplicate": "Dupliquer la connexion"
   },
   "modal_credential": {
     "close": "Fermer",

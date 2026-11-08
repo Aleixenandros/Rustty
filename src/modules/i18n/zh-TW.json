@@ -1018,7 +1018,8 @@
     "test_checking_port": "正在檢查 {proto} 連接埠 {host}:{port}",
     "test_port_ok": "{proto} 連接埠可連線（{ms} 毫秒）",
     "test_ok_activity": "{proto} 測試成功：{name}",
-    "test_failed_activity": "測試失敗：{name}"
+    "test_failed_activity": "測試失敗：{name}",
+    "title_duplicate": "複製連線"
   },
   "modal_credential": {
     "close": "關閉",

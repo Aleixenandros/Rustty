@@ -1018,7 +1018,8 @@
     "test_checking_port": "A verificar a porta {proto} {host}:{port}",
     "test_port_ok": "Porta {proto} acessível ({ms} ms)",
     "test_ok_activity": "Teste {proto} OK: {name}",
-    "test_failed_activity": "Teste falhou: {name}"
+    "test_failed_activity": "Teste falhou: {name}",
+    "title_duplicate": "Duplicar conexão"
   },
   "modal_credential": {
     "close": "Fechar",

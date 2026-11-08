@@ -1018,7 +1018,8 @@
     "test_checking_port": "Prüfe {proto}-Port {host}:{port}",
     "test_port_ok": "{proto}-Port erreichbar ({ms} ms)",
     "test_ok_activity": "{proto}-Test OK: {name}",
-    "test_failed_activity": "Test fehlgeschlagen: {name}"
+    "test_failed_activity": "Test fehlgeschlagen: {name}",
+    "title_duplicate": "Verbindung duplizieren"
   },
   "modal_credential": {
     "close": "Schließen",

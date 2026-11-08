@@ -1018,7 +1018,8 @@
     "test_checking_port": "Checking {proto} port {host}:{port}",
     "test_port_ok": "{proto} port reachable ({ms} ms)",
     "test_ok_activity": "{proto} test OK: {name}",
-    "test_failed_activity": "Test failed: {name}"
+    "test_failed_activity": "Test failed: {name}",
+    "title_duplicate": "Duplicate connection"
   },
   "modal_credential": {
     "close": "Close",

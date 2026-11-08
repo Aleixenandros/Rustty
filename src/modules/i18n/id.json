@@ -1018,7 +1018,8 @@
     "test_checking_port": "Memeriksa port {proto} {host}:{port}",
     "test_port_ok": "Port {proto} dapat dijangkau ({ms} ms)",
     "test_ok_activity": "Uji {proto} OK: {name}",
-    "test_failed_activity": "Uji gagal: {name}"
+    "test_failed_activity": "Uji gagal: {name}",
+    "title_duplicate": "Duplikat koneksi"
   },
   "modal_credential": {
     "close": "Tutup",

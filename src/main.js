@@ -275,6 +275,12 @@ const broadcastViews = new Map();
 
 let activeSessionId = null;
 let editingProfileId = null;
+/**
+ * Perfil del que sale el formulario abierto con «Duplicar». La copia es un
+ * borrador: el formulario va en modo «nueva conexión» con los datos del
+ * original y no se crea nada hasta pulsar Guardar.
+ */
+let duplicatingFromId = null;
 let _connectionTestUnlisten = null;
 let _activityFilter = "all";
 const ACTIVITY_MAX_ITEMS = 250;
@@ -8812,6 +8818,7 @@ function collectLegacyAlgorithms() {
 
 function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiveWorkspaceId()) {
   editingProfileId = null;
+  duplicatingFromId = null;
   resetConnectionTestPanel();
   document.getElementById("modal-title").textContent = t("modal_conn.title_new");
   document.getElementById("form-connection").reset();
@@ -9087,6 +9094,7 @@ function openEditConnectionModal(profileId) {
   if (!profile) return;
 
   editingProfileId = profileId;
+  duplicatingFromId = null;
   resetConnectionTestPanel();
   setupModalNotePane();
   document.getElementById("field-template")?.classList.add("hidden");
@@ -9631,6 +9639,7 @@ function closeModal() {
   if (hiddenKp) hiddenKp.value = "";
   document.getElementById("btn-keepass-clear")?.classList.add("hidden");
   editingProfileId = null;
+  duplicatingFromId = null;
 }
 
 function getConnectionModalSizeLimits() {
@@ -10927,8 +10936,14 @@ async function saveAndClose(shouldConnect) {
   const profileId = editingProfileId || crypto.randomUUID();
   const { creds: extraCredentials, passwordWrites: extraPwWrites, deletes: extraPwDeletes } =
     collectExtraCredsFromForm(profileId);
+  // «Duplicar»: lo que el formulario no recoge viaja del original (como hacía
+  // la copia directa); lo que sí recoge manda.
+  const duplicateSource = !editingProfileId && duplicatingFromId
+    ? profiles.find((p) => p.id === duplicatingFromId) || null
+    : null;
 
   const profile = {
+    ...(duplicateSource || {}),
     id:                  profileId,
     name:                document.getElementById("f-name").value.trim(),
     host:                document.getElementById("f-host").value.trim(),
@@ -10969,7 +10984,7 @@ async function saveAndClose(shouldConnect) {
     mac_address:         (document.getElementById("f-mac-address").value || "").trim() || null,
     wol_broadcast:       (document.getElementById("f-wol-broadcast").value || "").trim() || null,
     wol_port:            wolPortFromInput(document.getElementById("f-wol-port").value),
-    ssh_tunnels:         profiles.find((p) => p.id === editingProfileId)?.ssh_tunnels || [],
+    ssh_tunnels:         profiles.find((p) => p.id === (editingProfileId || duplicateSource?.id))?.ssh_tunnels || [],
     created_at: editingProfileId
       ? (profiles.find((p) => p.id === editingProfileId)?.created_at ?? new Date().toISOString())
       : new Date().toISOString(),
@@ -10991,6 +11006,9 @@ async function saveAndClose(shouldConnect) {
     }
     for (const key of extraPwDeletes) {
       await deleteStoredSecret(key);
+    }
+    if (duplicateSource) {
+      await copyDuplicatedExtraSecrets(duplicateSource, profile, new Set(extraPwWrites.map((w) => w.key)));
     }
 
     // Si se especificó una carpeta nueva, persiste en el workspace del perfil.
@@ -11018,6 +11036,8 @@ async function saveAndClose(shouldConnect) {
       } else {
         await connectProfileWithCredentials(profile.id, password, passphrase, savePassphrase);
       }
+    } else if (duplicateSource) {
+      toast(t("toast.conn_duplicated", { name: profile.name }), "success");
     } else {
       toast(t("toast.profile_saved"), "success");
     }
@@ -18925,36 +18945,63 @@ async function deleteSelectedProfiles(targetId) {
  * cual y, si el original tiene contraseña/passphrase en el keyring, también
  * se replican bajo la nueva clave `password:<id>` / `passphrase:<id>`.
  */
+/**
+ * «Duplicar»: abre el formulario relleno con los datos del original, en modo
+ * «nueva conexión». Nada se crea hasta pulsar Guardar; cancelar o cerrar el
+ * formulario no deja ninguna copia. Los secretos del original se precargan en
+ * los campos (y los de las identidades adicionales se copian al guardar).
+ */
 async function duplicateProfile(profileId) {
   const original = profiles.find((p) => p.id === profileId);
   if (!original) return;
-  const copy = {
-    ...original,
-    id: crypto.randomUUID(),
-    name: t("ctx.duplicate_name", { name: original.name }),
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-  try {
-    await invoke("save_profile", { profile: copy });
-    const [pw, pp] = await Promise.all([
-      getStoredSecret(passwordKey(original.id)),
-      getStoredSecret(passphraseKey(original.id)),
-    ]);
-    if (pw) await saveStoredSecret(passwordKey(copy.id), pw, t("toast.secret_password"));
-    if (pp) await saveStoredSecret(passphraseKey(copy.id), pp, t("toast.secret_passphrase"));
-    // Replicar las contraseñas de las identidades adicionales bajo el id nuevo.
-    for (const c of original.extra_credentials || []) {
-      const ePw = await getStoredSecret(credPasswordKey(original.id, c.id));
-      if (ePw) await saveStoredSecret(credPasswordKey(copy.id, c.id), ePw, t("toast.secret_password"));
+  // Mismo relleno que «Editar» y, encima, el modo borrador.
+  openEditConnectionModal(profileId);
+  editingProfileId = null;
+  duplicatingFromId = profileId;
+  // Las identidades adicionales no «existían» en la copia: nada que borrar.
+  originalExtraCredIds = [];
+  document.getElementById("modal-title").textContent = t("modal_conn.title_duplicate");
+  document.getElementById("f-name").value = t("ctx.duplicate_name", { name: original.name });
+  // La pestaña Notas vuelve al estado de una conexión sin guardar.
+  setupModalNotePane();
+  renderConnectionSummary();
+
+  // Secretos del original en el formulario: así Guardar los escribe bajo el id
+  // nuevo por el camino normal (y se pueden cambiar antes de guardar).
+  if (!original.keepass_entry_uuid) {
+    const pw = await getStoredSecret(passwordKey(original.id));
+    if (pw && duplicatingFromId === profileId) document.getElementById("f-password").value = pw;
+  }
+  if (original.auth_type === "public_key") {
+    const pp = await getStoredSecret(passphraseKey(original.id));
+    if (pp && duplicatingFromId === profileId) document.getElementById("f-passphrase").value = pp;
+  }
+  if (duplicatingFromId === profileId) {
+    document.getElementById("f-name")?.select();
+  }
+}
+
+/**
+ * Copia bajo el perfil nuevo los secretos de las identidades adicionales del
+ * original que el usuario no ha reescrito en el formulario de «Duplicar».
+ * @param {any} original
+ * @param {any} copy
+ * @param {Set<string>} written claves de keyring ya escritas al guardar.
+ */
+async function copyDuplicatedExtraSecrets(original, copy, written) {
+  const originalIds = new Set((original.extra_credentials || []).map((c) => c.id));
+  for (const c of copy.extra_credentials || []) {
+    if (!originalIds.has(c.id)) continue;
+    const pairs = c.auth_type === "public_key"
+      ? [[credPassphraseKey(original.id, c.id), credPassphraseKey(copy.id, c.id), "toast.secret_passphrase"]]
+      : (c.password_source || "own") === "own"
+        ? [[credPasswordKey(original.id, c.id), credPasswordKey(copy.id, c.id), "toast.secret_password"]]
+        : [];
+    for (const [from, to, label] of pairs) {
+      if (written.has(to)) continue;
+      const secret = await getStoredSecret(from);
+      if (secret) await saveStoredSecret(to, secret, t(label));
     }
-    profiles = await invoke("get_profiles");
-    renderConnectionList();
-    scheduleProfileAutoSync();
-    openEditConnectionModal(copy.id);
-    toast(t("toast.conn_duplicated", { name: copy.name }), "success");
-  } catch (err) {
-    toast(t("toast.conn_duplicate_error", { err }), "error");
   }
 }
 
