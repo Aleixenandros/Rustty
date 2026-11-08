@@ -153,6 +153,7 @@
   --z-modal-top: 11400;       /* cima de una pila de diálogos (la pone el controlador) */
   --z-toast: 11500;
   --z-dropdown: 12000;        /* lista de los desplegables */
+  --z-text-menu: 12100;       /* menú de los campos de texto: también dentro de los diálogos */
   --z-tooltip: 12300;         /* burbuja de ayuda: encima de modales, avisos y listas */
   --z-hud: 12500;             /* indicador de zoom */
   --z-flash: 20000;           /* destello de la campana visual */
@@ -456,6 +457,7 @@ a:focus-visible,
 #tab-context-menu,
 #sftp-context-menu,
 #route-menu,
+#text-context-menu,
 #tab-overflow-popover,
 #toast-container {
   zoom: var(--ui-zoom, 1);
@@ -1613,6 +1615,9 @@ body:not(.native-scrollbars) #connection-list::-webkit-scrollbar-thumb:hover {
   pointer-events: none;
 }
 .conn-notes-badge:hover { color: var(--peach); }
+/* Botón «Ver nota» de las acciones de la fila: el amarillo del distintivo,
+   que en una barra estrecha queda tapado por el nombre. */
+.conn-item-actions .conn-note-action { color: var(--yellow); }
 
 /* Distintivo de «esta conexión tiene túneles abiertos». Mismo tamaño y
    alineación que el de notas; el azul lo emparenta con el contador del rail. */
@@ -6021,7 +6026,8 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 #context-menu,
 #tab-context-menu,
 #sftp-context-menu,
-#route-menu {
+#route-menu,
+#text-context-menu {
   position: fixed;
   z-index: var(--z-menu);
   background: var(--surface-popover);
@@ -6040,7 +6046,8 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 #context-menu.menu-overflow,
 #tab-context-menu.menu-overflow,
 #sftp-context-menu.menu-overflow,
-#route-menu.menu-overflow {
+#route-menu.menu-overflow,
+#text-context-menu.menu-overflow {
   /* En unidades del menú, que va escalado por el zoom de la interfaz. */
   max-height: calc((100vh - 12px) / var(--ui-zoom, 1));
   max-width: calc((100vw - 12px) / var(--ui-zoom, 1));
@@ -6050,6 +6057,12 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 
 /* Ítem del submenú de túneles que corresponde a uno en marcha. El color es un
    refuerzo: el texto del ítem ya dice si abre o para. */
+/* El menú de texto se abre también sobre los diálogos (editor de notas,
+   Preferencias…): por encima de todos ellos. */
+#text-context-menu {
+  z-index: var(--z-text-menu);
+}
+
 .ctx-item.is-running {
   color: var(--blue);
 }
@@ -10819,6 +10832,38 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   color: var(--subtext0);
 }
 .note-editor-spacer { flex: 1; }
+
+/* ── Nota en lectura ─────────────────────────────────────────────
+   El mismo modal sin editor: la vista previa a todo el ancho, el título y
+   las etiquetas arriba, y «Editar» / «Cerrar» abajo. */
+#note-editor-modal .note-view-only { display: none; }
+#note-editor-modal.is-view .note-view-only { display: revert; }
+#note-editor-modal.is-view .note-view-meta.hidden,
+#note-editor-modal.is-view .note-edit-only,
+#note-editor-modal.is-view .note-editor-textarea { display: none; }
+#note-editor-modal.is-view .note-editor-split { grid-template-columns: 1fr; }
+#note-editor-modal.is-view .note-editor-preview { padding: 4px 24px; }
+.note-view-meta {
+  padding: 12px 20px 8px;
+}
+.note-view-title {
+  margin: 0 0 6px;
+  font-size: 1.05em;
+  font-weight: 600;
+  color: var(--text);
+}
+.note-view-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.note-view-tag {
+  font-size: 0.78em;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface1);
+  color: var(--subtext1);
+}
 
 /* ── Pestaña Notas del modal de conexión ─────────────────────── */
 .note-modal-preview {

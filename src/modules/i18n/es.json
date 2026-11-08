@@ -732,7 +732,9 @@
     "folder_color_clear": "Quitar color",
     "tunnels": "Túneles",
     "tunnel_start_item": "Abrir «{name}»",
-    "tunnel_stop_item": "Parar «{name}»"
+    "tunnel_stop_item": "Parar «{name}»",
+    "note": "Nota",
+    "view_note": "Ver nota"
   },
   "promote_master": {
     "title": "Promover a credencial maestra",
@@ -2052,7 +2054,13 @@
     "ph_link": "texto",
     "ph_heading": "Título",
     "ph_item": "elemento",
-    "ph_task": "tarea"
+    "ph_task": "tarea",
+    "viewer_title": "Nota",
+    "edit": "Editar",
+    "tool_codeblock": "Bloque de código",
+    "tool_ol": "Lista numerada",
+    "tool_quote": "Cita",
+    "ph_quote": "cita"
   },
   "modal_kp": {
     "title": "Desbloquear KeePass",
@@ -2522,5 +2530,16 @@
     "current": "Perfil actual",
     "all": "Todos los perfiles",
     "group": "Un perfil concreto"
+  },
+  "text_menu": {
+    "label": "Edición de texto",
+    "undo": "Deshacer",
+    "redo": "Rehacer",
+    "cut": "Cortar",
+    "copy": "Copiar",
+    "paste": "Pegar",
+    "delete": "Eliminar",
+    "select_all": "Seleccionar todo",
+    "format": "Formato"
   }
 }

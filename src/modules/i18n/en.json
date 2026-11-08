@@ -732,7 +732,9 @@
     "folder_color_clear": "Clear color",
     "tunnels": "Tunnels",
     "tunnel_start_item": "Open “{name}”",
-    "tunnel_stop_item": "Stop “{name}”"
+    "tunnel_stop_item": "Stop “{name}”",
+    "note": "Note",
+    "view_note": "View note"
   },
   "promote_master": {
     "title": "Promote to master credential",
@@ -2052,7 +2054,13 @@
     "ph_link": "text",
     "ph_heading": "Heading",
     "ph_item": "item",
-    "ph_task": "task"
+    "ph_task": "task",
+    "viewer_title": "Note",
+    "edit": "Edit",
+    "tool_codeblock": "Code block",
+    "tool_ol": "Numbered list",
+    "tool_quote": "Quote",
+    "ph_quote": "quote"
   },
   "modal_kp": {
     "title": "Unlock KeePass",
@@ -2522,5 +2530,16 @@
     "current": "Current workspace",
     "all": "All workspaces",
     "group": "A specific workspace"
+  },
+  "text_menu": {
+    "label": "Text editing",
+    "undo": "Undo",
+    "redo": "Redo",
+    "cut": "Cut",
+    "copy": "Copy",
+    "paste": "Paste",
+    "delete": "Delete",
+    "select_all": "Select all",
+    "format": "Format"
   }
 }

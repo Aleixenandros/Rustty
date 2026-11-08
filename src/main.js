@@ -189,6 +189,8 @@ import { createFileApi, isFileGrantError, localCommandError, localFsError } from
 import { buildDropInsertText, hasControlChars, initialDirCommand } from "./modules/shell-quote.js";
 import { generatePassphrase, passphraseStrength } from "./modules/passphrase.js";
 import { rankCommandSuggestions } from "./modules/command-suggest.js";
+import { markdownFormatEdit, MARKDOWN_FORMATS } from "./modules/markdown-format.js";
+import { textMenuEntries, textTargetKind } from "./modules/text-menu.js";
 import { detectedWake, staggerDelays } from "./modules/wake.js";
 import { buildDiagnosticsReport, diagnosticsToMarkdown } from "./modules/diagnostics.js";
 import { STEP_TYPES, makeStep, emptyScript, validateScript } from "./modules/scripts/model.js";
@@ -7318,6 +7320,8 @@ function renderConnectionItem(p, depth, opts = {}) {
         ${contextLine}${noteLine}
       </div>
       <div class="conn-item-actions">
+        <button class="btn-icon-sm" data-action="connect" data-id="${p.id}" tabindex="-1" title="${escHtml(t("ctx.connect"))}" aria-label="${escHtml(t("ctx.connect"))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></button>
+        ${noteSummary ? `<button class="btn-icon-sm conn-note-action" data-action="view-note" data-id="${p.id}" tabindex="-1" title="${escHtml(t("ctx.view_note"))}" aria-label="${escHtml(t("ctx.view_note"))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-note"/></svg></button>` : ""}
         <button class="btn-icon-sm conn-fav${isFavoriteProfile(p.id) ? " on" : ""}" data-action="toggle-favorite" data-id="${p.id}" tabindex="-1" title="${escHtml(t("ctx.toggle_favorite"))}"><svg class="row-icon-svg${isFavoriteProfile(p.id) ? " filled" : ""}" aria-hidden="true"><use href="#ci-star"/></svg></button>
         <button class="btn-icon-sm" data-action="edit" data-id="${p.id}" tabindex="-1" title="${escHtml(t("ctx.edit"))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></button>
         <button class="btn-icon-sm danger" data-action="delete" data-id="${p.id}" tabindex="-1" title="${escHtml(t("ctx.delete"))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
@@ -7454,10 +7458,18 @@ function bindTreeEvents(container) {
       toggleFavoriteProfile(btn.dataset.id);
     });
   });
-  container.querySelectorAll("[data-action='open-note']").forEach((btn) => {
+  // El distintivo de nota y el botón de la fila abren la nota en lectura; de
+  // ahí, «Editar» lleva al editor.
+  container.querySelectorAll("[data-action='open-note'], [data-action='view-note']").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      openNoteEditor(btn.dataset.id);
+      openNoteViewer(btn.dataset.id);
+    });
+  });
+  container.querySelectorAll("[data-action='connect']").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      connectProfile(btn.dataset.id);
     });
   });
 
@@ -7830,10 +7842,12 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   menu.querySelectorAll(".ctx-script-only").forEach((el) =>
     el.classList.toggle("hidden", type !== "connection" || !canScript)
   );
-  // Nota: etiqueta dinámica (Añadir/Editar) y visibilidad de "Eliminar nota".
+  // Nota: sin nota, «Añadir nota»; con ella, el submenú «Nota ▸» (ver,
+  // editar, eliminar).
   const hasNote = type === "connection" && id ? profileHasNote(id) : false;
-  const noteLabel = document.getElementById("ctx-note-label");
-  if (noteLabel) noteLabel.textContent = hasNote ? t("ctx.edit_note") : t("ctx.add_note");
+  menu.querySelectorAll(".ctx-note-missing").forEach((el) =>
+    el.classList.toggle("hidden", type !== "connection" || hasNote)
+  );
   // Plantilla: etiqueta según si el perfil ya está marcado como tal.
   const tplLabel = document.getElementById("ctx-template-label");
   if (tplLabel && type === "connection" && id) {
@@ -7971,7 +7985,9 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
   // arriba (anclados por abajo) para que no se corten contra el borde inferior.
   // Cada submenú se mide contra SU ítem: son varios y están a distinta altura.
   const openLeft = finalX + width + 190 > window.innerWidth;
-  for (const [item, sub] of [[connectAsEl, submenu], [viaEl, viaSubmenu], [tunnelsEl, tunnelsSubmenu]]) {
+  const noteEl = document.getElementById("ctx-note");
+  const noteSubmenu = document.getElementById("ctx-note-submenu");
+  for (const [item, sub] of [[connectAsEl, submenu], [viaEl, viaSubmenu], [tunnelsEl, tunnelsSubmenu], [noteEl, noteSubmenu]]) {
     if (!sub) continue;
     sub.classList.toggle("open-left", openLeft);
     const itemRect = item && !item.classList.contains("hidden")
@@ -7999,7 +8015,7 @@ function hideContextMenu() {
 // anillo de foco solo se ve si la apertura fue por teclado, por la heurística de
 // `:focus-visible`); las flechas / Inicio / Fin recorren los ítems visibles; y
 // Tab o Escape cierran devolviendo el foco al elemento que abrió el menú.
-const FLOATING_MENU_IDS = ["context-menu", "tab-context-menu", "sftp-context-menu", "route-menu"];
+const FLOATING_MENU_IDS = ["context-menu", "tab-context-menu", "sftp-context-menu", "route-menu", "text-context-menu"];
 let menuReturnFocus = null;
 /**
  * Cuándo se cerró por última vez un menú visible. Un diálogo que se abre con
@@ -8121,6 +8137,7 @@ function closeFloatingMenus({ restoreFocus = false } = {}) {
   hideTabContextMenu();
   hideSftpContextMenu();
   hideRouteMenu();
+  hideTextContextMenu();
   if (restoreFocus && wasOpen && menuReturnFocus && document.contains(menuReturnFocus)) {
     menuReturnFocus.focus();
   }
@@ -8177,6 +8194,270 @@ function handleFloatingMenuKeydown(e) {
     default:
       break;
   }
+}
+
+// ─── Menú contextual de los campos de texto ─────────────────────
+// La app bloquea el menú nativo del WebView en toda la ventana (traía Atrás,
+// Recargar o Inspeccionar), así que los campos de texto se quedaban sin
+// Copiar ni Pegar con el botón derecho. Este menú los devuelve en cualquier
+// campo —también dentro de los diálogos: vive fuera de #app— y, en los campos
+// Markdown (la nota), añade el submenú «Formato». Qué entradas salen lo decide
+// `modules/text-menu.js`.
+
+/** @type {{ el: HTMLElement | null, start: number | null, end: number | null, selText: string } | null} */
+let textMenuTarget = null;
+
+const TEXT_MENU_ITEMS = {
+  undo: { icon: "ci-undo", label: "text_menu.undo" },
+  redo: { icon: "ci-redo", label: "text_menu.redo" },
+  cut: { icon: "ci-cut", label: "text_menu.cut" },
+  copy: { icon: "ci-copy", label: "text_menu.copy" },
+  paste: { icon: "ci-paste", label: "text_menu.paste" },
+  delete: { icon: "ci-trash", label: "text_menu.delete" },
+  "select-all": { icon: "ci-select-all", label: "text_menu.select_all" },
+  format: { icon: "ci-format", label: "text_menu.format" },
+};
+
+const MARKDOWN_FORMAT_LABELS = {
+  bold: "notes.tool_bold",
+  italic: "notes.tool_italic",
+  code: "notes.tool_code",
+  codeblock: "notes.tool_codeblock",
+  link: "notes.tool_link",
+  h: "notes.tool_heading",
+  ul: "notes.tool_list",
+  ol: "notes.tool_ol",
+  task: "notes.tool_task",
+  quote: "notes.tool_quote",
+};
+
+function hideTextContextMenu() {
+  noteFloatingMenuHidden("text-context-menu");
+  document.getElementById("text-context-menu")?.classList.add("hidden");
+  textMenuTarget = null;
+}
+
+/** ¿El campo es un `<input>`/`<textarea>` (con `value`)? */
+function isValueField(el) {
+  return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+}
+
+/** Selección de un campo, o `null` si su tipo no la expone (email, number). */
+function fieldSelection(el) {
+  try {
+    if (el.selectionStart == null || el.selectionEnd == null) return null;
+    return { start: el.selectionStart, end: el.selectionEnd };
+  } catch {
+    return null;
+  }
+}
+
+/** ¿El editor puede deshacer/rehacer ahora? `undefined` si no lo dice. */
+function queryEditCommand(cmd) {
+  try {
+    return document.queryCommandEnabled(cmd);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Ítem (botón) del menú de texto, con icono del sprite y etiqueta. */
+function textMenuButton(icon, label, data) {
+  const item = document.createElement("button");
+  item.type = "button";
+  item.className = "ctx-item";
+  item.setAttribute("role", "menuitem");
+  Object.assign(item.dataset, data);
+  const ic = document.createElement("span");
+  ic.className = "ctx-icon";
+  ic.innerHTML = icon.startsWith("<svg")
+    ? icon
+    : `<svg class="ctx-icon-svg" aria-hidden="true"><use href="#${icon}"/></svg>`;
+  const text = document.createElement("span");
+  text.textContent = label;
+  item.append(ic, text);
+  return item;
+}
+
+/** Icono de un formato: el mismo de la barra del editor de notas. */
+function markdownFormatIcon(action) {
+  const svg = document.querySelector(`#note-editor-toolbar .note-tool[data-md="${action}"] svg`);
+  return svg ? svg.outerHTML : "ci-format";
+}
+
+/**
+ * Abre el menú de texto en `(x, y)` para `field` (o, sin campo, para el texto
+ * seleccionado `selText`).
+ * @param {number} x
+ * @param {number} y
+ * @param {HTMLElement | null} field
+ * @param {"editable" | "readonly" | "selection"} kind
+ * @param {string} selText
+ */
+function showTextContextMenu(x, y, field, kind, selText) {
+  closeFloatingMenus();
+  const menu = document.getElementById("text-context-menu");
+  if (!menu) return;
+  const valueField = isValueField(field) ? field : null;
+  const sel = valueField ? fieldSelection(valueField) : null;
+  const value = valueField ? valueField.value : (field?.textContent || "");
+  const hasSelection = valueField
+    ? (sel ? sel.start !== sel.end : value !== "")
+    : selText !== "";
+  const entries = textMenuEntries({
+    kind,
+    hasSelection,
+    hasValue: value !== "",
+    secret: valueField instanceof HTMLInputElement && valueField.type === "password",
+    canUndo: queryEditCommand("undo"),
+    canRedo: queryEditCommand("redo"),
+    formats: field?.dataset?.markdown === "true",
+  });
+
+  menu.innerHTML = "";
+  /** @type {HTMLElement | null} */
+  let formatParent = null;
+  for (const entry of entries) {
+    if ("separator" in entry) {
+      const sep = document.createElement("div");
+      sep.className = "ctx-sep";
+      menu.appendChild(sep);
+      continue;
+    }
+    const meta = TEXT_MENU_ITEMS[entry.id];
+    if (entry.id === "format") {
+      formatParent = document.createElement("div");
+      formatParent.className = "ctx-item ctx-has-submenu";
+      formatParent.id = "text-menu-format";
+      formatParent.tabIndex = -1;
+      formatParent.setAttribute("role", "menuitem");
+      formatParent.setAttribute("aria-haspopup", "menu");
+      formatParent.setAttribute("aria-expanded", "false");
+      formatParent.setAttribute("aria-labelledby", "text-menu-format-label");
+      formatParent.innerHTML = `<span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#${meta.icon}"/></svg></span>`
+        + `<span id="text-menu-format-label">${escHtml(t(meta.label))}</span>`
+        + `<span class="ctx-submenu-arrow" aria-hidden="true">▸</span>`;
+      const sub = document.createElement("div");
+      sub.className = "ctx-submenu";
+      sub.setAttribute("role", "menu");
+      sub.setAttribute("aria-labelledby", "text-menu-format-label");
+      MARKDOWN_FORMATS.forEach((action, i) => {
+        // Dos grupos: en línea y de línea.
+        if (action === "h" && i > 0) {
+          const sep = document.createElement("div");
+          sep.className = "ctx-sep";
+          sub.appendChild(sep);
+        }
+        sub.appendChild(textMenuButton(markdownFormatIcon(action), t(MARKDOWN_FORMAT_LABELS[action]), {
+          textMenu: "format",
+          format: action,
+        }));
+      });
+      formatParent.appendChild(sub);
+      formatParent.addEventListener("mouseenter", () => formatParent?.setAttribute("aria-expanded", "true"));
+      formatParent.addEventListener("mouseleave", () => {
+        if (!formatParent?.contains(document.activeElement)) formatParent?.setAttribute("aria-expanded", "false");
+      });
+      menu.appendChild(formatParent);
+      continue;
+    }
+    const btn = textMenuButton(meta.icon, t(meta.label), { textMenu: entry.id });
+    btn.disabled = !!entry.disabled;
+    menu.appendChild(btn);
+  }
+
+  textMenuTarget = { el: field, start: sel?.start ?? null, end: sel?.end ?? null, selText };
+  const { left, width } = positionFloatingMenu(menu, x, y);
+  const sub = formatParent?.querySelector(".ctx-submenu");
+  if (sub && formatParent) {
+    sub.classList.toggle("open-left", left + width + 190 > window.innerWidth);
+    const r = formatParent.getBoundingClientRect();
+    sub.classList.toggle("open-up", r.top + r.height / 2 > window.innerHeight / 2);
+  }
+  onFloatingMenuOpened(menu);
+}
+
+/** Texto de un pegado para un campo de una sola línea: sin saltos. */
+function pasteTextFor(field, text) {
+  if (!(field instanceof HTMLInputElement)) return text;
+  return text.replace(/[\r\n]+$/, "").replace(/\r?\n/g, " ");
+}
+
+/** Ejecuta una acción del menú de texto sobre el campo que lo abrió. */
+async function runTextMenuAction(action, format) {
+  const target = textMenuTarget;
+  hideTextContextMenu();
+  if (!target) return;
+  const el = target.el;
+  const field = isValueField(el) ? el : null;
+  const hasRange = field && target.start != null && target.end != null;
+  if (el && document.contains(el)) {
+    el.focus();
+    if (hasRange) {
+      try { field.setSelectionRange(target.start, target.end); } catch { /* tipo sin selección */ }
+    }
+  }
+  const selected = hasRange ? field.value.slice(target.start, target.end) : target.selText;
+  switch (action) {
+    case "undo":
+    case "redo":
+      document.execCommand(action);
+      break;
+    case "copy":
+      if (selected) await writeSystemClipboardText(selected);
+      break;
+    case "cut":
+    case "delete":
+      if (action === "cut" && selected) await writeSystemClipboardText(selected);
+      if (hasRange) replaceFieldText(field, target.start, target.end, "");
+      else document.execCommand("delete");
+      break;
+    case "paste": {
+      const text = await readSystemClipboardText();
+      if (!text) break;
+      const insert = pasteTextFor(field, text);
+      if (hasRange) replaceFieldText(field, target.start, target.end, insert);
+      else document.execCommand("insertText", false, insert);
+      break;
+    }
+    case "select-all":
+      if (field) field.select();
+      else document.execCommand("selectAll");
+      break;
+    case "format":
+      if (field && format) applyMarkdownFormatToField(field, format);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * Clic derecho en cualquier parte: si nadie más lo ha atendido (los menús de
+ * la app hacen `preventDefault`) y cae en un campo de texto o sobre texto
+ * seleccionado, abre el menú de texto. El terminal y el escritorio remoto
+ * tienen el suyo.
+ * @param {MouseEvent} e
+ */
+function handleTextContextMenu(e) {
+  const target = e.target instanceof Element ? e.target : null;
+  const menu = document.getElementById("text-context-menu");
+  if (menu && !menu.classList.contains("hidden") && !menu.contains(target)) hideTextContextMenu();
+  if (e.defaultPrevented || !target) return;
+  if (target.closest(".xterm, .rdp-canvas-host, .ctx-menu, #context-menu, #route-menu")) return;
+  const field = /** @type {HTMLElement | null} */ (target.closest("input, textarea, [contenteditable]"));
+  const selText = window.getSelection()?.toString() || "";
+  const kind = textTargetKind({
+    tagName: field?.tagName || target.tagName,
+    type: field instanceof HTMLInputElement ? field.type : "",
+    readOnly: isValueField(field) ? field.readOnly : false,
+    disabled: isValueField(field) ? field.disabled : false,
+    isContentEditable: !!field?.isContentEditable,
+    hasDocumentSelection: !field && selText.trim() !== "",
+  });
+  if (!kind) return;
+  e.preventDefault();
+  showTextContextMenu(e.clientX, e.clientY, kind === "selection" ? null : field, kind, selText);
 }
 
 function handleContextMenuAction(action) {
@@ -8241,6 +8522,9 @@ function handleContextMenuAction(action) {
       break;
     case "copy-host":
       if (id) copyProfileHost(id);
+      break;
+    case "view-note":
+      if (id) openNoteViewer(id);
       break;
     case "edit-note":
       if (id) openNoteEditor(id);
@@ -26939,6 +27223,15 @@ function bindUIEvents() {
   // Bloquear el menú contextual nativo del WebView (Atrás, Recargar, Inspeccionar…).
   // Los menús de la app llaman a showContextMenu() y no dependen del default.
   window.addEventListener("contextmenu", (e) => e.preventDefault());
+  // Campos de texto y texto seleccionado: su propio menú (Copiar, Pegar…).
+  document.addEventListener("contextmenu", handleTextContextMenu);
+  document.getElementById("text-context-menu")?.addEventListener("click", (e) => {
+    const btn = e.target instanceof Element ? e.target.closest("[data-text-menu]") : null;
+    if (!(btn instanceof HTMLButtonElement) || btn.disabled) return;
+    runTextMenuAction(btn.dataset.textMenu, btn.dataset.format);
+  });
+  // Pulsar en el menú no debe quitar el foco (ni la selección) del campo.
+  document.getElementById("text-context-menu")?.addEventListener("mousedown", (e) => e.preventDefault());
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && activeSessionId) clearTabActivity(activeSessionId);
   });
@@ -28054,6 +28347,10 @@ function bindUIEvents() {
         && !e.target.closest?.("#sidebar-route-pill")) {
       hideRouteMenu();
     }
+    const textMenu = document.getElementById("text-context-menu");
+    if (textMenu && !textMenu.classList.contains("hidden") && !textMenu.contains(e.target)) {
+      hideTextContextMenu();
+    }
   });
 
   // Al redimensionar la ventana, cerrar los menús flotantes: su posición se
@@ -28863,7 +29160,7 @@ function buildPaletteSources() {
   for (const [pid, summary] of notesIndex) {
     const p = profiles.find((x) => x.id === pid);
     if (!p) continue;
-    add(`note:${pid}`, { kind: "note", title: summary.title || p.name || p.host || "", sub: p.name || p.host || "", icon: PALETTE_ICONS.note, run: () => openNoteEditor(pid) });
+    add(`note:${pid}`, { kind: "note", title: summary.title || p.name || p.host || "", sub: p.name || p.host || "", icon: PALETTE_ICONS.note, run: () => openNoteViewer(pid) });
   }
   return items;
 }
@@ -30311,7 +30608,96 @@ function renderNotePreviewInto(el, body, profile) {
   el.innerHTML = renderMarkdownMinimal(resolved);
 }
 
-async function openNoteEditor(profileId) {
+/** Abre la nota de una conexión en lectura (Markdown pintado, sin editor). */
+function openNoteViewer(profileId) {
+  return openNoteEditor(profileId, { view: true });
+}
+
+/**
+ * Pasa el modal de la nota entre lectura y edición. En lectura solo se ve la
+ * vista previa a todo el ancho, con el título y las etiquetas arriba; las
+ * casillas de tarea se pueden marcar y se guardan en el `.md`.
+ * @param {boolean} view
+ * @param {any} profile
+ * @param {{ title?: string, tags?: string[] } | null} [doc]
+ */
+function setNoteModalMode(view, profile, doc = null) {
+  const modal = document.getElementById("note-editor-modal");
+  if (!modal) return;
+  modal.classList.toggle("is-view", view);
+  document.getElementById("note-editor-title").textContent =
+    `${t(view ? "notes.viewer_title" : "notes.editor_title")} · ${profile?.name || ""}`;
+  const meta = document.getElementById("note-view-meta");
+  if (meta) {
+    const title = view ? (doc?.title || "").trim() : "";
+    const tags = view ? (doc?.tags || []) : [];
+    meta.innerHTML = (title ? `<h3 class="note-view-title">${escHtml(title)}</h3>` : "")
+      + (tags.length
+        ? `<div class="note-view-tags">${tags.map((tag) => `<span class="note-view-tag">${escHtml(tag)}</span>`).join("")}</div>`
+        : "");
+    meta.classList.toggle("hidden", !title && !tags.length);
+  }
+  const preview = document.getElementById("note-editor-preview");
+  if (preview) {
+    // En lectura la vista previa es el contenido: enfocable para desplazarla
+    // con el teclado.
+    if (view) preview.setAttribute("tabindex", "0");
+    else preview.removeAttribute("tabindex");
+  }
+}
+
+/** Pinta la vista previa; en lectura, con las casillas de tarea operativas. */
+function renderNoteModalPreview(body, profile) {
+  const el = document.getElementById("note-editor-preview");
+  if (!el) return;
+  const view = document.getElementById("note-editor-modal")?.classList.contains("is-view");
+  if (!view) {
+    renderNotePreviewInto(el, body, profile);
+    return;
+  }
+  const resolved = substitutePreview(String(body || ""), noteSubstContext(profile));
+  el.innerHTML = renderMarkdownMinimal(resolved, { onToggleTask: () => {} });
+  const profileId = profile?.id;
+  el.querySelectorAll('input[type="checkbox"][data-task-index]').forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      const textarea = document.getElementById("note-editor-textarea");
+      try {
+        const newBody = await persistNoteTaskToggle(profileId, Number(cb.dataset.taskIndex), cb.checked);
+        if (textarea && _noteEditorProfileId === profileId) textarea.value = newBody;
+        updateRunbookForProfile(profileId);
+      } catch (err) {
+        console.error("[notes] toggle task", err);
+        cb.checked = !cb.checked;
+      }
+    });
+  });
+}
+
+/**
+ * Marca o desmarca la casilla `index` de la nota guardada y la persiste.
+ * Devuelve el cuerpo nuevo.
+ */
+async function persistNoteTaskToggle(profileId, index, checked) {
+  const profile = profiles.find((p) => p.id === profileId);
+  const fresh = await invoke("note_get", { profileId });
+  const newBody = toggleTaskInBody(fresh?.body ?? "", index, checked);
+  await invoke("note_set", {
+    profileId,
+    body: newBody,
+    title: fresh?.title || "",
+    connection: profile?.name || "",
+    tags: fresh?.tags || [],
+  });
+  await refreshNotesIndex();
+  scheduleProfileAutoSync();
+  return newBody;
+}
+
+/**
+ * Abre el modal de la nota de una conexión: en edición (por defecto) o en
+ * lectura con `{ view: true }`. Sin nota guardada siempre abre en edición.
+ */
+async function openNoteEditor(profileId, { view = false } = {}) {
   const overlay = document.getElementById("note-editor-overlay");
   if (!overlay || !profileId) return;
   const profile = profiles.find((p) => p.id === profileId);
@@ -30323,9 +30709,6 @@ async function openNoteEditor(profileId) {
   const tagsInput = document.getElementById("note-editor-tags");
   const textarea = document.getElementById("note-editor-textarea");
 
-  document.getElementById("note-editor-title").textContent =
-    `${t("notes.editor_title")} · ${profile.name}`;
-
   let doc = null;
   try {
     doc = await invoke("note_get", { profileId });
@@ -30336,9 +30719,21 @@ async function openNoteEditor(profileId) {
   tagsInput.value = (doc?.tags || []).join(", ");
   textarea.value = doc?.body || "";
 
-  renderNotePreviewInto(document.getElementById("note-editor-preview"), textarea.value, profile);
+  const viewMode = view && !!(doc && (String(doc.body || "").trim() || doc.title));
+  setNoteModalMode(viewMode, profile, doc);
+  renderNoteModalPreview(textarea.value, profile);
   overlay.classList.remove("hidden");
-  textarea.focus();
+  if (viewMode) document.getElementById("note-editor-preview")?.focus();
+  else textarea.focus();
+}
+
+/** De la lectura a la edición, sin volver a leer la nota. */
+function switchNoteToEdit() {
+  const profile = profiles.find((p) => p.id === _noteEditorProfileId);
+  if (!profile) return;
+  setNoteModalMode(false, profile);
+  renderNoteModalPreview(document.getElementById("note-editor-textarea")?.value, profile);
+  document.getElementById("note-editor-textarea")?.focus();
 }
 
 function scheduleNotePreview() {
@@ -30346,7 +30741,7 @@ function scheduleNotePreview() {
   _notePreviewTimer = setTimeout(() => {
     const textarea = document.getElementById("note-editor-textarea");
     const profile = profiles.find((p) => p.id === _noteEditorProfileId);
-    renderNotePreviewInto(document.getElementById("note-editor-preview"), textarea?.value, profile);
+    renderNoteModalPreview(textarea?.value, profile);
   }, 150);
 }
 
@@ -30422,31 +30817,58 @@ async function deleteNote(profileId) {
   }
 }
 
-/** Inserta marcado Markdown alrededor de la selección del textarea. */
-function applyNoteToolbar(action) {
-  const ta = document.getElementById("note-editor-textarea");
-  if (!ta) return;
-  const start = ta.selectionStart;
-  const end = ta.selectionEnd;
-  const sel = ta.value.slice(start, end);
-  let before = "";
-  let after = "";
-  let placeholder = sel;
-  switch (action) {
-    case "bold":   before = "**"; after = "**"; placeholder = sel || t("notes.ph_bold"); break;
-    case "italic": before = "*";  after = "*";  placeholder = sel || t("notes.ph_italic"); break;
-    case "code":   before = "`";  after = "`";  placeholder = sel || t("notes.ph_code"); break;
-    case "link":   before = "[";  after = "](https://)"; placeholder = sel || t("notes.ph_link"); break;
-    case "h":      before = "## "; placeholder = sel || t("notes.ph_heading"); break;
-    case "ul":     before = "- ";  placeholder = sel || t("notes.ph_item"); break;
-    case "task":   before = "- [ ] "; placeholder = sel || t("notes.ph_task"); break;
-    default: return;
+/** Textos de ejemplo del formato Markdown, en el idioma de la interfaz. */
+function noteFormatPlaceholders() {
+  return {
+    bold: t("notes.ph_bold"),
+    italic: t("notes.ph_italic"),
+    code: t("notes.ph_code"),
+    link: t("notes.ph_link"),
+    heading: t("notes.ph_heading"),
+    item: t("notes.ph_item"),
+    task: t("notes.ph_task"),
+    quote: t("notes.ph_quote"),
+  };
+}
+
+/**
+ * Sustituye `[start, end)` de un campo por `text` sin romper su deshacer:
+ * `insertText` entra en el historial del editor (Ctrl+Z lo revierte); si el
+ * WebView no lo admite, `setRangeText` y un `input` a mano.
+ * @param {HTMLInputElement | HTMLTextAreaElement} field
+ */
+function replaceFieldText(field, start, end, text) {
+  field.focus();
+  field.setSelectionRange(start, end);
+  let done = false;
+  try {
+    done = text
+      ? document.execCommand("insertText", false, text)
+      : document.execCommand("delete");
+  } catch {
+    done = false;
   }
-  const insert = before + placeholder + after;
-  ta.value = ta.value.slice(0, start) + insert + ta.value.slice(end);
-  const caret = start + before.length;
-  ta.focus();
-  ta.setSelectionRange(caret, caret + placeholder.length);
+  if (!done) {
+    field.setRangeText(text, start, end, "end");
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+}
+
+/** Aplica un formato Markdown a la selección de un campo (`modules/markdown-format.js`). */
+function applyMarkdownFormatToField(field, action) {
+  if (!field) return;
+  const edit = markdownFormatEdit(field.value, field.selectionStart ?? 0, field.selectionEnd ?? 0,
+    action, noteFormatPlaceholders());
+  if (!edit) return;
+  replaceFieldText(field, edit.start, edit.end, edit.text);
+  field.setSelectionRange(edit.selStart, edit.selEnd);
+}
+
+/** Barra del editor de notas: formato sobre la selección del cuerpo. */
+function applyNoteToolbar(action) {
+  const ta = /** @type {HTMLTextAreaElement | null} */ (document.getElementById("note-editor-textarea"));
+  if (!ta) return;
+  applyMarkdownFormatToField(ta, action);
   _noteEditorDirty = true;
   scheduleNotePreview();
 }
@@ -30476,6 +30898,8 @@ function initNoteEditor() {
   document.getElementById("note-editor-save")?.addEventListener("click", () => saveNoteFromEditor({ close: true }));
   document.getElementById("note-editor-cancel")?.addEventListener("click", () => handleNoteEditorEscape());
   document.getElementById("note-editor-close")?.addEventListener("click", () => handleNoteEditorEscape());
+  document.getElementById("note-view-close")?.addEventListener("click", () => handleNoteEditorEscape());
+  document.getElementById("note-view-edit")?.addEventListener("click", () => switchNoteToEdit());
   document.getElementById("note-editor-open-folder")?.addEventListener("click", async () => {
     try {
       const dir = await invoke("notes_dir");
@@ -30566,20 +30990,8 @@ async function renderRunbookPanel(sessionId) {
   // Cablea las casillas interactivas para que persistan en el `.md`.
   bodyEl.querySelectorAll('input[type="checkbox"][data-task-index]').forEach((cb) => {
     cb.addEventListener("change", async () => {
-      const idx = Number(cb.dataset.taskIndex);
       try {
-        const fresh = await invoke("note_get", { profileId: s.profileId });
-        const base = fresh?.body ?? doc.body;
-        const newBody = toggleTaskInBody(base, idx, cb.checked);
-        await invoke("note_set", {
-          profileId: s.profileId,
-          body: newBody,
-          title: fresh?.title || doc.title || "",
-          connection: profile.name,
-          tags: fresh?.tags || doc.tags || [],
-        });
-        await refreshNotesIndex();
-        scheduleProfileAutoSync();
+        await persistNoteTaskToggle(s.profileId, Number(cb.dataset.taskIndex), cb.checked);
         renderRunbookPanel(sessionId);
       } catch (err) {
         console.error("[notes] toggle task", err);

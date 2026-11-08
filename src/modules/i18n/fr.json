@@ -732,7 +732,9 @@
     "promote_master": "Promouvoir en identifiant maître…",
     "tunnels": "Tunnels",
     "tunnel_start_item": "Ouvrir « {name} »",
-    "tunnel_stop_item": "Arrêter « {name} »"
+    "tunnel_stop_item": "Arrêter « {name} »",
+    "note": "Note",
+    "view_note": "Voir la note"
   },
   "promote_master": {
     "title": "Promouvoir en identifiant maître",
@@ -2058,7 +2060,13 @@
     "ph_link": "texte",
     "ph_heading": "Titre",
     "ph_item": "élément",
-    "ph_task": "tâche"
+    "ph_task": "tâche",
+    "viewer_title": "Note",
+    "edit": "Modifier",
+    "tool_codeblock": "Bloc de code",
+    "tool_ol": "Liste numérotée",
+    "tool_quote": "Citation",
+    "ph_quote": "citation"
   },
   "modal_kp": {
     "title": "Déverrouiller KeePass",
@@ -2522,5 +2530,16 @@
     "current": "Espace actuel",
     "all": "Tous les espaces",
     "group": "Un espace précis"
+  },
+  "text_menu": {
+    "label": "Édition du texte",
+    "undo": "Annuler",
+    "redo": "Rétablir",
+    "cut": "Couper",
+    "copy": "Copier",
+    "paste": "Coller",
+    "delete": "Supprimer",
+    "select_all": "Tout sélectionner",
+    "format": "Mise en forme"
   }
 }

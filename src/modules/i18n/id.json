@@ -732,7 +732,9 @@
     "folder_color_clear": "Hapus warna",
     "tunnels": "Tunnel",
     "tunnel_start_item": "Buka “{name}”",
-    "tunnel_stop_item": "Hentikan “{name}”"
+    "tunnel_stop_item": "Hentikan “{name}”",
+    "note": "Catatan",
+    "view_note": "Lihat catatan"
   },
   "promote_master": {
     "title": "Jadikan kredensial utama",
@@ -2052,7 +2054,13 @@
     "ph_link": "teks",
     "ph_heading": "Judul",
     "ph_item": "item",
-    "ph_task": "tugas"
+    "ph_task": "tugas",
+    "viewer_title": "Catatan",
+    "edit": "Ubah",
+    "tool_codeblock": "Blok kode",
+    "tool_ol": "Daftar bernomor",
+    "tool_quote": "Kutipan",
+    "ph_quote": "kutipan"
   },
   "modal_kp": {
     "title": "Buka kunci KeePass",
@@ -2522,5 +2530,16 @@
     "current": "Ruang kerja saat ini",
     "all": "Semua ruang kerja",
     "group": "Ruang kerja tertentu"
+  },
+  "text_menu": {
+    "label": "Penyuntingan teks",
+    "undo": "Urungkan",
+    "redo": "Ulangi",
+    "cut": "Potong",
+    "copy": "Salin",
+    "paste": "Tempel",
+    "delete": "Hapus",
+    "select_all": "Pilih semua",
+    "format": "Format"
   }
 }

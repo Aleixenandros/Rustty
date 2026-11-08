@@ -114,9 +114,11 @@ export async function checkTree(app, check) {
       actionStops: row ? [...row.querySelectorAll("[data-action]")].filter((b) => b.getAttribute("tabindex") === "0").length : -1,
       stops: [...document.querySelectorAll("#connection-list [data-tree-key]")].filter((r) => r.getAttribute("tabindex") === "0").length };
   `, [IDS.inFolder]);
+  // Acciones de la fila: conectar, favorito, editar y eliminar (sin nota, no
+  // hay «Ver nota»).
   check("↓ llega a la conexión de la carpeta, que pasa a ser la parada de Tab (con sus acciones) y queda seleccionada",
     onConn.isRow && onConn.tabindex === "0" && onConn.level === "2" && onConn.selected
-      && onConn.actionStops === 3 && onConn.stops === 1, JSON.stringify(onConn));
+      && onConn.actionStops === 4 && onConn.stops === 1, JSON.stringify(onConn));
 
   // Repintado: marcar favorito desde el botón de la fila reconstruye la lista.
   await app.exec(`document.querySelector('#connection-list .conn-item[data-id="' + arguments[0] + '"] [data-action="toggle-favorite"]').click(); return true;`, [IDS.inFolder]);

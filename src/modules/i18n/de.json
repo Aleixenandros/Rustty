@@ -732,7 +732,9 @@
     "folder_color_clear": "Farbe entfernen",
     "tunnels": "Tunnel",
     "tunnel_start_item": "„{name}“ öffnen",
-    "tunnel_stop_item": "„{name}“ beenden"
+    "tunnel_stop_item": "„{name}“ beenden",
+    "note": "Notiz",
+    "view_note": "Notiz ansehen"
   },
   "promote_master": {
     "title": "Zu Master-Anmeldedaten hochstufen",
@@ -2052,7 +2054,13 @@
     "ph_link": "Text",
     "ph_heading": "Überschrift",
     "ph_item": "Element",
-    "ph_task": "Aufgabe"
+    "ph_task": "Aufgabe",
+    "viewer_title": "Notiz",
+    "edit": "Bearbeiten",
+    "tool_codeblock": "Codeblock",
+    "tool_ol": "Nummerierte Liste",
+    "tool_quote": "Zitat",
+    "ph_quote": "Zitat"
   },
   "modal_kp": {
     "title": "KeePass entsperren",
@@ -2522,5 +2530,16 @@
     "current": "Aktueller Workspace",
     "all": "Alle Workspaces",
     "group": "Ein bestimmter Workspace"
+  },
+  "text_menu": {
+    "label": "Textbearbeitung",
+    "undo": "Rückgängig",
+    "redo": "Wiederholen",
+    "cut": "Ausschneiden",
+    "copy": "Kopieren",
+    "paste": "Einfügen",
+    "delete": "Löschen",
+    "select_all": "Alles auswählen",
+    "format": "Formatierung"
   }
 }
