@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
 
 use crate::locks::MutexExt;
 use std::thread;
@@ -264,7 +264,11 @@ impl TransferControls {
 
 // ─── Mensajes al hilo de transferencia ──────────────────────────────────────
 
-type Reply<T> = mpsc::SyncSender<Result<T, String>>;
+/// Respuesta de un comando: el worker la entrega con `send`, que no es async y
+/// vale desde su runtime propia; el llamador la espera con `await`, sin ocupar
+/// un hilo del sistema mientras dura la operación (una transferencia puede
+/// tardar minutos).
+type Reply<T> = tokio::sync::oneshot::Sender<Result<T, String>>;
 
 enum SftpCommand {
     ListDir {
@@ -473,7 +477,7 @@ impl SftpManager {
         routing: crate::jump_pool::Routing,
     ) -> Result<(), String> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<SftpCommand>();
-        let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
         let controls = Arc::new(TransferControls::new());
 
         let sid = session_id.clone();
@@ -508,12 +512,8 @@ impl SftpManager {
         });
 
         // Esperar a que la autenticación + apertura terminen sin bloquear el
-        // runtime de Tauri; las transferencias largas deben dejar respirar a la UI.
-        let ready_result = tauri::async_runtime::spawn_blocking(move || ready_rx.recv())
-            .await
-            .map_err(|e| format!("No se pudo esperar al worker de ficheros: {e}"))?;
-
-        match ready_result {
+        // runtime de Tauri ni ocupar un hilo: la espera es un `await`.
+        match ready_rx.await {
             Ok(Ok(())) => {
                 self.sessions.lock_recover().insert(
                     session_id,
@@ -580,17 +580,7 @@ impl SftpManager {
                 .ok_or_else(|| format!("Sesión de ficheros no encontrada: {session_id}"))?;
             handle.tx.clone()
         };
-
-        tauri::async_runtime::spawn_blocking(move || {
-            let (reply_tx, reply_rx) = mpsc::sync_channel::<Result<T, String>>(1);
-            tx.send(build(reply_tx)).map_err(|e| e.to_string())?;
-            match reply_rx.recv() {
-                Ok(r) => r,
-                Err(_) => Err("El worker de ficheros terminó inesperadamente".into()),
-            }
-        })
-        .await
-        .map_err(|e| format!("No se pudo esperar respuesta del worker de ficheros: {e}"))?
+        request_worker(&tx, build).await
     }
 
     pub async fn list_dir(&self, session_id: &str, path: String) -> Result<Vec<FileEntry>, String> {
@@ -793,7 +783,7 @@ async fn run_sftp_worker(
     request: OpenRequest<'_>,
     max_parallelism: usize,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<SftpCommand>,
-    ready: mpsc::SyncSender<Result<(), String>>,
+    ready: tokio::sync::oneshot::Sender<Result<(), String>>,
     app_handle: AppHandle,
     controls: Arc<TransferControls>,
 ) {
@@ -932,6 +922,21 @@ async fn run_sftp_worker(
     // Cerrar sesión de transferencia ordenadamente.
     backend.close().await;
     let _ = session_id; // mantenemos por si queremos emitir eventos de cierre
+}
+
+/// Manda un comando al worker y espera su respuesta con `await`: mientras dura
+/// (una transferencia, minutos) no se ocupa ningún hilo del sistema. Antes cada
+/// operación bloqueaba un hilo de `spawn_blocking` en un `recv` síncrono.
+async fn request_worker<T>(
+    tx: &tokio::sync::mpsc::UnboundedSender<SftpCommand>,
+    build: impl FnOnce(Reply<T>) -> SftpCommand,
+) -> Result<T, String> {
+    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel::<Result<T, String>>();
+    tx.send(build(reply_tx)).map_err(|e| e.to_string())?;
+    // Si el worker muere sin contestar, su emisor se suelta y esto lo dice.
+    reply_rx
+        .await
+        .unwrap_or_else(|_| Err("El worker de ficheros terminó inesperadamente".into()))
 }
 
 /// Espera el siguiente comando del worker **sin bloquear su runtime**. russh
@@ -4891,6 +4896,61 @@ mod tests {
         assert!(vistos >= 10, "la runtime se quedó parada esperando: {vistos} ticks");
     }
 
+    /// El llamador espera la respuesta del worker (que corre en su propio hilo
+    /// y runtime, como en producción) sin ocupar hilos; y si el worker muere
+    /// sin contestar, recibe un error en vez de quedarse esperando.
+    #[test]
+    fn la_respuesta_del_worker_se_espera_sin_hilos_y_su_muerte_es_un_error() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SftpCommand>();
+        let worker = thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            rt.block_on(async move {
+                while let Some(cmd) = next_command(&mut rx).await {
+                    match cmd {
+                        SftpCommand::HomeDir { reply } => {
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                            let _ = reply.send(Ok("/home/rustty".into()));
+                        }
+                        // Se suelta la respuesta sin contestar, como un worker
+                        // que muere a mitad.
+                        SftpCommand::Mkdir { reply, .. } => drop(reply),
+                        SftpCommand::Close => break,
+                        _ => {}
+                    }
+                }
+            })
+        });
+        // El llamador corre en un runtime de un hilo: si la espera bloqueara
+        // el hilo, las dos peticiones no podrían esperar a la vez.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(async {
+            let (a, b) = tokio::join!(
+                request_worker(&tx, |reply| SftpCommand::HomeDir { reply }),
+                request_worker(&tx, |reply| SftpCommand::HomeDir { reply }),
+            );
+            assert_eq!(a.as_deref(), Ok("/home/rustty"));
+            assert_eq!(b.as_deref(), Ok("/home/rustty"));
+            let muerto = request_worker(&tx, |reply| SftpCommand::Mkdir {
+                path: "/x".into(),
+                reply,
+            })
+            .await;
+            assert!(muerto.unwrap_err().contains("terminó inesperadamente"));
+        });
+        let _ = tx.send(SftpCommand::Close);
+        worker.join().expect("el worker no debe entrar en pánico");
+        // Con el worker ya fuera, mandar falla al instante.
+        assert!(rt
+            .block_on(request_worker(&tx, |reply| SftpCommand::HomeDir { reply }))
+            .is_err());
+    }
+
     /// **Integración**: con el panel abierto y sin tocar, la sesión SFTP sigue
     /// viva frente a un `sshd` que sondea al cliente cada segundo y corta al
     /// primer sondeo sin respuesta (`ClientAliveInterval 1`,
@@ -5905,7 +5965,7 @@ mod tests {
         plazo: Duration,
         f: impl FnOnce() -> T + Send + 'static,
     ) -> T {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::channel();
         thread::spawn(move || {
             let _ = tx.send(f());
         });
