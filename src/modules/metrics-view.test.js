@@ -8,6 +8,13 @@ import {
   sparklinePath,
   pushHistory,
   computeMetricAlerts,
+  PROC_SORT_KEYS,
+  defaultProcView,
+  filterProcs,
+  sortProcs,
+  procTableRows,
+  nextProcSort,
+  procSortAria,
 } from "./metrics-view.js";
 
 describe("formatBytesPerSec", () => {
@@ -135,5 +142,102 @@ describe("computeMetricAlerts", () => {
   it("varias métricas pueden disparar en la misma muestra", () => {
     const r = computeMetricAlerts({}, { cpu: 95, mem: 91, disk: 99 }, th);
     expect(r.fired).toEqual(["cpu", "mem", "disk"]);
+  });
+});
+
+const PROCS = [
+  { pid: 1234, cpuPct: 12.5, memPct: 3.2, user: "postgres", command: "postgres" },
+  { pid: 42, cpuPct: 8, memPct: 11.1, user: "aleix", command: "rust analyzer" },
+  { pid: 7, cpuPct: 8, memPct: 0.1, user: "root", command: "nginx" },
+  { pid: 900, cpuPct: 0, memPct: 0.5, user: "root", command: "Nginx-worker" },
+];
+const pids = (rows) => rows.map((p) => p.pid);
+
+describe("filterProcs", () => {
+  it("sin consulta devuelve todos (en una copia)", () => {
+    const out = filterProcs(PROCS, "  ");
+    expect(pids(out)).toEqual([1234, 42, 7, 900]);
+    expect(out).not.toBe(PROCS);
+  });
+
+  it("casa por comando sin distinguir mayúsculas", () => {
+    expect(pids(filterProcs(PROCS, "NGINX"))).toEqual([7, 900]);
+  });
+
+  it("casa por PID y por usuario", () => {
+    expect(pids(filterProcs(PROCS, "1234"))).toEqual([1234]);
+    expect(pids(filterProcs(PROCS, "aleix"))).toEqual([42]);
+  });
+
+  it("varias palabras se exigen todas, cada una en cualquier campo", () => {
+    expect(pids(filterProcs(PROCS, "root worker"))).toEqual([900]);
+    expect(pids(filterProcs(PROCS, "root postgres"))).toEqual([]);
+  });
+
+  it("tolera filas sin usuario y entradas que no son lista", () => {
+    expect(pids(filterProcs([{ pid: 5, cpuPct: 0, memPct: 0, command: "sh" }], "sh"))).toEqual([5]);
+    expect(filterProcs(/** @type {any} */ (null), "x")).toEqual([]);
+  });
+});
+
+describe("sortProcs", () => {
+  it("por %CPU descendente, empates por PID creciente", () => {
+    expect(pids(sortProcs(PROCS, "cpu", "desc"))).toEqual([1234, 7, 42, 900]);
+  });
+
+  it("por %MEM ascendente", () => {
+    expect(pids(sortProcs(PROCS, "mem", "asc"))).toEqual([7, 900, 1234, 42]);
+  });
+
+  it("por PID", () => {
+    expect(pids(sortProcs(PROCS, "pid", "asc"))).toEqual([7, 42, 900, 1234]);
+    expect(pids(sortProcs(PROCS, "pid", "desc"))).toEqual([1234, 900, 42, 7]);
+  });
+
+  it("por comando sin distinguir mayúsculas", () => {
+    expect(sortProcs(PROCS, "command", "asc").map((p) => p.command))
+      .toEqual(["nginx", "Nginx-worker", "postgres", "rust analyzer"]);
+  });
+
+  it("no muta la entrada y una clave desconocida ordena por %CPU", () => {
+    const copy = PROCS.slice();
+    sortProcs(PROCS, "pid", "asc");
+    expect(PROCS).toEqual(copy);
+    expect(pids(sortProcs(PROCS, "nope", "desc"))).toEqual([1234, 7, 42, 900]);
+  });
+});
+
+describe("procTableRows / nextProcSort / procSortAria", () => {
+  it("la vista por defecto es el orden del servidor (%CPU desc) sin filtro", () => {
+    expect(defaultProcView()).toEqual({ filter: "", sortKey: "cpu", sortDir: "desc" });
+    expect(pids(procTableRows(PROCS, null))).toEqual([1234, 7, 42, 900]);
+  });
+
+  it("filtra y luego ordena", () => {
+    expect(pids(procTableRows(PROCS, { filter: "root", sortKey: "pid", sortDir: "desc" }))).toEqual([900, 7]);
+  });
+
+  it("la misma columna invierte; otra empieza en su sentido natural", () => {
+    const view = defaultProcView();
+    expect(nextProcSort(view, "cpu")).toEqual({ sortKey: "cpu", sortDir: "asc" });
+    expect(nextProcSort(view, "mem")).toEqual({ sortKey: "mem", sortDir: "desc" });
+    expect(nextProcSort(view, "pid")).toEqual({ sortKey: "pid", sortDir: "asc" });
+    expect(nextProcSort(view, "command")).toEqual({ sortKey: "command", sortDir: "asc" });
+    expect(nextProcSort({ ...view, sortKey: "pid", sortDir: "asc" }, "pid")).toEqual({ sortKey: "pid", sortDir: "desc" });
+    expect(nextProcSort(view, "bogus")).toEqual({ sortKey: "cpu", sortDir: "desc" });
+  });
+
+  it("aria-sort solo en la columna activa", () => {
+    const view = { filter: "", sortKey: /** @type {const} */ ("mem"), sortDir: /** @type {const} */ ("asc") };
+    expect(procSortAria(view, "mem")).toBe("ascending");
+    expect(procSortAria({ ...view, sortDir: "desc" }, "mem")).toBe("descending");
+    expect(procSortAria(view, "cpu")).toBe("none");
+    expect(procSortAria(null, "cpu")).toBe("none");
+  });
+
+  it("todas las columnas ordenables tienen sentido natural", () => {
+    for (const key of PROC_SORT_KEYS) {
+      expect(nextProcSort({ filter: "", sortKey: "cpu", sortDir: "desc" }, key).sortKey).toBe(key);
+    }
   });
 });

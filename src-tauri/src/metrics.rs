@@ -36,7 +36,10 @@ pub fn linux_sample_command() -> String {
         ("disk", "df -P"),
         (
             "proc",
-            "ps -eo pid,pcpu,pmem,comm --sort=-pcpu 2>/dev/null | head -n 11",
+            // `user:32`: sin ancho, procps corta el nombre a 8 caracteres con
+            // un `+`. Los 25 primeros por CPU: la tabla del panel se filtra y
+            // se ordena en el cliente, y con 10 apenas había qué buscar.
+            "ps -eo pid,pcpu,pmem,user:32,comm --sort=-pcpu 2>/dev/null | head -n 26",
         ),
     ];
     let mut cmd = String::new();
@@ -101,6 +104,8 @@ pub struct ProcInfo {
     pub pid: u32,
     pub cpu_pct: f64,
     pub mem_pct: f64,
+    /// Dueño del proceso (`ps -o user`); vacío si la fuente no lo trae.
+    pub user: String,
     pub command: String,
 }
 
@@ -290,19 +295,30 @@ pub fn parse_df(text: &str) -> Vec<DiskUsage> {
     out
 }
 
-/// Parsea `ps -eo pid,pcpu,pmem,comm` (con cabecera). `comm` puede llevar
-/// espacios: pid es el 1.º, pcpu/pmem los dos numéricos que siguen, y el resto
-/// es el comando.
+/// Parsea `ps -eo pid,pcpu,pmem,user,comm` (con cabecera). `comm` puede
+/// llevar espacios: pid es el 1.º, pcpu/pmem los dos numéricos que siguen,
+/// el usuario (si la cabecera trae `USER`: un nombre de usuario no lleva
+/// espacios) y el resto es el comando. Sin columna `USER` (el formato de
+/// antes) el usuario queda vacío.
 #[must_use]
 pub fn parse_ps(text: &str) -> Vec<ProcInfo> {
+    let mut lines = text.lines();
+    let has_user = lines
+        .next()
+        .is_some_and(|header| header.split_whitespace().any(|col| col == "USER"));
     let mut out = Vec::new();
-    for line in text.lines().skip(1) {
+    for line in lines {
         let mut it = line.split_whitespace();
         let (Some(pid), Some(cpu), Some(mem)) = (it.next(), it.next(), it.next()) else {
             continue;
         };
         let (Ok(pid), Ok(cpu_pct), Ok(mem_pct)) = (pid.parse(), cpu.parse(), mem.parse()) else {
             continue;
+        };
+        let user = if has_user {
+            it.next().unwrap_or_default().to_string()
+        } else {
+            String::new()
         };
         let command = it.collect::<Vec<_>>().join(" ");
         if command.is_empty() {
@@ -312,6 +328,7 @@ pub fn parse_ps(text: &str) -> Vec<ProcInfo> {
             pid,
             cpu_pct,
             mem_pct,
+            user,
             command,
         });
     }
@@ -487,6 +504,25 @@ mod tests {
         assert_eq!(p[0].pid, 1234);
         assert_eq!(p[0].cpu_pct, 12.5);
         assert_eq!(p[1].command, "rust analyzer");
+        // Sin columna USER (formato de antes), el usuario queda vacío.
+        assert_eq!(p[0].user, "");
+    }
+
+    #[test]
+    fn parse_ps_lee_el_usuario_si_la_cabecera_lo_trae() {
+        let text = "  PID %CPU %MEM USER                             COMMAND\n\
+                    1234 12.5  3.2 postgres                         postgres\n\
+                      42  8.0  1.1 aleix                            rust analyzer\n\
+                       7  0.0  0.0 1001                             sh\n";
+        let p = parse_ps(text);
+        assert_eq!(p.len(), 3);
+        assert_eq!(p[0].user, "postgres");
+        assert_eq!(p[0].command, "postgres");
+        assert_eq!(p[1].user, "aleix");
+        assert_eq!(p[1].command, "rust analyzer");
+        // Un uid sin nombre en el servidor sale como número.
+        assert_eq!(p[2].user, "1001");
+        assert_eq!(p[2].command, "sh");
     }
 
     #[test]
@@ -552,6 +588,7 @@ mod tests {
         assert!(cmd.contains(SECTION_PREFIX));
         assert!(cmd.contains("cat /proc/stat"));
         assert!(cmd.contains("df -P"));
+        assert!(cmd.contains("pid,pcpu,pmem,user:32,comm"));
         // El marcador va antes de cada fuente, no debe quedar ningún `%s` sin sustituir.
         assert!(!cmd.contains("%s"));
     }

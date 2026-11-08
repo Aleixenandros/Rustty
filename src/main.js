@@ -129,7 +129,10 @@ import {
   tooltipWithRemoteTitle,
 } from "./modules/terminal/osc.js";
 import { opensReadOnly, readOnlyInputDecision, readOnlyKeyAction } from "./modules/terminal/read-only.js";
-import { formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts } from "./modules/metrics-view.js";
+import {
+  formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts,
+  defaultProcView, procTableRows, nextProcSort, procSortAria,
+} from "./modules/metrics-view.js";
 import { createMetricsPoller } from "./modules/metrics-poller.js";
 import { localUserHost, statusBarModel } from "./modules/status-bar.js";
 import { THEME_FORMAT_VERSION, UI_THEME_TOKENS, TERMINAL_THEME_TOKENS, pickThemeTokens, buildThemeDocument, normalizeThemeDocument } from "./modules/themes/document.js";
@@ -16055,8 +16058,12 @@ function openMetricsPanel(sessionId) {
   panel.innerHTML = `
     <div class="metrics-resize-handle"></div>
     <div class="metrics-panel-header">
-      <span class="metrics-panel-title">${escHtml(t("metrics.title"))}</span>
+      <span class="metrics-panel-title">${escHtml(t("metrics.title"))}<span class="metrics-paused-badge hidden">${escHtml(t("metrics.paused"))}</span></span>
       <span class="metrics-panel-actions">
+        <button type="button" class="metrics-panel-btn" data-metrics-act="pause" aria-pressed="false"
+                title="${escHtml(t("metrics.pause"))}" aria-label="${escHtml(t("metrics.pause"))}">
+          <svg class="icon-x-svg" aria-hidden="true"><use href="#ci-pause"/></svg>
+        </button>
         <button type="button" class="metrics-panel-btn" data-metrics-act="export"
                 title="${escHtml(t("metrics.export"))}" aria-label="${escHtml(t("metrics.export"))}">
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v7"/><path d="M4.5 6.5 8 10l3.5-3.5"/><path d="M2.5 13h11"/></svg>
@@ -16077,11 +16084,44 @@ function openMetricsPanel(sessionId) {
   panel.querySelector(".metrics-resize-handle")?.addEventListener("mousedown", (e) => startMetricsResize(e, panel, pane, s));
   panel.querySelector('[data-metrics-act="close"]')?.addEventListener("click", () => closeMetricsPanel(sessionId));
   panel.querySelector('[data-metrics-act="export"]')?.addEventListener("click", () => exportMetricsSnapshot(sessionId));
-  // El cuerpo se repinta entero con cada muestra: el click de «terminar proceso»
-  // se delega aquí, que sobrevive a los repintados.
-  panel.querySelector(".metrics-body")?.addEventListener("click", (e) => {
+  panel.querySelector('[data-metrics-act="pause"]')?.addEventListener("click", () => toggleMetricsPause(sessionId));
+  // El resumen se repinta entero con cada muestra y las filas de la tabla
+  // también: el click de «terminar proceso» y el de las cabeceras se delegan
+  // aquí, que sobrevive a los repintados.
+  const body = panel.querySelector(".metrics-body");
+  body?.addEventListener("click", (e) => {
     const btn = e.target.closest?.("[data-kill-pid]");
-    if (btn) confirmKillRemoteProcess(sessionId, Number(btn.dataset.killPid), btn.dataset.killCmd || "");
+    if (btn) {
+      confirmKillRemoteProcess(sessionId, Number(btn.dataset.killPid), btn.dataset.killCmd || "");
+      return;
+    }
+    const sortBtn = e.target.closest?.("[data-proc-sort]");
+    if (sortBtn) {
+      const cur = sessions.get(sessionId);
+      if (!cur) return;
+      const view = metricsProcView(cur);
+      Object.assign(view, nextProcSort(view, sortBtn.dataset.procSort));
+      renderMetricsProcTable(cur);
+    }
+  });
+  body?.addEventListener("input", (e) => {
+    if (!e.target.classList?.contains("metrics-proc-filter")) return;
+    const cur = sessions.get(sessionId);
+    if (!cur) return;
+    metricsProcView(cur).filter = e.target.value;
+    renderMetricsProcTable(cur);
+  });
+  body?.addEventListener("keydown", (e) => {
+    // Escape vacía el filtro; ya vacío, deja pasar la tecla. Se marca como
+    // atendida para que nada de debajo la use también.
+    if (e.key !== "Escape" || !e.target.classList?.contains("metrics-proc-filter") || !e.target.value) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.target.value = "";
+    const cur = sessions.get(sessionId);
+    if (!cur) return;
+    metricsProcView(cur).filter = "";
+    renderMetricsProcTable(cur);
   });
   panel.querySelector('[data-metrics-act="orientation"]')?.addEventListener("click", () => {
     const cur = sessions.get(sessionId);
@@ -16091,6 +16131,7 @@ function openMetricsPanel(sessionId) {
     refitMetricsPane(cur);
   });
 
+  updateMetricsPauseUi(s);
   renderMetricsPanel(s);
   refitMetricsPane(s);
   updateMetricsExpandBtn(s);
@@ -16103,9 +16144,77 @@ function closeMetricsPanel(sessionId) {
   pane?.classList.remove("metrics-split-vertical");
   if (s) {
     s._metricsPanelOpen = false;
+    // La pausa es para mirar un pico con el panel delante: al cerrarlo se
+    // reanuda. El filtro y el orden se quedan en la sesión.
+    if (s._procView) {
+      s._procView.paused = false;
+      s._procView.frozen = null;
+    }
     refitMetricsPane(s);
     updateMetricsExpandBtn(s);
   }
+}
+
+/**
+ * Estado de la tabla de procesos de una sesión (filtro, orden y pausa). Vive en
+ * la sesión, no en el DOM: el panel se repinta con cada muestra y se puede
+ * cerrar y volver a abrir.
+ * @param {any} s
+ */
+function metricsProcView(s) {
+  if (!s._procView) s._procView = { ...defaultProcView(), paused: false, frozen: null };
+  return s._procView;
+}
+
+/**
+ * Lo que enseña el panel: la última muestra y su historia o, en pausa, la
+ * copia congelada al pausar (el muestreo, la barra y las alertas siguen).
+ * @param {any} s
+ */
+function metricsPanelData(s) {
+  const view = s?._procView;
+  return view?.paused && view.frozen ? view.frozen : s?._metrics;
+}
+
+/** Pausa o reanuda el refresco del panel de la sesión. */
+function toggleMetricsPause(sessionId) {
+  const s = sessions.get(sessionId);
+  if (!s) return;
+  const view = metricsProcView(s);
+  if (view.paused) {
+    view.paused = false;
+    view.frozen = null;
+  } else {
+    const st = s._metrics;
+    view.paused = true;
+    view.frozen = st
+      ? { latest: st.latest, cpuHist: st.cpuHist.slice(), rxHist: st.rxHist.slice(), txHist: st.txHist.slice() }
+      : null;
+  }
+  updateMetricsPauseUi(s);
+  renderMetricsPanel(s);
+}
+
+/** Botón «Pausar/Reanudar refresco» y aviso «En pausa» según el estado. */
+function updateMetricsPauseUi(s) {
+  const panel = metricsPanelEl(s);
+  if (!panel) return;
+  const paused = !!s._procView?.paused;
+  const btn = panel.querySelector('[data-metrics-act="pause"]');
+  if (btn) {
+    const label = t(paused ? "metrics.resume" : "metrics.pause");
+    btn.setAttribute("aria-pressed", paused ? "true" : "false");
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+    btn.classList.toggle("active", paused);
+    btn.querySelector("use")?.setAttribute("href", paused ? "#ci-play" : "#ci-pause");
+  }
+  panel.querySelector(".metrics-paused-badge")?.classList.toggle("hidden", !paused);
+}
+
+function metricsPanelEl(s) {
+  return s?.pane?.querySelector(".metrics-panel")
+    || document.querySelector(`.terminal-pane[data-session="${CSS.escape(s?.id || "")}"] .metrics-panel`);
 }
 
 /** Un sparkline SVG a partir de una serie y un color de token. */
@@ -16125,17 +16234,66 @@ function metricsBar(pct, label, sub) {
   </div>`;
 }
 
+/** Columnas de la tabla de procesos: clave de orden y rótulo. */
+function metricsProcColumns() {
+  return [
+    { key: "pid", label: "PID", cls: "metrics-proc-pid" }, // i18n-exempt: nombre canónico de columna de ps
+    { key: "user", label: t("metrics.col_user"), cls: "metrics-proc-user" },
+    { key: "command", label: t("metrics.col_command"), cls: "metrics-proc-cmd" },
+    { key: "cpu", label: "%CPU", cls: "metrics-proc-num" }, // i18n-exempt: nombre canónico de columna de ps
+    { key: "mem", label: "%MEM", cls: "metrics-proc-num" }, // i18n-exempt: nombre canónico de columna de ps
+  ];
+}
+
+/**
+ * Esqueleto del cuerpo: el resumen (se repinta entero) y la sección de
+ * procesos, cuyo buscador y cabeceras se crean UNA vez para que el foco, el
+ * texto y el cursor del filtro sobrevivan a los refrescos.
+ */
+function ensureMetricsBodySkeleton(body, s) {
+  let summary = body.querySelector(":scope > .metrics-summary");
+  let procs = body.querySelector(":scope > .metrics-section-procs");
+  if (summary && procs) return { summary, procs };
+  const view = metricsProcView(s);
+  const heads = metricsProcColumns().map((c) => `
+    <th scope="col" class="${c.cls}" data-proc-col="${c.key}" aria-sort="none">
+      <button type="button" class="metrics-proc-sort" data-proc-sort="${c.key}"
+              title="${escHtml(t("metrics.sort_by", { col: c.label }))}">
+        <span>${escHtml(c.label)}</span><svg class="icon-x-svg metrics-sort-icon" aria-hidden="true"><use href="#ci-arrow-down"/></svg>
+      </button>
+    </th>`).join("");
+  body.innerHTML = `
+    <div class="metrics-summary"></div>
+    <section class="metrics-section metrics-section-procs">
+      <header class="metrics-section-head"><span>${escHtml(t("metrics.processes"))}</span><strong class="metrics-procs-count"></strong></header>
+      <input type="search" class="metrics-proc-filter" spellcheck="false" autocomplete="off"
+             placeholder="${escHtml(t("metrics.filter_placeholder"))}" aria-label="${escHtml(t("metrics.filter_label"))}" />
+      <table class="metrics-proc-table">
+        <thead><tr>${heads}<th class="metrics-proc-act"><span class="sr-only">${escHtml(t("metrics.kill"))}</span></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>`;
+  const input = body.querySelector(".metrics-proc-filter");
+  if (input) input.value = view.filter || "";
+  summary = body.querySelector(".metrics-summary");
+  procs = body.querySelector(".metrics-section-procs");
+  return { summary, procs };
+}
+
 /** Repinta el cuerpo del panel de una sesión con su última muestra. */
 function renderMetricsPanel(s) {
   const body = s?.pane?.querySelector(".metrics-body")
     || document.querySelector(`.terminal-pane[data-session="${CSS.escape(s?.id || "")}"] .metrics-body`);
   if (!body) return;
-  const st = s._metrics;
+  const { summary, procs } = ensureMetricsBodySkeleton(body, s);
+  const st = metricsPanelData(s);
   const m = st?.latest;
   if (!m) {
-    body.innerHTML = `<div class="metrics-empty">${escHtml(t("metrics.waiting"))}</div>`;
+    summary.innerHTML = `<div class="metrics-empty">${escHtml(t("metrics.waiting"))}</div>`;
+    procs.classList.add("hidden");
     return;
   }
+  procs.classList.remove("hidden");
 
   try {
   const cpu = m.cpuPct == null ? "—" : `${Math.round(m.cpuPct)}%`;
@@ -16153,26 +16311,8 @@ function renderMetricsPanel(s) {
   const disks = (m.disks || []).map((d) =>
     metricsBar(usagePct(d.usedKb, d.sizeKb), d.mount, `${formatKib(d.usedKb)} / ${formatKib(d.sizeKb)}`)
   ).join("");
-  // Terminar procesos solo en el servidor remoto: en la consola local sería
-  // una orden nueva del IPC para señalar cualquier proceso del usuario
-  // (modules/status-bar.js).
-  const canKill = !!statusBarModelFor(s)?.killProcess;
-  const procs = (m.procs || []).map((p) => `
-    <tr>
-      <td class="metrics-proc-pid mono">${Number(p.pid) || 0}</td>
-      <td class="metrics-proc-cmd" title="${escHtml(p.command)}">${escHtml(p.command)}</td>
-      <td class="metrics-proc-num mono">${(Number(p.cpuPct) || 0).toFixed(1)}</td>
-      <td class="metrics-proc-num mono">${(Number(p.memPct) || 0).toFixed(1)}</td>
-      <td class="metrics-proc-act">${canKill ? `
-        <button type="button" class="metrics-proc-kill" data-kill-pid="${Number(p.pid) || 0}"
-                data-kill-cmd="${escHtml(p.command)}"
-                title="${escHtml(t("metrics.kill"))}" aria-label="${escHtml(t("metrics.kill"))}">
-          <svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg>
-        </button>` : ""}
-      </td>
-    </tr>`).join("");
 
-  body.innerHTML = `
+  summary.innerHTML = `
     <section class="metrics-section">
       <header class="metrics-section-head"><span>${escHtml(t("status.cpu"))}</span><strong>${cpu}</strong></header>
       ${metricsSparkline(st.cpuHist, "var(--blue)")}
@@ -16190,27 +16330,76 @@ function renderMetricsPanel(s) {
     <section class="metrics-section">
       <header class="metrics-section-head"><span>${escHtml(t("status.disk"))}</span><strong>${escHtml(t("metrics.uptime"))}: ${escHtml(formatDuration(m.uptimeSecs))}</strong></header>
       ${disks || `<div class="metrics-empty">—</div>`}
-    </section>
-    <section class="metrics-section metrics-section-procs">
-      <header class="metrics-section-head"><span>${escHtml(t("metrics.processes"))}</span><strong>%CPU · %MEM</strong></header>
-      <table class="metrics-proc-table"><tbody>${procs}</tbody></table>
     </section>`;
+  renderMetricsProcTable(s);
   } catch (err) {
     // Nunca dejar el panel en blanco en silencio: si algo del payload no encaja,
     // se muestra el error aquí (y en consola) para poder diagnosticarlo.
     console.error("[metrics] error al pintar el panel", err);
-    body.innerHTML = `<div class="metrics-empty">${escHtml(t("metrics.render_error", { err: String(err) }))}</div>`;
+    summary.innerHTML = `<div class="metrics-empty">${escHtml(t("metrics.render_error", { err: String(err) }))}</div>`;
   }
 }
 
 /**
+ * Filas de la tabla de procesos (filtradas y ordenadas según la vista de la
+ * sesión) y estado de las cabeceras. No toca el buscador: se puede llamar en
+ * cada pulsación sin perder el foco ni el cursor.
+ */
+function renderMetricsProcTable(s) {
+  const panel = metricsPanelEl(s);
+  const section = panel?.querySelector(".metrics-section-procs");
+  const tbody = section?.querySelector("tbody");
+  if (!section || !tbody) return;
+  const view = metricsProcView(s);
+  const all = metricsPanelData(s)?.latest?.procs || [];
+  const rows = procTableRows(all, view);
+
+  section.querySelectorAll("th[data-proc-col]").forEach((th) => {
+    const key = th.dataset.procCol;
+    const aria = procSortAria(view, key);
+    th.setAttribute("aria-sort", aria);
+    th.classList.toggle("is-sorted", aria !== "none");
+    th.querySelector(".metrics-sort-icon use")?.setAttribute("href", aria === "ascending" ? "#ci-arrow-up" : "#ci-arrow-down");
+  });
+  const count = section.querySelector(".metrics-procs-count");
+  if (count) {
+    count.textContent = view.filter.trim()
+      ? t("metrics.procs_count", { shown: rows.length, total: all.length })
+      : String(all.length);
+  }
+
+  // Terminar procesos solo en el servidor remoto: en la consola local sería
+  // una orden nueva del IPC para señalar cualquier proceso del usuario
+  // (modules/status-bar.js).
+  const canKill = !!statusBarModelFor(s)?.killProcess;
+  const colspan = metricsProcColumns().length + 1;
+  tbody.innerHTML = rows.length
+    ? rows.map((p) => `
+    <tr>
+      <td class="metrics-proc-pid mono">${Number(p.pid) || 0}</td>
+      <td class="metrics-proc-user" title="${escHtml(p.user || "")}">${escHtml(p.user || "")}</td>
+      <td class="metrics-proc-cmd" title="${escHtml(p.command)}">${escHtml(p.command)}</td>
+      <td class="metrics-proc-num mono">${(Number(p.cpuPct) || 0).toFixed(1)}</td>
+      <td class="metrics-proc-num mono">${(Number(p.memPct) || 0).toFixed(1)}</td>
+      <td class="metrics-proc-act">${canKill ? `
+        <button type="button" class="metrics-proc-kill" data-kill-pid="${Number(p.pid) || 0}"
+                data-kill-cmd="${escHtml(p.command)}"
+                title="${escHtml(t("metrics.kill"))}" aria-label="${escHtml(t("metrics.kill"))}">
+          <svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg>
+        </button>` : ""}
+      </td>
+    </tr>`).join("")
+    : `<tr><td class="metrics-empty" colspan="${colspan}">${escHtml(all.length ? t("metrics.procs_no_match") : "—")}</td></tr>`;
+}
+
+/**
  * Exporta a un JSON local la última muestra del monitor y la historia de los
- * sparklines de la sesión. Solo datos ya presentes en el panel: nada de
- * credenciales ni de estado de la app.
+ * sparklines de la sesión (en pausa, la que está a la vista). Solo datos ya
+ * presentes en el panel: nada de credenciales ni de estado de la app.
  */
 async function exportMetricsSnapshot(sessionId) {
   const s = sessions.get(sessionId);
-  const st = s?._metrics;
+  const st = metricsPanelData(s);
   if (!st?.latest) {
     toast(t("metrics.waiting"), "warning");
     return;
@@ -16247,23 +16436,47 @@ async function exportMetricsSnapshot(sessionId) {
 }
 
 /**
- * Confirmación y envío de SIGTERM a un proceso del servidor remoto (acción de
- * la tabla de procesos del monitor). Destructivo → siempre pregunta; el
- * veredicto (permiso, proceso inexistente) es el del `kill` remoto.
+ * Confirmación y envío de una señal a un proceso del servidor remoto (acción
+ * de la tabla de procesos del monitor). Destructivo → siempre pregunta, y en
+ * la misma confirmación se elige la señal: SIGTERM (por defecto, le pide que
+ * termine y puede limpiar) o SIGKILL (lo mata sin más). El veredicto
+ * (permiso, proceso inexistente) es el del `kill` remoto.
  */
 async function confirmKillRemoteProcess(sessionId, pid, command) {
   if (!Number.isInteger(pid) || pid < 2) return;
   if (!statusBarModelFor(sessions.get(sessionId))?.killProcess) return;
-  const ok = await confirmThemed({
+  // La elección se anota al cambiar: la limpieza del diálogo (que quita el
+  // selector) corre antes de que la promesa se resuelva.
+  let force = false;
+  const onShow = () => {
+    const messageEl = document.getElementById("credential-modal-message");
+    if (!messageEl) return undefined;
+    const box = document.createElement("fieldset");
+    box.className = "metrics-kill-signal";
+    box.innerHTML = `
+      <legend>${escHtml(t("metrics.kill_signal"))}</legend>
+      <label class="checkbox-label"><input type="radio" name="metrics-kill-signal" value="term" checked />
+        <span>${escHtml(t("metrics.kill_sigterm"))}</span></label>
+      <label class="checkbox-label"><input type="radio" name="metrics-kill-signal" value="kill" />
+        <span>${escHtml(t("metrics.kill_sigkill"))}</span></label>`;
+    box.addEventListener("change", (e) => {
+      if (e.target?.name === "metrics-kill-signal") force = e.target.value === "kill";
+    });
+    messageEl.after(box);
+    return () => box.remove();
+  };
+  const result = await promptCredential({
     title: t("metrics.kill_title"),
-    message: t("metrics.kill_message").replace("{cmd}", command).replace("{pid}", String(pid)),
+    message: t("metrics.kill_message", { cmd: command, pid: String(pid) }),
     submitLabel: t("metrics.kill_confirm"),
+    hideInput: true,
     danger: true,
+    onShow,
   });
-  if (!ok) return;
+  if (!result) return;
   try {
-    await invoke("ssh_kill_process", { sessionId, pid, force: false });
-    toast(t("metrics.killed").replace("{pid}", String(pid)), "success");
+    await invoke("ssh_kill_process", { sessionId, pid, force });
+    toast(t("metrics.killed", { pid: String(pid), signal: force ? "SIGKILL" : "SIGTERM" }), "success");
   } catch (err) {
     toast(`${err}`, "error");
   }
@@ -17938,7 +18151,8 @@ function ingestMetricsSample(s, m) {
   checkMetricsAlerts(s, st, m);
   if (s.id === activeSessionId) {
     renderStatusMetrics(s);
-    if (s._metricsPanelOpen) renderMetricsPanel(s);
+    // En pausa, el panel enseña la copia congelada: nada que repintar.
+    if (s._metricsPanelOpen && !s._procView?.paused) renderMetricsPanel(s);
   }
 }
 

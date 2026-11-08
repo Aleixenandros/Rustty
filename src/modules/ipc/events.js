@@ -300,7 +300,7 @@ export function eventName(kind, suffix) {
  * @property {number|null} netRxBps Bytes/s de bajada.
  * @property {number|null} netTxBps Bytes/s de subida.
  * @property {Array<{ filesystem: string, sizeKb: number, usedKb: number, availKb: number, mount: string }>} disks Uso por sistema de ficheros.
- * @property {Array<{ pid: number, cpuPct: number, memPct: number, command: string }>} procs Procesos top por CPU.
+ * @property {Array<{ pid: number, cpuPct: number, memPct: number, user: string, command: string }>} procs Procesos top por CPU (`user` vacío si `ps` no lo da).
  */
 
 /**

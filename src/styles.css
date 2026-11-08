@@ -3110,10 +3110,65 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 .metrics-bar-sub { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .metrics-bar { height: 6px; border-radius: var(--radius-xs); background: var(--surface0); overflow: hidden; margin-top: 2px; }
 .metrics-bar-fill { height: 100%; background: var(--blue); transition: width var(--motion-slow) var(--motion-ease); }
+.metrics-summary { display: flex; flex-direction: column; gap: 12px; }
 .metrics-proc-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .metrics-proc-table td { padding: 1px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .metrics-proc-cmd { max-width: 0; width: 100%; }
 .metrics-proc-num { text-align: right; color: var(--subtext1); }
+.metrics-proc-user { max-width: 8em; color: var(--subtext1); }
+
+/* Tabla de procesos: filtro y cabeceras ordenables. El filtro y las
+   cabeceras no se repintan con cada muestra (solo las filas): el foco y lo
+   escrito sobreviven al refresco. */
+.metrics-proc-filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+.metrics-proc-table th { padding: 0; font-weight: normal; text-align: left; white-space: nowrap; }
+.metrics-proc-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--subtext0);
+  font: inherit;
+  cursor: pointer;
+}
+.metrics-proc-sort:hover { background: var(--surface0); color: var(--text); }
+th.metrics-proc-num .metrics-proc-sort { justify-content: flex-end; }
+.metrics-sort-icon { width: 10px; height: 10px; flex-shrink: 0; visibility: hidden; }
+th.is-sorted .metrics-proc-sort { color: var(--text); font-weight: 600; }
+th.is-sorted .metrics-sort-icon { visibility: visible; }
+
+/* Pausa del refresco: botón pulsado y aviso junto al título. */
+.metrics-panel-btn.active { background: var(--surface0); color: var(--blue); }
+.metrics-paused-badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--yellow);
+  border-radius: var(--radius-xs);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Elección de señal en la confirmación de terminar un proceso. */
+.metrics-kill-signal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+}
+.metrics-kill-signal legend { margin-bottom: 4px; color: var(--subtext1); font-size: 12px; }
 .metrics-empty { color: var(--subtext0); padding: 6px 0; }
 
 /* CPU por core: mini-columnas estilo htop bajo el sparkline. Con muchos cores

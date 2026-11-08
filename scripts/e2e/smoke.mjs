@@ -35,7 +35,11 @@
 //   6d. El buscador de la barra lateral busca en el perfil actual, en uno
 //      concreto o en todos, y los perfiles se reordenan (`workspaces.mjs`).
 //   6e. La consola local tiene barra inferior y, en Linux, el monitor de
-//      recursos de este equipo (`local-status.mjs`).
+//      recursos de este equipo (`local-status.mjs`); su tabla de procesos se
+//      filtra, se ordena y se pausa sin perder el buscador en los refrescos
+//      (`metrics-panel.mjs`). Los botones de la pestaña se ocultan desde
+//      Preferencias sin que el menú contextual pierda sus paneles
+//      (`tab-buttons.mjs`).
 //   6f. Con el zoom de la interfaz al 140 %, menús, desplegables y
 //      Preferencias en su sitio y escalados (`zoom.mjs`).
 //   7. Salto activo y bastiones por la interfaz (`jump.mjs`), sin servidores:
@@ -71,6 +75,8 @@ import { checkDialogs } from "./dialogs.mjs";
 import { checkConnectionFrame, checkFrames, checkTooltips } from "./frames.mjs";
 import { checkWorkspaces } from "./workspaces.mjs";
 import { checkLocalStatusBar } from "./local-status.mjs";
+import { checkMetricsPanel } from "./metrics-panel.mjs";
+import { checkTabButtons } from "./tab-buttons.mjs";
 import { zoomDialogs, zoomFloating } from "./zoom.mjs";
 import { checkKeyboard } from "./keyboard.mjs";
 import { checkToasts } from "./toasts.mjs";
@@ -529,6 +535,8 @@ async function main() {
     await checkTooltips(app, check);
     await checkWorkspaces(app, check);
     await checkLocalStatusBar(app, check);
+    await checkMetricsPanel(app, check);
+    await checkTabButtons(app, check);
     await zoomFloating(app, check);
     await zoomDialogs(app, check);
     await checkKeyboard(app, check);

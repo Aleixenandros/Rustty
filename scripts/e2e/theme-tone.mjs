@@ -67,6 +67,37 @@ export async function checkThemeTone(app, check, artifactsDir) {
     await app.waitForApp();
     const booted = await read();
     check("tras recargar el tono claro está puesto desde el arranque", booted.tone === "light" && booted.scheme === "light", JSON.stringify(booted));
+
+    // Galería: cada tarjeta trae su tono anotado al crearla (sin medir nada al
+    // filtrar) y el chip «Claros» solo deja los claros y las opciones meta.
+    await app.jsClick("#rail-btn-settings");
+    await app.waitFor("#modal-prefs-overlay:not(.hidden)");
+    await sleep(400);
+    await app.jsClick('[data-prefs-tab="appearance"]');
+    const gallery = await app.exec(`
+      const root = document.querySelector('.theme-picker[data-for="ui"]');
+      const opts = [...root.querySelectorAll(".theme-option")];
+      const tone = (id) => root.querySelector('.theme-option[data-theme="' + id + '"]')?.dataset.themeTone || null;
+      root.querySelector('.theme-tone-chip[data-tone="light"]').click();
+      const shown = opts.filter((o) => !o.classList.contains("is-filtered-out")).map((o) => o.dataset.themeTone);
+      root.querySelector('.theme-tone-chip[data-tone="all"]').click();
+      return {
+        total: opts.length,
+        missing: opts.filter((o) => !o.dataset.themeTone).map((o) => o.dataset.theme),
+        light: tone("light"), dracula: tone("dracula"), system: tone("system"),
+        githubLight: tone("github-light"), hc: tone("github-light-high-contrast"),
+        shown: shown.length, wrong: shown.filter((t) => t !== "light" && t !== "any"),
+      };
+    `);
+    await app.jsClick("#btn-prefs-cancel");
+    await sleep(200);
+    check("cada tarjeta de la galería trae su tono anotado",
+      gallery.total > 200 && gallery.missing.length === 0, JSON.stringify(gallery.missing.slice(0, 5)));
+    check("la galería clasifica claros, oscuros, alto contraste y opciones meta",
+      gallery.light === "light" && gallery.dracula === "dark" && gallery.system === "any"
+        && gallery.githubLight === "light" && gallery.hc === "hc", JSON.stringify(gallery));
+    check("el chip «Claros» deja solo los claros (y las opciones meta)",
+      gallery.shown > 20 && gallery.wrong.length === 0, JSON.stringify({ shown: gallery.shown, wrong: gallery.wrong }));
   } finally {
     await setTheme(originalTheme).catch(() => {});
   }
