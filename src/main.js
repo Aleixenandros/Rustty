@@ -92,6 +92,7 @@ import { buildCheatsheet, filterCheatsheet } from "./modules/shortcuts/cheatshee
 import { formatAccelerator } from "./modules/platform.js";
 import { QUICK_DEFAULT_USER, buildQuickProfile, findQuickTargetProfile, formatQuickTarget, paletteQuickTarget, parseQuickTarget } from "./modules/quick-connect.js";
 import { normalizeTabWheel, tabWheelAction } from "./modules/tab-wheel.js";
+import { normalizeTabButtons } from "./modules/tab-buttons.js";
 import { firstBlockPerAlias, linkSshConfigJumps, sshConfigJumpFields } from "./modules/ssh-config-jumps.js";
 import {
   MAX_ENV_VALUE_LEN, MAX_ENV_VARS, allowsOsc7Hook, applySshConfigLaunchKey, formatEnvVarsText, launchKind,
@@ -672,6 +673,7 @@ function loadPrefs() {
   applyStrongFocus(prefs.strongFocus);
   applyTooltips(prefs.tooltips !== false);
   applyViewFade(prefs.viewFade !== false);
+  applyTabButtons(prefs.tabButtons);
   applyScrollbarStyle();
   if (loadZenMode()) applyZenMode(true);
 }
@@ -2023,6 +2025,8 @@ function openSettingsModal() {
   if (_remoteTitle) _remoteTitle.value = normalizeRemoteTitleMode(prefs.remoteTitleMode);
   const _tabWheel = document.getElementById("pref-tab-wheel");
   if (_tabWheel) _tabWheel.value = normalizeTabWheel(prefs.tabWheel);
+  const _tabButtons = document.getElementById("pref-tab-buttons");
+  if (_tabButtons) _tabButtons.value = normalizeTabButtons(prefs.tabButtons);
   const _ligEl = document.getElementById("pref-terminal-ligatures");
   if (_ligEl) _ligEl.checked = !!prefs.terminalLigatures;
   document.getElementById("pref-scrollback").value          = prefs.scrollback;
@@ -4194,6 +4198,7 @@ function readPrefsFromModal() {
     oscProgress:     document.getElementById("pref-osc-progress")?.checked ?? true,
     remoteTitleMode: normalizeRemoteTitleMode(document.getElementById("pref-remote-title")?.value),
     tabWheel: normalizeTabWheel(document.getElementById("pref-tab-wheel")?.value),
+    tabButtons: normalizeTabButtons(document.getElementById("pref-tab-buttons")?.value),
     terminalLigatures: !!document.getElementById("pref-terminal-ligatures")?.checked,
     scrollback:      parseInt(document.getElementById("pref-scrollback").value, 10) || DEFAULT_PREFS.scrollback,
     tmuxScrollbackLines: (() => {
@@ -4354,6 +4359,7 @@ function savePrefsFromModal() {
   applyNativeSelects(prefs.nativeSelects);
   applyTooltips(prefs.tooltips !== false);
   applyViewFade(prefs.viewFade !== false);
+  applyTabButtons(prefs.tabButtons);
   applyScrollbarStyle();
   applyPrefsToAllTerminals();
   renderConnectionList();
@@ -14315,6 +14321,56 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
   // selectSession/renderView llega más tarde, así no parpadea).
   updateTabSelectionClasses();
   return tab;
+}
+
+/**
+ * Paneles que ofrece una pestaña: los mismos que sus botones (SFTP, túneles,
+ * nota). Se lee de los botones del DOM, que existen aunque la preferencia
+ * «Botones de la pestaña» los oculte: el menú contextual y los atajos ofrecen
+ * así exactamente lo mismo que los botones.
+ * @param {Element|null|undefined} tab
+ */
+function tabPanelAvailability(tab) {
+  return {
+    sftp: !!tab?.querySelector(".tab-sftp"),
+    tunnels: !!tab?.querySelector(".tab-tunnels"),
+    runbook: !!tab?.querySelector(".tab-notes"),
+  };
+}
+
+/** Abre o cierra un panel de la pestaña de `sessionId` (botón, menú o atajo). */
+function toggleTabPanel(sessionId, kind) {
+  if (kind === "sftp") toggleSftpPanel(sessionId);
+  else if (kind === "tunnels") toggleTunnelPanel(sessionId);
+  else if (kind === "runbook") toggleRunbookPanel(sessionId);
+}
+
+/**
+ * Atajo: el panel de túneles o la nota de la pestaña activa. Si la pestaña no
+ * lo tiene (consola local, RDP, perfil sin guardar), lo dice en vez de callar.
+ * @param {"tunnels"|"runbook"} kind
+ */
+function toggleActiveTabPanel(kind) {
+  const tab = activeSessionId
+    ? document.querySelector(`.tab[data-session="${CSS.escape(activeSessionId)}"]`)
+    : null;
+  const sessionId = tab?.dataset.session;
+  if (!sessionId || !tabPanelAvailability(tab)[kind]) {
+    toast(kind === "runbook" ? t("notes.toast_no_profile") : t("toast.select_ssh_first"), "warning");
+    return;
+  }
+  toggleTabPanel(sessionId, kind);
+}
+
+/**
+ * Botones de la pestaña (SFTP, túneles, nota): «always» (de serie: siempre,
+ * y las ancladas solo en la activa, al pasar el ratón o con foco), «active»
+ * (solo en la pestaña activa) o «never». Lo aplica la hoja desde
+ * `body[data-tab-buttons]`; sus funciones siguen en el menú contextual de la
+ * pestaña y en los atajos.
+ */
+function applyTabButtons(mode) {
+  document.body.dataset.tabButtons = normalizeTabButtons(mode);
 }
 
 /**
@@ -30216,6 +30272,8 @@ const shortcuts = createShortcutController({
     sftp_toggle_panel: () => toggleActiveSftpPanel(),
     sftp_toggle_follow: () => toggleActiveSftpFollow(),
     sftp_toggle_sudo: () => toggleActiveSftpElevated(),
+    tunnels_toggle_panel: () => toggleActiveTabPanel("tunnels"),
+    runbook_toggle_panel: () => toggleActiveTabPanel("runbook"),
     toggle_zen_mode: () => toggleZenMode(),
     disconnect_all: () => disconnectAll(),
     open_command_editor: () => openCommandEditor(),
@@ -32512,6 +32570,14 @@ function showTabContextMenu(x, y, sessionId) {
   }
 
   const targetTab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
+  // Paneles de la sesión: los mismos que los botones de la pestaña (que la
+  // preferencia puede ocultar), para que nunca queden inaccesibles.
+  const panels = tabPanelAvailability(targetTab);
+  menu.querySelector(".tabctx-panel-sftp")?.classList.toggle("hidden", !panels.sftp);
+  menu.querySelector(".tabctx-panel-tunnels")?.classList.toggle("hidden", !panels.tunnels);
+  menu.querySelector(".tabctx-panel-runbook")?.classList.toggle("hidden", !panels.runbook);
+  menu.querySelector(".tabctx-panels-sep")?.classList.toggle("hidden",
+    !(panels.sftp || panels.tunnels || panels.runbook));
   const isPinned = !!targetTab?.classList.contains("is-pinned");
   const pinLabel = menu.querySelector(".tabctx-pin-label");
   if (pinLabel) pinLabel.textContent = isPinned ? t("tabctx.unpin") : t("tabctx.pin");
@@ -32539,6 +32605,11 @@ async function handleTabContextAction(action, data = {}) {
 
   if (action === "rdp-resolution") {
     chooseRdpResolution(targetId, data.rdpRes);
+    return;
+  }
+
+  if (action === "panel-sftp" || action === "panel-tunnels" || action === "panel-runbook") {
+    toggleTabPanel(targetId, action.slice("panel-".length));
     return;
   }
 

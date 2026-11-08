@@ -9915,6 +9915,14 @@ body.view-fade #terminals-container.view-fade-run {
 
 .tab.is-pinned .tab-close { display: none; }
 
+/* Preferencia «Botones de la pestaña» (modules/tab-buttons.js): «always» es
+   lo de arriba; «active», solo en la pestaña activa; «never», ninguno (sus
+   funciones siguen en el menú contextual de la pestaña y en los atajos). */
+body[data-tab-buttons="active"] .tab:not(.active) :is(.tab-sftp, .tab-tunnels, .tab-notes),
+body[data-tab-buttons="never"] .tab :is(.tab-sftp, .tab-tunnels, .tab-notes) {
+  display: none;
+}
+
 /* ─── Estado ocupado global — slice estético #6 ────────────────
    Aplica cursor: progress a cualquier elemento (y sus hijos) que
    tenga la clase .is-busy o el atributo aria-busy. Útil mientras

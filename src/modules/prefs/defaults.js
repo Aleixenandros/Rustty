@@ -147,6 +147,10 @@ export const DEFAULT_PREFS = {
   // Rueda del ratón sobre la barra de pestañas: "scroll" (desplaza la tira,
   // por defecto), "switch" (cambia de pestaña) u "off".
   tabWheel:           "scroll",
+  // Botones de la pestaña (SFTP, túneles, nota): "always" (de serie; las
+  // ancladas, solo en la activa o al pasar el ratón), "active" o "never". Sus
+  // funciones siguen en el menú contextual de la pestaña y en los atajos.
+  tabButtons:         "always",
   scrollback:      5000,
   // Directorio inicial de las consolas locales nuevas. "" = $HOME (o el dir del
   // usuario). Una ruta válida se usa como cwd al abrir/reabrir la consola; si no

@@ -798,6 +798,19 @@
         <div class="ctx-submenu" id="tabctx-rdp-res-submenu" role="menu" aria-labelledby="tabctx-rdp-res-label"></div>
       </div>
 
+      <!-- Paneles de la sesión: lo mismo que los botones de la pestaña, que
+           pueden ocultarse en Preferencias (visibles según los que tenga) -->
+      <div class="ctx-sep tabctx-panels-sep hidden"></div>
+      <button class="ctx-item tabctx-panel-sftp hidden" data-tabctx="panel-sftp">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-folder"/></svg></span><span data-i18n="sftp.panel">Panel SFTP</span>
+      </button>
+      <button class="ctx-item tabctx-panel-tunnels hidden" data-tabctx="panel-tunnels">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span><span data-i18n="tunnels.panel">Túneles SSH</span>
+      </button>
+      <button class="ctx-item tabctx-panel-runbook hidden" data-tabctx="panel-runbook">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-file"/></svg></span><span data-i18n="notes.runbook_title">Nota (runbook)</span>
+      </button>
+
       <!-- Grupo 2 · Acciones de división/vista (visibilidad calculada al abrir el menú) -->
       <div class="ctx-sep tabctx-view-sep hidden"></div>
       <button class="ctx-item tabctx-view-add hidden" data-tabctx="view-add">
@@ -2636,6 +2649,16 @@
                 </select>
               </div>
               <p class="settings-hint" data-i18n="prefs_terminal.tab_wheel_hint">Con muchas pestañas abiertas, girar la rueda sobre ellas mueve la barra para llegar a las que no caben. Ctrl+rueda sigue siendo el zoom del terminal.</p>
+
+              <div class="settings-row settings-row-inline">
+                <label for="pref-tab-buttons" data-i18n="prefs_terminal.tab_buttons">Botones de la pestaña</label>
+                <select id="pref-tab-buttons">
+                  <option value="always" data-i18n="prefs_terminal.tab_buttons_always">Siempre</option>
+                  <option value="active" data-i18n="prefs_terminal.tab_buttons_active">Solo en la activa</option>
+                  <option value="never" data-i18n="prefs_terminal.tab_buttons_never">Nunca</option>
+                </select>
+              </div>
+              <p class="settings-hint" data-i18n="prefs_terminal.tab_buttons_hint">Los accesos al panel SFTP, a los túneles y a la nota de cada pestaña. Ocultos, siguen en el menú del clic derecho sobre la pestaña y en sus atajos. Las pestañas ancladas los muestran solo en la activa o al pasar el ratón.</p>
 
               <div class="settings-row">
                 <label for="pref-local-cwd" data-i18n="prefs_terminal.local_cwd">Carpeta inicial de la consola local</label>

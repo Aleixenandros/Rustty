@@ -22,7 +22,7 @@ export const SHORTCUT_GROUPS = [
   ] },
   { id: "tabs", actions: [
     "new_local_shell", "close_tab", "next_tab", "prev_tab", "next_pane", "prev_pane", "reconnect_session",
-    "toggle_read_only",
+    "toggle_read_only", "tunnels_toggle_panel", "runbook_toggle_panel",
   ] },
   { id: "terminal", actions: [
     "copy_terminal", "paste_terminal", "paste_password", "find_in_terminal", "quick_select", "clear_terminal",

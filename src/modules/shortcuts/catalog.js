@@ -42,6 +42,11 @@ export const SHORTCUT_ACTIONS = {
   sftp_toggle_panel: { default: "Ctrl+Shift+F" },
   sftp_toggle_follow: { default: null },
   sftp_toggle_sudo: { default: null },
+  // Paneles de túneles y de la nota (runbook) de la pestaña activa: lo mismo
+  // que sus botones en la pestaña, que pueden ocultarse. Sin combinación de
+  // fábrica: el usuario la elige.
+  tunnels_toggle_panel: { default: null },
+  runbook_toggle_panel: { default: null },
   toggle_zen_mode: { default: "F11" },
   disconnect_all: { default: "" },
   open_command_editor: { default: "Ctrl+Shift+E" },
