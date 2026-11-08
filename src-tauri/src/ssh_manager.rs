@@ -48,7 +48,7 @@ use crate::session_ops::{
     self, ForwardStep, KeepaliveOutcome, OpDone, OpLimits, SessionOps, SharedHandle, ShellRequest,
 };
 use crate::tmux::bridge::{BridgeOut, ControlBridge};
-use crate::tunnel_throttle::TunnelTraffic;
+use crate::tunnel_throttle::{TrafficSink, TunnelConnection, TunnelTraffic};
 
 /// Timeout TCP por defecto al abrir la conexión inicial. Sin techo russh
 /// puede colgarse minutos si el destino no responde (puerto filtrado, host
@@ -184,6 +184,8 @@ struct SshTunnelTrafficEvent {
     id: String,
     bytes_up: u64,
     bytes_down: u64,
+    /// Conexiones abiertas ahora mismo por el túnel.
+    active_connections: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3204,7 +3206,12 @@ async fn open_tunnel_channel(
     .await
     {
         Ok(Ok(channel)) => {
-            let on_traffic = tunnel_traffic_emitter(app_handle.clone(), &session_id, &tunnel_id);
+            // Desde aquí la conexión cuenta como activa en el túnel, hasta que
+            // se suelte `conn` (fin, error o tarea abortada).
+            let conn = TunnelConnection::open(
+                traffic,
+                tunnel_traffic_emitter(app_handle.clone(), &session_id, &tunnel_id),
+            );
             tokio::spawn(async move {
                 let mut stream = stream;
                 if socks
@@ -3215,7 +3222,7 @@ async fn open_tunnel_channel(
                 {
                     return;
                 }
-                pump_tunnel(channel, stream, traffic, on_traffic).await;
+                pump_tunnel(channel, stream, conn).await;
             });
             return;
         }
@@ -3362,15 +3369,20 @@ pub(crate) fn tunnel_traffic_emitter(
     app_handle: AppHandle,
     session_id: &str,
     tunnel_id: &str,
-) -> impl Fn(u64, u64) + Send + Sync + 'static {
+) -> TrafficSink {
     let event = event_name(EventKind::SshTunnelTraffic, session_id);
     let id = tunnel_id.to_string();
-    move |bytes_up, bytes_down| {
+    Arc::new(move |snap| {
         let _ = app_handle.emit(
             &event,
-            SshTunnelTrafficEvent { id: id.clone(), bytes_up, bytes_down },
+            SshTunnelTrafficEvent {
+                id: id.clone(),
+                bytes_up: snap.bytes_up,
+                bytes_down: snap.bytes_down,
+                active_connections: snap.active_connections,
+            },
         );
-    }
+    })
 }
 
 /// Autenticación vía agente SSH. Probamos cada identidad hasta que una
@@ -5960,7 +5972,9 @@ mod tests {
         let mut client_sock = TcpStream::connect(addr).await.unwrap();
         let (pump_sock, _) = listener.accept().await.unwrap();
         let traffic = Arc::new(TunnelTraffic::default());
-        let pump = tokio::spawn(pump_tunnel(channel, pump_sock, traffic.clone(), |_, _| {}));
+        let conn = TunnelConnection::open(traffic.clone(), Arc::new(|_| {}));
+        let pump = tokio::spawn(pump_tunnel(channel, pump_sock, conn));
+        assert_eq!(traffic.active_connections(), 1, "la conexión cuenta mientras bombea");
 
         // Subida que el servidor nunca absorberá...
         client_sock.write_all(&vec![b'u'; 64 * 1024]).await.unwrap();
@@ -5981,5 +5995,7 @@ mod tests {
         let (_up, down) = traffic.totals();
         assert_eq!(down as usize, expected);
         pump.abort();
+        let _ = pump.await;
+        assert_eq!(traffic.active_connections(), 0, "abortar el bombeo la descuenta");
     }
 }

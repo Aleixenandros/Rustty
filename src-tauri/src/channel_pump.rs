@@ -34,7 +34,7 @@
 //! va con plazo ([`finish_channel`]).
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use russh::client;
@@ -42,7 +42,7 @@ use russh::{ChannelMsg, ChannelWriteHalf};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::locks::MutexExt;
-use crate::tunnel_throttle::TunnelTraffic;
+use crate::tunnel_throttle::TunnelConnection;
 
 /// Lo que se lee de una vez del origen de una subida.
 const UPLOAD_CHUNK: usize = 16 * 1024;
@@ -147,46 +147,46 @@ pub(crate) async fn finish_channel(write: &ChannelWriteHalf<client::Msg>, eof: b
 }
 
 /// Bombea una conexión de túnel (`-L`, SOCKS o `-R`): [`pump_stream`] con los
-/// eventos de tráfico coalescidos. `traffic` es el acumulado del túnel entero;
-/// `on_traffic` recibe sus totales.
+/// eventos de tráfico coalescidos. `conn` es la conexión viva del túnel (la
+/// cuenta en sus conexiones activas hasta que se suelta, también si este
+/// futuro se aborta) y por ella salen los totales del túnel entero.
 pub(crate) async fn pump_tunnel<S>(
     channel: russh::Channel<client::Msg>,
     stream: S,
-    traffic: Arc<TunnelTraffic>,
-    on_traffic: impl Fn(u64, u64) + Send + Sync + 'static,
+    conn: TunnelConnection,
 ) where
     S: AsyncRead + AsyncWrite,
 {
-    let emitter = TunnelTrafficEmitter::new(traffic, on_traffic);
+    let emitter = TunnelTrafficEmitter::new(&conn);
     pump_stream(channel, stream, |up, down| emitter.add(up, down)).await;
-    emitter.flush();
+    // Al soltar `conn` se avisa con los totales exactos y una conexión menos,
+    // aunque el último chunk no cruzara el umbral de emisión.
 }
 
 /// Coalescing de los eventos de tráfico de UNA conexión de túnel: en vez de
 /// emitir por cada chunk (avalancha IPC en transferencias masivas), se emite a
-/// lo sumo cada `TRAFFIC_MIN_INTERVAL` o cada `TRAFFIC_MIN_BYTES`, y `flush`
-/// manda los totales exactos al terminar. El ritmo lo deciden los bytes de
-/// ESTA conexión; el evento lleva el acumulado del túnel. Con interior mutable
-/// porque las dos direcciones del bombeo corren como futuros independientes.
-struct TunnelTrafficEmitter<F: Fn(u64, u64)> {
-    traffic: Arc<TunnelTraffic>,
-    on_traffic: F,
+/// lo sumo cada `TRAFFIC_MIN_INTERVAL` o cada `TRAFFIC_MIN_BYTES`; el aviso
+/// final lo da la [`TunnelConnection`] al soltarse. El ritmo lo deciden los
+/// bytes de ESTA conexión; el evento lleva el acumulado del túnel. Con interior
+/// mutable porque las dos direcciones del bombeo corren como futuros
+/// independientes.
+struct TunnelTrafficEmitter<'a> {
+    conn: &'a TunnelConnection,
     conn_total: AtomicU64,
     last: Mutex<(Instant, u64)>,
 }
 
-impl<F: Fn(u64, u64)> TunnelTrafficEmitter<F> {
-    fn new(traffic: Arc<TunnelTraffic>, on_traffic: F) -> Self {
+impl<'a> TunnelTrafficEmitter<'a> {
+    fn new(conn: &'a TunnelConnection) -> Self {
         Self {
-            traffic,
-            on_traffic,
+            conn,
             conn_total: AtomicU64::new(0),
             last: Mutex::new((Instant::now(), 0)),
         }
     }
 
     fn add(&self, up: u64, down: u64) {
-        self.traffic.add(up, down);
+        self.conn.traffic().add(up, down);
         let delta = up.saturating_add(down);
         let total = self
             .conn_total
@@ -197,22 +197,8 @@ impl<F: Fn(u64, u64)> TunnelTrafficEmitter<F> {
             last.0.elapsed(),
             total.saturating_sub(last.1),
         ) {
-            self.emit();
+            self.conn.emit();
             *last = (Instant::now(), total);
-        }
-    }
-
-    fn emit(&self) {
-        let (bytes_up, bytes_down) = self.traffic.totals();
-        (self.on_traffic)(bytes_up, bytes_down);
-    }
-
-    /// Flush final: la UI ve los totales exactos aunque el último chunk no
-    /// cruzara el umbral de emisión.
-    fn flush(&self) {
-        let total = self.conn_total.load(Ordering::Relaxed);
-        if total != self.last.lock_recover().1 {
-            self.emit();
         }
     }
 }

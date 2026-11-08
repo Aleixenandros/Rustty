@@ -2442,6 +2442,10 @@
     "close_keep": "Leave them open",
     "close_stop_all": "Close every tunnel",
     "active_count": "{n} tunnel(s) active",
+    "connections": "{n} connection(s)",
+    "connections_title": "Connections currently open through this tunnel",
+    "copy_address": "Copy address",
+    "open_browser": "Open in browser",
     "stay_open_note": "{n} tunnel(s) open: they keep running after you close this panel."
   },
   "jump": {

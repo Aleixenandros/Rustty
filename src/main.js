@@ -161,6 +161,7 @@ import {
 } from "./modules/profiles/bulk-edit.js";
 import { commandDraftKey, isLocalShellReady, isLocalShellSession } from "./modules/sessions/local-shell.js";
 import { connectionTunnelOwners } from "./modules/tunnels/lifecycle.js";
+import { localTunnelAddress, localTunnelUrl } from "./modules/tunnels/address.js";
 import { DEFAULT_PREFS, createDefaultPrefs } from "./modules/prefs/defaults.js";
 import { loadPrefs as readSavedPrefs, savePrefs as writeSavedPrefs } from "./modules/prefs/storage.js";
 import { applyPrefsForm } from "./modules/prefs/sync.js";
@@ -17851,8 +17852,8 @@ async function registerSshListeners(sessionId, terminal, dataChannel) {
     if (!tunnel) return;
     tunnel.bytesUp = payload.bytesUp || 0;
     tunnel.bytesDown = payload.bytesDown || 0;
-    renderTunnelList(sessionId);
-    if (isGlobalTunnelsModalOpen()) renderGlobalTunnelLists();
+    tunnel.activeConnections = payload.activeConnections || 0;
+    scheduleTunnelTrafficRender(sessionId);
   }));
 
   // Monitor de recursos: cada muestra la digiere `ingestMetricsSample`.
@@ -21789,8 +21790,9 @@ function renderGlobalTunnelLists() {
           <span class="tunnel-kind">${tunnel.tunnelType === "dynamic" ? "SOCKS" : tunnel.tunnelType.toUpperCase()}</span>
           <span class="global-tunnel-profile">${escHtml(profile?.name || "SSH")}</span>
           <span class="global-tunnel-desc">${escHtml(describeTunnel(tunnel))}</span>
-          <span class="global-tunnel-meta">↑ ${formatSize(tunnel.bytesUp || 0)} · ↓ ${formatSize(tunnel.bytesDown || 0)}</span>
+          <span class="global-tunnel-meta">↑ ${formatSize(tunnel.bytesUp || 0)} · ↓ ${formatSize(tunnel.bytesDown || 0)} · ${tunnelConnectionsHtml(tunnel)}</span>
           <span class="global-tunnel-row-actions">
+            ${localTunnelActionsHtml(tunnel, "data-global-tunnel-action")}
             <button type="button" class="btn-secondary btn-compact danger" data-global-tunnel-action="stop-active">${escHtml(t("tunnels.stop_short"))}</button>
           </span>
         </div>`)
@@ -22097,8 +22099,11 @@ function renderTunnelList(sessionId) {
         <strong>${escHtml(tun.name || describeTunnel(tun))}</strong>
         <small>${escHtml(describeTunnel(tun))}</small>
       </span>
-      <span class="tunnel-traffic">↑ ${formatSize(tun.bytesUp || 0)} · ↓ ${formatSize(tun.bytesDown || 0)}</span>
-      <button type="button" class="tunnel-stop" title="${escHtml(t("tunnels.stop"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+      <span class="tunnel-traffic">↑ ${formatSize(tun.bytesUp || 0)} · ↓ ${formatSize(tun.bytesDown || 0)} · ${tunnelConnectionsHtml(tun)}</span>
+      <span class="tunnel-row-actions">
+        ${localTunnelActionsHtml(tun, "data-tunnel-action")}
+        <button type="button" class="tunnel-stop" title="${escHtml(t("tunnels.stop"))}" aria-label="${escHtml(t("tunnels.stop"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+      </span>
     </div>`).join("");
   list.querySelectorAll(".tunnel-stop").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -22106,6 +22111,78 @@ function renderTunnelList(sessionId) {
       if (id) stopSshTunnel(sessionId, id);
     });
   });
+  list.querySelectorAll("[data-tunnel-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.closest(".tunnel-row")?.dataset.tunnelId;
+      const tun = id ? s.tunnels?.get(id) : null;
+      if (tun) runLocalTunnelAction(btn.getAttribute("data-tunnel-action"), tun);
+    });
+  });
+}
+
+/** Sesiones con datos de túnel nuevos por pintar en el próximo frame. */
+const _tunnelTrafficDirty = new Set();
+let _tunnelTrafficFrame = 0;
+
+/**
+ * Repinta las listas de túneles con los datos de tráfico recibidos, como mucho
+ * una vez por frame: además del tráfico (ya coalescido en el backend), cada
+ * conexión que se abre o se cierra manda su evento, y un navegador por un
+ * SOCKS abre decenas por segundo.
+ * @param {string} sessionId
+ */
+function scheduleTunnelTrafficRender(sessionId) {
+  _tunnelTrafficDirty.add(sessionId);
+  if (_tunnelTrafficFrame) return;
+  _tunnelTrafficFrame = requestAnimationFrame(() => {
+    _tunnelTrafficFrame = 0;
+    const dirty = [..._tunnelTrafficDirty];
+    _tunnelTrafficDirty.clear();
+    for (const sid of dirty) renderTunnelList(sid);
+    if (isGlobalTunnelsModalOpen()) renderGlobalTunnelLists();
+  });
+}
+
+/**
+ * Cuántas conexiones tiene abiertas ahora un túnel (lo cuenta el backend en
+ * cada evento de tráfico: sube al abrir un canal y baja al cerrarlo).
+ * @param {{ activeConnections?: number }} tun
+ */
+function tunnelConnectionsHtml(tun) {
+  const n = Number(tun.activeConnections) || 0;
+  return `<span class="tunnel-conns${n ? " is-active" : ""}" title="${escHtml(t("tunnels.connections_title"))}">${escHtml(t("tunnels.connections", { n }))}</span>`;
+}
+
+/**
+ * «Copiar dirección» y «Abrir en el navegador» de un túnel local (`-L`). Los
+ * SOCKS y los remotos no tienen un servicio local al que apuntar: nada.
+ * @param {object} tun
+ * @param {string} attr  Atributo con el que el llamador reconoce la acción.
+ */
+function localTunnelActionsHtml(tun, attr) {
+  if (!localTunnelAddress(tun)) return "";
+  const copy = escHtml(t("tunnels.copy_address"));
+  const open = escHtml(t("tunnels.open_browser"));
+  return `<button type="button" class="tunnel-action" ${attr}="copy-address" title="${copy}" aria-label="${copy}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></button>
+        <button type="button" class="tunnel-action" ${attr}="open-browser" title="${open}" aria-label="${open}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-external"/></svg></button>`;
+}
+
+/**
+ * Ejecuta una acción de túnel local: copiar `host:puerto` o abrir
+ * `http://host:puerto/` con el opener del sistema (el mismo de los enlaces).
+ * @param {string | null} action
+ * @param {object} tun
+ */
+async function runLocalTunnelAction(action, tun) {
+  if (action === "copy-address") {
+    const address = localTunnelAddress(tun);
+    if (!address) return;
+    await writeSystemClipboardText(address);
+    toast(t("toast.host_copied", { host: address }), "success");
+  } else if (action === "open-browser") {
+    const url = localTunnelUrl(tun);
+    if (url) openExternalUrl(url);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -28005,6 +28082,9 @@ function bindUIEvents() {
       const action = btn.dataset.globalTunnelAction;
       if (action === "stop-active") {
         stopSshTunnel(row.dataset.sessionId, row.dataset.tunnelId);
+      } else if (action === "copy-address" || action === "open-browser") {
+        const tun = sessions.get(row.dataset.sessionId)?.tunnels?.get(row.dataset.tunnelId);
+        if (tun) runLocalTunnelAction(action, tun);
       } else if (action === "start-saved") {
         startSavedGlobalTunnel(row.dataset.profileId, row.dataset.tunnelId);
       } else if (action === "delete-saved") {

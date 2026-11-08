@@ -2442,6 +2442,10 @@
     "close_keep": "保持開啟",
     "close_stop_all": "關閉所有通道",
     "active_count": "{n} 個通道作用中",
+    "connections": "{n} 個連線",
+    "connections_title": "目前透過此通道開啟的連線",
+    "copy_address": "複製位址",
+    "open_browser": "在瀏覽器中開啟",
     "stay_open_note": "{n} 個通道處於開啟狀態：關閉此面板後它們仍會繼續執行。"
   },
   "jump": {

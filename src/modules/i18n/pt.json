@@ -2442,6 +2442,10 @@
     "close_keep": "Deixá-los abertos",
     "close_stop_all": "Fechar todos os túneis",
     "active_count": "{n} túnel(eis) ativos",
+    "connections": "{n} ligação(ões)",
+    "connections_title": "Ligações abertas neste momento por este túnel",
+    "copy_address": "Copiar endereço",
+    "open_browser": "Abrir no navegador",
     "stay_open_note": "{n} túnel(eis) abertos: continuam a funcionar depois de fechares este painel."
   },
   "jump": {

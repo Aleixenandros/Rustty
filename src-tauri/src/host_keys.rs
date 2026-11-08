@@ -1064,18 +1064,23 @@ impl client::Handler for KnownHostsClient {
             return Ok(());
         };
         reply.accept().await;
+        // Desde que se acepta el canal, la conexión cuenta como activa en el
+        // túnel; si no se llega a conectar con el destino local, se descuenta
+        // al soltarse `conn` en la tarea.
+        let conn = crate::tunnel_throttle::TunnelConnection::open(
+            target.traffic,
+            crate::ssh_manager::tunnel_traffic_emitter(
+                target.app_handle,
+                &target.session_id,
+                &target.tunnel_id,
+            ),
+        );
+        let (host, port) = (target.host, target.port);
         tokio::spawn(async move {
-            if let Ok(stream) =
-                tokio::net::TcpStream::connect((target.host.as_str(), target.port)).await
-            {
+            if let Ok(stream) = tokio::net::TcpStream::connect((host.as_str(), port)).await {
                 // El mismo bombeo que un túnel local: direcciones independientes
                 // y tráfico coalescido con el acumulado del túnel.
-                let on_traffic = crate::ssh_manager::tunnel_traffic_emitter(
-                    target.app_handle,
-                    &target.session_id,
-                    &target.tunnel_id,
-                );
-                crate::channel_pump::pump_tunnel(channel, stream, target.traffic, on_traffic).await;
+                crate::channel_pump::pump_tunnel(channel, stream, conn).await;
             }
         });
         Ok(())

@@ -2442,6 +2442,10 @@
     "close_keep": "Biarkan tetap terbuka",
     "close_stop_all": "Tutup semua tunnel",
     "active_count": "{n} tunnel aktif",
+    "connections": "{n} koneksi",
+    "connections_title": "Koneksi yang sedang terbuka melalui tunnel ini",
+    "copy_address": "Salin alamat",
+    "open_browser": "Buka di peramban",
     "stay_open_note": "{n} tunnel terbuka: tetap berjalan setelah Anda menutup panel ini."
   },
   "jump": {

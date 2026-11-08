@@ -15,8 +15,14 @@
 //! de la conexión que lo emite: un túnel SOCKS o `-L` atiende muchas conexiones
 //! a la vez o seguidas, y con contadores por conexión el ↑/↓ saltaba entre ellas
 //! y caía a unos KB en cuanto una conexión nueva informaba.
+//!
+//! También lleva cuántas conexiones tiene el túnel **ahora mismo**: cada canal
+//! (`direct-tcpip` de un `-L`/SOCKS o `forwarded-tcpip` de un `-R`) cuenta
+//! mientras vive su [`TunnelConnection`], un guard que resta al soltarse pase
+//! lo que pase (fin normal, error o tarea abortada) y avisa del cambio.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Intervalo mínimo entre eventos de tráfico coalescidos (~4 por segundo),
@@ -45,7 +51,21 @@ pub fn should_emit_traffic(elapsed: Duration, bytes_since_last: u64) -> bool {
 pub struct TunnelTraffic {
     up: AtomicU64,
     down: AtomicU64,
+    /// Conexiones abiertas ahora (una por [`TunnelConnection`] viva).
+    active: AtomicU64,
 }
+
+/// Lo que se le cuenta a la interfaz de un túnel: totales y conexiones vivas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrafficSnapshot {
+    pub bytes_up: u64,
+    pub bytes_down: u64,
+    pub active_connections: u64,
+}
+
+/// Quien recibe las instantáneas de un túnel (en la app, el emisor del evento
+/// `ssh-tunnel-traffic-*`; en los tests, lo que haga falta).
+pub type TrafficSink = Arc<dyn Fn(TrafficSnapshot) + Send + Sync>;
 
 impl TunnelTraffic {
     /// Suma `up`/`down` bytes y devuelve los totales `(subida, bajada)`.
@@ -58,6 +78,55 @@ impl TunnelTraffic {
     /// Totales `(subida, bajada)` acumulados.
     pub fn totals(&self) -> (u64, u64) {
         (self.up.load(Ordering::Relaxed), self.down.load(Ordering::Relaxed))
+    }
+
+    /// Conexiones abiertas ahora mismo.
+    pub fn active_connections(&self) -> u64 {
+        self.active.load(Ordering::Relaxed)
+    }
+
+    /// Totales y conexiones vivas, para el evento.
+    pub fn snapshot(&self) -> TrafficSnapshot {
+        let (bytes_up, bytes_down) = self.totals();
+        TrafficSnapshot {
+            bytes_up,
+            bytes_down,
+            active_connections: self.active_connections(),
+        }
+    }
+}
+
+/// Una conexión viva de un túnel. Abrirla suma una conexión y soltarla la
+/// resta, también si la tarea que la lleva falla o se aborta: así el contador
+/// no se queda con conexiones fantasma. Las dos cosas avisan a `sink`.
+pub struct TunnelConnection {
+    traffic: Arc<TunnelTraffic>,
+    sink: TrafficSink,
+}
+
+impl TunnelConnection {
+    pub fn open(traffic: Arc<TunnelTraffic>, sink: TrafficSink) -> Self {
+        traffic.active.fetch_add(1, Ordering::Relaxed);
+        let conn = Self { traffic, sink };
+        conn.emit();
+        conn
+    }
+
+    /// El tráfico acumulado del túnel al que pertenece.
+    pub fn traffic(&self) -> &TunnelTraffic {
+        &self.traffic
+    }
+
+    /// Avisa a `sink` con la instantánea actual del túnel.
+    pub fn emit(&self) {
+        (self.sink)(self.traffic.snapshot());
+    }
+}
+
+impl Drop for TunnelConnection {
+    fn drop(&mut self) {
+        self.traffic.active.fetch_sub(1, Ordering::Relaxed);
+        self.emit();
     }
 }
 
@@ -111,5 +180,64 @@ mod tests {
             h.join().unwrap();
         }
         assert_eq!(t.totals(), (20_000, 40_000));
+    }
+
+    fn recording_sink() -> (TrafficSink, Arc<std::sync::Mutex<Vec<TrafficSnapshot>>>) {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = Arc::clone(&seen);
+        let sink: TrafficSink = Arc::new(move |snap| log.lock().unwrap().push(snap));
+        (sink, seen)
+    }
+
+    #[test]
+    fn las_conexiones_del_tunel_suben_al_abrir_y_bajan_al_soltar() {
+        let t = Arc::new(TunnelTraffic::default());
+        let (sink, seen) = recording_sink();
+        let a = TunnelConnection::open(Arc::clone(&t), Arc::clone(&sink));
+        let b = TunnelConnection::open(Arc::clone(&t), Arc::clone(&sink));
+        assert_eq!(t.active_connections(), 2);
+        b.traffic().add(10, 20);
+        drop(b);
+        assert_eq!(t.active_connections(), 1);
+        drop(a);
+        assert_eq!(t.active_connections(), 0);
+        // Cada cambio se avisa, con los totales del túnel.
+        let vistos: Vec<_> = seen.lock().unwrap().iter().map(|s| s.active_connections).collect();
+        assert_eq!(vistos, vec![1, 2, 1, 0]);
+        assert_eq!(
+            seen.lock().unwrap().last().copied(),
+            Some(TrafficSnapshot { bytes_up: 10, bytes_down: 20, active_connections: 0 })
+        );
+    }
+
+    /// Una conexión que acaba en error o con su tarea abortada también resta:
+    /// el guard se suelta al deshacer la pila.
+    #[test]
+    fn una_conexion_abortada_o_con_panico_no_queda_contada() {
+        let t = Arc::new(TunnelTraffic::default());
+        let (sink, _) = recording_sink();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let conn = TunnelConnection::open(Arc::clone(&t), Arc::clone(&sink));
+            let tarea = tokio::spawn(async move {
+                let _conn = conn;
+                std::future::pending::<()>().await;
+            });
+            tokio::task::yield_now().await;
+            assert_eq!(t.active_connections(), 1);
+            tarea.abort();
+            let _ = tarea.await;
+            assert_eq!(t.active_connections(), 0);
+        });
+        let t2 = Arc::clone(&t);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _conn = TunnelConnection::open(t2, sink);
+            panic!("fallo a mitad de la conexión");
+        }));
+        assert!(r.is_err());
+        assert_eq!(t.active_connections(), 0);
     }
 }

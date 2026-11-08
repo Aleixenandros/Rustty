@@ -9441,7 +9441,8 @@ body.sftp-log-resizing {
 }
 
 .tunnel-close,
-.tunnel-stop {
+.tunnel-stop,
+.tunnel-action {
   width: 24px;
   height: 24px;
   border-radius: var(--radius-xs);
@@ -9455,6 +9456,21 @@ body.sftp-log-resizing {
 .tunnel-stop:hover {
   color: var(--red);
   background: color-mix(in srgb, var(--red) 14%, transparent);
+}
+
+.tunnel-action:hover {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+}
+
+.tunnel-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tunnel-conns.is-active {
+  color: var(--green);
 }
 
 .tunnel-form {
@@ -9503,7 +9519,7 @@ body.sftp-log-resizing {
 
 .tunnel-row {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr) auto 28px;
+  grid-template-columns: 58px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
@@ -9561,7 +9577,7 @@ body.sftp-log-resizing {
     grid-template-columns: 1fr 1fr 1fr;
   }
   .tunnel-row {
-    grid-template-columns: 58px minmax(0, 1fr) 28px;
+    grid-template-columns: 58px minmax(0, 1fr) auto;
   }
   .tunnel-traffic {
     grid-column: 2 / 3;

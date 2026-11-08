@@ -281,6 +281,8 @@ export function eventName(kind, suffix) {
  * @property {string} id Identificador del túnel.
  * @property {number} bytesUp Bytes enviados acumulados.
  * @property {number} bytesDown Bytes recibidos acumulados.
+ * @property {number} activeConnections Conexiones abiertas ahora por el túnel
+ *   (sube al abrir cada canal y baja al cerrarlo, también si falla).
  */
 
 /**
