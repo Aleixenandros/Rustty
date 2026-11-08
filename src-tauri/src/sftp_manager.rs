@@ -1429,7 +1429,7 @@ impl FileTransfer for SftpBackend {
     }
 
     async fn create_file(&mut self, path: &str) -> Result<(), String> {
-        let file = self
+        let mut file = self
             .sftp
             .open_with_flags(
                 path.to_string(),
@@ -1437,8 +1437,9 @@ impl FileTransfer for SftpBackend {
             )
             .await
             .map_err(|e| e.to_string())?;
-        drop(file);
-        Ok(())
+        // Como toda escritura SFTP, se cierra esperando el acuse: con `drop`,
+        // un fallo del servidor al cerrar (disco lleno, cuota) se perdía.
+        close_written(&mut file).await
     }
 
     async fn remove(&mut self, path: &str, is_dir: bool) -> Result<(), String> {
@@ -5558,6 +5559,42 @@ mod tests {
         let profile = ssh_profile(server);
         let (result, stages) = open_panel_sftp(&profile, &server.known_hosts_path()).await;
         result.unwrap_or_else(|e| panic!("no se abrió SFTP: {e}. Registro: {stages:#?}"))
+    }
+
+    /// **Integración**: «Nuevo fichero» del panel crea un fichero vacío,
+    /// cerrado con acuse del servidor, y no pisa uno que ya exista.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn sftp_nuevo_fichero_se_crea_vacio_y_no_pisa_otro() {
+        let _guard = SFTP_IT_LOCK.lock().await;
+        let Some(server) = crate::ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        let root = std::env::temp_dir().join(format!("rustty-newfile-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("carpeta remota");
+        let mut backend = SftpBackend {
+            sftp: fixture_sftp(&server).await,
+            max_parallelism: 1,
+            _jump: None,
+            resume: None,
+        };
+        let nuevo = root.join("nuevo.txt");
+        backend
+            .create_file(&nuevo.to_string_lossy())
+            .await
+            .expect("crear el fichero");
+        assert_eq!(std::fs::metadata(&nuevo).expect("existe").len(), 0);
+
+        let existente = root.join("existente.txt");
+        std::fs::write(&existente, b"contenido").unwrap();
+        assert!(
+            backend.create_file(&existente.to_string_lossy()).await.is_err(),
+            "con EXCLUDE, un fichero que ya existe es un error"
+        );
+        assert_eq!(std::fs::read(&existente).unwrap(), b"contenido");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Lo más alto que ha contado el progreso.
