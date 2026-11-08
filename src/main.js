@@ -22163,7 +22163,7 @@ function localTunnelActionsHtml(tun, attr) {
   if (!localTunnelAddress(tun)) return "";
   const copy = escHtml(t("tunnels.copy_address"));
   const open = escHtml(t("tunnels.open_browser"));
-  return `<button type="button" class="tunnel-action" ${attr}="copy-address" title="${copy}" aria-label="${copy}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-duplicate"/></svg></button>
+  return `<button type="button" class="tunnel-action" ${attr}="copy-address" title="${copy}" aria-label="${copy}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-copy"/></svg></button>
         <button type="button" class="tunnel-action" ${attr}="open-browser" title="${open}" aria-label="${open}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-external"/></svg></button>`;
 }
 
