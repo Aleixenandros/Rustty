@@ -259,6 +259,61 @@ pub struct HealthResult {
 const HEALTH_MAX_TARGETS: usize = 500;
 const HEALTH_MAX_PARALLEL: usize = 8;
 const HEALTH_TCP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
+/// Plazo de la resolución DNS de cada objetivo. `getaddrinfo` no tiene plazo
+/// propio: con un DNS o una VPN caídos tarda 30–120 s, y el lote entero espera
+/// al más lento.
+const HEALTH_DNS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+/// Resoluciones colgadas que se toleran a la vez. `getaddrinfo` no se puede
+/// cancelar: la que vence su plazo sigue en su hilo hasta que el sistema
+/// conteste. Con este tope, un barrido de 500 hosts con el DNS caído no deja
+/// 500 hilos esperando; pasado el tope, el objetivo falla sin resolver.
+const HEALTH_DNS_MAX_PENDING: usize = 32;
+static HEALTH_DNS_PENDING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Resuelve con plazo: `resolve` corre en un hilo propio y, si no contesta a
+/// tiempo, se le deja terminar solo y se devuelve un error claro. El hilo
+/// cuenta en [`HEALTH_DNS_PENDING`] mientras vive.
+fn resolve_with_deadline<F>(
+    resolve: F,
+    timeout: std::time::Duration,
+) -> Result<Vec<std::net::SocketAddr>, String>
+where
+    F: FnOnce() -> std::io::Result<Vec<std::net::SocketAddr>> + Send + 'static,
+{
+    use std::sync::atomic::Ordering;
+    struct Pending;
+    impl Drop for Pending {
+        fn drop(&mut self) {
+            HEALTH_DNS_PENDING.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    if HEALTH_DNS_PENDING.fetch_add(1, Ordering::SeqCst) >= HEALTH_DNS_MAX_PENDING {
+        HEALTH_DNS_PENDING.fetch_sub(1, Ordering::SeqCst);
+        return Err("DNS: demasiadas resoluciones sin respuesta; el servidor DNS no contesta".into());
+    }
+    let pending = Pending;
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let spawned = std::thread::Builder::new()
+        .name("health-dns".into())
+        .spawn(move || {
+            let _pending = pending;
+            let _ = tx.send(resolve());
+        });
+    if let Err(e) = spawned {
+        return Err(format!("DNS: {e}"));
+    }
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(addrs)) => Ok(addrs),
+        Ok(Err(e)) => Err(format!("DNS: {e}")),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(format!(
+            "DNS: sin respuesta en {} s",
+            timeout.as_secs_f32()
+        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("DNS: la resolución terminó sin respuesta".into())
+        }
+    }
+}
 
 /// Comprobación masiva de salud de hosts: resolución DNS + conexión TCP, en
 /// lotes de `HEALTH_MAX_PARALLEL` hilos. **Nunca autentica**: un barrido no
@@ -267,8 +322,9 @@ const HEALTH_TCP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4
 ///
 /// Comando **async** que delega en `spawn_blocking`: en Tauri 2 un comando
 /// síncrono corre en el hilo principal, y cada lote espera al host más lento
-/// (DNS sin plazo + hasta `HEALTH_TCP_TIMEOUT`), así que el barrido de un
-/// workspace con hosts caídos congelaba la ventana entera. Tampoco vale
+/// (DNS + hasta `HEALTH_TCP_TIMEOUT`), así que el barrido de un
+/// workspace con hosts caídos congelaba la ventana entera. La resolución DNS
+/// tiene su propio plazo (`HEALTH_DNS_TIMEOUT`). Tampoco vale
 /// `#[tauri::command(async)]`: ocuparía durante todo el barrido un hilo de
 /// tokio de los que comparten las sesiones SSH.
 #[tauri::command]
@@ -320,9 +376,14 @@ fn health_check_one(t: &HealthTarget) -> HealthResult {
         latency_ms: None,
         error: Some(error),
     };
-    let addrs: Vec<_> = match (t.host.as_str(), t.port).to_socket_addrs() {
-        Ok(a) => a.collect(),
-        Err(e) => return fail(false, format!("DNS: {e}")),
+    let (host, port) = (t.host.clone(), t.port);
+    let resolved = resolve_with_deadline(
+        move || (host.as_str(), port).to_socket_addrs().map(Iterator::collect),
+        HEALTH_DNS_TIMEOUT,
+    );
+    let addrs = match resolved {
+        Ok(a) => a,
+        Err(e) => return fail(false, e),
     };
     let Some(addr) = addrs.first() else {
         return fail(false, "DNS: 0 addrs".into());
@@ -4437,6 +4498,40 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port,
         }
+    }
+
+    /// Un DNS que no contesta no congela el lote: vence el plazo y el
+    /// objetivo sale con un error claro, sin esperar a `getaddrinfo`.
+    #[test]
+    fn health_check_un_dns_lento_vence_el_plazo_con_error_claro() {
+        let empezado = std::time::Instant::now();
+        let err = resolve_with_deadline(
+            || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                Ok(vec![])
+            },
+            std::time::Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert!(
+            empezado.elapsed() < std::time::Duration::from_secs(2),
+            "esperó al resolvedor: {:?}",
+            empezado.elapsed()
+        );
+        assert!(err.starts_with("DNS:") && err.contains("sin respuesta"), "{err}");
+
+        // Lo que contesta a tiempo pasa tal cual, sea dirección o error.
+        let addr: std::net::SocketAddr = "127.0.0.1:22".parse().unwrap();
+        assert_eq!(
+            resolve_with_deadline(move || Ok(vec![addr]), HEALTH_DNS_TIMEOUT),
+            Ok(vec![addr])
+        );
+        let err = resolve_with_deadline(
+            || Err(std::io::Error::other("nombre desconocido")),
+            HEALTH_DNS_TIMEOUT,
+        )
+        .unwrap_err();
+        assert_eq!(err, "DNS: nombre desconocido");
     }
 
     #[test]
