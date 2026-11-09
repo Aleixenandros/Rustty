@@ -158,6 +158,45 @@ export async function checkNotesAndText(app, check) {
     check("marcar una casilla en lectura la guarda en la nota", /- \[x\] paso uno/.test(saved?.body || ""),
       JSON.stringify(saved?.body));
 
+    // ── Copiar desde la lectura ──────────────────────────────────
+    // El texto pintado se puede seleccionar (pese al `user-select: none` del
+    // body) y el clic derecho ofrece Copiar, Seleccionar todo y «Copiar como
+    // Markdown» aunque no haya selección.
+    const selectable = await app.exec(`
+      const p = document.querySelector("#note-editor-preview p, #note-editor-preview li, #note-editor-preview h1, #note-editor-preview h2");
+      const cs = getComputedStyle(p || document.getElementById("note-editor-preview"));
+      return cs.userSelect || cs.webkitUserSelect;
+    `);
+    check("el texto de la nota en lectura se puede seleccionar", selectable === "text", selectable);
+    await app.exec("window.getSelection().removeAllRanges(); return true;");
+    const viewMenu = await textMenuOn("#note-editor-preview");
+    const viewItems = await app.exec(`
+      return [...document.querySelectorAll("#text-context-menu > [data-text-menu]")]
+        .map((b) => b.dataset.textMenu + (b.disabled ? ":off" : ""));
+    `);
+    check("el clic derecho en la nota en lectura ofrece Copiar, Seleccionar todo y Copiar como Markdown",
+      viewMenu && viewItems.join(",") === "copy:off,select-all,copy-source", JSON.stringify(viewItems));
+    await clickText("select-all");
+    await settle();
+    const selAll = await app.exec(`
+      const sel = window.getSelection();
+      const preview = document.getElementById("note-editor-preview");
+      return { text: sel.toString(), inside: sel.rangeCount > 0 && preview.contains(sel.getRangeAt(0).commonAncestorContainer) };
+    `);
+    check("«Seleccionar todo» selecciona solo la nota", selAll.inside && /Runbook/.test(selAll.text), JSON.stringify(selAll));
+    await textMenuOn("#note-editor-preview");
+    const copyOn = await app.exec(`return !document.querySelector('#text-context-menu [data-text-menu="copy"]').disabled;`);
+    check("con la nota seleccionada, «Copiar» está activo", copyOn, String(copyOn));
+    await app.exec(`document.getElementById("text-context-menu").classList.add("hidden"); window.getSelection().removeAllRanges(); return true;`);
+    const ctrlA = await app.exec(`
+      const preview = document.getElementById("note-editor-preview");
+      preview.focus();
+      preview.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
+      return window.getSelection().toString();
+    `);
+    check("Ctrl+A en la nota en lectura selecciona la nota", /Runbook/.test(ctrlA), JSON.stringify(ctrlA));
+    await app.exec("window.getSelection().removeAllRanges(); return true;");
+
     // ── Editar ───────────────────────────────────────────────────
     await app.jsClick("#note-view-edit");
     await settle();

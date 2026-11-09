@@ -120,7 +120,7 @@
                 <line x1="12" y1="12" x2="15" y2="15"></line>
               </svg>
             </button>
-            <button id="btn-sidebar-tools" data-i18n-title="sidebar.tools_title" title="Filtrar y cambiar de perfil" aria-label="Filtrar y cambiar de perfil" data-i18n-aria-label="sidebar.tools_title">≡</button>
+            <button id="btn-sidebar-tools" data-i18n-title="sidebar.tools_title" title="Filtrar y cambiar de perfil" aria-label="Filtrar y cambiar de perfil" data-i18n-aria-label="sidebar.tools_title"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-menu"/></svg></button>
           </div>
         </div>
 
@@ -143,7 +143,7 @@
             <button class="tools-view-btn" data-view-mode="favorites" data-i18n="sidebar.view_favorites">Favoritos</button>
           </div>
           <button id="btn-sidebar-compact" class="tools-density-btn" type="button" data-i18n-title="sidebar.compact_title" title="Mostrar lista compacta" aria-pressed="false">
-            <span class="tools-density-icon">▤</span>
+            <span class="tools-density-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-rows"/></svg></span>
             <span data-i18n="sidebar.compact_view">Vista compacta</span>
           </button>
 
@@ -206,7 +206,7 @@
       <main id="main-area">
         <div id="tab-bar">
           <button id="btn-toggle-sidebar" data-i18n-title="sidebar.toggle_title" title="Ocultar / mostrar la barra lateral" aria-label="Ocultar / mostrar la barra lateral" data-i18n-aria-label="sidebar.toggle_title">
-            <span class="chevron" aria-hidden="true">‹</span>
+            <span class="chevron" aria-hidden="true"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-chevron"/></svg></span>
           </button>
           <div id="tab-scroll">
             <button id="home-tab" class="tab tab-home active" type="button" title="Inicio" data-i18n-title="welcome.home_tab">
@@ -217,7 +217,7 @@
           </div>
           <div id="tab-bar-drag" data-tauri-drag-region></div>
           <button id="btn-tab-overflow" class="hidden" type="button" data-i18n-title="tab_overflow.button_title" title="Pestañas abiertas" aria-label="Pestañas abiertas" data-i18n-aria-label="tab_overflow.button_title" aria-haspopup="true" aria-expanded="false">
-            <span class="tab-overflow-icon" aria-hidden="true">⋯</span>
+            <span class="tab-overflow-icon" aria-hidden="true"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-more"/></svg></span>
           </button>
           <div id="window-controls" aria-hidden="false">
             <button id="btn-win-min" class="win-ctrl" data-i18n-title="window.minimize" title="Minimizar" aria-label="Minimizar" data-i18n-aria-label="window.minimize">
@@ -401,7 +401,7 @@
                   </div>
                   <div class="dashboard-quick-grid">
                     <button id="btn-welcome-new" class="dashboard-tool" data-dashboard-action="new-connection">
-                      <span class="dashboard-tool-icon new">＋</span>
+                      <span class="dashboard-tool-icon new"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-plus"/></svg></span>
                       <span>
                         <strong data-i18n="welcome.new_conn">Nueva conexión</strong>
                         <small data-i18n="dashboard.quick_new_hint">SSH o RDP</small>
@@ -485,6 +485,10 @@
         <symbol id="ci-pin" viewBox="0 0 16 16"><path d="M5.8 3h4.4"/><path d="M6.4 3 6 7.2 4.2 9.3h7.6L10 7.2 9.6 3"/><path d="M8 9.3V13"/></symbol>
         <symbol id="ci-arrow-up" viewBox="0 0 16 16"><path d="M8 3v9.5M4.8 6.2 8 3l3.2 3.2"/></symbol>
         <symbol id="ci-arrow-down" viewBox="0 0 16 16"><path d="M8 13V3.5M4.8 9.8 8 13l3.2-3.2"/></symbol>
+        <symbol id="ci-chevron" viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5"/></symbol>
+        <symbol id="ci-more" viewBox="0 0 16 16"><circle cx="3.8" cy="8" r=".6"/><circle cx="8" cy="8" r=".6"/><circle cx="12.2" cy="8" r=".6"/></symbol>
+        <symbol id="ci-plus" viewBox="0 0 16 16"><path d="M8 3.2v9.6M3.2 8h9.6"/></symbol>
+        <symbol id="ci-menu" viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h10"/></symbol>
         <symbol id="ci-refresh" viewBox="0 0 16 16"><path d="M12.6 8a4.6 4.6 0 1 1-1.3-3.2"/><path d="M13.4 2v3h-3"/></symbol>
         <symbol id="ci-folder" viewBox="0 0 16 16"><path d="M3 5.4a1 1 0 0 1 1-1h2.3l1.3 1.5H12a1 1 0 0 1 1 1v4.7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></symbol>
         <symbol id="ci-file" viewBox="0 0 16 16"><path d="M5 3h4l3 3v6.4a.7.7 0 0 1-.7.7H5a.7.7 0 0 1-.7-.7V3.7A.7.7 0 0 1 5 3z"/><path d="M8.8 3.2V6.2H11.8"/></symbol>
@@ -1146,7 +1150,7 @@
             </p>
             <div id="extra-creds-list"></div>
             <button type="button" class="btn-secondary" id="btn-add-extra-cred">
-              <span class="ctx-icon">＋</span><span data-i18n="modal_conn.add_user">Añadir otro usuario</span>
+              <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-plus"/></svg></span><span data-i18n="modal_conn.add_user">Añadir otro usuario</span>
             </button>
           </div>
 
@@ -2700,7 +2704,7 @@
                   </thead>
                   <tbody id="highlight-rules-body"></tbody>
                 </table>
-                <button type="button" class="btn-secondary" id="btn-highlight-add" data-i18n="prefs_terminal.highlight_add">＋ Añadir regla</button>
+                <button type="button" class="btn-secondary" id="btn-highlight-add"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-plus"/></svg><span data-i18n="prefs_terminal.highlight_add">Añadir regla</span></button>
               </div>
 
               <div class="settings-row">
@@ -2721,7 +2725,7 @@
                   </thead>
                   <tbody id="quick-select-patterns-body"></tbody>
                 </table>
-                <button type="button" class="btn-secondary" id="btn-quick-select-add" data-i18n="prefs_terminal.quick_select_add">＋ Añadir patrón</button>
+                <button type="button" class="btn-secondary" id="btn-quick-select-add"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-plus"/></svg><span data-i18n="prefs_terminal.quick_select_add">Añadir patrón</span></button>
               </div>
             </section>
 
@@ -3934,7 +3938,7 @@
                     <option value="" data-i18n="prefs_sync.snapshots_none">— Sin copias disponibles —</option>
                   </select>
                   <button type="button" class="btn-secondary" id="btn-sync-restore" data-i18n="prefs_sync.snapshots_restore">Restaurar</button>
-                  <button type="button" class="btn-icon" id="btn-sync-snapshots-refresh" data-i18n-aria-label="prefs_sync.snapshots_refresh" aria-label="Refrescar copias">⟳</button>
+                  <button type="button" class="btn-icon" id="btn-sync-snapshots-refresh" data-i18n-aria-label="prefs_sync.snapshots_refresh" aria-label="Refrescar copias"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg></button>
                   <p class="form-hint" data-i18n="prefs_sync.snapshots_hint">Selecciona una copia previa y pulsa "Restaurar" para sustituir tu estado actual con esa versión.</p>
                 </div>
               </div>
@@ -4341,7 +4345,7 @@
           <textarea id="note-editor-textarea" class="note-editor-textarea" data-markdown="true"
                     spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
                     data-i18n-placeholder="notes.body_ph" placeholder="Escribe la nota en Markdown…"></textarea>
-          <div id="note-editor-preview" class="note-editor-preview markdown-body"></div>
+          <div id="note-editor-preview" class="note-editor-preview markdown-body" data-text-region></div>
         </div>
         <div class="modal-actions">
           <span class="note-editor-hint note-edit-only" data-i18n="notes.editor_hint">Ctrl+S para guardar · Markdown · evita guardar secretos</span>

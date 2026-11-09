@@ -1280,11 +1280,11 @@
     "highlight_pattern": "Motif",
     "highlight_color": "Couleur",
     "highlight_bold": "Gras",
-    "highlight_add": "＋ Ajouter une règle",
+    "highlight_add": "Ajouter une règle",
     "quick_select_title": "Sélection rapide",
     "quick_select_hint": "Avec son raccourci (Ctrl+Maj+Espace par défaut), chaque IP, URL, chemin, hash ou identifiant affiché reçoit une ou deux lettres : tapez-les pour le copier, ou en majuscules pour le coller aussi dans l'invite. Vos motifs (expressions régulières) passent avant ceux fournis ; s'ils contiennent un groupe entre parenthèses, seul le groupe est copié.",
     "quick_select_builtins": "Utiliser aussi les motifs fournis (IP, URL, chemins, hashes, UUID, identifiants de conteneur, e-mails et nombres longs)",
-    "quick_select_add": "＋ Ajouter un motif",
+    "quick_select_add": "Ajouter un motif",
     "quick_select_invalid": "Expression régulière non valide, de plus de {max} caractères ou avec des répétitions imbriquées comme (a+)+, qui pourraient bloquer l’application : elle ne sera pas utilisée",
     "tmux_scrollback": "Historique à récupérer au rattachement tmux",
     "tmux_scrollback_hint": "En attachant une session en mode contrôle, chaque panneau réhydrate jusqu'à ce nombre de lignes de son historique. 0 = ne rien récupérer (attache instantanée).",
@@ -2563,6 +2563,7 @@
     "copy": "Copier",
     "paste": "Coller",
     "delete": "Supprimer",
+    "copy_markdown": "Copier en Markdown",
     "select_all": "Tout sélectionner",
     "format": "Mise en forme"
   }

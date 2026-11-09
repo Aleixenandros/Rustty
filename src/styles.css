@@ -757,6 +757,7 @@ body.sidebar-collapsed #sidebar-resize-handle {
 
 #btn-new-connection { font-size: 18px; }
 #btn-sidebar-tools { font-size: 16px; }
+#btn-sidebar-tools .ctx-icon-svg { width: 15px; height: 15px; vertical-align: -3px; }
 #btn-sidebar-tools:hover,
 #btn-sidebar-search:hover {
   background: var(--surface1);
@@ -903,8 +904,8 @@ body.sidebar-collapsed #sidebar-resize-handle {
 
 .tools-density-icon {
   width: 16px;
-  text-align: center;
-  font-size: 12px;
+  display: inline-flex;
+  justify-content: center;
   line-height: 1;
 }
 
@@ -948,7 +949,8 @@ body.sidebar-collapsed #sidebar-resize-handle {
 }
 #btn-tab-overflow.hidden { display: none; }
 #btn-tab-overflow:hover { background: var(--surface0); color: var(--text); }
-#btn-tab-overflow .tab-overflow-icon { font-size: 16px; line-height: 1; }
+#btn-tab-overflow .tab-overflow-icon { display: inline-flex; line-height: 1; }
+#btn-tab-overflow .tab-overflow-icon .ctx-icon-svg { width: 16px; height: 16px; vertical-align: 0; stroke-width: 2.4; }
 
 .tab-overflow-popover {
   position: fixed;
@@ -1080,7 +1082,16 @@ body.sidebar-collapsed #sidebar-resize-handle {
 }
 
 .workspace-menu .ws-color-dot {
-  color: var(--workspace-tint, var(--overlay1));
+  display: inline-block;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--workspace-tint, var(--overlay1));
+}
+.workspace-menu .ws-color-dot.active {
+  background: var(--workspace-tint, var(--overlay1));
 }
 
 .workspace-menu .ws-item.danger {
@@ -1763,12 +1774,15 @@ body:not(.native-scrollbars) #tab-scroll::-webkit-scrollbar { display: none; }
   color: var(--text);
 }
 #btn-toggle-sidebar .chevron {
-  font-size: 16px;
+  display: inline-flex;
   line-height: 1;
+  /* El icono apunta a la derecha: abierta la barra, «plegar» mira a la izquierda. */
+  transform: rotate(180deg);
   transition: transform var(--motion-fast) var(--motion-ease);
 }
+#btn-toggle-sidebar .chevron .ctx-icon-svg { width: 14px; height: 14px; vertical-align: 0; stroke-width: 1.8; }
 body.sidebar-collapsed #sidebar { display: none; }
-body.sidebar-collapsed #btn-toggle-sidebar .chevron { transform: rotate(180deg); }
+body.sidebar-collapsed #btn-toggle-sidebar .chevron { transform: none; }
 
 #tabs-container {
   display: flex;
@@ -3675,6 +3689,7 @@ th.is-sorted .metrics-sort-icon { visibility: visible; }
 }
 
 .dashboard-tool-icon.new { color: var(--blue); }
+.dashboard-tool-icon .ctx-icon-svg { width: 16px; height: 16px; vertical-align: 0; stroke-width: 2; }
 .dashboard-tool-icon.rdp { color: var(--peach); }
 .dashboard-tool-icon.local { color: var(--green); font-size: 10px; }
 
@@ -3857,6 +3872,10 @@ th.is-sorted .metrics-sort-icon { visibility: visible; }
   border-radius: var(--control-radius);
   transition: background var(--motion-fast) var(--motion-ease), border-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease);
 }
+
+/* Icono SVG delante del texto («＋ Añadir regla» y similares). */
+.btn-secondary > .ctx-icon-svg:first-child { margin-right: 6px; }
+.workspace-menu .ws-item > .ctx-icon-svg { flex-shrink: 0; }
 
 .btn-secondary:hover {
   background: var(--surface1);
@@ -5748,10 +5767,19 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   transition: transform var(--motion-fast) var(--motion-ease);
   width: 10px;
   flex-shrink: 0;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .folder-arrow.open { transform: rotate(90deg); }
+.folder-arrow .ctx-icon-svg,
+.ft-arrow .ctx-icon-svg {
+  display: block;
+  width: 10px;
+  height: 10px;
+  stroke-width: 1.8;
+}
 
 .folder-icon {
   display: inline-flex;
@@ -11005,7 +11033,15 @@ body.color-blind-safe .modal-summary-badge.warn::before {
 .runbook-add { margin-top: 4px; }
 
 /* ── Render Markdown común (preview + runbook) ───────────────── */
-.markdown-body { font-size: 0.9em; line-height: 1.55; color: var(--text); word-break: break-word; }
+.markdown-body {
+  font-size: 0.9em; line-height: 1.55; color: var(--text); word-break: break-word;
+  /* Una nota se lee para copiar de ella: seleccionable pese al
+     `user-select: none` global del body. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.markdown-body input, .markdown-body button { cursor: default; }
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
 .markdown-body h4, .markdown-body h5, .markdown-body h6 {
   margin: 0.9em 0 0.4em;

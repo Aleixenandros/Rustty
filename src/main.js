@@ -5592,7 +5592,7 @@ function renderAllWorkspacesTree() {
     const labelId = nextTreeLabelId();
     return `<div class="folder-item ws-folder-item" data-ws-root="${escHtml(w.id)}" data-tree-key="__ws__/${escHtml(w.id)}" role="treeitem" tabindex="-1" aria-level="1" aria-expanded="${open ? "true" : "false"}" aria-labelledby="${labelId}"${workspaceTintAttrs(w.id)}>
       <div class="folder-header" data-folder-path="__ws__/${escHtml(w.id)}">
-        <span class="folder-arrow ${open}" aria-hidden="true">▶</span>
+        <span class="folder-arrow ${open}" aria-hidden="true"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-chevron"/></svg></span>
         <span class="folder-icon">${folderIconSvg()}</span>
         <span class="folder-name" id="${labelId}">${escHtml(workspaceLabel(w))}</span>
         <span class="folder-count">${count}</span>
@@ -5668,7 +5668,7 @@ function renderWorkspaceSwitcher() {
     const isActive = w.id === getActiveWorkspaceId() && prefs.sidebarViewMode === "current";
     const color = getWorkspaceColor(w.id)?.color || "var(--overlay1)";
     return `<button class="ws-item${isActive ? " active" : ""}" data-ws-action="select" data-ws-id="${escHtml(w.id)}" draggable="true" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown">
-      <span class="ws-color-dot" style="--workspace-tint:${color}">${isActive ? "●" : "○"}</span>
+      <span class="ws-color-dot${isActive ? " active" : ""}" style="--workspace-tint:${color}" aria-hidden="true"></span>
       <span>${escHtml(workspaceLabel(w))}</span>
     </button>`;
   }).join("");
@@ -5676,7 +5676,7 @@ function renderWorkspaceSwitcher() {
   const moves = workspaceMoves(prefs.workspaces, getActiveWorkspaceId());
   menu.innerHTML = `${items}
     <div class="ws-sep"></div>
-    <button class="ws-item" data-ws-action="new"><span>＋ ${escHtml(t("sidebar.workspace_new"))}</span></button>
+    <button class="ws-item" data-ws-action="new"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-plus"/></svg><span>${escHtml(t("sidebar.workspace_new"))}</span></button>
     <div class="ws-order-row">
       <span class="ws-order-label">${escHtml(t("sidebar.workspace_order"))}</span>
       <button class="ws-item ws-order-btn" data-ws-action="move-up" aria-label="${escHtml(t("sidebar.workspace_move_up"))}" ${moves.up ? "" : "disabled"}><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
@@ -7121,7 +7121,7 @@ function renderFolderNode(name, node, depth, workspaceId) {
   return `
     <div class="folder-item" data-folder-path="${escHtml(path)}" data-tree-key="${escHtml(folderTreeKey(path, workspaceId))}" draggable="true" role="treeitem" tabindex="-1" aria-level="${depth + 1}" aria-expanded="${isOpen ? "true" : "false"}" aria-labelledby="${labelId}"${tintAttrs}>
       <div class="folder-header" style="padding-left:${indent}px; padding-right:14px">
-        <span class="folder-arrow ${isOpen ? "open" : ""}" aria-hidden="true">▶</span>
+        <span class="folder-arrow ${isOpen ? "open" : ""}" aria-hidden="true"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-chevron"/></svg></span>
         <span class="folder-icon">${folderIconSvg()}</span>
         <span class="folder-name" id="${labelId}">${escHtml(name)}</span>
         <span class="folder-count">${count}</span>
@@ -8223,6 +8223,7 @@ const TEXT_MENU_ITEMS = {
   paste: { icon: "ci-paste", label: "text_menu.paste" },
   delete: { icon: "ci-trash", label: "text_menu.delete" },
   "select-all": { icon: "ci-select-all", label: "text_menu.select_all" },
+  "copy-source": { icon: "ci-note", label: "text_menu.copy_markdown" },
   format: { icon: "ci-format", label: "text_menu.format" },
 };
 
@@ -8238,6 +8239,13 @@ const MARKDOWN_FORMAT_LABELS = {
   task: "notes.tool_task",
   quote: "notes.tool_quote",
 };
+
+/**
+ * Texto Markdown de origen de cada región pintada (`[data-text-region]`), para
+ * «Copiar como Markdown» desde el clic derecho de una nota en lectura.
+ * @type {WeakMap<Element, string>}
+ */
+const textRegionSources = new WeakMap();
 
 function hideTextContextMenu() {
   noteFloatingMenuHidden("text-context-menu");
@@ -8320,6 +8328,7 @@ function showTextContextMenu(x, y, field, kind, selText) {
     canUndo: queryEditCommand("undo"),
     canRedo: queryEditCommand("redo"),
     formats: field?.dataset?.markdown === "true",
+    hasSource: kind === "region" && !!field && !!textRegionSources.get(field),
   });
 
   menu.innerHTML = "";
@@ -8430,8 +8439,19 @@ async function runTextMenuAction(action, format) {
     }
     case "select-all":
       if (field) field.select();
-      else document.execCommand("selectAll");
+      else if (el?.hasAttribute("data-text-region") && document.contains(el)) {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      } else document.execCommand("selectAll");
       break;
+    case "copy-source": {
+      const source = el ? textRegionSources.get(el) : "";
+      if (source) await writeSystemClipboardText(source);
+      break;
+    }
     case "format":
       if (field && format) applyMarkdownFormatToField(field, format);
       break;
@@ -8454,6 +8474,7 @@ function handleTextContextMenu(e) {
   if (e.defaultPrevented || !target) return;
   if (target.closest(".xterm, .rdp-canvas-host, .ctx-menu, #context-menu, #route-menu")) return;
   const field = /** @type {HTMLElement | null} */ (target.closest("input, textarea, [contenteditable]"));
+  const region = field ? null : /** @type {HTMLElement | null} */ (target.closest("[data-text-region]"));
   const selText = window.getSelection()?.toString() || "";
   const kind = textTargetKind({
     tagName: field?.tagName || target.tagName,
@@ -8462,10 +8483,12 @@ function handleTextContextMenu(e) {
     disabled: isValueField(field) ? field.disabled : false,
     isContentEditable: !!field?.isContentEditable,
     hasDocumentSelection: !field && selText.trim() !== "",
+    inTextRegion: !!region,
   });
   if (!kind) return;
   e.preventDefault();
-  showTextContextMenu(e.clientX, e.clientY, kind === "selection" ? null : field, kind, selText);
+  const menuTarget = kind === "selection" ? null : kind === "region" ? region : field;
+  showTextContextMenu(e.clientX, e.clientY, menuTarget, kind, selText);
 }
 
 function handleContextMenuAction(action) {
@@ -10114,7 +10137,7 @@ function renderFolderTreeNodes(nodes, selectedPath, openSet, depth = 0) {
     html += `<div class="ft-row${isSel ? " selected" : ""}" role="treeitem"`
       + ` aria-selected="${isSel}" data-path="${escHtml(node.path)}" style="padding-left:${pad}px">`;
     html += hasChildren
-      ? `<span class="ft-arrow${isOpen ? " open" : ""}" data-arrow="1">▶</span>`
+      ? `<span class="ft-arrow${isOpen ? " open" : ""}" data-arrow="1"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-chevron"/></svg></span>`
       : `<span class="ft-arrow ft-arrow-empty"></span>`;
     html += `<svg class="ft-icon" aria-hidden="true"><use href="#ci-folder"/></svg>`;
     html += `<span class="ft-label">${escHtml(node.name)}</span>`;
@@ -23329,7 +23352,7 @@ function buildSftpPanel(sessionId) {
         <button class="sftp-nav-btn" data-sftp-nav="forward" data-side="local" title="${escHtml(t("sftp_nav.forward"))}" aria-label="${escHtml(t("sftp_nav.forward"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="up" data-side="local" title="${escHtml(t("sftp_nav.up"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="home" data-side="local" title="${escHtml(t("sftp_nav.home"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></button>
-        <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="local" title="${escHtml(t("sftp_nav.refresh"))}">⟳</button>
+        <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="local" title="${escHtml(t("sftp_nav.refresh"))}"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg></button>
         <div class="sftp-path-wrap" data-side="local">
           <nav class="sftp-breadcrumb" data-side="local" aria-label="${escHtml(t("sftp_nav.breadcrumb_label"))}"></nav>
           <input class="sftp-path hidden" data-side="local" type="text" spellcheck="false" />
@@ -23374,7 +23397,7 @@ function buildSftpPanel(sessionId) {
         <button class="sftp-nav-btn" data-sftp-nav="forward" data-side="remote" title="${escHtml(t("sftp_nav.forward"))}" aria-label="${escHtml(t("sftp_nav.forward"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="up" data-side="remote" title="${escHtml(t("sftp_nav.up"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
         <button class="sftp-nav-btn" data-sftp-nav="home" data-side="remote" title="${escHtml(t("sftp_nav.home"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-home"/></svg></button>
-        <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="remote" title="${escHtml(t("sftp_nav.refresh"))}">⟳</button>
+        <button class="sftp-nav-btn" data-sftp-nav="refresh" data-side="remote" title="${escHtml(t("sftp_nav.refresh"))}"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg></button>
         <button class="sftp-nav-btn sftp-follow-btn" data-sftp-nav="follow"
                 title="${escHtml(t("sftp.follow_cwd"))}">CWD</button>
         <button class="sftp-nav-btn sftp-sudo-btn" data-sftp-nav="sudo"
@@ -30956,6 +30979,7 @@ function renderNotePreviewInto(el, body, profile) {
   if (!el) return;
   const resolved = substitutePreview(String(body || ""), noteSubstContext(profile));
   el.innerHTML = renderMarkdownMinimal(resolved);
+  textRegionSources.set(el, String(body || ""));
 }
 
 /** Abre la nota de una conexión en lectura (Markdown pintado, sin editor). */
@@ -31007,6 +31031,7 @@ function renderNoteModalPreview(body, profile) {
   }
   const resolved = substitutePreview(String(body || ""), noteSubstContext(profile));
   el.innerHTML = renderMarkdownMinimal(resolved, { onToggleTask: () => {} });
+  textRegionSources.set(el, String(body || ""));
   const profileId = profile?.id;
   el.querySelectorAll('input[type="checkbox"][data-task-index]').forEach((cb) => {
     cb.addEventListener("change", async () => {
@@ -31250,6 +31275,18 @@ function initNoteEditor() {
   document.getElementById("note-editor-close")?.addEventListener("click", () => handleNoteEditorEscape());
   document.getElementById("note-view-close")?.addEventListener("click", () => handleNoteEditorEscape());
   document.getElementById("note-view-edit")?.addEventListener("click", () => switchNoteToEdit());
+  // En lectura, Ctrl+A con la nota enfocada selecciona solo la nota (no toda
+  // la ventana), lista para Ctrl+C.
+  document.getElementById("note-editor-preview")?.addEventListener("keydown", (e) => {
+    if ((e.key === "a" || e.key === "A") && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      const range = document.createRange();
+      range.selectNodeContents(/** @type {Node} */ (e.currentTarget));
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }
+  });
   document.getElementById("note-editor-open-folder")?.addEventListener("click", async () => {
     try {
       const dir = await invoke("notes_dir");
@@ -31302,7 +31339,7 @@ function buildRunbookPanel(sessionId) {
         <button class="btn-icon runbook-close" type="button" title="${escHtml(t("notes.close"))}" aria-label="${escHtml(t("notes.close"))}">${closeSvg}</button>
       </div>
     </div>
-    <div class="runbook-body markdown-body"></div>`;
+    <div class="runbook-body markdown-body" data-text-region></div>`;
   panel.querySelector(".runbook-close").addEventListener("click", () => {
     panel.classList.add("hidden");
     sessions.get(sessionId)?.fitAddon?.fit();
@@ -31337,6 +31374,7 @@ async function renderRunbookPanel(sessionId) {
   }
   const resolved = substitutePreview(doc.body, noteSubstContext(profile));
   bodyEl.innerHTML = renderMarkdownMinimal(resolved, { onToggleTask: () => {} });
+  textRegionSources.set(bodyEl, String(doc.body || ""));
   // Cablea las casillas interactivas para que persistan en el `.md`.
   bodyEl.querySelectorAll('input[type="checkbox"][data-task-index]').forEach((cb) => {
     cb.addEventListener("change", async () => {

@@ -25,6 +25,13 @@ describe("textTargetKind", () => {
     expect(textTargetKind({ tagName: "BUTTON" })).toBeNull();
   });
 
+  it("texto pintado de solo lectura (nota en Markdown)", () => {
+    expect(textTargetKind({ tagName: "P", inTextRegion: true })).toBe("region");
+    expect(textTargetKind({ tagName: "P", inTextRegion: true, hasDocumentSelection: true })).toBe("region");
+    // Un campo dentro de la región manda sobre la región.
+    expect(textTargetKind({ tagName: "INPUT", type: "text", inTextRegion: true })).toBe("editable");
+  });
+
   it("texto seleccionado fuera de un campo", () => {
     expect(textTargetKind({ tagName: "P", hasDocumentSelection: true })).toBe("selection");
     expect(textTargetKind({ tagName: "P" })).toBeNull();
@@ -32,6 +39,15 @@ describe("textTargetKind", () => {
 });
 
 describe("textMenuEntries", () => {
+  it("región de texto: copiar, seleccionar todo y copiar como Markdown", () => {
+    const e = textMenuEntries({ kind: "region", hasSelection: false, hasValue: true, hasSource: true });
+    expect(ids(e)).toEqual(["copy", "|", "select-all", "copy-source"]);
+    expect(disabled(e)).toEqual(["copy"]);
+    const sinFuente = textMenuEntries({ kind: "region", hasSelection: true, hasValue: true });
+    expect(ids(sinFuente)).toEqual(["copy", "|", "select-all"]);
+    expect(disabled(sinFuente)).toEqual([]);
+  });
+
   it("campo editable con selección", () => {
     const e = textMenuEntries({ kind: "editable", hasSelection: true, hasValue: true });
     expect(ids(e)).toEqual(["undo", "redo", "|", "cut", "copy", "paste", "delete", "|", "select-all"]);

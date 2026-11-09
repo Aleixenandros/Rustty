@@ -1280,11 +1280,11 @@
     "highlight_pattern": "模式",
     "highlight_color": "顏色",
     "highlight_bold": "粗體",
-    "highlight_add": "＋ 新增規則",
+    "highlight_add": "新增規則",
     "quick_select_title": "快速選取",
     "quick_select_hint": "按下其快速鍵（預設為 Ctrl+Shift+Space）後，畫面上每個 IP、URL、路徑、雜湊或 ID 都會標上一或兩個字母：輸入字母即可複製，輸入大寫則會同時貼到提示字元處。你的模式（正規表示式）優先於內建模式；若含有括號群組，則只會複製該群組。",
     "quick_select_builtins": "同時使用內建模式（IP、URL、路徑、雜湊、UUID、容器 ID、電子郵件與長數字）",
-    "quick_select_add": "＋ 新增模式",
+    "quick_select_add": "新增模式",
     "quick_select_invalid": "正規表示式無效、長度超過 {max} 個字元，或含有 (a+)+ 這類巢狀重複而可能讓應用程式凍結：將不會使用",
     "tmux_scrollback": "tmux 重新附加時要恢復的捲動緩衝區",
     "tmux_scrollback_hint": "附加控制模式工作階段時，每個窗格最多會還原這麼多行的歷程記錄。0 = 不恢復任何內容（立即附加）。",
@@ -2563,6 +2563,7 @@
     "copy": "複製",
     "paste": "貼上",
     "delete": "刪除",
+    "copy_markdown": "複製為 Markdown",
     "select_all": "全選",
     "format": "格式"
   }

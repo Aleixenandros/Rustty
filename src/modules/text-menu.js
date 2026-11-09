@@ -20,16 +20,20 @@ const TEXT_INPUT_TYPES = new Set(["", "text", "search", "url", "email", "tel", "
  * @property {boolean} [disabled]
  * @property {boolean} [isContentEditable]
  * @property {boolean} [hasDocumentSelection] hay texto seleccionado fuera de un campo.
+ * @property {boolean} [inTextRegion] el clic cae en texto pintado de solo
+ *   lectura que se puede seleccionar y copiar (una nota en Markdown).
  */
 
 /**
  * Clase de objetivo del clic derecho:
  * - `"editable"`: campo en el que se puede escribir.
  * - `"readonly"`: campo de solo lectura (se puede copiar y seleccionar).
+ * - `"region"`: texto pintado de solo lectura (copiar, seleccionar todo y,
+ *   si hay fuente, copiarla como Markdown), haya o no selección.
  * - `"selection"`: texto seleccionado fuera de un campo (solo copiar).
  * - `null`: nada que ofrecer.
  * @param {TextTargetInfo} info
- * @returns {"editable" | "readonly" | "selection" | null}
+ * @returns {"editable" | "readonly" | "region" | "selection" | null}
  */
 export function textTargetKind(info) {
   const tag = String(info?.tagName || "").toUpperCase();
@@ -40,18 +44,20 @@ export function textTargetKind(info) {
     return info.readOnly ? "readonly" : "editable";
   }
   if (info?.isContentEditable) return "editable";
+  if (info?.inTextRegion) return "region";
   return info?.hasDocumentSelection ? "selection" : null;
 }
 
 /**
  * @typedef {object} TextMenuState
- * @property {"editable" | "readonly" | "selection"} kind
+ * @property {"editable" | "readonly" | "region" | "selection"} kind
  * @property {boolean} [hasSelection] hay texto seleccionado en el objetivo.
  * @property {boolean} [hasValue] el campo tiene texto.
  * @property {boolean} [secret] campo de contraseña: no se copia ni se corta.
  * @property {boolean} [canUndo]
  * @property {boolean} [canRedo]
  * @property {boolean} [formats] ofrecer el submenú de formato Markdown.
+ * @property {boolean} [hasSource] la región tiene su texto Markdown de origen.
  */
 
 /**
@@ -70,6 +76,16 @@ export function textMenuEntries(state) {
   const secret = !!state.secret;
   if (state.kind === "selection") {
     return [{ id: "copy", disabled: !sel }];
+  }
+  if (state.kind === "region") {
+    /** @type {TextMenuEntry[]} */
+    const entries = [
+      { id: "copy", disabled: !sel },
+      { separator: true },
+      { id: "select-all", disabled: !state.hasValue },
+    ];
+    if (state.hasSource) entries.push({ id: "copy-source" });
+    return entries;
   }
   if (state.kind === "readonly") {
     return [

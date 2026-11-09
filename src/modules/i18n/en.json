@@ -1280,11 +1280,11 @@
     "highlight_pattern": "Pattern",
     "highlight_color": "Color",
     "highlight_bold": "Bold",
-    "highlight_add": "＋ Add rule",
+    "highlight_add": "Add rule",
     "quick_select_title": "Quick Select",
     "quick_select_hint": "With its shortcut (Ctrl+Shift+Space by default) every IP, URL, path, hash or ID on screen gets one or two letters: type them to copy it, or type them in uppercase to also paste it at the prompt. Your patterns (regular expressions) come before the built-in ones; if they have a group in parentheses, only the group is copied.",
     "quick_select_builtins": "Also use the built-in patterns (IPs, URLs, paths, hashes, UUIDs, container IDs, emails and long numbers)",
-    "quick_select_add": "＋ Add pattern",
+    "quick_select_add": "Add pattern",
     "quick_select_invalid": "Invalid regular expression, longer than {max} characters or with nested repetitions such as (a+)+, which could freeze the app: it will not be used",
     "tmux_scrollback": "Scrollback to recover on tmux reattach",
     "tmux_scrollback_hint": "When attaching a control-mode session, each pane rehydrates up to this many lines of its history. 0 = recover nothing (instant attach).",
@@ -2563,6 +2563,7 @@
     "copy": "Copy",
     "paste": "Paste",
     "delete": "Delete",
+    "copy_markdown": "Copy as Markdown",
     "select_all": "Select all",
     "format": "Format"
   }

@@ -1280,11 +1280,11 @@
     "highlight_pattern": "Patrón",
     "highlight_color": "Color",
     "highlight_bold": "Negrita",
-    "highlight_add": "＋ Añadir regla",
+    "highlight_add": "Añadir regla",
     "quick_select_title": "Selección rápida",
     "quick_select_hint": "Con su atajo (Ctrl+Shift+Espacio de fábrica) cada IP, URL, ruta, hash o ID de la pantalla recibe una o dos letras: al teclearlas se copia, y en mayúscula además se pega en el prompt. Tus patrones (expresiones regulares) van por delante de los de serie; si llevan un grupo entre paréntesis, se copia solo el grupo.",
     "quick_select_builtins": "Usar también los patrones de serie (IPs, URLs, rutas, hashes, UUID, IDs de contenedor, correos y números largos)",
-    "quick_select_add": "＋ Añadir patrón",
+    "quick_select_add": "Añadir patrón",
     "quick_select_invalid": "Expresión regular no válida, de más de {max} caracteres o con repeticiones anidadas como (a+)+, que podrían colgar la aplicación: no se usará",
     "tmux_scrollback": "Scrollback al reenganchar tmux",
     "tmux_scrollback_hint": "Al enganchar una sesión en modo control, cada pane rehidrata hasta estas líneas de su historia. 0 = no recuperar nada (enganche instantáneo).",
@@ -2563,6 +2563,7 @@
     "copy": "Copiar",
     "paste": "Pegar",
     "delete": "Eliminar",
+    "copy_markdown": "Copiar como Markdown",
     "select_all": "Seleccionar todo",
     "format": "Formato"
   }

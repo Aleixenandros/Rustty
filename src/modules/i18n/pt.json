@@ -1280,11 +1280,11 @@
     "highlight_pattern": "Padrão",
     "highlight_color": "Cor",
     "highlight_bold": "Negrito",
-    "highlight_add": "＋ Adicionar regra",
+    "highlight_add": "Adicionar regra",
     "quick_select_title": "Seleção rápida",
     "quick_select_hint": "Com o atalho (Ctrl+Shift+Espaço por predefinição), cada IP, URL, caminho, hash ou ID no ecrã recebe uma ou duas letras: ao escrevê-las, o texto é copiado e, em maiúscula, também é colado no prompt. Os padrões próprios (expressões regulares) têm prioridade sobre os incluídos; se tiverem um grupo entre parênteses, copia-se apenas o grupo.",
     "quick_select_builtins": "Usar também os padrões incluídos (IPs, URLs, caminhos, hashes, UUID, IDs de contentor, emails e números longos)",
-    "quick_select_add": "＋ Adicionar padrão",
+    "quick_select_add": "Adicionar padrão",
     "quick_select_invalid": "Expressão regular inválida, com mais de {max} caracteres ou com repetições aninhadas como (a+)+, que poderiam bloquear a aplicação: não será usada",
     "tmux_scrollback": "Scrollback a recuperar ao reengatar tmux",
     "tmux_scrollback_hint": "Ao engatar uma sessão em modo de controlo, cada painel reidrata até este número de linhas da sua história. 0 = não recuperar nada (engate instantâneo).",
@@ -2563,6 +2563,7 @@
     "copy": "Copiar",
     "paste": "Colar",
     "delete": "Eliminar",
+    "copy_markdown": "Copiar como Markdown",
     "select_all": "Selecionar tudo",
     "format": "Formatação"
   }

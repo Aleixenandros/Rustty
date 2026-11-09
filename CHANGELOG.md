@@ -2,6 +2,20 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.27.0] - 2026-11-10
+
+### Añadido
+
+- El clic derecho sobre una nota en lectura (en su ventana y en el panel de nota de la pestaña) ofrece Copiar, Seleccionar todo y «Copiar como Markdown», que copia el texto original de la nota con su formato.
+
+### Cambiado
+
+- Los últimos símbolos de texto de la interfaz pasan a ser iconos: las flechas de las carpetas, plegar la barra lateral, el botón de herramientas de la barra, el de más pestañas, los botones de refrescar del panel de archivos, el de añadir en el panel de inicio, en las reglas de resaltado y en el selector de workspaces, y el punto de color de cada workspace. Se ven igual de nítidos y centrados en Linux, Windows y macOS.
+
+### Corregido
+
+- El texto de una nota en lectura ya se puede seleccionar con el ratón y copiar con Ctrl+C sin pasar al editor; Ctrl+A selecciona solo la nota.
+
 ## [2.26.0] - 2026-11-08
 
 ### Añadido

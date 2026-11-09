@@ -1280,11 +1280,11 @@
     "highlight_pattern": "Muster",
     "highlight_color": "Farbe",
     "highlight_bold": "Fett",
-    "highlight_add": "＋ Regel hinzufügen",
+    "highlight_add": "Regel hinzufügen",
     "quick_select_title": "Schnellauswahl",
     "quick_select_hint": "Mit dem Tastenkürzel (standardmäßig Strg+Umschalt+Leertaste) bekommt jede IP, URL, jeder Pfad, Hash und jede ID auf dem Bildschirm ein oder zwei Buchstaben: Tippe sie, um den Text zu kopieren, oder tippe sie groß, um ihn zusätzlich in die Eingabezeile einzufügen. Deine Muster (reguläre Ausdrücke) haben Vorrang vor den eingebauten; enthalten sie eine Gruppe in Klammern, wird nur die Gruppe kopiert.",
     "quick_select_builtins": "Auch die eingebauten Muster verwenden (IPs, URLs, Pfade, Hashes, UUIDs, Container-IDs, E-Mails und lange Zahlen)",
-    "quick_select_add": "＋ Muster hinzufügen",
+    "quick_select_add": "Muster hinzufügen",
     "quick_select_invalid": "Ungültiger regulärer Ausdruck, länger als {max} Zeichen oder mit verschachtelten Wiederholungen wie (a+)+, die die App einfrieren könnten: Er wird nicht verwendet",
     "tmux_scrollback": "Scrollback beim tmux-Reattach",
     "tmux_scrollback_hint": "Beim Verbinden einer Kontrollmodus-Sitzung stellt jede Pane bis zu dieser Zeilenzahl ihrer Historie wieder her. 0 = nichts wiederherstellen (sofortiges Verbinden).",
@@ -2563,6 +2563,7 @@
     "copy": "Kopieren",
     "paste": "Einfügen",
     "delete": "Löschen",
+    "copy_markdown": "Als Markdown kopieren",
     "select_all": "Alles auswählen",
     "format": "Formatierung"
   }

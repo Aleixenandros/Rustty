@@ -1280,11 +1280,11 @@
     "highlight_pattern": "Pola",
     "highlight_color": "Warna",
     "highlight_bold": "Tebal",
-    "highlight_add": "＋ Tambah aturan",
+    "highlight_add": "Tambah aturan",
     "quick_select_title": "Pilih cepat",
     "quick_select_hint": "Dengan pintasannya (default Ctrl+Shift+Space) setiap IP, URL, path, hash, atau ID di layar mendapat satu atau dua huruf: ketik untuk menyalinnya, atau ketik dengan huruf kapital untuk juga menempelkannya di prompt. Pola Anda (ekspresi reguler) didahulukan sebelum pola bawaan; jika memiliki grup dalam tanda kurung, hanya grup yang disalin.",
     "quick_select_builtins": "Gunakan juga pola bawaan (IP, URL, path, hash, UUID, ID kontainer, email, dan angka panjang)",
-    "quick_select_add": "＋ Tambah pola",
+    "quick_select_add": "Tambah pola",
     "quick_select_invalid": "Ekspresi reguler tidak valid, lebih panjang dari {max} karakter, atau memiliki pengulangan bersarang seperti (a+)+, yang dapat membekukan aplikasi: tidak akan dipakai",
     "tmux_scrollback": "Scrollback yang dipulihkan saat tmux tersambung ulang",
     "tmux_scrollback_hint": "Saat menyambung sesi mode kontrol, setiap panel memulihkan hingga sejumlah baris riwayatnya ini. 0 = tidak memulihkan apa pun (sambung instan).",
@@ -2563,6 +2563,7 @@
     "copy": "Salin",
     "paste": "Tempel",
     "delete": "Hapus",
+    "copy_markdown": "Salin sebagai Markdown",
     "select_all": "Pilih semua",
     "format": "Format"
   }
