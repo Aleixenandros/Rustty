@@ -2,6 +2,12 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.27.2] - 2026-11-10
+
+### Corregido
+
+- Los submenús del clic derecho (como «Nota ▸» y «Túneles ▸» de una conexión) se ven enteros cuando el menú no cabe en la ventana y tiene barra de desplazamiento: salen por encima de la caja del menú en vez de quedar cortados por ella. El arreglo de la 2.27.1 no bastaba en Linux.
+
 ## [2.27.1] - 2026-11-10
 
 ### Corregido
