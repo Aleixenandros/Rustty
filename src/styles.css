@@ -6261,6 +6261,16 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   bottom: auto;
   margin: 0;
 }
+/* En la capa superior (`popover`): anular los estilos del agente de usuario
+   (inset, borde, colores…) y dejar la visibilidad al `display` de siempre. */
+.ctx-submenu[popover] {
+  inset: auto;
+  color: inherit;
+  overflow-y: auto;
+}
+.ctx-submenu[popover]:not(:popover-open) {
+  display: none;
+}
 .ctx-submenu.submenu-fixed.submenu-measuring {
   display: block;
   visibility: hidden;

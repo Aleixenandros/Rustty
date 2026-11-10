@@ -57,6 +57,8 @@ export async function openSession({ application, driver = "http://127.0.0.1:4444
       fs.writeFileSync(file, Buffer.from(await call("GET", `${base}/screenshot`), "base64")),
     resize: (width, height) => call("POST", `${base}/window/rect`, { width, height }),
     close: () => call("DELETE", base),
+    /** Acciones W3C (p. ej. mover el puntero de verdad para que haya :hover). */
+    actions: (body) => call("POST", `${base}/actions`, body),
     async waitFor(css, timeoutMs = 30000) {
       const started = Date.now();
       for (;;) {

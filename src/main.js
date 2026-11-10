@@ -8037,6 +8037,7 @@ const MENU_OPENER_WINDOW_MS = 3000;
 /** @param {string} id */
 function noteFloatingMenuHidden(id) {
   const el = document.getElementById(id);
+  releaseMenuSubmenuLayers(el);
   if (el && !el.classList.contains("hidden")) menuHiddenAt = performance.now();
 }
 
@@ -24711,8 +24712,13 @@ function setSftpRowSelected(row, on) {
 /**
  * Coloca el submenú de `item` cuando su menú tiene scroll interno
  * (`.menu-overflow`): ese `overflow` recorta todo lo que sale de la caja, así
- * que el submenú absoluto se desplegaba pero no se veía. Ahí pasa a `fixed`,
- * pegado a su ítem y dentro de la ventana; sin scroll se queda como estaba.
+ * que el submenú absoluto se desplegaba pero no se veía. Ni siquiera `fixed`
+ * basta: WebKitGTK lo sigue recortando al pintarlo (aunque `elementFromPoint`
+ * lo dé por visible). Por eso ahí sube a la capa superior (`popover`), que se
+ * pinta por encima de todo sin sacarlo del DOM: el hover del padre, los clics
+ * delegados en el menú y el teclado siguen igual. La visibilidad la sigue
+ * decidiendo el CSS (`display`); el popover solo lo saca de la caja.
+ * Sin scroll se queda como estaba.
  * @param {Element} item `.ctx-has-submenu`
  */
 function placeOverflowSubmenu(item) {
@@ -24720,6 +24726,7 @@ function placeOverflowSubmenu(item) {
   if (!sub) return;
   if (!item.closest(".menu-overflow")) {
     if (sub.classList.contains("submenu-fixed")) {
+      releaseSubmenuLayer(sub);
       sub.classList.remove("submenu-fixed");
       sub.style.left = "";
       sub.style.top = "";
@@ -24727,16 +24734,20 @@ function placeOverflowSubmenu(item) {
     return;
   }
   sub.classList.add("submenu-fixed", "submenu-measuring");
+  raiseSubmenuLayer(sub);
   const { width, height } = sub.getBoundingClientRect();
   sub.classList.remove("submenu-measuring");
   const r = item.getBoundingClientRect();
+  // En horizontal, pegado a la caja del menú y no al ítem: así no tapa su
+  // barra de desplazamiento.
+  const box = item.closest(".menu-overflow")?.getBoundingClientRect() ?? r;
   const gap = 2;
   const margin = 6;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  let left = sub.classList.contains("open-left") ? r.left - width - gap : r.right + gap;
-  if (left + width > vw - margin) left = r.left - width - gap;
-  if (left < margin) left = Math.min(r.right + gap, vw - margin - width);
+  let left = sub.classList.contains("open-left") ? box.left - width - gap : box.right + gap;
+  if (left + width > vw - margin) left = box.left - width - gap;
+  if (left < margin) left = Math.min(box.right + gap, vw - margin - width);
   let top = sub.classList.contains("open-up") ? r.bottom + 5 - height : r.top - 5;
   top = Math.min(top, vh - margin - height);
   top = Math.max(top, margin);
@@ -24744,6 +24755,36 @@ function placeOverflowSubmenu(item) {
   const z = uiZoomFactor();
   sub.style.left = `${Math.max(left, margin) / z}px`;
   sub.style.top = `${top / z}px`;
+}
+
+const supportsPopover = typeof HTMLElement !== "undefined"
+  && typeof HTMLElement.prototype.showPopover === "function";
+
+/** Sube el submenú a la capa superior (si el motor la tiene). */
+function raiseSubmenuLayer(sub) {
+  if (!supportsPopover) return;
+  if (!sub.hasAttribute("popover")) sub.setAttribute("popover", "manual");
+  try {
+    if (!sub.matches(":popover-open")) sub.showPopover();
+  } catch {
+    // Desconectado o ya abierto: se queda como `fixed` dentro del menú.
+  }
+}
+
+/** Devuelve el submenú a su caja (al cerrar el menú o si deja de tener scroll). */
+function releaseSubmenuLayer(sub) {
+  if (!sub.hasAttribute("popover")) return;
+  try {
+    if (sub.matches(":popover-open")) sub.hidePopover();
+  } catch {
+    // Ya cerrado.
+  }
+  sub.removeAttribute("popover");
+}
+
+/** Al cerrar un menú flotante, ningún submenú suyo puede quedarse en la capa superior. */
+function releaseMenuSubmenuLayers(menu) {
+  menu?.querySelectorAll(".ctx-submenu[popover]").forEach(releaseSubmenuLayer);
 }
 
 /** Recoloca los submenús abiertos de un menú con scroll (al desplazarlo). */
@@ -24772,6 +24813,7 @@ function initOverflowSubmenus() {
 
 function positionFloatingMenu(menu, x, y) {
   // Medir con la altura natural (sin el acotado de una apertura anterior).
+  releaseMenuSubmenuLayers(menu);
   menu.classList.remove("menu-overflow");
   menu.style.left = "0px";
   menu.style.top = "0px";

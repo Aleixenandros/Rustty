@@ -128,26 +128,60 @@ export async function checkNotesAndText(app, check) {
       ctx.addHidden && ctx.parentShown && ctx.items.join(",") === "view-note,edit-note,delete-note",
       JSON.stringify(ctx));
 
-    // Menú con scroll interno (ventana baja): el submenú no puede quedar
-    // recortado por el `overflow` del menú; se tiene que ver de verdad.
-    const clipped = await app.exec(`
-      const menu = document.getElementById("context-menu");
-      menu.classList.add("menu-overflow");
-      menu.style.maxHeight = "220px";
-      const item = document.getElementById("ctx-note");
-      item.scrollIntoView({ block: "nearest" });
-      item.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: menu }));
-      item.setAttribute("aria-expanded", "true");
+    // Menú con scroll interno (ventana baja): el `overflow` del menú recortaba
+    // el submenú al pintarlo aunque `elementFromPoint` lo diera por visible,
+    // así que se mira lo que lo saca de verdad de la caja: la capa superior.
+    // Con el puntero real (acciones WebDriver), no con eventos sintéticos.
+    await app.resize(1000, 460);
+    await sleep(800);
+    await openCtx();
+    await sleep(300);
+    const move = (x, y) => app.actions({ actions: [{
+      type: "pointer", id: "raton", parameters: { pointerType: "mouse" },
+      actions: [{ type: "pointerMove", duration: 50, x: Math.round(x), y: Math.round(y), origin: "viewport" }],
+    }] });
+    const rect = (js) => app.exec(`const r = (${js}).getBoundingClientRect(); return [r.left, r.top, r.width, r.height];`);
+    const subState = () => app.exec(`
       const sub = document.getElementById("ctx-note-submenu");
       const r = sub.getBoundingClientRect();
-      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 14));
-      const out = { fixed: getComputedStyle(sub).position, w: Math.round(r.width), h: Math.round(r.height), visible: !!hit && sub.contains(hit) };
-      item.setAttribute("aria-expanded", "false");
-      menu.style.maxHeight = "";
-      return out;
+      return { topLayer: sub.matches(":popover-open"), shown: getComputedStyle(sub).display !== "none",
+        overflow: document.getElementById("context-menu").classList.contains("menu-overflow"),
+        right: r.left > document.getElementById("context-menu").getBoundingClientRect().right - 1 };
     `);
-    check("con el menú acotado con scroll, el submenú «Nota ▸» se ve entero (no lo recorta el menú)",
-      clipped.visible && clipped.fixed === "fixed" && clipped.w > 100, JSON.stringify(clipped));
+    await app.exec('document.getElementById("ctx-note").scrollIntoView({ block: "nearest" }); return true;');
+    const noteRect = await rect('document.getElementById("ctx-note")');
+    await move(noteRect[0] + 40, noteRect[1] + noteRect[3] / 2);
+    await sleep(400);
+    const onParent = await subState();
+    check("con el menú acotado con scroll, el submenú «Nota ▸» sale de la caja hacia la derecha (capa superior)",
+      onParent.overflow && onParent.topLayer && onParent.shown && onParent.right, JSON.stringify(onParent));
+    const subRect = await rect('document.getElementById("ctx-note-submenu")');
+    await move(noteRect[0] + noteRect[2] - 10, noteRect[1] + noteRect[3] / 2);
+    await move(subRect[0] + 40, subRect[1] + 15);
+    await sleep(400);
+    const inSub = await subState();
+    check("al entrar con el puntero en el submenú, sigue abierto", inSub.shown, JSON.stringify(inSub));
+    const hostRect = await rect('[...document.querySelectorAll("#context-menu > .ctx-item")].find((b) => b.dataset.ctx === "copy-host")');
+    await move(subRect[0] - 30, subRect[1] + 15);
+    await move(hostRect[0] + 40, hostRect[1] + hostRect[3] / 2);
+    await sleep(400);
+    const onOther = await subState();
+    check("al pasar a otra opción del menú, el submenú se pliega", !onOther.shown, JSON.stringify(onOther));
+    await app.exec(`
+      const target = document.activeElement || document.body;
+      target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      return true;
+    `);
+    await sleep(200);
+    const released = await app.exec(`
+      return document.getElementById("context-menu").classList.contains("hidden")
+        && !document.getElementById("ctx-note-submenu").matches(":popover-open");
+    `);
+    check("al cerrar el menú, el submenú deja la capa superior", released, String(released));
+    await move(5, 5);
+    await app.resize(1500, 900);
+    await sleep(800);
+    await openCtx();
 
     // ── Ver nota: lectura ────────────────────────────────────────
     await app.jsClick('#ctx-note-submenu [data-ctx="view-note"]');
