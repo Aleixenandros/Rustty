@@ -24708,6 +24708,68 @@ function setSftpRowSelected(row, on) {
   row.setAttribute("aria-selected", on ? "true" : "false");
 }
 
+/**
+ * Coloca el submenú de `item` cuando su menú tiene scroll interno
+ * (`.menu-overflow`): ese `overflow` recorta todo lo que sale de la caja, así
+ * que el submenú absoluto se desplegaba pero no se veía. Ahí pasa a `fixed`,
+ * pegado a su ítem y dentro de la ventana; sin scroll se queda como estaba.
+ * @param {Element} item `.ctx-has-submenu`
+ */
+function placeOverflowSubmenu(item) {
+  const sub = /** @type {HTMLElement | null} */ (item.querySelector(":scope > .ctx-submenu"));
+  if (!sub) return;
+  if (!item.closest(".menu-overflow")) {
+    if (sub.classList.contains("submenu-fixed")) {
+      sub.classList.remove("submenu-fixed");
+      sub.style.left = "";
+      sub.style.top = "";
+    }
+    return;
+  }
+  sub.classList.add("submenu-fixed", "submenu-measuring");
+  const { width, height } = sub.getBoundingClientRect();
+  sub.classList.remove("submenu-measuring");
+  const r = item.getBoundingClientRect();
+  const gap = 2;
+  const margin = 6;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let left = sub.classList.contains("open-left") ? r.left - width - gap : r.right + gap;
+  if (left + width > vw - margin) left = r.left - width - gap;
+  if (left < margin) left = Math.min(r.right + gap, vw - margin - width);
+  let top = sub.classList.contains("open-up") ? r.bottom + 5 - height : r.top - 5;
+  top = Math.min(top, vh - margin - height);
+  top = Math.max(top, margin);
+  // El menú va escalado por el zoom de la interfaz: coordenadas en sus unidades.
+  const z = uiZoomFactor();
+  sub.style.left = `${Math.max(left, margin) / z}px`;
+  sub.style.top = `${top / z}px`;
+}
+
+/** Recoloca los submenús abiertos de un menú con scroll (al desplazarlo). */
+function placeOpenOverflowSubmenus(menu) {
+  menu.querySelectorAll(".ctx-has-submenu").forEach((item) => {
+    if (item.matches(':hover, [aria-expanded="true"], :focus-within')) placeOverflowSubmenu(item);
+  });
+}
+
+function initOverflowSubmenus() {
+  const onEnter = (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    const item = target?.closest(".ctx-has-submenu");
+    // Solo al entrar en el ítem, no al moverse por dentro de su submenú.
+    if (item && !(e.relatedTarget instanceof Node && item.contains(e.relatedTarget))) {
+      placeOverflowSubmenu(item);
+    }
+  };
+  document.addEventListener("mouseover", onEnter);
+  document.addEventListener("focusin", onEnter);
+  document.addEventListener("scroll", (e) => {
+    const menu = e.target instanceof Element ? e.target : null;
+    if (menu?.classList.contains("menu-overflow")) placeOpenOverflowSubmenus(menu);
+  }, true);
+}
+
 function positionFloatingMenu(menu, x, y) {
   // Medir con la altura natural (sin el acotado de una apertura anterior).
   menu.classList.remove("menu-overflow");
@@ -27593,6 +27655,7 @@ function bindUIEvents() {
   window.addEventListener("contextmenu", (e) => e.preventDefault());
   // Campos de texto y texto seleccionado: su propio menú (Copiar, Pegar…).
   document.addEventListener("contextmenu", handleTextContextMenu);
+  initOverflowSubmenus();
   document.getElementById("text-context-menu")?.addEventListener("click", (e) => {
     const btn = e.target instanceof Element ? e.target.closest("[data-text-menu]") : null;
     if (!(btn instanceof HTMLButtonElement) || btn.disabled) return;

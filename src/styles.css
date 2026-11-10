@@ -6252,6 +6252,20 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   bottom: -5px;
 }
 
+/* Con el menú acotado con scroll (`.menu-overflow`) el submenú absoluto
+   quedaba recortado: ahí va fijo a la ventana y lo coloca
+   `placeOverflowSubmenu`. */
+.ctx-submenu.submenu-fixed {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  margin: 0;
+}
+.ctx-submenu.submenu-fixed.submenu-measuring {
+  display: block;
+  visibility: hidden;
+}
+
 /* Resaltado del ítem al que el teclado ha llevado el foco (y del padre cuyo
    submenú recorre), con el mismo aspecto que el :hover del puntero. */
 .ctx-item.is-active {

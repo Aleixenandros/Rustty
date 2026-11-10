@@ -128,6 +128,27 @@ export async function checkNotesAndText(app, check) {
       ctx.addHidden && ctx.parentShown && ctx.items.join(",") === "view-note,edit-note,delete-note",
       JSON.stringify(ctx));
 
+    // Menú con scroll interno (ventana baja): el submenú no puede quedar
+    // recortado por el `overflow` del menú; se tiene que ver de verdad.
+    const clipped = await app.exec(`
+      const menu = document.getElementById("context-menu");
+      menu.classList.add("menu-overflow");
+      menu.style.maxHeight = "220px";
+      const item = document.getElementById("ctx-note");
+      item.scrollIntoView({ block: "nearest" });
+      item.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, relatedTarget: menu }));
+      item.setAttribute("aria-expanded", "true");
+      const sub = document.getElementById("ctx-note-submenu");
+      const r = sub.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 14));
+      const out = { fixed: getComputedStyle(sub).position, w: Math.round(r.width), h: Math.round(r.height), visible: !!hit && sub.contains(hit) };
+      item.setAttribute("aria-expanded", "false");
+      menu.style.maxHeight = "";
+      return out;
+    `);
+    check("con el menú acotado con scroll, el submenú «Nota ▸» se ve entero (no lo recorta el menú)",
+      clipped.visible && clipped.fixed === "fixed" && clipped.w > 100, JSON.stringify(clipped));
+
     // ── Ver nota: lectura ────────────────────────────────────────
     await app.jsClick('#ctx-note-submenu [data-ctx="view-note"]');
     await app.waitFor("#note-editor-overlay:not(.hidden)");

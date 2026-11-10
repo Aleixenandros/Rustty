@@ -6402,20 +6402,25 @@ mod tests {
 
     /// Pone un oyente propio en lugar del puerto de datos que anuncia el
     /// servidor y reenvía por él la conexión de datos en los dos sentidos.
+    ///
+    /// La conexión con el servidor se abre **antes** de contestar el `227`,
+    /// como la abriría el cliente sin proxy. Abrirla al aceptar al cliente
+    /// dejaba una carrera: si el comando de datos se rechaza (`APPE` → 502) el
+    /// cliente suelta su canal y pide otro `PASV`; la conexión vieja llegaba al
+    /// servidor después de ese segundo `PASV`, libunftp le daba el turno del
+    /// `STOR` siguiente y el canal bueno se quedaba sin lector (5 s sin datos).
     #[cfg(target_os = "linux")]
     fn proxy_pasv(st: &Arc<FtpProxyState>, line: &str) -> Option<String> {
         let inner = line.split_once('(')?.1.split_once(')')?.0;
         let nums: Vec<u16> = inner.split(',').filter_map(|n| n.trim().parse().ok()).collect();
         let [.., p1, p2] = nums[..] else { return None };
         let upstream_port = p1 * 256 + p2;
+        let upstream = std::net::TcpStream::connect(("127.0.0.1", upstream_port)).ok()?;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
         let port = listener.local_addr().ok()?.port();
         let st = Arc::clone(st);
         thread::spawn(move || {
             let Ok((client, _)) = listener.accept() else { return };
-            let Ok(upstream) = std::net::TcpStream::connect(("127.0.0.1", upstream_port)) else {
-                return;
-            };
             st.keep(&client);
             st.keep(&upstream);
             let pipe = |mut from: std::net::TcpStream, mut to: std::net::TcpStream| {
