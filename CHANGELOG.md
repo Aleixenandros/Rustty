@@ -2,6 +2,12 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.27.1] - 2026-11-10
+
+### Corregido
+
+- Los submenús del clic derecho (como «Nota ▸» y «Túneles ▸» de una conexión) vuelven a verse cuando el menú no cabe entero en la ventana y aparece con barra de desplazamiento.
+
 ## [2.27.0] - 2026-11-10
 
 ### Añadido
