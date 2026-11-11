@@ -8091,6 +8091,64 @@ function focusMenuEntry(menu, el) {
 }
 
 /**
+ * Margen para cruzar con el puntero del ítem padre a su submenú. Entre los
+ * dos hay una franja que no es ni uno ni otro (el borde del menú, su barra de
+ * desplazamiento, el hueco que los separa): si el submenú se plegara nada más
+ * salir del ítem, desaparecería antes de llegar a él.
+ */
+const SUBMENU_CLOSE_GRACE_MS = 350;
+/** @type {WeakMap<Element, ReturnType<typeof setTimeout>>} */
+const submenuCloseTimers = new WeakMap();
+
+function cancelSubmenuClose(parent) {
+  const timer = submenuCloseTimers.get(parent);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  submenuCloseTimers.delete(parent);
+}
+
+/** Pliega el submenú que abrió el puntero; si el foco está dentro, manda el teclado. */
+function collapseHoverSubmenu(parent) {
+  cancelSubmenuClose(parent);
+  if (!parent.contains(document.activeElement)) parent.setAttribute("aria-expanded", "false");
+}
+
+function scheduleSubmenuClose(parent) {
+  cancelSubmenuClose(parent);
+  submenuCloseTimers.set(parent, setTimeout(() => {
+    submenuCloseTimers.delete(parent);
+    collapseHoverSubmenu(parent);
+  }, SUBMENU_CLOSE_GRACE_MS));
+}
+
+/**
+ * Apertura del submenú con el puntero. Lo abre `aria-expanded` y no el
+ * `:hover` del padre: con el submenú en la capa superior (`popover`) WebKit
+ * no considera al padre bajo el puntero mientras este recorre el submenú.
+ * Al salir del padre:
+ *  - hacia otra opción del menú, se pliega ya;
+ *  - hacia el borde o la barra de desplazamiento del menú, sigue abierto
+ *    (es el camino hacia el submenú);
+ *  - fuera del menú, se pliega tras `SUBMENU_CLOSE_GRACE_MS` si no se vuelve.
+ * @param {Element} parent `.ctx-has-submenu`
+ */
+function bindSubmenuHover(parent) {
+  parent.addEventListener("mouseenter", () => {
+    cancelSubmenuClose(parent);
+    parent.setAttribute("aria-expanded", "true");
+  });
+  parent.addEventListener("mouseleave", (e) => {
+    const to = e.relatedTarget instanceof Element ? e.relatedTarget : null;
+    const menu = parent.parentElement?.closest('[role="menu"]') ?? parent.parentElement;
+    if (to && menu?.contains(to)) {
+      if (to.closest(".ctx-item")) collapseHoverSubmenu(parent);
+    } else {
+      scheduleSubmenuClose(parent);
+    }
+  });
+}
+
+/**
  * `aria-expanded` de cada padre con submenú según dónde esté el foco. El
  * submenú se ve con el foco dentro del padre (`:focus-within`) salvo que
  * Escape o ← lo hayan plegado (`ctx-sub-collapsed`); al salir del padre, el
@@ -8372,10 +8430,7 @@ function showTextContextMenu(x, y, field, kind, selText) {
         }));
       });
       formatParent.appendChild(sub);
-      formatParent.addEventListener("mouseenter", () => formatParent?.setAttribute("aria-expanded", "true"));
-      formatParent.addEventListener("mouseleave", () => {
-        if (!formatParent?.contains(document.activeElement)) formatParent?.setAttribute("aria-expanded", "false");
-      });
+      bindSubmenuHover(formatParent);
       menu.appendChild(formatParent);
       continue;
     }
@@ -28850,14 +28905,21 @@ function bindUIEvents() {
     menu.addEventListener("focusin", () => syncSubmenuExpansion(menu));
     // El puntero manda: en cuanto se mueve por el menú se quita el resaltado
     // que dejó el teclado.
-    menu.addEventListener("mouseover", () =>
-      menu.querySelectorAll(".ctx-item.is-active").forEach((it) => it.classList.remove("is-active")));
-    menu.querySelectorAll(".ctx-has-submenu").forEach((parent) => {
-      parent.addEventListener("mouseenter", () => parent.setAttribute("aria-expanded", "true"));
-      parent.addEventListener("mouseleave", () => {
-        if (!parent.contains(document.activeElement)) parent.setAttribute("aria-expanded", "false");
+    menu.addEventListener("mouseover", (e) => {
+      menu.querySelectorAll(".ctx-item.is-active").forEach((it) => it.classList.remove("is-active"));
+      // Al entrar en otra opción, los submenús que el puntero dejó abiertos
+      // se pliegan ya, sin esperar al margen de cruce.
+      const item = e.target instanceof Element ? e.target.closest(".ctx-item") : null;
+      if (!item) return;
+      menu.querySelectorAll('.ctx-has-submenu[aria-expanded="true"]').forEach((parent) => {
+        if (!parent.contains(item)) collapseHoverSubmenu(parent);
       });
     });
+    // El puntero sale del menú (también al hueco que lo separa del submenú).
+    menu.addEventListener("mouseleave", () => {
+      menu.querySelectorAll('.ctx-has-submenu[aria-expanded="true"]').forEach(scheduleSubmenuClose);
+    });
+    menu.querySelectorAll(".ctx-has-submenu").forEach(bindSubmenuHover);
   }
 
   // Atajos de teclado globales (capture phase para preempt a xterm)

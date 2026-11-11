@@ -131,42 +131,89 @@ export async function checkNotesAndText(app, check) {
     // Menú con scroll interno (ventana baja): el `overflow` del menú recortaba
     // el submenú al pintarlo aunque `elementFromPoint` lo diera por visible,
     // así que se mira lo que lo saca de verdad de la caja: la capa superior.
-    // Con el puntero real (acciones WebDriver), no con eventos sintéticos.
+    // Con el puntero real (acciones WebDriver), no con eventos sintéticos, y
+    // moviéndolo PASO A PASO: de un salto no se pisa la franja que separa el
+    // ítem de su submenú (borde, barra de desplazamiento, hueco), que es donde
+    // el submenú se perdía.
+    const move = (x, y) => app.actions({ actions: [{
+      type: "pointer", id: "raton", parameters: { pointerType: "mouse" },
+      actions: [{ type: "pointerMove", duration: 0, x: Math.round(x), y: Math.round(y), origin: "viewport" }],
+    }] });
+    const glide = async (from, to, { stepPx = 3, pauseMs = 15 } = {}) => {
+      const steps = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / stepPx));
+      for (let i = 0; i <= steps; i++) {
+        await move(from[0] + ((to[0] - from[0]) * i) / steps, from[1] + ((to[1] - from[1]) * i) / steps);
+        await sleep(pauseMs);
+      }
+    };
+    const rect = (js) => app.exec(`const r = (${js}).getBoundingClientRect(); return [r.left, r.top, r.width, r.height];`);
+    const subState = () => app.exec(`
+      const menu = document.getElementById("context-menu");
+      const parent = document.getElementById("ctx-note");
+      const sub = document.getElementById("ctx-note-submenu");
+      const r = sub.getBoundingClientRect();
+      const iconColor = (el) => el ? getComputedStyle(el).color : null;
+      return {
+        topLayer: sub.matches(":popover-open"),
+        position: getComputedStyle(sub).position,
+        shown: getComputedStyle(sub).display !== "none",
+        expanded: parent.getAttribute("aria-expanded"),
+        overflow: menu.classList.contains("menu-overflow"),
+        right: r.left > menu.getBoundingClientRect().right - 1,
+        parentBg: getComputedStyle(parent).backgroundColor,
+        plainBg: getComputedStyle(menu.querySelector('[data-ctx="copy-host"]')).backgroundColor,
+        subIcon: iconColor(sub.querySelector('[data-ctx="edit-note"] > .ctx-icon')),
+        plainIcon: iconColor(menu.querySelector('[data-ctx="copy-host"] > .ctx-icon')),
+      };
+    `);
+    /** Del ítem «Nota ▸» a su submenú, despacio y parándose en la franja intermedia. */
+    const crossIntoNoteSubmenu = async () => {
+      await app.exec('document.getElementById("ctx-note").scrollIntoView({ block: "nearest" }); return true;');
+      const item = await rect('document.getElementById("ctx-note")');
+      const start = [item[0] + 40, item[1] + item[3] / 2];
+      await move(start[0], start[1]);
+      await sleep(400);
+      const onParent = await subState();
+      const sub = await rect('document.getElementById("ctx-note-submenu")');
+      const box = await rect('document.getElementById("context-menu")');
+      const y = Math.min(Math.max(start[1], sub[1] + 10), sub[1] + sub[3] - 10);
+      // Hasta el borde derecho de la caja del menú (relleno o barra de
+      // desplazamiento, ya fuera del ítem) y ahí se queda más que el margen.
+      const edge = [box[0] + box[2] - 3, y];
+      await glide(start, edge);
+      await sleep(700);
+      const onEdge = await subState();
+      await glide(edge, [sub[0] + 30, y]);
+      await sleep(500);
+      return { onParent, onEdge, inSub: await subState(), item, sub };
+    };
+
     await app.resize(1000, 460);
     await sleep(800);
     await openCtx();
     await sleep(300);
-    const move = (x, y) => app.actions({ actions: [{
-      type: "pointer", id: "raton", parameters: { pointerType: "mouse" },
-      actions: [{ type: "pointerMove", duration: 50, x: Math.round(x), y: Math.round(y), origin: "viewport" }],
-    }] });
-    const rect = (js) => app.exec(`const r = (${js}).getBoundingClientRect(); return [r.left, r.top, r.width, r.height];`);
-    const subState = () => app.exec(`
-      const sub = document.getElementById("ctx-note-submenu");
-      const r = sub.getBoundingClientRect();
-      return { topLayer: sub.matches(":popover-open"), shown: getComputedStyle(sub).display !== "none",
-        overflow: document.getElementById("context-menu").classList.contains("menu-overflow"),
-        right: r.left > document.getElementById("context-menu").getBoundingClientRect().right - 1 };
-    `);
-    await app.exec('document.getElementById("ctx-note").scrollIntoView({ block: "nearest" }); return true;');
-    const noteRect = await rect('document.getElementById("ctx-note")');
-    await move(noteRect[0] + 40, noteRect[1] + noteRect[3] / 2);
-    await sleep(400);
-    const onParent = await subState();
+    const low = await crossIntoNoteSubmenu();
     check("con el menú acotado con scroll, el submenú «Nota ▸» sale de la caja hacia la derecha (capa superior)",
-      onParent.overflow && onParent.topLayer && onParent.shown && onParent.right, JSON.stringify(onParent));
-    const subRect = await rect('document.getElementById("ctx-note-submenu")');
-    await move(noteRect[0] + noteRect[2] - 10, noteRect[1] + noteRect[3] / 2);
-    await move(subRect[0] + 40, subRect[1] + 15);
-    await sleep(400);
-    const inSub = await subState();
-    check("al entrar con el puntero en el submenú, sigue abierto", inSub.shown, JSON.stringify(inSub));
-    const hostRect = await rect('[...document.querySelectorAll("#context-menu > .ctx-item")].find((b) => b.dataset.ctx === "copy-host")');
-    await move(subRect[0] - 30, subRect[1] + 15);
-    await move(hostRect[0] + 40, hostRect[1] + hostRect[3] / 2);
-    await sleep(400);
+      low.onParent.overflow && low.onParent.topLayer && low.onParent.shown && low.onParent.right, JSON.stringify(low.onParent));
+    check("los iconos del submenú no toman el color del padre resaltado (no se pierden contra el fondo)",
+      !!low.onParent.subIcon && low.onParent.subIcon === low.onParent.plainIcon,
+      `${low.onParent.subIcon} / ${low.onParent.plainIcon}`);
+    check("parado en el borde del menú, camino del submenú, este sigue abierto",
+      low.onEdge.shown, JSON.stringify(low.onEdge));
+    check("al llegar con el puntero al submenú, sigue abierto y su padre resaltado",
+      low.inSub.shown && low.inSub.expanded === "true" && low.inSub.parentBg !== low.inSub.plainBg,
+      JSON.stringify(low.inSub));
+    const hostRect = await rect('document.querySelector(\'#context-menu [data-ctx="copy-host"]\')');
+    await glide([low.sub[0] + 30, low.sub[1] + 15], [hostRect[0] + 40, hostRect[1] + hostRect[3] / 2], { stepPx: 12 });
+    await sleep(200);
     const onOther = await subState();
-    check("al pasar a otra opción del menú, el submenú se pliega", !onOther.shown, JSON.stringify(onOther));
+    check("al pasar a otra opción del menú, el submenú se pliega enseguida", !onOther.shown, JSON.stringify(onOther));
+    await move(low.item[0] + 40, low.item[1] + low.item[3] / 2);
+    await sleep(300);
+    await glide([low.item[0] + 40, low.item[1] + low.item[3] / 2], [low.item[0] + 420, low.item[1] - 120], { stepPx: 20 });
+    await sleep(700);
+    const away = await subState();
+    check("al sacar el puntero del menú sin entrar en el submenú, este se pliega tras el margen", !away.shown, JSON.stringify(away));
     await app.exec(`
       const target = document.activeElement || document.body;
       target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
@@ -181,6 +228,16 @@ export async function checkNotesAndText(app, check) {
     await move(5, 5);
     await app.resize(1500, 900);
     await sleep(800);
+
+    // Lo mismo con el menú entero (sin scroll): submenú absoluto de siempre.
+    await openCtx();
+    await sleep(300);
+    const tall = await crossIntoNoteSubmenu();
+    check("con el menú entero, el submenú «Nota ▸» también aguanta el cruce del puntero",
+      !tall.onParent.overflow && !tall.onParent.topLayer && tall.onParent.shown && tall.onEdge.shown && tall.inSub.shown,
+      JSON.stringify({ onParent: tall.onParent.shown, onEdge: tall.onEdge.shown, inSub: tall.inSub.shown, position: tall.inSub.position }));
+    await move(5, 5);
+    await sleep(500);
     await openCtx();
 
     // ── Ver nota: lectura ────────────────────────────────────────

@@ -6172,7 +6172,10 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   background: var(--blue);
   color: var(--on-blue);
 }
-.ctx-item:hover .ctx-icon { color: var(--on-blue); }
+/* Con `>`: el icono solo cambia con SU opción. Sin él, resaltar un padre con
+   submenú teñía también los iconos de todo el submenú, que se perdían contra
+   el fondo. */
+.ctx-item:hover > .ctx-icon { color: var(--on-blue); }
 
 /* El ítem activo al recorrer el menú con el teclado se ve igual que con el
    ratón; el anillo de foco común se mantiene por encima. */
@@ -6180,12 +6183,12 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   background: var(--blue);
   color: var(--on-blue);
 }
-.ctx-item:focus-visible .ctx-icon { color: var(--on-blue); }
+.ctx-item:focus-visible > .ctx-icon { color: var(--on-blue); }
 .ctx-item.danger:focus-visible {
   background: var(--red);
   color: var(--on-red);
 }
-.ctx-item.danger:focus-visible .ctx-icon { color: var(--on-red); }
+.ctx-item.danger:focus-visible > .ctx-icon { color: var(--on-red); }
 
 .ctx-item:disabled {
   opacity: 0.45;
@@ -6195,15 +6198,15 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   background: transparent;
   color: var(--text);
 }
-.ctx-item:disabled:hover .ctx-icon { color: var(--blue); }
+.ctx-item:disabled:hover > .ctx-icon { color: var(--blue); }
 
 .ctx-item.danger { color: var(--red); }
-.ctx-item.danger .ctx-icon { color: var(--red); }
+.ctx-item.danger > .ctx-icon { color: var(--red); }
 .ctx-item.danger:hover {
   background: var(--red);
   color: var(--on-red);
 }
-.ctx-item.danger:hover .ctx-icon { color: var(--on-red); }
+.ctx-item.danger:hover > .ctx-icon { color: var(--on-red); }
 
 /* Submenú del menú contextual (p. ej. «Conectar con otro usuario») */
 .ctx-has-submenu {
@@ -6229,6 +6232,8 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   overflow-y: auto;
   display: none;
   z-index: var(--z-submenu);
+  /* Color propio: si no, heredaría el del padre resaltado. */
+  color: var(--text);
 }
 /* Se despliega con el puntero encima, con el foco dentro (teclado) y cuando
    el código lo declara abierto (aria-expanded, que el teclado mantiene: en
@@ -6238,6 +6243,13 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 .ctx-has-submenu[aria-expanded="true"] > .ctx-submenu {
   display: block;
 }
+/* El padre sigue resaltado mientras su submenú está abierto, también cuando
+   el puntero ya está dentro del submenú. */
+.ctx-item.ctx-has-submenu[aria-expanded="true"] {
+  background: var(--blue);
+  color: var(--on-blue);
+}
+.ctx-item.ctx-has-submenu[aria-expanded="true"] > .ctx-icon { color: var(--on-blue); }
 /* Apertura hacia la izquierda cuando no cabe a la derecha */
 .ctx-submenu.open-left {
   left: auto;
@@ -6265,7 +6277,6 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
    (inset, borde, colores…) y dejar la visibilidad al `display` de siempre. */
 .ctx-submenu[popover] {
   inset: auto;
-  color: inherit;
   overflow-y: auto;
 }
 .ctx-submenu[popover]:not(:popover-open) {
@@ -6282,19 +6293,19 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   background: var(--blue);
   color: var(--on-blue);
 }
-.ctx-item.is-active .ctx-icon { color: var(--on-blue); }
+.ctx-item.is-active > .ctx-icon { color: var(--on-blue); }
 .ctx-item.danger.is-active {
   background: var(--red);
   color: var(--on-red);
 }
-.ctx-item.danger.is-active .ctx-icon { color: var(--on-red); }
+.ctx-item.danger.is-active > .ctx-icon { color: var(--on-red); }
 
 .ctx-item.active {
   color: var(--blue);
   font-weight: 600;
 }
-.ctx-item.active .ctx-icon { color: var(--blue); }
-.ctx-item.active:hover .ctx-icon { color: var(--on-blue); }
+.ctx-item.active > .ctx-icon { color: var(--blue); }
+.ctx-item.active:hover > .ctx-icon { color: var(--on-blue); }
 
 .ctx-icon {
   width: 16px;
