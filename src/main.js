@@ -5664,27 +5664,36 @@ function renderWorkspaceSwitcher() {
   }
 
   if (!menu) return;
+  // Cada perfil es una fila: el botón que lo selecciona y «⋯», que abre su
+  // menú de opciones (el mismo del clic derecho: renombrar, mover, eliminar…).
   const items = prefs.workspaces.map((w) => {
     const isActive = w.id === getActiveWorkspaceId() && prefs.sidebarViewMode === "current";
     const color = getWorkspaceColor(w.id)?.color || "var(--overlay1)";
-    return `<button class="ws-item${isActive ? " active" : ""}" data-ws-action="select" data-ws-id="${escHtml(w.id)}" draggable="true" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown">
-      <span class="ws-color-dot${isActive ? " active" : ""}" style="--workspace-tint:${color}" aria-hidden="true"></span>
-      <span>${escHtml(workspaceLabel(w))}</span>
-    </button>`;
+    const label = workspaceLabel(w);
+    const options = escHtml(t("sidebar.workspace_options", { name: label }));
+    return `<div class="ws-row" data-ws-id="${escHtml(w.id)}">
+      <button class="ws-item${isActive ? " active" : ""}" data-ws-action="select" data-ws-id="${escHtml(w.id)}" draggable="true" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown">
+        <span class="ws-color-dot${isActive ? " active" : ""}" style="--workspace-tint:${color}" aria-hidden="true"></span>
+        <span class="ws-item-name">${escHtml(label)}</span>
+      </button>
+      <button type="button" class="ws-more" data-ws-id="${escHtml(w.id)}" aria-haspopup="menu" aria-label="${options}" title="${options}"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-more"/></svg></button>
+    </div>`;
   }).join("");
-  const canDelete = prefs.workspaces.length > 1;
-  const moves = workspaceMoves(prefs.workspaces, getActiveWorkspaceId());
   menu.innerHTML = `${items}
     <div class="ws-sep"></div>
-    <button class="ws-item" data-ws-action="new"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-plus"/></svg><span>${escHtml(t("sidebar.workspace_new"))}</span></button>
-    <div class="ws-order-row">
-      <span class="ws-order-label">${escHtml(t("sidebar.workspace_order"))}</span>
-      <button class="ws-item ws-order-btn" data-ws-action="move-up" aria-label="${escHtml(t("sidebar.workspace_move_up"))}" ${moves.up ? "" : "disabled"}><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-up"/></svg></button>
-      <button class="ws-item ws-order-btn" data-ws-action="move-down" aria-label="${escHtml(t("sidebar.workspace_move_down"))}" ${moves.down ? "" : "disabled"}><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-arrow-down"/></svg></button>
-    </div>
-    <button class="ws-item" data-ws-action="health"><span><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-refresh"/></svg> ${escHtml(t("health.workspace_action"))}</span></button>
-    <button class="ws-item" data-ws-action="rename"><span><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg> ${escHtml(t("sidebar.workspace_rename"))}</span></button>
-    <button class="ws-item danger" data-ws-action="delete" ${canDelete ? "" : "disabled"}><span><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-x"/></svg> ${escHtml(t("sidebar.workspace_delete"))}</span></button>`;
+    <button class="ws-item" data-ws-action="new"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-plus"/></svg><span>${escHtml(t("sidebar.workspace_new"))}</span></button>`;
+}
+
+/** Abre el menú de opciones de un perfil (workspace) en un punto de la ventana. */
+function showWorkspaceOptionsMenu(x, y, workspaceId) {
+  if (!prefs.workspaces.some((w) => w.id === workspaceId)) return;
+  showContextMenu(x, y, "workspace", null, null, { workspaceId });
+}
+
+/** Cierra el popover de herramientas de la barra lateral solo si está abierto. */
+function closeSidebarToolsIfOpen() {
+  const popover = document.getElementById("sidebar-tools-popover");
+  if (popover && !popover.classList.contains("hidden")) toggleSidebarTools(false);
 }
 
 /**
@@ -5805,11 +5814,6 @@ function updateRailActiveState() {
 }
 
 async function handleWorkspaceMenuClick(action, wsId) {
-  if (action === "health") {
-    toggleWorkspaceMenu(false);
-    runHealthCheck(profiles.filter(profileBelongsToActiveWorkspace), t("health.scope_workspace"));
-    return;
-  }
   if (action === "select" && wsId) {
     if (wsId !== getActiveWorkspaceId()) {
       prefs.activeWorkspaceId = wsId;
@@ -5840,27 +5844,9 @@ async function handleWorkspaceMenuClick(action, wsId) {
       renderConnectionList();
       scheduleProfileAutoSync();
     }
-    return;
   }
-  if (action === "rename") {
-    toggleWorkspaceMenu(false);
-    // La misma vía que el menú contextual: el workspace por defecto se
-    // propone con su nombre traducido.
-    await renameWorkspaceById(getActiveWorkspaceId());
-    return;
-  }
-  if (action === "move-up" || action === "move-down") {
-    reorderWorkspace(getActiveWorkspaceId(), action === "move-up" ? -1 : 1);
-    return;
-  }
-  if (action === "delete") {
-    toggleWorkspaceMenu(false);
-    // La vía común: diálogos tematizados (wry no implementa `window.confirm`:
-    // en Linux y macOS no mostraba nada), confirmación tecleada si tiene
-    // conexiones y papelera con Deshacer también para un workspace vacío.
-    await deleteWorkspaceById(getActiveWorkspaceId());
-    return;
-  }
+  // Renombrar, mover, comprobar la salud y eliminar van en el menú de
+  // opciones de cada perfil (clic derecho o «⋯»): `handleContextMenuAction`.
 }
 
 // ─── Orden de los perfiles (workspaces) ─────────────────────────
@@ -7873,6 +7859,9 @@ function showContextMenu(x, y, type, id = null, folderPath = null, extra = {}) {
     const down = menu.querySelector('[data-ctx="move-ws-down"]');
     if (up) up.disabled = !moves.up;
     if (down) down.disabled = !moves.down;
+    // El último perfil no se puede eliminar.
+    const del = menu.querySelector('[data-ctx="delete-ws"]');
+    if (del) del.disabled = prefs.workspaces.length <= 1;
   }
   menu.querySelectorAll(".ctx-colorable").forEach((el) =>
     el.classList.toggle("hidden", type !== "folder" && type !== "workspace")
@@ -8550,14 +8539,19 @@ function handleTextContextMenu(e) {
 function handleContextMenuAction(action) {
   const { id, folderPath, workspaceId } = ctxTarget;
   const targetWs = workspaceId || getActiveWorkspaceId();
+  // Ojo: `hideContextMenu()` vacía `ctxTarget`. Todo lo que haga falta del
+  // objetivo se lee de las constantes de arriba, nunca de `ctxTarget` después
+  // (las acciones de perfil lo leían tarde y no hacían nada).
   hideContextMenu();
 
   switch (action) {
     case "new-connection":
+      closeSidebarToolsIfOpen();
       // La carpeta contextual se pasa como prefijo
       openNewConnectionModal(folderPath, targetWs);
       break;
     case "new-folder":
+      closeSidebarToolsIfOpen();
       startInlineFolderCreation(folderPath, targetWs);
       break;
     case "rename-folder":
@@ -8653,19 +8647,28 @@ function handleContextMenuAction(action) {
       if (folderPath) openBulkEditForFolder(folderPath, targetWs);
       break;
     case "bulk-edit-ws":
-      if (ctxTarget.workspaceId) openBulkEditForWorkspace(ctxTarget.workspaceId);
+      closeSidebarToolsIfOpen();
+      if (workspaceId) openBulkEditForWorkspace(workspaceId);
       break;
     case "rename-ws":
-      renameWorkspaceById(ctxTarget.workspaceId);
+      closeSidebarToolsIfOpen();
+      renameWorkspaceById(workspaceId);
+      break;
+    case "health-ws":
+      closeSidebarToolsIfOpen();
+      if (workspaceId) {
+        runHealthCheck(profilesInWorkspace(workspaceId), workspaceDisplayName(workspaceId));
+      }
       break;
     case "move-ws-up":
-      if (ctxTarget.workspaceId) reorderWorkspace(ctxTarget.workspaceId, -1);
+      if (workspaceId) reorderWorkspace(workspaceId, -1);
       break;
     case "move-ws-down":
-      if (ctxTarget.workspaceId) reorderWorkspace(ctxTarget.workspaceId, 1);
+      if (workspaceId) reorderWorkspace(workspaceId, 1);
       break;
     case "delete-ws":
-      deleteWorkspaceById(ctxTarget.workspaceId);
+      closeSidebarToolsIfOpen();
+      deleteWorkspaceById(workspaceId);
       break;
     case "open-trash":
       openTrashModal();
@@ -8674,7 +8677,8 @@ function handleContextMenuAction(action) {
       if (folderPath) exportConnections(folderPath, targetWs);
       break;
     case "export-ws":
-      if (ctxTarget.workspaceId) exportConnectionsByWorkspace(ctxTarget.workspaceId);
+      closeSidebarToolsIfOpen();
+      if (workspaceId) exportConnectionsByWorkspace(workspaceId);
       break;
     case "open-data-dir":
       openDataDirectory();
@@ -8702,24 +8706,23 @@ async function deleteWorkspaceById(wsId) {
   if (prefs.workspaces.length <= 1) return;
   const ws = prefs.workspaces.find((w) => w.id === wsId);
   if (!ws) return;
-  const inUse = profiles.some((p) => (p.workspace_id || "default") === ws.id);
-  if (inUse) {
-    const ok = await confirmDestructiveTyped({
-      title: t("sidebar.workspace_delete"),
-      message: t("sidebar.workspace_confirm_delete_full"),
-      expectedText: workspaceLabel(ws),
-      danger: true,
-    });
-    if (!ok) return;
-  } else {
-    const ok = await confirmThemed({
-      title: t("sidebar.workspace_delete"),
-      message: t("sidebar.workspace_confirm_delete"),
-      submitLabel: t("modal_destructive.submit"),
-      danger: true,
-    });
-    if (!ok) return;
-  }
+  const name = workspaceLabel(ws);
+  const count = profiles.filter((p) => (p.workspace_id || "default") === ws.id).length;
+  const inUse = count > 0;
+  // Siempre se dice QUÉ perfil se va a eliminar y cuántas conexiones se lleva,
+  // y siempre se pide teclear su nombre: también vacío, que es fácil
+  // equivocarse de perfil en la lista.
+  const ok = await confirmDestructiveTyped({
+    title: t("sidebar.workspace_delete"),
+    message: count === 0
+      ? t("sidebar.workspace_confirm_delete_empty", { name })
+      : count === 1
+        ? t("sidebar.workspace_confirm_delete_one", { name })
+        : t("sidebar.workspace_confirm_delete_many", { name, n: count }),
+    expectedText: name,
+    danger: true,
+  });
+  if (!ok) return;
   const finalize = () => {
     if (prefs.userFoldersByWorkspace) delete prefs.userFoldersByWorkspace[ws.id];
     deleteWorkspaceColors(ws.id);
@@ -27875,7 +27878,30 @@ function bindUIEvents() {
     });
     const wsMenu = document.getElementById("workspace-menu");
     if (wsMenu) bindWorkspaceMenuReorder(wsMenu);
+    // Clic derecho (o tecla de menú) sobre un perfil: su menú de opciones.
+    wsMenu?.addEventListener("contextmenu", (e) => {
+      const row = e.target.closest?.(".ws-row");
+      if (!row) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // Desde el teclado el evento no trae posición: bajo la fila.
+      const r = row.getBoundingClientRect();
+      const fromKeyboard = e.clientX === 0 && e.clientY === 0;
+      showWorkspaceOptionsMenu(
+        fromKeyboard ? r.left + 16 : e.clientX,
+        fromKeyboard ? r.bottom : e.clientY,
+        row.dataset.wsId,
+      );
+    });
     popover.addEventListener("click", (e) => {
+      const moreBtn = e.target.closest(".ws-more");
+      if (moreBtn) {
+        // Sin propagar: el clic en el documento cerraría el menú recién abierto.
+        e.stopPropagation();
+        const r = moreBtn.getBoundingClientRect();
+        showWorkspaceOptionsMenu(r.left, r.bottom + 2, moreBtn.dataset.wsId);
+        return;
+      }
       const wsBtn = e.target.closest(".ws-item");
       if (wsBtn && !wsBtn.disabled) {
         handleWorkspaceMenuClick(wsBtn.dataset.wsAction, wsBtn.dataset.wsId);
@@ -27917,6 +27943,10 @@ function bindUIEvents() {
       if (popover.classList.contains("hidden")) return;
       if (downInDropdown) return;
       if (popover.contains(e.target) || toolsBtn.contains(e.target)) return;
+      // El menú de opciones de un perfil se abre desde aquí: elegir en él no
+      // cierra el popover (mover o cambiar el color se ven al momento); las
+      // acciones que abren un diálogo lo cierran ellas.
+      if (e.target.closest?.("#context-menu")) return;
       // Si el clic recae sobre una conexión de los resultados, no cierres el
       // popover de búsqueda: así la lista no se re-renderiza en el primer clic
       // y el doble clic para conectar puede completarse. El popover y el filtro

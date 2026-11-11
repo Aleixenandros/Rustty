@@ -7,10 +7,15 @@
 //     lo refleja.
 //   - Elegir en ese desplegable (su lista vive en <body>) no cierra el popover
 //     de búsqueda ni borra lo escrito.
-//   - «Bajar perfil» y Alt+↑ en la lista de perfiles cambian el orden guardado.
+//   - Cada perfil de la lista trae su menú de opciones (clic derecho o «⋯»):
+//     renombrar, mover, comprobar la salud, exportar, eliminar. Bajo la lista
+//     ya no hay acciones sueltas que actúen «sobre el perfil activo».
+//   - «Mover abajo» y Alt+↑ en la lista de perfiles cambian el orden guardado.
+//   - Eliminar un perfil dice cuál es y pide teclear su nombre, también vacío.
 import { sleep } from "./webdriver.mjs";
 
 const WS_B = { id: "e2e-ws-b", name: "E2E Trabajo" };
+const WS_C = { id: "e2e-ws-c", name: "E2E Borrar" };
 const IDS = { a: "e2e-scope-a", b: "e2e-scope-b" };
 
 export async function checkWorkspaces(app, check, { shot } = {}) {
@@ -40,15 +45,16 @@ export async function checkWorkspaces(app, check, { shot } = {}) {
   });
   await app.exec(`
     const prefs = JSON.parse(localStorage.getItem("rustty-prefs") || "{}");
-    const list = (prefs.workspaces || [{ id: "default", name: "Default" }]).filter((w) => w.id !== arguments[0].id);
-    prefs.workspaces = [...list, arguments[0]];
+    const list = (prefs.workspaces || [{ id: "default", name: "Default" }])
+      .filter((w) => w.id !== arguments[0].id && w.id !== arguments[1].id);
+    prefs.workspaces = [...list, arguments[0], arguments[1]];
     prefs.sidebarViewMode = "current";
     prefs.searchScope = "current";
     prefs.searchAllWorkspaces = false;
     localStorage.setItem("rustty-prefs", JSON.stringify(prefs));
     setTimeout(() => location.reload(), 50);
     return true;
-  `, [WS_B]);
+  `, [WS_B, WS_C]);
   await sleep(2000);
   await app.waitForApp();
   await sleep(800);
@@ -130,15 +136,72 @@ export async function checkWorkspaces(app, check, { shot } = {}) {
   await app.jsClick("#btn-sidebar-tools");
   await app.waitFor("#sidebar-tools-popover:not(.hidden)");
   await settle();
+  // Bajo la lista solo queda «Nuevo perfil…»: nada de renombrar/eliminar sueltos.
+  const loose = await app.exec(`
+    return [...document.querySelectorAll("#workspace-menu [data-ws-action]")]
+      .map((b) => b.dataset.wsAction).filter((a) => a !== "select" && a !== "new");
+  `);
+  check("bajo la lista de perfiles ya no hay acciones sueltas (solo «Nuevo perfil…»)",
+    loose.length === 0, JSON.stringify(loose));
+
+  /** Clic derecho sobre un perfil de la lista. */
+  const openWsMenu = async (id) => {
+    await app.exec(`
+      const row = document.querySelector('#workspace-menu .ws-row[data-ws-id="' + arguments[0] + '"]');
+      const r = row.getBoundingClientRect();
+      row.querySelector(".ws-item").dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 8,
+      }));
+      return true;
+    `, [id]);
+    await app.waitFor("#context-menu:not(.hidden)");
+    await settle();
+  };
+  const menuEntries = () => app.exec(`
+    const shown = (el) => !el.classList.contains("hidden") && el.offsetParent !== null;
+    return [...document.querySelectorAll("#context-menu [data-ctx]")].filter(shown)
+      .map((b) => b.dataset.ctx + (b.disabled ? ":off" : ""));
+  `);
+  const popoverOpen = () => app.exec('return !document.getElementById("sidebar-tools-popover").classList.contains("hidden");');
+
+  await openWsMenu(WS_B.id);
+  const entries = await menuEntries();
+  check("el clic derecho sobre un perfil abre su menú: renombrar, mover, salud, exportar y eliminar",
+    ["rename-ws", "health-ws", "export-ws", "delete-ws"].every((e) => entries.includes(e))
+      && entries.some((e) => e.startsWith("move-ws-up")) && entries.some((e) => e.startsWith("move-ws-down"))
+      && !entries.includes("connect") && !entries.includes("delete-conn"),
+    entries.join(","));
+  await app.exec(`
+    (document.activeElement || document.body).dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    return true;
+  `);
+  await settle();
+  check("Escape cierra el menú del perfil y deja abierta la lista",
+    await app.exec('return document.getElementById("context-menu").classList.contains("hidden");') && await popoverOpen());
+
+  await app.jsClick(`#workspace-menu .ws-more[data-ws-id="${WS_B.id}"]`);
+  await settle();
+  const viaMore = await app.exec(`
+    const menu = document.getElementById("context-menu");
+    const btn = document.querySelector('#workspace-menu .ws-more[data-ws-id="${WS_B.id}"]');
+    return { open: !menu.classList.contains("hidden"), label: btn.getAttribute("aria-label") || "" };
+  `);
+  check("el botón «⋯» de cada perfil abre el mismo menú y dice de qué perfil es",
+    viaMore.open && viaMore.label.includes(WS_B.name), JSON.stringify(viaMore));
+  await app.exec('document.body.click(); return true;');
+  await settle();
+
   const before = await order();
   const canDown = before.indexOf(activeId) < before.length - 1;
-  await app.jsClick(`#workspace-menu .ws-item[data-ws-action="${canDown ? "move-down" : "move-up"}"]`);
+  await openWsMenu(activeId);
+  await app.jsClick(`#context-menu [data-ctx="${canDown ? "move-ws-down" : "move-ws-up"}"]`);
   await settle();
   const afterDown = await order();
-  check("«Bajar/Subir perfil» mueve el perfil activo una posición",
+  check("«Mover abajo/arriba» del menú del perfil lo mueve una posición",
     afterDown.indexOf(activeId) === before.indexOf(activeId) + (canDown ? 1 : -1), `${before} → ${afterDown}`);
-  check("la lista del menú sigue el orden nuevo",
-    await app.exec(`return [...document.querySelectorAll('#workspace-menu .ws-item[data-ws-action="select"]')]
+  check("la lista sigue abierta y con el orden nuevo",
+    await popoverOpen() && await app.exec(`return [...document.querySelectorAll('#workspace-menu .ws-item[data-ws-action="select"]')]
       .map((b) => b.dataset.wsId).join() === arguments[0];`, [afterDown.join()]));
   const altBack = await app.exec(`
     const item = document.querySelector('#workspace-menu .ws-item[data-ws-id="' + arguments[0] + '"]');
@@ -154,7 +217,63 @@ export async function checkWorkspaces(app, check, { shot } = {}) {
     afterBack.join() === before.join() && altBack.prevented && altBack.focus === activeId,
     `${afterBack} ${JSON.stringify(altBack)}`);
   if (shot) await shot("workspace-menu");
+
+  // ── Eliminar un perfil: dice cuál y pide teclear su nombre ──────
+  const dialog = () => app.exec(`
+    const overlay = document.getElementById("credential-modal-overlay");
+    return {
+      open: !overlay.classList.contains("hidden"),
+      message: document.getElementById("credential-modal-message").textContent,
+      label: document.getElementById("credential-modal-label").textContent,
+      submitOff: document.getElementById("btn-credential-submit").disabled,
+    };
+  `);
+  const typeName = (value) => app.exec(`
+    const input = document.getElementById("credential-modal-input");
+    input.value = arguments[0];
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return document.getElementById("btn-credential-submit").disabled;
+  `, [value]);
+
+  // Con conexiones: nombra el perfil y avisa de lo que se lleva. Se cancela.
+  await openWsMenu(WS_B.id);
+  await app.jsClick('#context-menu [data-ctx="delete-ws"]');
+  await app.waitFor("#credential-modal-overlay:not(.hidden)");
+  await settle();
+  const askB = await dialog();
+  check("eliminar un perfil con conexiones dice qué perfil es y pide teclear su nombre",
+    askB.message.includes(WS_B.name) && askB.label.includes(WS_B.name) && askB.submitOff, JSON.stringify(askB));
+  check("al pedir la confirmación, la lista de perfiles se cierra", !(await popoverOpen()));
+  check("con otro nombre, «Eliminar» sigue apagado", await typeName("E2E Otro") === true);
+  await app.jsClick("#btn-credential-cancel");
+  await settle();
+  check("cancelar no elimina el perfil", (await order()).includes(WS_B.id));
+
+  // Vacío: también se nombra y también hay que teclearlo.
   await app.jsClick("#btn-sidebar-tools");
+  await app.waitFor("#sidebar-tools-popover:not(.hidden)");
+  await settle();
+  await openWsMenu(WS_C.id);
+  await app.jsClick('#context-menu [data-ctx="delete-ws"]');
+  await app.waitFor("#credential-modal-overlay:not(.hidden)");
+  await settle();
+  const askC = await dialog();
+  check("eliminar un perfil vacío también dice cuál es y pide su nombre",
+    askC.message.includes(WS_C.name) && askC.submitOff, JSON.stringify(askC));
+  const offAfterName = await typeName(WS_C.name);
+  await app.jsClick("#btn-credential-submit");
+  await settle();
+  const afterDelete = await order();
+  check("al teclear el nombre se enciende «Eliminar» y el perfil desaparece",
+    offAfterName === false && !afterDelete.includes(WS_C.id) && afterDelete.includes(WS_B.id), `${afterDelete}`);
+  // Fuera de la papelera, para no dejar rastro en el resto del smoke.
+  await app.exec(`
+    const key = "rustty.trash.v1";
+    const kept = JSON.parse(localStorage.getItem(key) || "[]").filter((e) => !JSON.stringify(e).includes(arguments[0]));
+    localStorage.setItem(key, JSON.stringify(kept));
+    return true;
+  `, [WS_C.id]);
+  if (await popoverOpen()) await app.jsClick("#btn-sidebar-tools");
   await settle();
 
   // Limpieza: fuera las conexiones y el perfil de prueba, y las preferencias
@@ -163,7 +282,7 @@ export async function checkWorkspaces(app, check, { shot } = {}) {
   await app.exec(`
     const prefs = JSON.parse(localStorage.getItem("rustty-prefs") || "{}");
     const o = arguments[0];
-    prefs.workspaces = (prefs.workspaces || []).filter((w) => w.id !== arguments[1]);
+    prefs.workspaces = (prefs.workspaces || []).filter((w) => w.id !== arguments[1] && w.id !== arguments[2]);
     prefs.activeWorkspaceId = o.activeWorkspaceId ?? prefs.activeWorkspaceId;
     prefs.sidebarViewMode = o.sidebarViewMode ?? "current";
     prefs.searchScope = o.searchScope ?? null;
@@ -171,7 +290,7 @@ export async function checkWorkspaces(app, check, { shot } = {}) {
     localStorage.setItem("rustty-prefs", JSON.stringify(prefs));
     setTimeout(() => location.reload(), 50);
     return true;
-  `, [original, WS_B.id]);
+  `, [original, WS_B.id, WS_C.id]);
   await sleep(2000);
   await app.waitForApp();
   await sleep(800);

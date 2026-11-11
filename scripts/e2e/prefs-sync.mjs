@@ -181,8 +181,18 @@ export async function checkPrefsSync(app, workDir, check) {
     await app.jsClick("#btn-sidebar-tools");
     await app.jsClick('[data-ws-action="select"][data-ws-id="ws-sync"]');
     check("cambiar de workspace no fecha el bundle", (await readPrefs())._prefsUpdatedAt === received._prefsUpdatedAt);
+    // Renombrar va en el menú de opciones del perfil (clic derecho en la lista).
     await app.jsClick("#btn-sidebar-tools");
-    await app.jsClick('[data-ws-action="rename"]');
+    await app.exec(`
+      const row = document.querySelector('#workspace-menu .ws-row[data-ws-id="ws-sync"]');
+      const r = row.getBoundingClientRect();
+      row.querySelector(".ws-item").dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true, cancelable: true, clientX: r.left + 20, clientY: r.top + 8,
+      }));
+      return true;
+    `);
+    await app.waitFor("#context-menu:not(.hidden)");
+    await app.jsClick('#context-menu [data-ctx="rename-ws"]');
     await app.waitFor("#credential-modal-overlay:not(.hidden)");
     await app.exec('document.getElementById("credential-modal-input").value = "Producción renombrada"; return true;');
     await app.jsClick("#btn-credential-submit");

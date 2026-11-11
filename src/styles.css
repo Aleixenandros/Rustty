@@ -1107,25 +1107,56 @@ body.sidebar-collapsed #sidebar-resize-handle {
   background: transparent;
 }
 
-/* Subir/bajar el perfil activo: una fila con dos iconos (con tooltip). */
-.workspace-menu .ws-order-row {
+/* Cada perfil: el botón que lo selecciona y «⋯», que abre su menú de opciones
+   (el mismo del clic derecho). */
+.workspace-menu .ws-row {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 2px 4px 2px 8px;
 }
 
-.workspace-menu .ws-order-label {
+.workspace-menu .ws-row > .ws-item {
   flex: 1;
-  font-size: 12px;
-  color: var(--subtext0);
+  min-width: 0;
 }
 
-.workspace-menu .ws-order-btn {
-  width: 28px;
-  height: 26px;
+.workspace-menu .ws-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-menu .ws-more {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+  width: 26px;
+  height: 26px;
   padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--subtext0);
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.workspace-menu .ws-more .ctx-icon-svg {
+  width: 14px;
+  height: 14px;
+  vertical-align: 0;
+  stroke-width: 1.8;
+}
+
+.workspace-menu .ws-row:hover .ws-more,
+.workspace-menu .ws-more:focus-visible {
+  opacity: 1;
+}
+
+.workspace-menu .ws-more:hover {
+  background: var(--surface0);
+  color: var(--text);
 }
 
 /* Orden de los perfiles: se arrastran en la lista; una guía marca dónde caen. */
