@@ -2,6 +2,29 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.28.0] - 2026-11-11
+
+### Añadido
+
+- Cada perfil de la lista de perfiles tiene su propio menú de opciones, con el clic derecho o con el botón «⋯» de su fila: renombrar, mover arriba o abajo, comprobar la salud de sus conexiones, exportarlas, editarlas en bloque, cambiar su color y eliminarlo. Actúa sobre el perfil elegido, no solo sobre el activo.
+- Al cerrar una pestaña que tiene túneles abiertos, la confirmación dice qué túneles se van a cerrar: los de esa pestaña y, si es la conexión principal, los de las pestañas abiertas sobre ella. Al cerrar varias pestañas a la vez y en «Desconectar todo» se dice cuántos túneles se cierran.
+- El historial de actividad muestra cuántas entradas tiene cada filtro, añade el filtro «Errores» (de cualquier tipo) y marca como «Nuevo» lo registrado desde la última vez que se abrió. El botón «Historial y logs» de la barra lateral lleva un distintivo rojo con los errores que aún no se han visto.
+
+### Cambiado
+
+- Eliminar un perfil dice siempre qué perfil es y cuántas conexiones se lleva, y pide escribir su nombre para confirmar, también si está vacío.
+- Bajo la lista de perfiles solo queda «Nuevo perfil…»: renombrar, mover, comprobar la salud y eliminar han pasado al menú de cada perfil.
+- La pista de teclado del buscador del inicio muestra el atajo que está configurado de verdad, y se oculta si no tiene ninguno.
+- Las flechas de los submenús son iconos, como el resto de la interfaz.
+- Los botones de Perfiles y Favoritos de la barra lateral anuncian cuál está puesto a los lectores de pantalla.
+- Dependencias puestas al día con las últimas correcciones compatibles.
+
+### Corregido
+
+- Los submenús del clic derecho ya no se pierden al llevar el ratón hasta ellos cuando el menú tiene barra de desplazamiento: siguen abiertos mientras se cruza el borde del menú, y la opción que los abre se mantiene resaltada.
+- Los iconos de un submenú conservan su color en vez de tomar el de la opción resaltada, con el que se perdían contra el fondo.
+- Las opciones de perfil del clic derecho en la vista «Todos los perfiles» (renombrar, mover, exportar, editar en bloque y eliminar) no hacían nada; vuelven a funcionar.
+
 ## [2.27.2] - 2026-11-10
 
 ### Corregido
