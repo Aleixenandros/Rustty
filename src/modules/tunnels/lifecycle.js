@@ -37,3 +37,34 @@ export function connectionTunnelOwners(entries, closedId) {
     .filter(([sid, s]) => sid === closedId || s._parentSessionId === closedId)
     .map(([sid]) => sid);
 }
+
+/**
+ * @template T
+ * @typedef {TunnelOwnerLike & { tunnels?: { values(): Iterable<T> } | null }} TunnelHolderLike
+ */
+
+/**
+ * Túneles abiertos que se cierran al cerrar las pestañas `closedIds`: los de
+ * cada una y, si es una raíz, los de sus hijas. Sirve para avisarlo ANTES de
+ * cerrar; cada túnel sale una sola vez aunque se cierren a la vez una raíz y
+ * sus hijas.
+ *
+ * @template T
+ * @param {Iterable<[string, TunnelHolderLike<T>]>} entries  Las sesiones.
+ * @param {Iterable<string>} closedIds
+ * @returns {T[]}
+ */
+export function tunnelsClosedWith(entries, closedIds) {
+  const all = [...entries];
+  const owners = new Set();
+  for (const id of closedIds) {
+    for (const sid of connectionTunnelOwners(all, id)) owners.add(sid);
+  }
+  /** @type {T[]} */
+  const closing = [];
+  for (const [sid, session] of all) {
+    if (!owners.has(sid)) continue;
+    for (const tunnel of session.tunnels?.values() || []) closing.push(tunnel);
+  }
+  return closing;
+}

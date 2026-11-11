@@ -516,12 +516,16 @@
     "filter_all": "Tout",
     "filter_connection": "Connexions",
     "filter_update": "Avis",
+    "filter_errors": "Erreurs",
     "connect": "Connecter",
     "close": "Fermer le centre d'activité",
     "filters_label": "Filtrer l'activité",
     "filter_sync": "Synchronisation",
     "clear": "Effacer",
-    "clear_title": "Vider l'historique d'activité"
+    "clear_title": "Vider l'historique d'activité",
+    "new": "Nouveau",
+    "unseen_errors_one": "1 erreur non vue",
+    "unseen_errors_many": "{n} erreurs non vues"
   },
   "sidebar": {
     "prefs_title": "Préférences",
@@ -751,7 +755,6 @@
   "dashboard": {
     "pinned_title": "Épinglés",
     "search_ph": "Rechercher un profil, un hôte ou un utilisateur…",
-    "search_kbd": "Ctrl K",
     "search_results_title": "Correspondances",
     "quick_title": "Accès rapide",
     "quick_new_hint": "SSH ou RDP",
@@ -816,10 +819,15 @@
     "session_fallback": "session",
     "tablist_label": "Sessions ouvertes",
     "close_tab_transfers": "Des transferts SFTP en cours seront annulés.",
+    "close_tunnels_one": "Elle a un tunnel ouvert qui sera fermé : {desc}",
+    "close_tunnels_many": "Elle a {n} tunnels ouverts qui seront fermés :",
+    "close_tunnels_more": "…et {n} de plus",
     "close_tab_submit": "Fermer et déconnecter",
     "close_many_title": "Fermer les onglets",
     "close_many_msg_one": "L'un des onglets à fermer a une connexion active. Continuer et la déconnecter ?",
-    "close_many_msg": "Il y a {n} connexions actives parmi les onglets à fermer. Continuer et les déconnecter ?"
+    "close_many_msg": "Il y a {n} connexions actives parmi les onglets à fermer. Continuer et les déconnecter ?",
+    "close_many_tunnels_one": "Un tunnel ouvert sera également fermé.",
+    "close_many_tunnels": "{n} tunnels ouverts seront également fermés."
   },
   "shell_child": {
     "root_not_connected": "La connexion de cet onglet n'est plus active",

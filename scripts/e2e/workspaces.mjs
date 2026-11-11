@@ -14,6 +14,10 @@
 //   - Eliminar un perfil dice cuál es y pide teclear su nombre, también vacío.
 import { sleep } from "./webdriver.mjs";
 
+const shotDir = process.env.E2E_SHOT_DIR || "";
+/** Captura opcional (`E2E_SHOT_DIR`): para mirar el resultado, no solo medirlo. */
+const snap = async (app, name) => { if (shotDir) await app.screenshot(`${shotDir}/${name}.png`); };
+
 const WS_B = { id: "e2e-ws-b", name: "E2E Trabajo" };
 const WS_C = { id: "e2e-ws-c", name: "E2E Borrar" };
 const IDS = { a: "e2e-scope-a", b: "e2e-scope-b" };
@@ -165,6 +169,7 @@ export async function checkWorkspaces(app, check, { shot } = {}) {
   const popoverOpen = () => app.exec('return !document.getElementById("sidebar-tools-popover").classList.contains("hidden");');
 
   await openWsMenu(WS_B.id);
+  await snap(app, "perfil-menu");
   const entries = await menuEntries();
   check("el clic derecho sobre un perfil abre su menú: renombrar, mover, salud, exportar y eliminar",
     ["rename-ws", "health-ws", "export-ws", "delete-ws"].every((e) => entries.includes(e))
@@ -240,6 +245,7 @@ export async function checkWorkspaces(app, check, { shot } = {}) {
   await app.jsClick('#context-menu [data-ctx="delete-ws"]');
   await app.waitFor("#credential-modal-overlay:not(.hidden)");
   await settle();
+  await snap(app, "perfil-eliminar");
   const askB = await dialog();
   check("eliminar un perfil con conexiones dice qué perfil es y pide teclear su nombre",
     askB.message.includes(WS_B.name) && askB.label.includes(WS_B.name) && askB.submitOff, JSON.stringify(askB));

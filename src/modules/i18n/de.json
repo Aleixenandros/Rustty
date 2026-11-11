@@ -516,12 +516,16 @@
     "filter_all": "Alle",
     "filter_connection": "Verbindungen",
     "filter_update": "Hinweise",
+    "filter_errors": "Fehler",
     "connect": "Verbinden",
     "close": "Aktivitätszentrum schließen",
     "filters_label": "Aktivität filtern",
     "filter_sync": "Sync",
     "clear": "Leeren",
-    "clear_title": "Aktivitätsverlauf leeren"
+    "clear_title": "Aktivitätsverlauf leeren",
+    "new": "Neu",
+    "unseen_errors_one": "1 ungesehener Fehler",
+    "unseen_errors_many": "{n} ungesehene Fehler"
   },
   "sidebar": {
     "prefs_title": "Einstellungen",
@@ -751,7 +755,6 @@
   "dashboard": {
     "pinned_title": "Angeheftet",
     "search_ph": "Profil, Host oder Benutzer suchen…",
-    "search_kbd": "Strg K",
     "search_results_title": "Treffer",
     "quick_title": "Schnellzugriff",
     "quick_new_hint": "SSH oder RDP",
@@ -816,10 +819,15 @@
     "session_fallback": "Sitzung",
     "tablist_label": "Offene Sitzungen",
     "close_tab_transfers": "Laufende SFTP-Übertragungen werden abgebrochen.",
+    "close_tunnels_one": "Sie hat einen offenen Tunnel, der geschlossen wird: {desc}",
+    "close_tunnels_many": "Sie hat {n} offene Tunnel, die geschlossen werden:",
+    "close_tunnels_more": "… und {n} weitere",
     "close_tab_submit": "Schließen und trennen",
     "close_many_title": "Tabs schließen",
     "close_many_msg_one": "Einer der zu schließenden Tabs hat eine aktive Verbindung. Fortfahren und trennen?",
-    "close_many_msg": "Unter den zu schließenden Tabs sind {n} aktive Verbindungen. Fortfahren und trennen?"
+    "close_many_msg": "Unter den zu schließenden Tabs sind {n} aktive Verbindungen. Fortfahren und trennen?",
+    "close_many_tunnels_one": "Außerdem wird ein offener Tunnel geschlossen.",
+    "close_many_tunnels": "Außerdem werden {n} offene Tunnel geschlossen."
   },
   "shell_child": {
     "root_not_connected": "Die Verbindung dieses Tabs ist nicht mehr aktiv",

@@ -551,6 +551,12 @@ a:focus-visible,
   pointer-events: none;
 }
 
+/* Errores sin ver en «Historial y logs»: mismo distintivo, en rojo. */
+.rail-badge.rail-badge-error {
+  background: var(--red);
+  color: var(--on-red);
+}
+
 /* Con túneles vivos el icono deja de ser gris aunque el panel esté cerrado:
    el color dice «hay algo funcionando», el número dice cuánto. */
 .rail-btn.has-active {
@@ -5534,10 +5540,12 @@ input[type="checkbox"] {
 .activity-center-toolbar {
   display: flex;
   align-items: center;
+  /* Los filtros llevan recuento y no caben siempre en una línea: saltan a la
+     siguiente en vez de esconder «Limpiar» tras un scroll horizontal. */
+  flex-wrap: wrap;
   gap: 6px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border-subtle);
-  overflow-x: auto;
 }
 
 .activity-filter,
@@ -5563,6 +5571,38 @@ input[type="checkbox"] {
   border-color: var(--blue);
   color: var(--blue);
   background: color-mix(in srgb, var(--blue) 12%, transparent);
+}
+
+/* Recuento de entradas de cada filtro. Va en `data-count` y no en el texto:
+   la traducción reescribe el texto del chip. */
+.activity-filter[data-count]::after {
+  content: attr(data-count);
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--font-weight-bold);
+  opacity: 0.75;
+}
+
+.activity-filter-error[data-count] {
+  color: var(--red);
+}
+
+.activity-filter-error.active {
+  border-color: var(--red);
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+
+/* Entradas registradas desde la última vez que se abrió el centro. */
+.activity-new {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--blue) 16%, transparent);
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  line-height: 16px;
 }
 
 .activity-clear {
@@ -6245,8 +6285,15 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 }
 .ctx-submenu-arrow {
   margin-left: auto;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
   opacity: 0.7;
+}
+.ctx-submenu-arrow .ctx-icon-svg {
+  width: 11px;
+  height: 11px;
+  vertical-align: 0;
+  stroke-width: 1.8;
 }
 .ctx-submenu {
   position: absolute;

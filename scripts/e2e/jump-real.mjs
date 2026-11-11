@@ -11,15 +11,30 @@
 //      con el salto (una sola autenticación en su registro, dos canales).
 //   4. «Sin saltos (directo)»: conecta sin abrir otro canal en el salto.
 //   5. «Probar el salto» de la píldora dice que deja abrir túneles.
+//   6. Con un túnel abierto en una de las sesiones, cerrar SU pestaña avisa de
+//      qué túnel se va a cerrar; las otras pestañas de la misma conexión no.
 //
 // Las claves no llevan passphrase y el keyring no está en el bus de la prueba,
 // así que la app pregunta la passphrase de cada clave: se contesta vacía.
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { startSshd } from "./sshd.mjs";
 import { sleep } from "./webdriver.mjs";
 
+const shotDir = process.env.E2E_SHOT_DIR || "";
 const IDS = { jump: "e2e-real-salto", dest: "e2e-real-destino" };
+const TUNNEL_ID = "e2e-real-tunel";
+
+/** Un puerto local libre, para el túnel de la prueba. */
+const freePort = () => new Promise((resolve, reject) => {
+  const probe = net.createServer();
+  probe.once("error", reject);
+  probe.listen(0, "127.0.0.1", () => {
+    const { port } = /** @type {import("node:net").AddressInfo} */ (probe.address());
+    probe.close(() => resolve(port));
+  });
+});
 
 export async function checkJumpReal(app, check, { sshd, workDir, home, children }) {
   const invoke = async (command, args) => {
@@ -59,8 +74,18 @@ export async function checkJumpReal(app, check, { sshd, workDir, home, children 
     proxy_jump_profile_id: null,
     ignore_active_jump: false,
   });
+  // El destino lleva un túnel guardado (sin arranque automático): se abre en
+  // el paso 6 desde el menú contextual.
+  const tunnelPort = await freePort();
+  const destProfile = {
+    ...make(IDS.dest, "e2e-real-destino", dest),
+    ssh_tunnels: [{
+      id: TUNNEL_ID, name: "E2E túnel", tunnel_type: "local",
+      bind_host: "127.0.0.1", local_port: tunnelPort, remote_host: "127.0.0.1", remote_port: dest.port,
+    }],
+  };
   await invoke("save_profiles", {
-    profiles: [make(IDS.jump, "e2e-real-salto", jump), make(IDS.dest, "e2e-real-destino", dest)],
+    profiles: [make(IDS.jump, "e2e-real-salto", jump), destProfile],
   });
   await app.exec("setTimeout(() => location.reload(), 50); return true;");
   await sleep(2000);
@@ -203,6 +228,42 @@ export async function checkJumpReal(app, check, { sshd, workDir, home, children 
     }
     check("salto real: «Probar el salto» dice que deja abrir túneles",
       verdict.includes("deja abrir túneles") && !verdict.includes("no deja"), verdict);
+
+    // ── 6. Cerrar una pestaña con un túnel abierto avisa de cuál es ──
+    const live = [first, second, direct].filter(Boolean);
+    await openCtx(IDS.dest);
+    await app.jsClick(`#ctx-tunnels-submenu [data-ctx="toggle-saved-tunnel"][data-tunnel-id="${TUNNEL_ID}"]`);
+    let tunnelUp = false;
+    for (let i = 0; i < 60 && !tunnelUp; i++) {
+      await sleep(250);
+      tunnelUp = await app.exec(`
+        const badge = document.getElementById("rail-tunnels-badge");
+        return !badge.classList.contains("hidden") && badge.textContent === "1";
+      `);
+    }
+    check("túnel real: el túnel guardado se abre sobre una sesión viva", tunnelUp);
+    const warned = [];
+    for (const sid of live) {
+      await app.jsClick(`.tab[data-session="${sid}"] .tab-close`);
+      await app.waitFor("#credential-modal-overlay:not(.hidden)");
+      await sleep(250);
+      const message = await app.exec('return document.getElementById("credential-modal-message").textContent;');
+      if (message.includes(`127.0.0.1:${tunnelPort}`)) {
+        warned.push(sid);
+        if (shotDir) await app.screenshot(`${shotDir}/tunel-aviso.png`);
+      }
+      await app.jsClick("#btn-credential-cancel");
+      await app.waitFor("#credential-modal-overlay.hidden");
+      await sleep(200);
+    }
+    check("túnel real: al cerrar la pestaña que tiene el túnel, el aviso dice cuál se va a cerrar; las demás no lo mencionan",
+      warned.length === 1, `${warned.length} de ${live.length}`);
+    const kept = await app.exec(`
+      const badge = document.getElementById("rail-tunnels-badge");
+      return { tabs: document.querySelectorAll(".tab[data-session]").length, tunnel: !badge.classList.contains("hidden") };
+    `);
+    check("túnel real: cancelar el aviso deja la pestaña y el túnel como estaban",
+      kept.tunnel && (await sessionIds()).filter((sid) => live.includes(sid)).length === live.length, JSON.stringify(kept));
   } finally {
     await app.exec(`
       document.getElementById("route-menu")?.classList.add("hidden");

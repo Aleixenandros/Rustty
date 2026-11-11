@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { connectionTunnelOwners } from "./lifecycle.js";
+import { connectionTunnelOwners, tunnelsClosedWith } from "./lifecycle.js";
 
 const sessions = (rootStatus = "connected") => new Map([
   ["r", { status: rootStatus }],
@@ -30,5 +30,34 @@ describe("connectionTunnelOwners", () => {
 
   it("un id desconocido no toca nada", () => {
     expect(connectionTunnelOwners(sessions(), "x")).toEqual([]);
+  });
+});
+
+describe("tunnelsClosedWith", () => {
+  const withTunnels = () => new Map([
+    ["r", { tunnels: new Map([["t1", "raíz-1"], ["t2", "raíz-2"]]) }],
+    ["h1", { _parentSessionId: "r", tunnels: new Map([["t3", "hija-1"]]) }],
+    ["h2", { _parentSessionId: "r" }],
+    ["o", { tunnels: new Map([["t4", "otra"]]) }],
+    ["vacia", { tunnels: new Map() }],
+  ]);
+
+  it("cerrar una raíz se lleva sus túneles y los de sus hijas", () => {
+    expect(tunnelsClosedWith(withTunnels(), ["r"])).toEqual(["raíz-1", "raíz-2", "hija-1"]);
+  });
+
+  it("cerrar una hija se lleva solo los suyos", () => {
+    expect(tunnelsClosedWith(withTunnels(), ["h1"])).toEqual(["hija-1"]);
+    expect(tunnelsClosedWith(withTunnels(), ["h2"])).toEqual([]);
+  });
+
+  it("en un cierre en lote cada túnel sale una sola vez", () => {
+    expect(tunnelsClosedWith(withTunnels(), ["h1", "r", "o"])).toEqual(["raíz-1", "raíz-2", "hija-1", "otra"]);
+  });
+
+  it("sin túneles o con un id desconocido no avisa de nada", () => {
+    expect(tunnelsClosedWith(withTunnels(), ["vacia"])).toEqual([]);
+    expect(tunnelsClosedWith(withTunnels(), ["x"])).toEqual([]);
+    expect(tunnelsClosedWith(withTunnels(), [])).toEqual([]);
   });
 });

@@ -89,6 +89,7 @@ import { checkQuickSelect } from "./quick-select.mjs";
 import { checkJump } from "./jump.mjs";
 import { checkBulkEdit } from "./bulk-edit.mjs";
 import { checkNotesAndText } from "./notes.mjs";
+import { checkActivityCenter } from "./activity.mjs";
 import { checkJumpReal } from "./jump-real.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -541,6 +542,7 @@ async function main() {
     await zoomDialogs(app, check);
     await checkKeyboard(app, check);
     await checkToasts(app, check);
+    await checkActivityCenter(app, check);
     await checkTerminalLayers(app, check);
     await checkTree(app, check);
     await checkIpcLeastPrivilege(app, home);

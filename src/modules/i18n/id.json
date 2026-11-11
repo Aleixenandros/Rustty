@@ -516,12 +516,16 @@
     "filter_all": "Semua",
     "filter_connection": "Koneksi",
     "filter_update": "Pemberitahuan",
+    "filter_errors": "Kesalahan",
     "connect": "Sambungkan",
     "close": "Tutup pusat aktivitas",
     "filters_label": "Saring aktivitas",
     "filter_sync": "Sinkronisasi",
     "clear": "Bersihkan",
-    "clear_title": "Kosongkan riwayat aktivitas"
+    "clear_title": "Kosongkan riwayat aktivitas",
+    "new": "Baru",
+    "unseen_errors_one": "1 kesalahan belum dilihat",
+    "unseen_errors_many": "{n} kesalahan belum dilihat"
   },
   "sidebar": {
     "prefs_title": "Preferensi",
@@ -751,7 +755,6 @@
   "dashboard": {
     "pinned_title": "Disematkan",
     "search_ph": "Cari profil, host, atau pengguna…",
-    "search_kbd": "Ctrl K",
     "search_results_title": "Kecocokan",
     "quick_title": "Akses cepat",
     "quick_new_hint": "SSH atau RDP",
@@ -816,10 +819,15 @@
     "session_fallback": "sesi",
     "tablist_label": "Sesi terbuka",
     "close_tab_transfers": "Ada transfer SFTP yang sedang berjalan dan akan dibatalkan.",
+    "close_tunnels_one": "Ada satu tunnel terbuka yang akan ditutup: {desc}",
+    "close_tunnels_many": "Ada {n} tunnel terbuka yang akan ditutup:",
+    "close_tunnels_more": "…dan {n} lainnya",
     "close_tab_submit": "Tutup dan putuskan",
     "close_many_title": "Tutup tab",
     "close_many_msg_one": "Salah satu tab yang akan ditutup memiliki koneksi aktif. Lanjutkan dan putuskan koneksinya?",
-    "close_many_msg": "Ada {n} koneksi aktif di antara tab yang akan ditutup. Lanjutkan dan putuskan koneksinya?"
+    "close_many_msg": "Ada {n} koneksi aktif di antara tab yang akan ditutup. Lanjutkan dan putuskan koneksinya?",
+    "close_many_tunnels_one": "Satu tunnel terbuka juga akan ditutup.",
+    "close_many_tunnels": "{n} tunnel terbuka juga akan ditutup."
   },
   "shell_child": {
     "root_not_connected": "Koneksi tab ini tidak lagi aktif",

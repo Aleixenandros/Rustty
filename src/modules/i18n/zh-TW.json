@@ -516,12 +516,16 @@
     "filter_all": "全部",
     "filter_connection": "連線",
     "filter_update": "通知",
+    "filter_errors": "錯誤",
     "connect": "連線",
     "close": "關閉活動中心",
     "filters_label": "篩選活動",
     "filter_sync": "同步",
     "clear": "清除",
-    "clear_title": "清空活動記錄"
+    "clear_title": "清空活動記錄",
+    "new": "新",
+    "unseen_errors_one": "1 個未查看的錯誤",
+    "unseen_errors_many": "{n} 個未查看的錯誤"
   },
   "sidebar": {
     "prefs_title": "偏好設定",
@@ -751,7 +755,6 @@
   "dashboard": {
     "pinned_title": "已釘選",
     "search_ph": "搜尋設定檔、主機或使用者…",
-    "search_kbd": "Ctrl K",
     "search_results_title": "符合項目",
     "quick_title": "快速存取",
     "quick_new_hint": "SSH 或 RDP",
@@ -816,10 +819,15 @@
     "session_fallback": "工作階段",
     "tablist_label": "開啟的工作階段",
     "close_tab_transfers": "有進行中的 SFTP 傳輸將被取消。",
+    "close_tunnels_one": "它有 1 個開啟的通道將被關閉：{desc}",
+    "close_tunnels_many": "它有 {n} 個開啟的通道將被關閉：",
+    "close_tunnels_more": "…以及另外 {n} 個",
     "close_tab_submit": "關閉並中斷連線",
     "close_many_title": "關閉分頁",
     "close_many_msg_one": "要關閉的分頁中有一個連線仍在使用中。要繼續並中斷連線嗎？",
-    "close_many_msg": "要關閉的分頁中有 {n} 個使用中的連線。要繼續並中斷連線嗎？"
+    "close_many_msg": "要關閉的分頁中有 {n} 個使用中的連線。要繼續並中斷連線嗎？",
+    "close_many_tunnels_one": "另外還會關閉 1 個開啟的通道。",
+    "close_many_tunnels": "另外還會關閉 {n} 個開啟的通道。"
   },
   "shell_child": {
     "root_not_connected": "此分頁的連線已不再作用中",

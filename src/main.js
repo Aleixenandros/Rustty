@@ -56,7 +56,11 @@ import { baseSlugifyThemeId } from "./modules/text.js";
 import { formatTime, formatRelativeTimeShort, formatDashboardTime } from "./modules/datetime.js";
 import { compareVersions, normalizeVersion } from "./modules/version.js";
 import {
+  activityFilterCounts,
+  countUnseenErrors,
+  filterActivityItems,
   groupActivityByDay,
+  isActivityUnseen,
   normalizeActivityItem,
   serializableActivityItem,
 } from "./modules/activity.js";
@@ -164,7 +168,7 @@ import {
   fieldAdmits as bulkFieldAdmits, summarizeBulkEdit, validateBulkPatch,
 } from "./modules/profiles/bulk-edit.js";
 import { commandDraftKey, isLocalShellReady, isLocalShellSession } from "./modules/sessions/local-shell.js";
-import { connectionTunnelOwners } from "./modules/tunnels/lifecycle.js";
+import { connectionTunnelOwners, tunnelsClosedWith } from "./modules/tunnels/lifecycle.js";
 import { localTunnelAddress, localTunnelUrl } from "./modules/tunnels/address.js";
 import { DEFAULT_PREFS, createDefaultPrefs } from "./modules/prefs/defaults.js";
 import { loadPrefs as readSavedPrefs, savePrefs as writeSavedPrefs } from "./modules/prefs/storage.js";
@@ -292,7 +296,14 @@ let _connectionTestUnlisten = null;
 let _activityFilter = "all";
 const ACTIVITY_MAX_ITEMS = 250;
 const ACTIVITY_HISTORY_STORAGE_KEY = "rustty-activity-history-v1";
+const ACTIVITY_SEEN_STORAGE_KEY = "rustty-activity-seen-at-v1";
 const activityItems = loadActivityHistory();
+// Última vez que se miró el centro de actividad: los errores posteriores salen
+// en el distintivo del botón «Historial y logs».
+let _activitySeenAt = loadActivitySeenAt();
+// Marca anterior a la apertura en curso: lo posterior se rotula «Nuevo»
+// mientras el centro siga abierto.
+let _activityNewSince = null;
 
 const KEYRING_SERVICE = "rustty";
 const RECENT_CONNECTIONS_STORAGE_KEY = "rustty-recent-connections";
@@ -661,7 +672,8 @@ function loadPrefs() {
   setLanguage(prefs.lang).then(() => {
     applyTranslations();
     refreshTunnelIndicators();
-    updateZenExitTooltip();
+    updateShortcutHints();
+    updateActivityRailBadge();
     refreshWorkspaceLabels();
   });
   applyTranslations();
@@ -3979,6 +3991,45 @@ function loadActivityHistory() {
   }
 }
 
+function markActivitySeen() {
+  const now = new Date().toISOString();
+  try { localStorage.setItem(ACTIVITY_SEEN_STORAGE_KEY, now); } catch { /* sin almacenamiento: vale para esta sesión */ }
+  return now;
+}
+
+function loadActivitySeenAt() {
+  try {
+    const raw = localStorage.getItem(ACTIVITY_SEEN_STORAGE_KEY);
+    if (raw && Number.isFinite(Date.parse(raw))) return raw;
+  } catch { /* se trata como primera vez */ }
+  // Primera vez: se parte de «todo visto», para que el historial que ya había
+  // no aparezca de golpe como errores pendientes.
+  return markActivitySeen();
+}
+
+/**
+ * Distintivo de «Historial y logs» en el rail: errores registrados desde la
+ * última vez que se abrió el centro de actividad. Con él abierto no hay nada
+ * pendiente.
+ */
+function updateActivityRailBadge() {
+  const badge = document.getElementById("rail-activity-badge");
+  const btn = document.querySelector('#rail [data-rail-action="activity"]');
+  if (!badge || !btn) return;
+  const overlay = document.getElementById("activity-center-overlay");
+  const open = !!overlay && !overlay.classList.contains("hidden");
+  const n = open ? 0 : countUnseenErrors(activityItems, _activitySeenAt);
+  badge.textContent = n > 99 ? "99+" : String(n);
+  badge.classList.toggle("hidden", n === 0);
+  const base = t("rail.activity");
+  const label = n === 0
+    ? base
+    : `${base} · ${n === 1 ? t("activity.unseen_errors_one") : t("activity.unseen_errors_many", { n })}`;
+  // El botón usa el sistema propio de tooltips (`data-tooltip`).
+  btn.setAttribute("data-tooltip", label);
+  btn.setAttribute("aria-label", label);
+}
+
 let _persistActivityHistoryTimer = 0;
 function persistActivityHistory() {
   // Debounce: ráfagas de eventos (p. ej. las ~7 etapas del handshake SFTP)
@@ -4018,16 +4069,31 @@ function recordActivity({ kind = "toast", status = "info", title, detail = "", a
   if (activityItems.length > ACTIVITY_MAX_ITEMS) activityItems.splice(ACTIVITY_MAX_ITEMS);
   persistActivityHistory();
   renderActivityCenter();
+  if (item.status === "error") updateActivityRailBadge();
 }
 
 function openActivityCenter(filter = null) {
   if (filter) _activityFilter = filter;
-  document.getElementById("activity-center-overlay")?.classList.remove("hidden");
+  const overlay = document.getElementById("activity-center-overlay");
+  if (overlay?.classList.contains("hidden")) {
+    // Lo registrado desde la última apertura se rotula «Nuevo» mientras el
+    // centro siga abierto; para el distintivo del rail ya está visto.
+    _activityNewSince = _activitySeenAt;
+    _activitySeenAt = markActivitySeen();
+  }
+  overlay?.classList.remove("hidden");
   renderActivityCenter();
+  updateActivityRailBadge();
 }
 
 function closeActivityCenter() {
-  document.getElementById("activity-center-overlay")?.classList.add("hidden");
+  const overlay = document.getElementById("activity-center-overlay");
+  if (!overlay || overlay.classList.contains("hidden")) return;
+  overlay.classList.add("hidden");
+  // Lo que llegó con el centro abierto también se ha visto.
+  _activitySeenAt = markActivitySeen();
+  _activityNewSince = null;
+  updateActivityRailBadge();
 }
 
 function renderActivityCenter() {
@@ -4039,16 +4105,20 @@ function renderActivityCenter() {
   // el hilo principal lo suficiente para sacar el aviso "no responde".
   const overlay = document.getElementById("activity-center-overlay");
   if (overlay && overlay.classList.contains("hidden")) return;
+  const counts = activityFilterCounts(activityItems);
   document.querySelectorAll(".activity-filter").forEach((btn) => {
-    const active = btn.dataset.activityFilter === _activityFilter;
+    const filter = btn.dataset.activityFilter || "all";
+    const active = filter === _activityFilter;
     btn.classList.toggle("active", active);
     // Los filtros son conmutadores excluyentes: el lector de pantalla sabe
     // cuál está puesto sin depender del color.
     btn.setAttribute("aria-pressed", active ? "true" : "false");
+    // El recuento va en un atributo y lo pinta el CSS: el texto del chip lo
+    // reescribe la traducción y se lo llevaría por delante.
+    if (counts[filter] > 0) btn.dataset.count = String(counts[filter]);
+    else delete btn.dataset.count;
   });
-  const visible = _activityFilter === "all"
-    ? activityItems
-    : activityItems.filter((item) => item.kind === _activityFilter);
+  const visible = filterActivityItems(activityItems, _activityFilter);
   if (!visible.length) {
     list.innerHTML = `<div class="activity-empty">${escHtml(t("activity.empty"))}</div>`;
     return;
@@ -4059,11 +4129,12 @@ function renderActivityCenter() {
   list.innerHTML = groups.map((g) => `
     <div class="activity-group-header">${escHtml(g.label)}</div>
     ${g.items.map((item) => `
-      <div class="activity-item ${escHtml(item.status)}" data-activity-id="${escHtml(item.id)}">
+      <div class="activity-item ${escHtml(item.status)}${isActivityUnseen(item, _activityNewSince) ? " is-new" : ""}" data-activity-id="${escHtml(item.id)}">
         <span class="activity-dot"></span>
         <div class="activity-body">
           <div class="activity-main">
             <span class="activity-kind">${escHtml(activityKindLabel(item.kind))}</span>
+            ${isActivityUnseen(item, _activityNewSince) ? `<span class="activity-new">${escHtml(t("activity.new"))}</span>` : ""}
             <span class="activity-title">${escHtml(item.title)}</span>
             <span class="activity-time">${escHtml(activityTime(item.timestamp))}</span>
           </div>
@@ -4338,7 +4409,8 @@ function savePrefsFromModal() {
   if (effectiveLang !== getLanguage()) {
     setLanguage(effectiveLang).then(() => {
       applyTranslations();
-      updateZenExitTooltip();
+      updateShortcutHints();
+      updateActivityRailBadge();
       // `applyTranslations` reescribe el tooltip del botón de túneles desde su
       // clave, y con él se va la lista de túneles activos: se vuelve a pintar.
       refreshTunnelIndicators();
@@ -5810,6 +5882,8 @@ function updateRailActiveState() {
     if (view === "favorites") active = prefs.sidebarViewMode === "favorites";
     else if (view === "profiles") active = prefs.sidebarViewMode !== "favorites";
     btn.classList.toggle("active", active);
+    // Son dos vistas excluyentes: el estado se anuncia, no solo se colorea.
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
   });
 }
 
@@ -8401,7 +8475,7 @@ function showTextContextMenu(x, y, field, kind, selText) {
       formatParent.setAttribute("aria-labelledby", "text-menu-format-label");
       formatParent.innerHTML = `<span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#${meta.icon}"/></svg></span>`
         + `<span id="text-menu-format-label">${escHtml(t(meta.label))}</span>`
-        + `<span class="ctx-submenu-arrow" aria-hidden="true">▸</span>`;
+        + `<span class="ctx-submenu-arrow" aria-hidden="true"><svg class="ctx-icon-svg"><use href="#ci-chevron"/></svg></span>`;
       const sub = document.createElement("div");
       sub.className = "ctx-submenu";
       sub.setAttribute("role", "menu");
@@ -18436,6 +18510,30 @@ async function confirmCloseSftpPanel(sessionId) {
   });
 }
 
+/** Cuántos túneles se detallan en un aviso de cierre antes de resumir el resto. */
+const CLOSING_TUNNELS_LISTED = 5;
+
+/**
+ * Aviso de los túneles que se cierran con una pestaña: uno, en la misma frase;
+ * varios, en lista (acotada), para que se vea exactamente qué deja de escuchar.
+ * @param {object[]} tunnels
+ */
+function closingTunnelsWarning(tunnels) {
+  if (!tunnels.length) return "";
+  if (tunnels.length === 1) return t("tabctx.close_tunnels_one", { desc: describeTunnel(tunnels[0]) });
+  const lines = tunnels.slice(0, CLOSING_TUNNELS_LISTED).map((tunnel) => `• ${describeTunnel(tunnel)}`);
+  if (tunnels.length > CLOSING_TUNNELS_LISTED) {
+    lines.push(t("tabctx.close_tunnels_more", { n: tunnels.length - CLOSING_TUNNELS_LISTED }));
+  }
+  return `${t("tabctx.close_tunnels_many", { n: tunnels.length })}\n${lines.join("\n")}`;
+}
+
+/** Frase de túneles para los cierres en lote, que no detallan cada pestaña. */
+function closingTunnelsCountWarning(count) {
+  if (count <= 0) return "";
+  return count === 1 ? t("tabctx.close_many_tunnels_one") : t("tabctx.close_many_tunnels", { n: count });
+}
+
 async function confirmCloseSession(sessionId) {
   const s = sessions.get(sessionId);
   if (!s) return true;
@@ -18443,9 +18541,13 @@ async function confirmCloseSession(sessionId) {
   // pero no son conexiones remotas: su confirmación propia (aviso de proceso
   // activo) se gestiona en closeSession justo antes de ejecutar _closeOverride.
   if (s._closeOverride) return true;
-  if (!isSessionLive(s) && !sessionHasActiveTransfers(s)) return true;
+  // Túneles que dejan de escuchar al cerrar esta pestaña (los suyos y, si es
+  // la raíz de la conexión, los de sus hijas): se avisa de cuáles son.
+  const closingTunnels = tunnelsClosedWith(sessions, [sessionId]);
+  if (!isSessionLive(s) && !sessionHasActiveTransfers(s) && !closingTunnels.length) return true;
   const profile = profiles.find((p) => p.id === s.profileId);
   const name = profile?.name || (s.type ? s.type.toUpperCase() : t("tabctx.session_fallback"));
+  const tunnelsWarning = closingTunnels.length ? `\n\n${closingTunnelsWarning(closingTunnels)}` : "";
   const transfers = sessionHasActiveTransfers(s)
     ? `\n\n${t("tabctx.close_tab_transfers")}`
     : "";
@@ -18456,7 +18558,7 @@ async function confirmCloseSession(sessionId) {
   const children = liveChildren > 0 ? `\n\n${t("shell_child.close_children_warning")}` : "";
   return confirmThemed({
     title: t("tabctx.close_tab_title"),
-    message: `${t("tabctx.close_tab_msg", { name })}${transfers}${children}`,
+    message: `${t("tabctx.close_tab_msg", { name })}${tunnelsWarning}${transfers}${children}`,
     submitLabel: t("tabctx.close_tab_submit"),
     danger: true,
   });
@@ -18595,7 +18697,10 @@ async function disconnectAll() {
 
   const ok = await confirmThemed({
     title: t("disconnect_all.title"),
-    message: t("disconnect_all.confirm", { n: liveIds.length, m: activeTransfers }),
+    message: t("disconnect_all.confirm", { n: liveIds.length, m: activeTransfers })
+      + (activeTunnelEntries().length
+        ? `\n\n${closingTunnelsCountWarning(activeTunnelEntries().length)}`
+        : ""),
     submitLabel: t("disconnect_all.submit"),
     danger: true,
   });
@@ -28122,6 +28227,7 @@ function bindUIEvents() {
       activityItems.length = 0;
       persistActivityHistory();
       renderActivityCenter();
+      updateActivityRailBadge();
     });
   document.querySelectorAll(".activity-filter").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -28178,6 +28284,8 @@ function bindUIEvents() {
     });
   });
   updateRailActiveState();
+  updateActivityRailBadge();
+  updateShortcutHints();
 
   // Toggle de la barra lateral (persistido en localStorage)
   initSidebarToggle();
@@ -30667,7 +30775,7 @@ function startQuickSelect() {
 
 const shortcuts = createShortcutController({
   getPrefs: () => prefs,
-  save: () => { savePrefs(); scheduleProfileAutoSync(); },
+  save: () => { savePrefs(); scheduleProfileAutoSync(); updateShortcutHints(); },
   toast, confirm: confirmThemed, files, readLimit: FILE_READ_LIMITS.shortcuts,
   t, applyTranslations, fileErrorText,
   actions: {
@@ -32028,6 +32136,21 @@ function loadZenMode() {
  * fábrica. Va solo en `data-tooltip` (un `title` sacaría además el tooltip
  * nativo) y se repinta tras cada `applyTranslations`, que no la conoce.
  */
+/**
+ * Pistas de teclado que la interfaz enseña fuera de Preferencias: salen del
+ * mapa de atajos vigente, no de un texto fijo, y se esconden si la acción no
+ * tiene combinación.
+ */
+function updateShortcutHints() {
+  updateZenExitTooltip();
+  const hint = document.getElementById("dashboard-search-kbd");
+  if (hint) {
+    const combo = shortcuts.get("search_connections");
+    hint.textContent = combo ? formatAccelerator(combo) : "";
+    hint.classList.toggle("hidden", !combo);
+  }
+}
+
 function updateZenExitTooltip() {
   const exitBtn = document.getElementById("zen-exit-btn");
   if (!exitBtn) return;
@@ -33159,12 +33282,14 @@ async function handleTabContextAction(action, data = {}) {
       const s = sessions.get(sid);
       return isSessionLive(s) || sessionHasActiveTransfers(s);
     }).length;
+    const batchTunnels = closingTunnelsCountWarning(tunnelsClosedWith(sessions, ids).length);
     if (liveCount > 0) {
       const ok = await confirmThemed({
         title: t("tabctx.close_many_title"),
-        message: liveCount === 1
+        message: (liveCount === 1
           ? t("tabctx.close_many_msg_one")
-          : t("tabctx.close_many_msg", { n: liveCount }),
+          : t("tabctx.close_many_msg", { n: liveCount }))
+          + (batchTunnels ? `\n\n${batchTunnels}` : ""),
         submitLabel: t("tabctx.close_all"),
         danger: true,
       });

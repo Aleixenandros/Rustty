@@ -105,3 +105,75 @@ export function groupActivityByDay(
   }
   return [...groups.values()].sort((a, b) => b.sort - a.sort);
 }
+
+/**
+ * Filtros del centro de actividad. Los cuatro centrales van por tipo de
+ * entrada; «error» es transversal: cualquier entrada que terminó en error.
+ */
+export const ACTIVITY_FILTERS = /** @type {const} */ (["all", "connection", "sftp", "sync", "update", "error"]);
+
+/**
+ * @param {Pick<ActivityItem, "kind"|"status">} item
+ * @param {string} filter
+ */
+export function matchesActivityFilter(item, filter) {
+  if (filter === "all") return true;
+  if (filter === "error") return item.status === "error";
+  return item.kind === filter;
+}
+
+/**
+ * @template {Pick<ActivityItem, "kind"|"status">} T
+ * @param {T[]} items
+ * @param {string} filter
+ * @returns {T[]}
+ */
+export function filterActivityItems(items, filter) {
+  return filter === "all" ? items : items.filter((item) => matchesActivityFilter(item, filter));
+}
+
+/**
+ * Cuántas entradas caen en cada filtro, para rotular los chips.
+ * @param {Pick<ActivityItem, "kind"|"status">[]} items
+ * @returns {Record<string, number>}
+ */
+export function activityFilterCounts(items) {
+  /** @type {Record<string, number>} */
+  const counts = {};
+  for (const filter of ACTIVITY_FILTERS) counts[filter] = 0;
+  for (const item of items) {
+    for (const filter of ACTIVITY_FILTERS) {
+      if (matchesActivityFilter(item, filter)) counts[filter] += 1;
+    }
+  }
+  return counts;
+}
+
+/**
+ * ¿La entrada es posterior a la última vez que se miró el centro de actividad?
+ * Sin marca guardada no hay nada «nuevo»: al estrenar la función, el historial
+ * antiguo no puede aparecer de golpe como pendiente.
+ *
+ * @param {Pick<ActivityItem, "timestamp">} item
+ * @param {string|null|undefined} seenAt ISO de la última apertura
+ */
+export function isActivityUnseen(item, seenAt) {
+  if (!seenAt) return false;
+  const seen = Date.parse(seenAt);
+  const at = Date.parse(item.timestamp);
+  return Number.isFinite(seen) && Number.isFinite(at) && at > seen;
+}
+
+/**
+ * Errores registrados desde la última apertura: el número del distintivo del
+ * botón «Historial y logs».
+ *
+ * @param {Pick<ActivityItem, "status"|"timestamp">[]} items
+ * @param {string|null|undefined} seenAt
+ */
+export function countUnseenErrors(items, seenAt) {
+  return items.reduce(
+    (n, item) => n + (item.status === "error" && isActivityUnseen(item, seenAt) ? 1 : 0),
+    0,
+  );
+}

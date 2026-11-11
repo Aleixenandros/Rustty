@@ -516,12 +516,16 @@
     "filter_all": "All",
     "filter_connection": "Connections",
     "filter_update": "Notices",
+    "filter_errors": "Errors",
     "connect": "Connect",
     "close": "Close the activity center",
     "filters_label": "Filter the activity",
     "filter_sync": "Sync",
     "clear": "Clear",
-    "clear_title": "Empty the activity history"
+    "clear_title": "Empty the activity history",
+    "new": "New",
+    "unseen_errors_one": "1 unseen error",
+    "unseen_errors_many": "{n} unseen errors"
   },
   "sidebar": {
     "prefs_title": "Preferences",
@@ -751,7 +755,6 @@
   "dashboard": {
     "pinned_title": "Pinned",
     "search_ph": "Search profile, host or user…",
-    "search_kbd": "Ctrl K",
     "search_results_title": "Matches",
     "quick_title": "Quick access",
     "quick_new_hint": "SSH or RDP",
@@ -816,10 +819,15 @@
     "session_fallback": "session",
     "tablist_label": "Open sessions",
     "close_tab_transfers": "There are SFTP transfers in progress that will be cancelled.",
+    "close_tunnels_one": "It has an open tunnel that will be closed: {desc}",
+    "close_tunnels_many": "It has {n} open tunnels that will be closed:",
+    "close_tunnels_more": "…and {n} more",
     "close_tab_submit": "Close and disconnect",
     "close_many_title": "Close tabs",
     "close_many_msg_one": "One of the tabs to close has an active connection. Continue and disconnect it?",
-    "close_many_msg": "There are {n} active connections among the tabs to close. Continue and disconnect them?"
+    "close_many_msg": "There are {n} active connections among the tabs to close. Continue and disconnect them?",
+    "close_many_tunnels_one": "An open tunnel will also be closed.",
+    "close_many_tunnels": "{n} open tunnels will also be closed."
   },
   "shell_child": {
     "root_not_connected": "This tab's connection is no longer active",

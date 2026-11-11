@@ -516,12 +516,16 @@
     "filter_all": "Todo",
     "filter_connection": "Conexiones",
     "filter_update": "Avisos",
+    "filter_errors": "Errores",
     "connect": "Conectar",
     "close": "Cerrar el centro de actividad",
     "filters_label": "Filtrar la actividad",
     "filter_sync": "Sincronización",
     "clear": "Limpiar",
-    "clear_title": "Vaciar el historial de actividad"
+    "clear_title": "Vaciar el historial de actividad",
+    "new": "Nuevo",
+    "unseen_errors_one": "1 error sin ver",
+    "unseen_errors_many": "{n} errores sin ver"
   },
   "sidebar": {
     "prefs_title": "Preferencias",
@@ -751,7 +755,6 @@
   "dashboard": {
     "pinned_title": "Anclados",
     "search_ph": "Buscar perfil, host o usuario…",
-    "search_kbd": "Ctrl K",
     "search_results_title": "Coincidencias",
     "quick_title": "Acceso rápido",
     "quick_new_hint": "SSH o RDP",
@@ -816,10 +819,15 @@
     "session_fallback": "sesión",
     "tablist_label": "Sesiones abiertas",
     "close_tab_transfers": "Hay transferencias SFTP en curso que se cancelarán.",
+    "close_tunnels_one": "Tiene un túnel abierto que se cerrará: {desc}",
+    "close_tunnels_many": "Tiene {n} túneles abiertos que se cerrarán:",
+    "close_tunnels_more": "…y {n} más",
     "close_tab_submit": "Cerrar y desconectar",
     "close_many_title": "Cerrar pestañas",
     "close_many_msg_one": "Hay una conexión activa entre las pestañas a cerrar. ¿Continuar y desconectarla?",
-    "close_many_msg": "Hay {n} conexiones activas entre las pestañas a cerrar. ¿Continuar y desconectarlas?"
+    "close_many_msg": "Hay {n} conexiones activas entre las pestañas a cerrar. ¿Continuar y desconectarlas?",
+    "close_many_tunnels_one": "Además se cerrará un túnel abierto.",
+    "close_many_tunnels": "Además se cerrarán {n} túneles abiertos."
   },
   "shell_child": {
     "root_not_connected": "La conexión de esta pestaña ya no está activa",

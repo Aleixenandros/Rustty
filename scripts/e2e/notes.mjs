@@ -12,6 +12,10 @@
 // nada; cancelar no deja copia y guardar crea una sola.
 import { sleep } from "./webdriver.mjs";
 
+const shotDir = process.env.E2E_SHOT_DIR || "";
+/** Captura opcional (`E2E_SHOT_DIR`): para mirar el resultado, no solo medirlo. */
+const snap = async (app, name) => { if (shotDir) await app.screenshot(`${shotDir}/${name}.png`); };
+
 const ID = "e2e-note-a";
 
 export async function checkNotesAndText(app, check) {
@@ -185,6 +189,7 @@ export async function checkNotesAndText(app, check) {
       const onEdge = await subState();
       await glide(edge, [sub[0] + 30, y]);
       await sleep(500);
+      await snap(app, `submenu-${Math.round(sub[2])}x${Math.round(box[3])}`);
       return { onParent, onEdge, inSub: await subState(), item, sub };
     };
 

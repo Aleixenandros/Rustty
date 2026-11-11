@@ -516,12 +516,16 @@
     "filter_all": "Tudo",
     "filter_connection": "Ligações",
     "filter_update": "Avisos",
+    "filter_errors": "Erros",
     "connect": "Ligar",
     "close": "Fechar o centro de atividade",
     "filters_label": "Filtrar a atividade",
     "filter_sync": "Sincronização",
     "clear": "Limpar",
-    "clear_title": "Esvaziar o histórico de atividade"
+    "clear_title": "Esvaziar o histórico de atividade",
+    "new": "Novo",
+    "unseen_errors_one": "1 erro por ver",
+    "unseen_errors_many": "{n} erros por ver"
   },
   "sidebar": {
     "prefs_title": "Preferências",
@@ -751,7 +755,6 @@
   "dashboard": {
     "pinned_title": "Fixados",
     "search_ph": "Procurar perfil, host ou utilizador…",
-    "search_kbd": "Ctrl K",
     "search_results_title": "Correspondências",
     "quick_title": "Acesso rápido",
     "quick_new_hint": "SSH ou RDP",
@@ -816,10 +819,15 @@
     "session_fallback": "sessão",
     "tablist_label": "Sessões abertas",
     "close_tab_transfers": "Há transferências SFTP em curso que serão canceladas.",
+    "close_tunnels_one": "Tem um túnel aberto que será fechado: {desc}",
+    "close_tunnels_many": "Tem {n} túneis abertos que serão fechados:",
+    "close_tunnels_more": "…e mais {n}",
     "close_tab_submit": "Fechar e desligar",
     "close_many_title": "Fechar separadores",
     "close_many_msg_one": "Há uma ligação ativa entre os separadores a fechar. Continuar e desligá-la?",
-    "close_many_msg": "Há {n} ligações ativas entre os separadores a fechar. Continuar e desligá-las?"
+    "close_many_msg": "Há {n} ligações ativas entre os separadores a fechar. Continuar e desligá-las?",
+    "close_many_tunnels_one": "Além disso, será fechado um túnel aberto.",
+    "close_many_tunnels": "Além disso, serão fechados {n} túneis abertos."
   },
   "shell_child": {
     "root_not_connected": "A ligação deste separador já não está ativa",

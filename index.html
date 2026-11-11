@@ -90,6 +90,7 @@
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
               <path d="M3 4.5h12M3 9h12M3 13.5h8"/>
             </svg>
+            <span class="rail-badge rail-badge-error hidden" id="rail-activity-badge" aria-hidden="true"></span>
           </button>
         </div>
         <div class="rail-section rail-bottom">
@@ -357,7 +358,7 @@
                 <div class="dashboard-search-wrap">
                   <span class="dashboard-search-icon" aria-hidden="true"><svg viewBox="0 0 16 16" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><use href="#ci-search"/></svg></span>
                   <input id="dashboard-search" type="search" autocomplete="off" spellcheck="false" placeholder="Buscar perfil, host o usuario…" data-i18n-placeholder="dashboard.search_ph" />
-                  <span class="dashboard-search-kbd" data-i18n="dashboard.search_kbd">Ctrl K</span>
+                  <kbd class="dashboard-search-kbd hidden" id="dashboard-search-kbd" translate="no"></kbd>
                 </div>
                 <div class="dashboard-search-scope">
                   <label for="dashboard-search-scope" data-i18n="search_scope.label">Buscar en</label>
@@ -592,7 +593,7 @@
       </button>
       <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-connect-as-only hidden" id="ctx-connect-as" role="menuitem" tabindex="-1" aria-haspopup="menu" aria-expanded="false" aria-labelledby="ctx-connect-as-label">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-play"/></svg></span><span id="ctx-connect-as-label" data-i18n="ctx.connect_as">Conectar con otro usuario</span>
-        <span class="ctx-submenu-arrow" aria-hidden="true">▸</span>
+        <span class="ctx-submenu-arrow" aria-hidden="true"><svg class="ctx-icon-svg"><use href="#ci-chevron"/></svg></span>
         <div class="ctx-submenu" id="ctx-connect-as-submenu" role="menu" aria-labelledby="ctx-connect-as-label"></div>
       </div>
       <button class="ctx-item ctx-conn-only ctx-restore-only hidden" data-ctx="connect-restore" id="ctx-connect-restore">
@@ -603,7 +604,7 @@
       </button>
       <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-jump-via-only hidden" id="ctx-connect-via" role="menuitem" tabindex="-1" aria-haspopup="menu" aria-expanded="false" aria-labelledby="ctx-connect-via-label">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-route"/></svg></span><span id="ctx-connect-via-label" data-i18n="jump.ctx_connect_via">Conectar a través de</span>
-        <span class="ctx-submenu-arrow" aria-hidden="true">▸</span>
+        <span class="ctx-submenu-arrow" aria-hidden="true"><svg class="ctx-icon-svg"><use href="#ci-chevron"/></svg></span>
         <div class="ctx-submenu" id="ctx-connect-via-submenu" role="menu" aria-labelledby="ctx-connect-via-label"></div>
       </div>
 
@@ -643,7 +644,7 @@
       </button>
       <div class="ctx-item ctx-has-submenu ctx-conn-only ctx-note-exists hidden" id="ctx-note" role="menuitem" tabindex="-1" aria-haspopup="menu" aria-expanded="false" aria-labelledby="ctx-note-label">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-note"/></svg></span><span id="ctx-note-label" data-i18n="ctx.note">Nota</span>
-        <span class="ctx-submenu-arrow" aria-hidden="true">▸</span>
+        <span class="ctx-submenu-arrow" aria-hidden="true"><svg class="ctx-icon-svg"><use href="#ci-chevron"/></svg></span>
         <div class="ctx-submenu" id="ctx-note-submenu" role="menu" aria-labelledby="ctx-note-label">
           <button class="ctx-item" type="button" data-ctx="view-note">
             <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-eye"/></svg></span><span data-i18n="ctx.view_note">Ver nota</span>
@@ -665,7 +666,7 @@
       </button>
       <div class="ctx-item ctx-has-submenu ctx-conn-only hidden" id="ctx-tunnels" role="menuitem" tabindex="-1" aria-haspopup="menu" aria-expanded="false" aria-labelledby="ctx-tunnels-label">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-tunnel"/></svg></span><span id="ctx-tunnels-label" data-i18n="ctx.tunnels">Túneles</span>
-        <span class="ctx-submenu-arrow" aria-hidden="true">▸</span>
+        <span class="ctx-submenu-arrow" aria-hidden="true"><svg class="ctx-icon-svg"><use href="#ci-chevron"/></svg></span>
         <div class="ctx-submenu" id="ctx-tunnels-submenu" role="menu" aria-labelledby="ctx-tunnels-label"></div>
       </div>
       <button class="ctx-item ctx-conn-only ctx-script-only hidden" data-ctx="run-script-conn">
@@ -801,7 +802,7 @@
       <!-- Solo en el RDP integrado: el submenú lo rellena showTabContextMenu -->
       <div class="ctx-item ctx-has-submenu tabctx-rdp-res hidden" id="tabctx-rdp-res" role="menuitem" tabindex="-1" aria-haspopup="menu" aria-expanded="false" aria-labelledby="tabctx-rdp-res-label">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-monitor"/></svg></span><span id="tabctx-rdp-res-label" data-i18n="tabctx.rdp_resolution">Resolución</span>
-        <span class="ctx-submenu-arrow" aria-hidden="true">▸</span>
+        <span class="ctx-submenu-arrow" aria-hidden="true"><svg class="ctx-icon-svg"><use href="#ci-chevron"/></svg></span>
         <div class="ctx-submenu" id="tabctx-rdp-res-submenu" role="menu" aria-labelledby="tabctx-rdp-res-label"></div>
       </div>
 
@@ -1658,6 +1659,7 @@
           <button type="button" class="activity-filter" data-activity-filter="sftp" aria-pressed="false" translate="no">SFTP</button>
           <button type="button" class="activity-filter" data-activity-filter="sync" aria-pressed="false" data-i18n="activity.filter_sync">Sincronización</button>
           <button type="button" class="activity-filter" data-activity-filter="update" aria-pressed="false" data-i18n="activity.filter_update">Avisos</button>
+          <button type="button" class="activity-filter activity-filter-error" data-activity-filter="error" aria-pressed="false" data-i18n="activity.filter_errors">Errores</button>
           <button type="button" class="activity-clear" id="btn-activity-clear" data-i18n="activity.clear" data-i18n-title="activity.clear_title" title="Vaciar el historial de actividad">Limpiar</button>
         </div>
         <div id="activity-center-list" class="activity-center-list"></div>
