@@ -147,7 +147,7 @@ sh install.sh
 | Fedora / RHEL / CentOS / Rocky / AlmaLinux | `.rpm` | `sudo dnf install` |
 | openSUSE / SUSE | `.rpm` | `sudo zypper install` |
 | Otras distribuciones Linux | `AppImage` | copia en `~/.local/bin/rustty` |
-| macOS Apple Silicon | `.app.tar.gz` | extrae en `~/Applications/Rustty.app` |
+| macOS (Apple Silicon e Intel) | `.app.tar.gz` | extrae en `~/Applications/Rustty.app` |
 
 Para actualizar a una nueva versión, vuelve a ejecutar el mismo comando. En Linux reemplazará el paquete mediante el gestor correspondiente; en macOS reemplazará `~/Applications/Rustty.app`.
 
@@ -220,16 +220,16 @@ Salvedades:
 - El estado de la ventana (tamaño, posición) sí se guarda en el perfil de usuario (plugin `tauri-plugin-window-state`); la sesión visual del USB no es 100% portable.
 - Si renombras el `.exe` y le quitas el sufijo `-portable.exe`, vuelve al modo normal y leerá `%APPDATA%\com.rustty.app\`.
 
-### macOS (Apple Silicon)
+### macOS (Apple Silicon e Intel)
 
 Las builds se firman con **Developer ID Application** y se notarizan con el servicio de Apple, así que Gatekeeper no muestra avisos en una instalación limpia.
 
 La forma más rápida es el instalador automático (ver [Instalación rápida con script](#instalación-rápida-con-script)): `curl -sSf https://rustty.es/install.sh | sh`. O descarga un binario directamente del release:
 
-- **DMG (`Rustty_<version>_aarch64.dmg`)**: abrir el `.dmg` y arrastrar `Rustty.app` a `Aplicaciones`.
-- **App bundle (`Rustty_aarch64.app.tar.gz`)**: descomprimir y ejecutar `Rustty.app`.
+- **DMG (`Rustty_<version>_universal.dmg`)**: abrir el `.dmg` y arrastrar `Rustty.app` a `Aplicaciones`.
+- **App bundle (`Rustty_<version>_universal.app.tar.gz`)**: descomprimir y ejecutar `Rustty.app`.
 
-> Las builds sólo se generan para **aarch64** (Apple Silicon). Para Intel Mac habría que compilar desde fuente.
+> El paquete es **universal**: el mismo fichero sirve para los Mac con Apple Silicon y para los Mac con Intel. Las versiones hasta la 2.28.0 sólo se publicaron para Apple Silicon (`_aarch64`) y no arrancan en un Mac Intel.
 
 ### Verificación de integridad
 
@@ -361,7 +361,7 @@ El binario y los paquetes (`.deb`, `.rpm`, `.AppImage`, `.msi`, `.dmg`, según p
 
 ### Release automático
 
-El workflow de GitHub Actions (`.github/workflows/build.yml`) compila binarios para Linux, Windows y macOS (Apple Silicon) al empujar un tag `v*`:
+El workflow de GitHub Actions (`.github/workflows/build.yml`) compila binarios para Linux, Windows y macOS (universal: Apple Silicon e Intel) al empujar un tag `v*`:
 
 La fuente única de versión es `package.json`. Para preparar una release, cambia sólo el campo `version` ahí y ejecuta:
 

@@ -183,9 +183,15 @@ jobs:
           - platform: windows-latest
             target:   x86_64-pc-windows-msvc
             label:    Windows
+          # Binario universal (Apple Silicon + Intel): uno arm64 no arranca en un
+          # Mac Intel. Se compila en el mismo runner de Apple Silicon, no en uno
+          # Intel aparte. `universal-apple-darwin` no es un target de rustup —lo
+          # monta la CLI de Tauri uniendo los dos con `lipo`—, de ahí
+          # `rust_targets` con las dos mitades que hay que instalar.
           - platform: macos-latest
-            target:   aarch64-apple-darwin
-            label:    macOS (Apple Silicon)
+            target:   universal-apple-darwin
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            label:    macOS (universal)
 
     runs-on: ${{ matrix.platform }}
     name: Build · ${{ matrix.label }}
@@ -214,7 +220,7 @@ jobs:
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ steps.rust.outputs.channel }}
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.rust_targets || matrix.target }}
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -284,6 +290,11 @@ jobs:
           # vacío: el workflow manual sigue siendo una prueba de compilación.
           releaseId: ${{ needs.prepare_release.outputs.release_id }}
           args:          --target ${{ matrix.target }}
+          # En una ejecución manual no hay release al que subir nada, así que el
+          # paquete de macOS se deja como artefacto del workflow: es la única
+          # forma de probarlo en un Mac de verdad (Intel incluido) antes de
+          # etiquetar, porque macOS no se puede compilar ni ejecutar en local.
+          uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' && matrix.platform == 'macos-latest' }}
 
       # ── Extras de Linux: empaquetar .pkg.tar.zst para Arch ────
       # Tauri no tiene target pacman; reusamos el .deb (mismo árbol)
@@ -462,10 +473,14 @@ jobs:
             --pattern latest.json --dir . --clobber --repo "${GITHUB_REPOSITORY}"
           # Además de ids válidos, exigir las tres plataformas: una escritura
           # concurrente del manifiesto no puede dejar una versión incompleta.
+          # macOS cuenta dos veces: el paquete es universal y tauri-action lo
+          # anuncia bajo las dos arquitecturas; sin `darwin-x86_64`, los Mac
+          # Intel se quedarían sin actualizaciones sin que nada avisara.
           jq -e --arg version "${GITHUB_REF_NAME#v}" '
             .version == $version and
             (.platforms | has("linux-x86_64") and has("windows-x86_64") and
-              has("darwin-aarch64") and all(.[]; .signature | type == "string" and length > 0))
+              has("darwin-aarch64") and has("darwin-x86_64") and
+              all(.[]; .signature | type == "string" and length > 0))
           ' latest.json > /dev/null
 
           RELEASE_ID="${{ needs.prepare_release.outputs.release_id }}"

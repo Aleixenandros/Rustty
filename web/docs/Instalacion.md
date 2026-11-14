@@ -86,11 +86,11 @@ Si actualizas **manualmente** con un instalador:
 - Con el **MSI**, basta con ejecutar el de la versión nueva: actualiza encima de la anterior.
 - Con el **NSIS** (`.exe`), al detectar una instalación previa verás la página *"Already Installed"* con dos opciones; **"Uninstall before installing"** es la recomendada y conserva tus datos (perfiles, preferencias y notas viven en `%APPDATA%\com.rustty.app`, no se borran al desinstalar).
 
-## macOS (Apple Silicon)
+## macOS (Apple Silicon e Intel)
 
 ### Instalador automático
 
-El mismo script detecta macOS (Apple Silicon), descarga el último release e instala `Rustty.app` en `~/Applications`:
+El mismo script detecta macOS (Apple Silicon o Intel), descarga el último release e instala `Rustty.app` en `~/Applications`:
 
 ```bash
 curl -sSf https://rustty.es/install.sh | sh
@@ -98,10 +98,10 @@ curl -sSf https://rustty.es/install.sh | sh
 
 O descarga un binario directamente del release:
 
-- **DMG** (`Rustty_<version>_aarch64.dmg`): abrir el `.dmg` y arrastrar `Rustty.app` a **Aplicaciones**.
-- **App bundle** (`Rustty_aarch64.app.tar.gz`): descomprimir y ejecutar `Rustty.app`.
+- **DMG** (`Rustty_<version>_universal.dmg`): abrir el `.dmg` y arrastrar `Rustty.app` a **Aplicaciones**.
+- **App bundle** (`Rustty_<version>_universal.app.tar.gz`): descomprimir y ejecutar `Rustty.app`.
 
-Las builds publicadas están firmadas con **Apple Developer ID** y notarizadas, así que Gatekeeper no mostrará aviso. Para Intel Mac hay que compilar desde fuente.
+Las builds publicadas están firmadas con **Apple Developer ID** y notarizadas, así que Gatekeeper no mostrará aviso. El paquete es **universal**: el mismo fichero sirve para los Mac con Apple Silicon y para los Mac con Intel. Las versiones hasta la 2.28.0 solo se publicaron para Apple Silicon (`_aarch64`) y no arrancan en un Mac Intel.
 
 ## Verificar integridad
 

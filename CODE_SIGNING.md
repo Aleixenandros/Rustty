@@ -12,7 +12,7 @@ autorizar una firma y cómo verificar que un artefacto descargado es auténtico.
 
 | Plataforma | Firma | Mecanismo |
 | --- | --- | --- |
-| **macOS** (Apple Silicon) | Sí | Firmado con **Apple Developer ID Application** y **notarizado** por Apple. Gatekeeper no muestra avisos en una instalación limpia. |
+| **macOS** (Apple Silicon e Intel) | Sí | Firmado con **Apple Developer ID Application** y **notarizado** por Apple. Gatekeeper no muestra avisos en una instalación limpia. |
 | **Windows** | **Todavía no** (firma en evaluación) | Pendiente de certificado. Verifica el `sha256` publicado en el release. |
 | **Linux** (`.deb`/`.rpm`/`.AppImage`/`.pkg.tar.zst`/Flatpak) | No aplica firma de código de SO | La integridad se valida por el gestor de paquetes y el `sha256` del release. |
 | **Actualizaciones automáticas** (todas las plataformas con updater) | Sí | Cada artefacto del updater de Tauri se firma con una clave **minisign**; la app verifica la firma contra la **clave pública** embebida antes de instalar. |

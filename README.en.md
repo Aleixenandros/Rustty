@@ -147,7 +147,7 @@ sh install.sh
 | Fedora / RHEL / CentOS / Rocky / AlmaLinux | `.rpm` | `sudo dnf install` |
 | openSUSE / SUSE | `.rpm` | `sudo zypper install` |
 | Other Linux distributions | `AppImage` | copied to `~/.local/bin/rustty` |
-| macOS Apple Silicon | `.app.tar.gz` | extracted to `~/Applications/Rustty.app` |
+| macOS (Apple Silicon and Intel) | `.app.tar.gz` | extracted to `~/Applications/Rustty.app` |
 
 To update to a new version, run the same command again. On Linux it will replace the package via the corresponding package manager; on macOS it will replace `~/Applications/Rustty.app`.
 
@@ -220,16 +220,16 @@ Caveats:
 - The window state (size, position) is saved in the user profile (`tauri-plugin-window-state` plugin); the visual session of the USB drive is not 100% portable.
 - If you rename the `.exe` and remove the `-portable.exe` suffix, it returns to normal mode and reads `%APPDATA%\com.rustty.app\`.
 
-### macOS (Apple Silicon)
+### macOS (Apple Silicon and Intel)
 
 The builds are signed with a **Developer ID Application** and notarized with Apple's service, so Gatekeeper shows no warnings on a clean installation.
 
 The quickest way is the automatic installer (see [Quick install with a script](#quick-install-with-a-script)): `curl -sSf https://rustty.es/install.sh | sh`. Or download a binary directly from the release:
 
-- **DMG (`Rustty_<version>_aarch64.dmg`)**: open the `.dmg` and drag `Rustty.app` to `Applications`.
-- **App bundle (`Rustty_aarch64.app.tar.gz`)**: extract and run `Rustty.app`.
+- **DMG (`Rustty_<version>_universal.dmg`)**: open the `.dmg` and drag `Rustty.app` to `Applications`.
+- **App bundle (`Rustty_<version>_universal.app.tar.gz`)**: extract and run `Rustty.app`.
 
-> Builds are only generated for **aarch64** (Apple Silicon). For Intel Macs you would need to compile from source.
+> The package is **universal**: the same file runs on Apple Silicon Macs and on Intel Macs. Versions up to 2.28.0 were only published for Apple Silicon (`_aarch64`) and do not start on an Intel Mac.
 
 ### Integrity verification
 
@@ -361,7 +361,7 @@ The binary and the packages (`.deb`, `.rpm`, `.AppImage`, `.msi`, `.dmg`, depend
 
 ### Automatic release
 
-The GitHub Actions workflow (`.github/workflows/build.yml`) compiles binaries for Linux, Windows and macOS (Apple Silicon) when a `v*` tag is pushed:
+The GitHub Actions workflow (`.github/workflows/build.yml`) compiles binaries for Linux, Windows and macOS (universal: Apple Silicon and Intel) when a `v*` tag is pushed:
 
 The single source of version truth is `package.json`. To prepare a release, change only the `version` field there and run:
 

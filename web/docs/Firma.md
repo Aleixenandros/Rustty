@@ -10,7 +10,7 @@ firma y cómo comprobar que una descarga es auténtica.
 
 ## Estado de la firma por plataforma
 
-- **macOS** (Apple Silicon): firmado con **Apple Developer ID Application** y
+- **macOS** (Apple Silicon e Intel): firmado con **Apple Developer ID Application** y
   **notarizado** por Apple. Gatekeeper no muestra avisos en una instalación
   limpia.
 - **Windows**: firma de código **en evaluación**. Hasta entonces, verifica el
