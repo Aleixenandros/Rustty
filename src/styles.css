@@ -8424,6 +8424,51 @@ body.sftp-panel-resizing {
   text-transform: uppercase;
 }
 
+/* Espacio libre del disco del servidor, a la derecha de la cabecera del lado
+   remoto: «12,3 GB libres de 50 GB» y una barra fina de ocupación. Discreto a
+   propósito (es un dato de fondo) y sin alto propio: la cabecera mide lo mismo
+   con él que sin él. En un lado estrecho el texto se corta con puntos antes de
+   empujar al título; la barra se queda. */
+.sftp-space {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--subtext0);
+  text-transform: none;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.sftp-space-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-space-bar {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface1);
+  overflow: hidden;
+}
+
+.sftp-space-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: var(--blue);
+  transition: width var(--motion-slow) var(--motion-ease);
+}
+
+.sftp-space[data-level="warn"] .sftp-space-fill { background: var(--yellow); }
+.sftp-space[data-level="full"] .sftp-space-fill { background: var(--red); }
+
 .sftp-divider {
   display: flex;
   flex-direction: column;

@@ -746,6 +746,9 @@
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-upload"/></svg></span><span data-i18n="sftp.upload_selection">Subir selección al remoto</span>
       </button>
       <div class="ctx-sep"></div>
+      <button class="ctx-item sftpctx-link-only hidden" data-sftpctx="link-target">
+        <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-external"/></svg></span><span data-i18n="sftp.link_go">Ir al destino del enlace</span>
+      </button>
       <button class="ctx-item sftpctx-single-selection" data-sftpctx="rename">
         <span class="ctx-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-edit"/></svg></span><span data-i18n="sftp.rename_dialog_title">Renombrar</span>
       </button>
@@ -3172,6 +3175,20 @@
                 </select>
               </div>
               <p class="settings-hint" data-i18n="prefs_aesthetics.sftp_layout_hint">Elige en qué lado del panel de ficheros se muestra el directorio remoto; el local queda en el lado opuesto.</p>
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-sftp-disk-space" />
+                  <span data-i18n="prefs_transfer.sftp_disk_space">Mostrar el espacio libre del servidor en el panel SFTP</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_transfer.sftp_disk_space_hint">Al entrar en una carpeta remota pregunta al servidor cuánto espacio queda en ese disco y lo enseña en la cabecera del panel, con una barra de ocupación. Solo con servidores SFTP que lo admiten (OpenSSH); con los demás, y con FTP y FTPS, no aparece nada.</p>
+              </div>
+              <div class="settings-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="pref-sftp-link-targets" />
+                  <span data-i18n="prefs_transfer.sftp_link_targets">Mostrar a dónde apuntan los enlaces simbólicos</span>
+                </label>
+                <p class="settings-hint" data-i18n="prefs_transfer.sftp_link_targets_hint">Al detener el puntero sobre un enlace simbólico del servidor, lee su destino y lo enseña en la descripción que aparece. Desactivado, el destino solo se lee al elegir «Ir al destino del enlace» en el menú del clic derecho. Solo SFTP.</p>
+              </div>
               <div class="settings-row settings-row-inline">
                 <label for="pref-sftp-conflict-policy" data-i18n="prefs_transfer.sftp_conflict_policy">Conflictos SFTP</label>
                 <select id="pref-sftp-conflict-policy">

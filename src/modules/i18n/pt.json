@@ -1626,7 +1626,11 @@
     "max_concurrent": "Transferências ao mesmo tempo (todas as sessões)",
     "max_concurrent_hint": "0 = sem teto (como sempre). Conta as cópias em curso em toda a aplicação, não os pedidos de cada uma: as que sobram esperam a sua vez e o painel marca-as como em fila. Uma pasta inteira ocupa uma única vez.",
     "resume": "Retomar transferências interrompidas",
-    "resume_hint": "Guarda o que já foi copiado quando uma transferência falha ou é cancelada e continua daí na vez seguinte. Uma descarga só é retomada se o ficheiro do servidor continuar igual —mesmo caminho, tamanho e data—, e um envio só se o ficheiro local continuar igual e o que está no servidor coincidir com ele; se algo mudou, começa do zero. Os envios vão para um temporário no servidor e só ocupam o seu nome ao terminar. O preço é que uma falha deixa um temporário «.rustty-part» junto ao destino, no seu computador ou no servidor, em vez de o apagar. Funciona com SFTP, FTP e FTPS."
+    "resume_hint": "Guarda o que já foi copiado quando uma transferência falha ou é cancelada e continua daí na vez seguinte. Uma descarga só é retomada se o ficheiro do servidor continuar igual —mesmo caminho, tamanho e data—, e um envio só se o ficheiro local continuar igual e o que está no servidor coincidir com ele; se algo mudou, começa do zero. Os envios vão para um temporário no servidor e só ocupam o seu nome ao terminar. O preço é que uma falha deixa um temporário «.rustty-part» junto ao destino, no seu computador ou no servidor, em vez de o apagar. Funciona com SFTP, FTP e FTPS.",
+    "sftp_disk_space": "Mostrar o espaço livre do servidor no painel SFTP",
+    "sftp_disk_space_hint": "Ao entrar numa pasta remota, pergunta ao servidor quanto espaço resta nesse disco e mostra-o no cabeçalho do painel, com uma barra de ocupação. Só com servidores SFTP que o suportam (OpenSSH); com os restantes, e com FTP e FTPS, não aparece nada.",
+    "sftp_link_targets": "Mostrar para onde apontam as ligações simbólicas",
+    "sftp_link_targets_hint": "Ao deixar o ponteiro sobre uma ligação simbólica do servidor, lê o destino e mostra-o na descrição que aparece. Desativado, o destino só é lido ao escolher «Ir para o destino da ligação» no menu do botão direito. Só SFTP."
   },
   "prefs_language": {
     "title": "Idioma",
@@ -2403,7 +2407,19 @@
     "upload_not_confirmed": "«{name}» não foi enviado: não foi confirmado.",
     "invalid_path": "Caminho inválido: {path}",
     "op_failed": "Erro: {err}",
-    "col_perms": "Permissões"
+    "col_perms": "Permissões",
+    "space_free_of": "{free} livres de {total}",
+    "space_tip": "Espaço no disco do servidor que contém esta pasta: {free} livres de {total} ({percent} % ocupado)",
+    "link_tip": "Ligação simbólica",
+    "link_tip_dir": "Ligação simbólica para a pasta {target}",
+    "link_tip_file": "Ligação simbólica para o ficheiro {target}",
+    "link_tip_broken": "Ligação simbólica para {target} (o destino não existe ou não pode ser lido)",
+    "link_go": "Ir para o destino da ligação",
+    "link_to_file": "A ligação aponta para um ficheiro: {target}",
+    "link_open_folder": "Abrir a respetiva pasta",
+    "link_broken": "O destino da ligação não existe ou não pode ser lido: {target}",
+    "link_unsupported": "Este servidor não permite ler o destino das ligações",
+    "link_read_failed": "Não foi possível ler o destino de {name}: {err}"
   },
   "sftp_nav": {
     "back": "Anterior",

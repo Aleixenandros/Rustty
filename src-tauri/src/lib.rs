@@ -557,6 +557,8 @@ pub fn run() {
             commands::sftp_disconnect,
             commands::sftp_list_dir,
             commands::sftp_home_dir,
+            commands::sftp_disk_space,
+            commands::sftp_read_link,
             commands::sftp_mkdir,
             commands::sftp_create_file,
             commands::sftp_remove,

@@ -1626,7 +1626,11 @@
     "max_concurrent": "Gleichzeitige Transfers (alle Sitzungen)",
     "max_concurrent_hint": "0 = keine Grenze (wie bisher). Gezählt werden die laufenden Kopiervorgänge der gesamten Anwendung, nicht die Anfragen jedes einzelnen: Was darüber liegt, wartet, und das Panel zeigt es als wartend an. Ein ganzer Ordner belegt nur einen Platz.",
     "resume": "Unterbrochene Übertragungen fortsetzen",
-    "resume_hint": "Behält das bereits Kopierte, wenn eine Übertragung fehlschlägt oder abgebrochen wird, und macht beim nächsten Mal dort weiter. Ein Download wird nur fortgesetzt, wenn die Datei auf dem Server unverändert ist – gleicher Pfad, gleiche Größe, gleiches Datum –, ein Upload nur, wenn die lokale Datei unverändert ist und das, was auf dem Server liegt, zu ihr passt; hat sich etwas geändert, beginnt die Übertragung neu. Uploads gehen in eine temporäre Datei auf dem Server und bekommen ihren Namen erst am Ende. Der Preis: Bei einem Fehler bleibt eine Datei „.rustty-part“ neben dem Ziel liegen – auf deinem Rechner oder auf dem Server –, statt gelöscht zu werden. Gilt für SFTP, FTP und FTPS."
+    "resume_hint": "Behält das bereits Kopierte, wenn eine Übertragung fehlschlägt oder abgebrochen wird, und macht beim nächsten Mal dort weiter. Ein Download wird nur fortgesetzt, wenn die Datei auf dem Server unverändert ist – gleicher Pfad, gleiche Größe, gleiches Datum –, ein Upload nur, wenn die lokale Datei unverändert ist und das, was auf dem Server liegt, zu ihr passt; hat sich etwas geändert, beginnt die Übertragung neu. Uploads gehen in eine temporäre Datei auf dem Server und bekommen ihren Namen erst am Ende. Der Preis: Bei einem Fehler bleibt eine Datei „.rustty-part“ neben dem Ziel liegen – auf deinem Rechner oder auf dem Server –, statt gelöscht zu werden. Gilt für SFTP, FTP und FTPS.",
+    "sftp_disk_space": "Freien Speicherplatz des Servers im SFTP-Bereich anzeigen",
+    "sftp_disk_space_hint": "Fragt beim Öffnen eines Remote-Ordners den Server, wie viel Platz auf diesem Datenträger noch frei ist, und zeigt es in der Kopfzeile des Bereichs an, mit einem Belegungsbalken. Nur bei SFTP-Servern, die das unterstützen (OpenSSH); bei allen anderen sowie bei FTP und FTPS wird nichts angezeigt.",
+    "sftp_link_targets": "Anzeigen, wohin symbolische Links zeigen",
+    "sftp_link_targets_hint": "Ruht der Mauszeiger auf einem symbolischen Link auf dem Server, wird dessen Ziel gelesen und in der eingeblendeten Beschreibung angezeigt. Deaktiviert wird das Ziel nur gelesen, wenn du im Rechtsklickmenü „Zum Ziel des Links gehen“ wählst. Nur SFTP."
   },
   "prefs_language": {
     "title": "Sprache",
@@ -2403,7 +2407,19 @@
     "upload_not_confirmed": "„{name}“ wurde nicht hochgeladen: Es wurde nicht bestätigt.",
     "invalid_path": "Ungültiger Pfad: {path}",
     "op_failed": "Fehler: {err}",
-    "col_perms": "Rechte"
+    "col_perms": "Rechte",
+    "space_free_of": "{free} frei von {total}",
+    "space_tip": "Speicherplatz auf dem Datenträger des Servers, auf dem dieser Ordner liegt: {free} frei von {total} ({percent} % belegt)",
+    "link_tip": "Symbolischer Link",
+    "link_tip_dir": "Symbolischer Link auf den Ordner {target}",
+    "link_tip_file": "Symbolischer Link auf die Datei {target}",
+    "link_tip_broken": "Symbolischer Link auf {target} (das Ziel existiert nicht oder ist nicht lesbar)",
+    "link_go": "Zum Ziel des Links gehen",
+    "link_to_file": "Der Link zeigt auf eine Datei: {target}",
+    "link_open_folder": "Deren Ordner öffnen",
+    "link_broken": "Das Ziel des Links existiert nicht oder ist nicht lesbar: {target}",
+    "link_unsupported": "Dieser Server kann das Ziel von Links nicht auslesen",
+    "link_read_failed": "Das Ziel von {name} konnte nicht gelesen werden: {err}"
   },
   "sftp_nav": {
     "back": "Zurück",

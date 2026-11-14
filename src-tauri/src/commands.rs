@@ -27,7 +27,9 @@ use crate::profiles::{AuthType, ConnectionProfile, PasswordSource, ProfileManage
 use crate::tmux::bridge as tmux_cmds;
 use crate::rdp_manager::RdpManager;
 use crate::scripts::{HostPreview, RunOptions, Script, ScriptManager};
-use crate::sftp_manager::{FileEntry, SftpManager, TransferConflictPolicy};
+use crate::sftp_manager::{
+    DiskSpace, FileEntry, LinkTarget, SftpManager, TransferConflictPolicy,
+};
 use crate::ssh_manager::{legacy_catalog_info, SshManager, SshTunnelConfig, SshTunnelInfo};
 use crate::sync::{
     pack_state, resolve_sync_folder, significant_clock_skew, unpack_state, OAuthAccountState,
@@ -1787,6 +1789,29 @@ pub async fn sftp_home_dir(
     session_id: String,
 ) -> Result<String, String> {
     sftp_state.home_dir(&session_id).await
+}
+
+/// Espacio libre y total del sistema de ficheros de una carpeta remota.
+/// `None` si el servidor no lo dice (FTP/FTPS, o SFTP sin
+/// `statvfs@openssh.com`): el panel, sencillamente, no pinta el indicador.
+#[tauri::command]
+pub async fn sftp_disk_space(
+    sftp_state: State<'_, SftpManager>,
+    session_id: String,
+    path: String,
+) -> Result<Option<DiskSpace>, String> {
+    sftp_state.disk_space(&session_id, path).await
+}
+
+/// Destino de un enlace simbólico remoto. `None` si el protocolo no sabe
+/// leerlo (FTP/FTPS). El destino es texto del servidor: el panel lo escapa.
+#[tauri::command]
+pub async fn sftp_read_link(
+    sftp_state: State<'_, SftpManager>,
+    session_id: String,
+    path: String,
+) -> Result<Option<LinkTarget>, String> {
+    sftp_state.read_link(&session_id, path).await
 }
 
 #[tauri::command]

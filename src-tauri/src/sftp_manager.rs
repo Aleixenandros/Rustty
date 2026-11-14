@@ -36,6 +36,7 @@ use russh::client::{self, AuthResult};
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
 use russh_sftp::client::fs::File as SftpFile;
 use russh_sftp::client::{Config as SftpConfig, SftpSession};
+use russh_sftp::extensions::Statvfs;
 use russh_sftp::protocol::{FileAttributes, OpenFlags};
 
 use crate::host_keys;
@@ -83,6 +84,86 @@ pub struct FileEntry {
     pub size: u64,
     pub modified: Option<u64>, // segundos desde epoch
     pub permissions: Option<u32>,
+}
+
+/// Espacio del sistema de ficheros que contiene una carpeta remota, en bytes.
+/// `available` es lo que puede usar el usuario que conectó (`f_bavail`);
+/// `free`, lo libre contando la reserva de root (`f_bfree`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct DiskSpace {
+    pub total: u64,
+    pub free: u64,
+    pub available: u64,
+}
+
+/// Convierte la respuesta de `statvfs@openssh.com` a bytes. Los bloques van en
+/// unidades de `f_frsize`; un servidor que lo deje a cero cuenta en `f_bsize`.
+/// Un sistema de ficheros sin tamaño (`/proc`, `/sys`…) da `total: 0`, que el
+/// panel no pinta. No se confunde con «el servidor no lo dice» (`None` en
+/// [`FileTransfer::disk_space`]): al salir de `/proc` hay que volver a preguntar.
+fn disk_space_from_statvfs(info: &Statvfs) -> DiskSpace {
+    let unit = if info.fragment_size > 0 {
+        info.fragment_size
+    } else {
+        info.block_size
+    };
+    // Los contadores son del servidor: el producto satura en vez de desbordar
+    // y se acotan para que nunca salga más espacio libre que total, ni más
+    // disponible que libre.
+    let total = info.blocks.saturating_mul(unit);
+    let free = info.blocks_free.saturating_mul(unit).min(total);
+    let available = info.blocks_avail.saturating_mul(unit).min(free);
+    DiskSpace {
+        total,
+        free,
+        available,
+    }
+}
+
+/// Destino de un enlace simbólico remoto: el texto que guarda el enlace, tal
+/// cual (puede ser relativo), si lo que hay al final es una carpeta y la ruta
+/// absoluta de ese final.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LinkTarget {
+    pub target: String,
+    /// `None` = el destino no se pudo consultar (enlace roto, sin permiso).
+    pub is_dir: Option<bool>,
+    /// Ruta absoluta a la que lleva el enlace, resuelta por el servidor
+    /// (`REALPATH`). Es la única cuenta exacta: un destino relativo con `..`
+    /// no se puede resolver a mano si la carpeta del enlace se alcanzó a su vez
+    /// por otro enlace (`current/shared -> ../../shared`). `None` si el
+    /// servidor no la da. Ojo: que venga no significa que el destino exista
+    /// —con un enlace roto OpenSSH devuelve la ruta que tendría—; eso lo dice
+    /// `is_dir`.
+    pub resolved: Option<String>,
+}
+
+/// Tope del texto de un destino de enlace: el `PATH_MAX` de Linux. Lo dicta el
+/// servidor, así que no se acepta cualquier tamaño.
+const LINK_TARGET_MAX: usize = 4096;
+
+/// Valida el destino que devuelve `READLINK`. Es entrada del servidor: vacío,
+/// con un byte nulo o más largo que una ruta posible, no es un destino.
+fn checked_link_target(target: String) -> Result<String, String> {
+    if target.is_empty() {
+        return Err("el servidor devolvió un destino de enlace vacío".into());
+    }
+    if target.len() > LINK_TARGET_MAX {
+        return Err("el servidor devolvió un destino de enlace demasiado largo".into());
+    }
+    if target.contains('\0') {
+        return Err("el servidor devolvió un destino de enlace no válido".into());
+    }
+    Ok(target)
+}
+
+/// La ruta real que devuelve `REALPATH` para un enlace, si es utilizable: con
+/// las mismas condiciones que un destino y, además, absoluta (es por donde el
+/// panel va a navegar).
+fn checked_resolved_path(path: String) -> Option<String> {
+    checked_link_target(path)
+        .ok()
+        .filter(|path| path.starts_with('/'))
 }
 
 // ─── Control de transferencias (cancelar + pausar) ──────────────────────────
@@ -301,6 +382,14 @@ enum SftpCommand {
         mode: u32,
         reply: Reply<()>,
     },
+    DiskSpace {
+        path: String,
+        reply: Reply<Option<DiskSpace>>,
+    },
+    ReadLink {
+        path: String,
+        reply: Reply<Option<LinkTarget>>,
+    },
     Download {
         remote: String,
         local: PathBuf,
@@ -364,6 +453,21 @@ trait FileTransfer {
     async fn remove(&mut self, path: &str, is_dir: bool) -> Result<(), String>;
     async fn rename(&mut self, from: &str, to: &str) -> Result<(), String>;
     async fn chmod(&mut self, path: &str, mode: u32) -> Result<(), String>;
+
+    /// Espacio libre y total del sistema de ficheros de `path`. `Ok(None)` =
+    /// este servidor no lo dice: es lo que vale por defecto (FTP y FTPS no
+    /// tienen con qué preguntarlo) y lo que contesta un SFTP que no anuncia
+    /// `statvfs@openssh.com`. No es un error y no se avisa de él.
+    async fn disk_space(&mut self, _path: &str) -> Result<Option<DiskSpace>, String> {
+        Ok(None)
+    }
+
+    /// Destino del enlace simbólico `path`. `Ok(None)` = este protocolo no
+    /// sabe leerlo (FTP y FTPS).
+    async fn read_link(&mut self, _path: &str) -> Result<Option<LinkTarget>, String> {
+        Ok(None)
+    }
+
     async fn download(
         &mut self,
         remote: &str,
@@ -627,6 +731,27 @@ impl SftpManager {
         .await
     }
 
+    pub async fn disk_space(
+        &self,
+        session_id: &str,
+        path: String,
+    ) -> Result<Option<DiskSpace>, String> {
+        self.send(session_id, move |reply| SftpCommand::DiskSpace {
+            path,
+            reply,
+        })
+        .await
+    }
+
+    pub async fn read_link(
+        &self,
+        session_id: &str,
+        path: String,
+    ) -> Result<Option<LinkTarget>, String> {
+        self.send(session_id, move |reply| SftpCommand::ReadLink { path, reply })
+            .await
+    }
+
     pub async fn chmod(&self, session_id: &str, path: String, mode: u32) -> Result<(), String> {
         self.send(session_id, move |reply| SftpCommand::Chmod {
             path,
@@ -827,6 +952,12 @@ async fn run_sftp_worker(
             }
             SftpCommand::Chmod { path, mode, reply } => {
                 let _ = reply.send(backend.chmod(&path, mode).await);
+            }
+            SftpCommand::DiskSpace { path, reply } => {
+                let _ = reply.send(backend.disk_space(&path).await);
+            }
+            SftpCommand::ReadLink { path, reply } => {
+                let _ = reply.send(backend.read_link(&path).await);
             }
             SftpCommand::Download {
                 remote,
@@ -1419,6 +1550,16 @@ impl FileTransfer for SftpBackend {
 
     async fn home_dir(&mut self) -> Result<String, String> {
         do_home_dir(&self.sftp).await
+    }
+
+    async fn disk_space(&mut self, path: &str) -> Result<Option<DiskSpace>, String> {
+        do_disk_space(&self.sftp, path, PROBE_TIMEOUT).await
+    }
+
+    async fn read_link(&mut self, path: &str) -> Result<Option<LinkTarget>, String> {
+        do_read_link(&self.sftp, path, PROBE_TIMEOUT)
+            .await
+            .map(Some)
     }
 
     async fn mkdir(&mut self, path: &str) -> Result<(), String> {
@@ -2505,6 +2646,62 @@ async fn do_home_dir(sftp: &SftpSession) -> Result<String, String> {
     sftp.canonicalize(".".to_string())
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Cuánto se espera cada respuesta de las consultas de cortesía del panel: el
+/// espacio en disco (`statvfs`) y el destino de un enlace. El worker atiende
+/// las peticiones de una en una, y estas salen solas (al entrar en una carpeta,
+/// al parar el puntero sobre un enlace): un servidor que tarde en contestar —un
+/// montaje de red colgado, un enlace que apunta a él— no puede tener parado el
+/// panel los dos minutos del plazo general de una petición SFTP.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// Espacio del sistema de ficheros de `path`, por la extensión
+/// `statvfs@openssh.com`. `fs_info` contesta `None` sin tocar la red si el
+/// servidor no la anunció al abrir la sesión.
+async fn do_disk_space(
+    sftp: &SftpSession,
+    path: &str,
+    plazo: Duration,
+) -> Result<Option<DiskSpace>, String> {
+    match tokio::time::timeout(plazo, sftp.fs_info(path.to_string())).await {
+        Ok(Ok(info)) => Ok(info.as_ref().map(disk_space_from_statvfs)),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("el servidor no contestó a tiempo al espacio en disco".into()),
+    }
+}
+
+/// Destino de un enlace simbólico (`READLINK`), si acaba en una carpeta y la
+/// ruta real de ese final. Lo segundo sale de `STAT`, que sí sigue enlaces, y
+/// lo tercero de `REALPATH`; se piden a la vez. Si fallan (enlace roto, sin
+/// permiso, o no contestan dentro de `plazo` porque el destino está en un
+/// montaje colgado) el destino se devuelve igual, con lo demás desconocido.
+async fn do_read_link(
+    sftp: &SftpSession,
+    path: &str,
+    plazo: Duration,
+) -> Result<LinkTarget, String> {
+    let target = match tokio::time::timeout(plazo, sftp.read_link(path.to_string())).await {
+        Ok(read) => read.map_err(|e| e.to_string()).and_then(checked_link_target)?,
+        Err(_) => return Err("el servidor no contestó a tiempo al destino del enlace".into()),
+    };
+    let (stat, real) = tokio::join!(
+        tokio::time::timeout(plazo, sftp.metadata(path.to_string())),
+        tokio::time::timeout(plazo, sftp.canonicalize(path.to_string())),
+    );
+    let is_dir = match stat {
+        Ok(Ok(meta)) => Some(meta.is_dir()),
+        Ok(Err(_)) | Err(_) => None,
+    };
+    let resolved = match real {
+        Ok(Ok(real)) => checked_resolved_path(real),
+        Ok(Err(_)) | Err(_) => None,
+    };
+    Ok(LinkTarget {
+        target,
+        is_dir,
+        resolved,
+    })
 }
 
 fn ftp_list_dir(ftp: &mut FtpConnection, path: &str) -> Result<Vec<FileEntry>, String> {
@@ -4828,6 +5025,410 @@ mod tests {
         assert!(safe_entry_name("/etc/passwd").is_err());
     }
 
+    // ─── Espacio en disco y destino de enlaces ──────────────────────────────
+
+    fn statvfs(unit: u64, blocks: u64, free: u64, avail: u64) -> Statvfs {
+        Statvfs {
+            block_size: unit,
+            fragment_size: unit,
+            blocks,
+            blocks_free: free,
+            blocks_avail: avail,
+            inodes: 0,
+            inodes_free: 0,
+            inodes_avail: 0,
+            fs_id: 0,
+            flags: 0,
+            name_max: 255,
+        }
+    }
+
+    #[test]
+    fn el_espacio_en_disco_se_cuenta_en_bytes_con_la_unidad_del_servidor() {
+        // 4 KiB por bloque: 1000 bloques, 400 libres y 350 para el usuario.
+        assert_eq!(
+            disk_space_from_statvfs(&statvfs(4096, 1000, 400, 350)),
+            DiskSpace {
+                total: 4_096_000,
+                free: 1_638_400,
+                available: 1_433_600,
+            }
+        );
+        // Los bloques van en `f_frsize`, no en `f_bsize` (que es el tamaño
+        // preferido de E/S y en algunos sistemas es mucho mayor).
+        let mut info = statvfs(512, 10, 5, 5);
+        info.block_size = 1 << 20;
+        assert_eq!(disk_space_from_statvfs(&info).total, 5120);
+        // Un servidor que deja `f_frsize` a cero cuenta en `f_bsize`.
+        info.fragment_size = 0;
+        assert_eq!(disk_space_from_statvfs(&info).total, 10 << 20);
+    }
+
+    #[test]
+    fn un_sistema_de_ficheros_sin_tamano_da_cero_y_no_un_servidor_sin_dato() {
+        // `/proc`, `/sys`: cero bloques. Es un dato (que el panel no pinta), no
+        // la señal de que el servidor no sabe contestar.
+        let vacio = DiskSpace {
+            total: 0,
+            free: 0,
+            available: 0,
+        };
+        assert_eq!(disk_space_from_statvfs(&statvfs(4096, 0, 0, 0)), vacio);
+        assert_eq!(disk_space_from_statvfs(&statvfs(0, 1000, 10, 10)), vacio);
+    }
+
+    #[test]
+    fn los_contadores_del_servidor_no_desbordan_ni_dan_mas_libre_que_total() {
+        // Contadores absurdos: el producto satura en vez de dar la vuelta.
+        let enorme = disk_space_from_statvfs(&statvfs(u64::MAX, u64::MAX, 1, 1));
+        assert_eq!(enorme.total, u64::MAX);
+        // Más libre que total, y más disponible que libre: se acotan.
+        let raro = disk_space_from_statvfs(&statvfs(1024, 10, 50, 80));
+        assert_eq!(raro.total, 10_240);
+        assert_eq!(raro.free, 10_240);
+        assert_eq!(raro.available, 10_240);
+        let reserva = disk_space_from_statvfs(&statvfs(1024, 10, 3, 9));
+        assert_eq!(reserva.available, reserva.free);
+    }
+
+    #[test]
+    fn el_destino_de_un_enlace_es_entrada_del_servidor() {
+        assert_eq!(
+            checked_link_target("../comun/actual".to_string()).as_deref(),
+            Ok("../comun/actual")
+        );
+        // Un destino con marcado no se toca aquí: es texto, y el panel lo escapa.
+        let marcado = "<img src=x onerror=alert(1)>".to_string();
+        assert_eq!(checked_link_target(marcado.clone()), Ok(marcado));
+        assert!(checked_link_target(String::new()).is_err());
+        assert!(checked_link_target("a\0b".to_string()).is_err());
+        assert!(checked_link_target("a".repeat(LINK_TARGET_MAX)).is_ok());
+        assert!(checked_link_target("a".repeat(LINK_TARGET_MAX + 1)).is_err());
+    }
+
+    #[test]
+    fn la_ruta_real_de_un_enlace_solo_vale_si_es_absoluta() {
+        assert_eq!(
+            checked_resolved_path("/srv/app/shared".to_string()).as_deref(),
+            Some("/srv/app/shared")
+        );
+        // Una ruta relativa no dice a dónde ir: se descarta y el panel resuelve
+        // el destino por su cuenta.
+        assert_eq!(checked_resolved_path("srv/app".to_string()), None);
+        assert_eq!(checked_resolved_path("../etc".to_string()), None);
+        assert_eq!(checked_resolved_path(String::new()), None);
+        assert_eq!(checked_resolved_path("/a\0b".to_string()), None);
+        assert_eq!(
+            checked_resolved_path(format!("/{}", "a".repeat(LINK_TARGET_MAX))),
+            None
+        );
+    }
+
+    /// Lo que tarda en contestar el servidor de mentira cuando hace de montaje
+    /// colgado. Holgado frente al plazo de los tests (50 ms) para que un
+    /// runner lento no confunda «venció el plazo» con «contestó el servidor».
+    const FAKE_SLOW: Duration = Duration::from_millis(1200);
+
+    /// Qué hace con `statvfs@openssh.com` el servidor SFTP de mentira.
+    #[derive(Clone, Copy)]
+    enum FakeStatvfs {
+        /// No anuncia la extensión (un servidor que no es OpenSSH).
+        NotAnnounced,
+        /// La anuncia y contesta con sus contadores.
+        Answers,
+        /// La anuncia, pero tarda esto en contestar (un montaje de red colgado).
+        Slow(Duration),
+        /// La anuncia y contesta con un error (sin permiso sobre la ruta).
+        Denied,
+    }
+
+    /// Servidor SFTP en proceso, sobre una tubería en memoria: la sesión del
+    /// panel (`SftpSession`) habla con él sin SSH ni `sshd`, así que estos
+    /// tests corren en las tres plataformas. Conoce un puñado de enlaces y
+    /// cuenta las peticiones de extensión que recibe.
+    struct FakeSftpServer {
+        statvfs: FakeStatvfs,
+        extended_calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl russh_sftp::server::Handler for FakeSftpServer {
+        type Error = russh_sftp::protocol::StatusCode;
+
+        fn unimplemented(&self) -> Self::Error {
+            russh_sftp::protocol::StatusCode::OpUnsupported
+        }
+
+        async fn init(
+            &mut self,
+            _version: u32,
+            _extensions: HashMap<String, String>,
+        ) -> Result<russh_sftp::protocol::Version, Self::Error> {
+            let mut version = russh_sftp::protocol::Version::new();
+            if !matches!(self.statvfs, FakeStatvfs::NotAnnounced) {
+                version
+                    .extensions
+                    .insert(russh_sftp::extensions::STATVFS.to_string(), "2".to_string());
+            }
+            Ok(version)
+        }
+
+        async fn extended(
+            &mut self,
+            id: u32,
+            request: String,
+            _data: Vec<u8>,
+        ) -> Result<russh_sftp::protocol::Packet, Self::Error> {
+            self.extended_calls.fetch_add(1, Ordering::SeqCst);
+            if request != russh_sftp::extensions::STATVFS {
+                return Err(self.unimplemented());
+            }
+            match self.statvfs {
+                FakeStatvfs::NotAnnounced => return Err(self.unimplemented()),
+                FakeStatvfs::Denied => {
+                    return Err(russh_sftp::protocol::StatusCode::PermissionDenied)
+                }
+                FakeStatvfs::Slow(espera) => tokio::time::sleep(espera).await,
+                FakeStatvfs::Answers => {}
+            }
+            let data = russh_sftp::ser::to_bytes(&statvfs(4096, 1000, 400, 350))
+                .map_err(|_| russh_sftp::protocol::StatusCode::Failure)?
+                .to_vec();
+            Ok(russh_sftp::protocol::Packet::ExtendedReply(
+                russh_sftp::protocol::ExtendedReply { id, data },
+            ))
+        }
+
+        async fn readlink(
+            &mut self,
+            id: u32,
+            path: String,
+        ) -> Result<russh_sftp::protocol::Name, Self::Error> {
+            let target = match path.as_str() {
+                "/srv/actual" => "versiones/v2".to_string(),
+                "/srv/config" => "/etc/app.conf".to_string(),
+                "/srv/roto" => "../no-existe".to_string(),
+                "/srv/colgado" => "/mnt/red".to_string(),
+                // Despliegue típico: `current` es un enlace a `releases/v2`, y
+                // dentro hay un enlace relativo que cuenta desde la carpeta real.
+                "/srv/app/current/shared" => "../../shared".to_string(),
+                "/srv/relativo" => "destino".to_string(),
+                "/srv/hostil" => "<img src=x onerror=alert(1)>".to_string(),
+                "/srv/vacio" => String::new(),
+                "/srv/enorme" => "a".repeat(LINK_TARGET_MAX + 1),
+                // Un fichero normal: READLINK falla, como en OpenSSH.
+                _ => return Err(russh_sftp::protocol::StatusCode::NoSuchFile),
+            };
+            Ok(russh_sftp::protocol::Name {
+                id,
+                files: vec![russh_sftp::protocol::File::dummy(target)],
+            })
+        }
+
+        /// `STAT` sigue el enlace: dice qué hay al final.
+        async fn stat(
+            &mut self,
+            id: u32,
+            path: String,
+        ) -> Result<russh_sftp::protocol::Attrs, Self::Error> {
+            let mut attrs = FileAttributes::empty();
+            match path.as_str() {
+                "/srv/actual" | "/srv/app/current/shared" | "/srv/relativo" => attrs.set_dir(true),
+                // El destino vive en un montaje de red que no contesta.
+                "/srv/colgado" => {
+                    tokio::time::sleep(FAKE_SLOW).await;
+                    attrs.set_dir(true);
+                }
+                "/srv/config" | "/srv/hostil" => attrs.set_regular(true),
+                _ => return Err(russh_sftp::protocol::StatusCode::NoSuchFile),
+            }
+            Ok(russh_sftp::protocol::Attrs { id, attrs })
+        }
+
+        /// `REALPATH` resuelve todos los enlaces del camino.
+        async fn realpath(
+            &mut self,
+            id: u32,
+            path: String,
+        ) -> Result<russh_sftp::protocol::Name, Self::Error> {
+            let real = match path.as_str() {
+                "/srv/actual" => "/srv/versiones/v2",
+                "/srv/config" => "/etc/app.conf",
+                "/srv/app/current/shared" => "/srv/app/shared",
+                // Un servidor que contesta con una ruta relativa: no sirve.
+                "/srv/relativo" => "destino",
+                _ => return Err(russh_sftp::protocol::StatusCode::NoSuchFile),
+            };
+            Ok(russh_sftp::protocol::Name {
+                id,
+                files: vec![russh_sftp::protocol::File::dummy(real)],
+            })
+        }
+    }
+
+    /// Sesión del panel contra un [`FakeSftpServer`], y su contador de
+    /// peticiones de extensión.
+    async fn fake_sftp(
+        statvfs: FakeStatvfs,
+    ) -> (SftpBackend, Arc<std::sync::atomic::AtomicUsize>) {
+        let extended_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (cliente, servidor) = tokio::io::duplex(64 * 1024);
+        russh_sftp::server::run(
+            servidor,
+            FakeSftpServer {
+                statvfs,
+                extended_calls: Arc::clone(&extended_calls),
+            },
+        )
+        .await;
+        let sftp = SftpSession::new(cliente).await.expect("sesión SFTP");
+        let backend = SftpBackend {
+            sftp,
+            max_parallelism: 1,
+            _jump: None,
+            resume: None,
+        };
+        (backend, extended_calls)
+    }
+
+    #[tokio::test]
+    async fn sftp_el_espacio_en_disco_sale_de_la_extension_statvfs() {
+        let (mut backend, llamadas) = fake_sftp(FakeStatvfs::Answers).await;
+        assert_eq!(
+            backend.disk_space("/srv").await,
+            Ok(Some(DiskSpace {
+                total: 4_096_000,
+                free: 1_638_400,
+                available: 1_433_600,
+            }))
+        );
+        assert_eq!(llamadas.load(Ordering::SeqCst), 1);
+    }
+
+    /// Un servidor que no anuncia la extensión no da el dato, y ni siquiera se
+    /// le pregunta: no hay error que enseñar ni petición que pueda rechazar.
+    #[tokio::test]
+    async fn sftp_sin_la_extension_statvfs_no_hay_espacio_ni_se_pregunta() {
+        let (mut backend, llamadas) = fake_sftp(FakeStatvfs::NotAnnounced).await;
+        assert_eq!(backend.disk_space("/srv").await, Ok(None));
+        assert_eq!(backend.disk_space("/").await, Ok(None));
+        assert_eq!(llamadas.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn sftp_un_statvfs_rechazado_es_un_error_y_no_un_cero() {
+        let (mut backend, _) = fake_sftp(FakeStatvfs::Denied).await;
+        assert!(backend.disk_space("/root").await.is_err());
+    }
+
+    /// Un `statvfs` que no contesta no deja parado el worker los dos minutos
+    /// del plazo general: se abandona a los pocos segundos y la sesión sigue
+    /// sirviendo las peticiones siguientes (el listado sale igual).
+    #[tokio::test]
+    async fn sftp_un_statvfs_lento_se_abandona_y_la_sesion_sigue_sirviendo() {
+        let (mut backend, _) = fake_sftp(FakeStatvfs::Slow(FAKE_SLOW)).await;
+        let antes = std::time::Instant::now();
+        let espacio = do_disk_space(&backend.sftp, "/mnt/red", Duration::from_millis(50)).await;
+        assert!(espacio.is_err(), "sin respuesta a tiempo no hay dato: {espacio:?}");
+        assert!(
+            antes.elapsed() < FAKE_SLOW * 3 / 4,
+            "se esperó al servidor en vez de al plazo: {:?}",
+            antes.elapsed()
+        );
+        // La respuesta tardía de la petición abandonada llega justo antes que
+        // la de esta, por el mismo canal, y no descoloca nada.
+        let enlace = backend.read_link("/srv/actual").await.expect("readlink");
+        assert_eq!(enlace.map(|l| l.target).as_deref(), Some("versiones/v2"));
+    }
+
+    #[tokio::test]
+    async fn sftp_el_destino_de_un_enlace_dice_si_acaba_en_una_carpeta() {
+        let (mut backend, _) = fake_sftp(FakeStatvfs::NotAnnounced).await;
+        // Relativo, tal cual lo guarda el enlace: resolverlo es cosa del panel.
+        assert_eq!(
+            backend.read_link("/srv/actual").await,
+            Ok(Some(LinkTarget {
+                target: "versiones/v2".to_string(),
+                is_dir: Some(true),
+                resolved: Some("/srv/versiones/v2".to_string()),
+            }))
+        );
+        assert_eq!(
+            backend.read_link("/srv/config").await,
+            Ok(Some(LinkTarget {
+                target: "/etc/app.conf".to_string(),
+                is_dir: Some(false),
+                resolved: Some("/etc/app.conf".to_string()),
+            }))
+        );
+        // Enlace roto: el destino se enseña igual; lo que no se sabe es qué es
+        // ni dónde acaba.
+        assert_eq!(
+            backend.read_link("/srv/roto").await,
+            Ok(Some(LinkTarget {
+                target: "../no-existe".to_string(),
+                is_dir: None,
+                resolved: None,
+            }))
+        );
+    }
+
+    /// La ruta real la da el servidor, no una cuenta sobre el texto: con la
+    /// carpeta del enlace alcanzada por otro enlace, `../../shared` contado
+    /// desde `/srv/app/current` daría `/srv/shared`, que no es.
+    #[tokio::test]
+    async fn sftp_la_ruta_real_de_un_enlace_la_resuelve_el_servidor() {
+        let (mut backend, _) = fake_sftp(FakeStatvfs::NotAnnounced).await;
+        assert_eq!(
+            backend.read_link("/srv/app/current/shared").await,
+            Ok(Some(LinkTarget {
+                target: "../../shared".to_string(),
+                is_dir: Some(true),
+                resolved: Some("/srv/app/shared".to_string()),
+            }))
+        );
+        // Una ruta real que no es absoluta no se entrega.
+        let relativo = backend.read_link("/srv/relativo").await.expect("readlink");
+        assert_eq!(relativo.and_then(|l| l.resolved), None);
+    }
+
+    /// Un enlace que apunta a un montaje colgado: el destino se lee (está en el
+    /// propio enlace), pero mirar qué hay al final no puede tener parado el
+    /// panel. Se da por desconocido al vencer el plazo.
+    #[tokio::test]
+    async fn sftp_un_destino_que_no_contesta_queda_como_desconocido() {
+        let (backend, _) = fake_sftp(FakeStatvfs::NotAnnounced).await;
+        let antes = std::time::Instant::now();
+        let enlace = do_read_link(&backend.sftp, "/srv/colgado", Duration::from_millis(50)).await;
+        assert_eq!(
+            enlace,
+            Ok(LinkTarget {
+                target: "/mnt/red".to_string(),
+                is_dir: None,
+                resolved: None,
+            })
+        );
+        assert!(
+            antes.elapsed() < FAKE_SLOW * 3 / 4,
+            "se esperó al servidor en vez de al plazo: {:?}",
+            antes.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn sftp_un_destino_de_enlace_imposible_se_rechaza() {
+        let (mut backend, _) = fake_sftp(FakeStatvfs::NotAnnounced).await;
+        assert!(backend.read_link("/srv/vacio").await.is_err());
+        assert!(backend.read_link("/srv/enorme").await.is_err());
+        // Lo que no es un enlace es un error del servidor, no un destino.
+        assert!(backend.read_link("/srv/fichero.txt").await.is_err());
+        // El marcado llega intacto: es texto, y escaparlo es cosa de quien pinta.
+        let hostil = backend.read_link("/srv/hostil").await.expect("readlink");
+        assert_eq!(
+            hostil.map(|l| l.target).as_deref(),
+            Some("<img src=x onerror=alert(1)>")
+        );
+    }
+
     #[test]
     fn la_pausa_y_la_cancelacion_de_la_carpeta_llegan_al_fichero_en_curso() {
         // Ningún test toca `PAUSE_ALL`, así que la pausa global no interfiere.
@@ -5559,6 +6160,119 @@ mod tests {
         let profile = ssh_profile(server);
         let (result, stages) = open_panel_sftp(&profile, &server.known_hosts_path()).await;
         result.unwrap_or_else(|e| panic!("no se abrió SFTP: {e}. Registro: {stages:#?}"))
+    }
+
+    /// **Integración**: contra un `sshd` real, el panel lee el espacio del
+    /// sistema de ficheros de una carpeta (`statvfs@openssh.com`) y el destino
+    /// de los enlaces simbólicos, distinguiendo carpeta, fichero y enlace roto.
+    #[cfg(target_os = "linux")]
+    #[ignore = "necesita sshd y ssh-keygen; se corre con --ignored"]
+    #[tokio::test]
+    async fn sftp_espacio_en_disco_y_destino_de_enlaces_contra_un_sshd_real() {
+        let _guard = SFTP_IT_LOCK.lock().await;
+        let Some(server) = crate::ssh_fixture::start().expect("arrancar sshd") else {
+            eprintln!("sshd/ssh-keygen no disponibles; test omitido");
+            return;
+        };
+        let root = std::env::temp_dir().join(format!("rustty-enlaces-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("versiones/v2")).expect("carpeta remota");
+        std::fs::write(root.join("versiones/notas.txt"), b"hola").expect("fichero");
+        std::os::unix::fs::symlink("versiones/v2", root.join("actual")).expect("enlace a carpeta");
+        std::os::unix::fs::symlink(root.join("versiones/notas.txt"), root.join("notas"))
+            .expect("enlace a fichero");
+        std::os::unix::fs::symlink("../no-existe", root.join("roto")).expect("enlace roto");
+        // Despliegue típico: `app/current -> releases/v2` y, dentro, un enlace
+        // relativo que cuenta desde la carpeta real, no desde `current`.
+        std::fs::create_dir_all(root.join("app/releases/v2")).expect("release");
+        std::fs::create_dir_all(root.join("app/shared")).expect("compartido");
+        std::os::unix::fs::symlink("releases/v2", root.join("app/current")).expect("current");
+        std::os::unix::fs::symlink("../../shared", root.join("app/releases/v2/shared"))
+            .expect("enlace relativo");
+        // El servidor da rutas reales: se comparan con la raíz ya resuelta.
+        let real = std::fs::canonicalize(&root).expect("raíz real");
+        let real = |nombre: &str| Some(real.join(nombre).to_string_lossy().into_owned());
+        let remoto = |nombre: &str| root.join(nombre).to_string_lossy().into_owned();
+
+        let mut backend = SftpBackend {
+            sftp: fixture_sftp(&server).await,
+            max_parallelism: 1,
+            _jump: None,
+            resume: None,
+        };
+
+        let espacio = backend
+            .disk_space(&root.to_string_lossy())
+            .await
+            .expect("statvfs")
+            .expect("OpenSSH anuncia statvfs@openssh.com");
+        assert!(espacio.total > 0, "un disco de verdad tiene tamaño");
+        assert!(espacio.available <= espacio.free && espacio.free <= espacio.total);
+        // Una ruta que no existe es un error, no un disco vacío.
+        assert!(backend.disk_space(&remoto("no-existe")).await.is_err());
+
+        assert_eq!(
+            backend.read_link(&remoto("actual")).await,
+            Ok(Some(LinkTarget {
+                target: "versiones/v2".to_string(),
+                is_dir: Some(true),
+                resolved: real("versiones/v2"),
+            }))
+        );
+        assert_eq!(
+            backend.read_link(&remoto("notas")).await,
+            Ok(Some(LinkTarget {
+                target: remoto("versiones/notas.txt"),
+                is_dir: Some(false),
+                resolved: real("versiones/notas.txt"),
+            }))
+        );
+        let roto = backend
+            .read_link(&remoto("roto"))
+            .await
+            .expect("readlink")
+            .expect("SFTP sabe leer enlaces");
+        assert_eq!(roto.target, "../no-existe");
+        assert_eq!(roto.is_dir, None, "un enlace roto no acaba en nada");
+        // OpenSSH resuelve igualmente la ruta que tendría el destino: por eso
+        // quien navega mira `is_dir`, y no solo si hay ruta real.
+        if let Some(resolved) = &roto.resolved {
+            assert!(resolved.ends_with("/no-existe"), "ruta real: {resolved}");
+        }
+        // Alcanzado a través de `current`: contando `../../shared` desde
+        // `app/current` saldría `shared` en la raíz, que no existe.
+        assert_eq!(
+            backend.read_link(&remoto("app/current/shared")).await,
+            Ok(Some(LinkTarget {
+                target: "../../shared".to_string(),
+                is_dir: Some(true),
+                resolved: real("app/shared"),
+            }))
+        );
+        assert!(
+            backend.read_link(&remoto("versiones")).await.is_err(),
+            "una carpeta normal no es un enlace"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **Integración**: FTP no tiene con qué preguntar ni el espacio ni el
+    /// destino de un enlace. No es un error: simplemente no hay dato.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor FTP efímero; se corre con --ignored"]
+    #[test]
+    fn ftp_no_da_espacio_en_disco_ni_destino_de_enlaces() {
+        let server = crate::ftp_fixture::start().expect("arrancar el servidor FTP");
+        let cert_store = server.root.join("ftps_certs.json");
+        let mut backend = FtpBackend {
+            ftp: ftp_conn(server.port, false, cert_store),
+            resume: None,
+        };
+        block_on(async {
+            assert_eq!(backend.disk_space("/").await, Ok(None));
+            assert_eq!(backend.read_link("/cualquiera").await, Ok(None));
+            // La conexión sigue entera: no se le ha mandado nada raro.
+            assert_eq!(backend.home_dir().await.as_deref(), Ok("/"));
+        });
     }
 
     /// **Integración**: «Nuevo fichero» del panel crea un fichero vacío,

@@ -1626,7 +1626,11 @@
     "max_concurrent": "Transfer sekaligus (semua sesi)",
     "max_concurrent_hint": "0 = tanpa batas (seperti biasa). Dihitung dari salinan yang berjalan di seluruh aplikasi, bukan permintaan yang dibuat masing-masing: sisanya menunggu giliran dan panel menandainya sebagai antre. Satu folder utuh memakai satu giliran.",
     "resume": "Lanjutkan transfer yang terputus",
-    "resume_hint": "Menyimpan bagian yang sudah disalin saat transfer gagal atau dibatalkan, dan melanjutkan dari sana lain kali. Unduhan hanya dilanjutkan jika berkas di server masih sama —path, ukuran, dan tanggal sama—, dan unggahan hanya jika berkas lokal masih sama dan isi di server cocok dengannya; jika ada yang berubah, mulai dari awal. Unggahan ditulis ke berkas sementara di server dan baru memakai namanya setelah selesai. Konsekuensinya, kegagalan meninggalkan berkas sementara “.rustty-part” di samping tujuan, di komputer Anda atau di server, alih-alih menghapusnya. Berlaku untuk SFTP, FTP, dan FTPS."
+    "resume_hint": "Menyimpan bagian yang sudah disalin saat transfer gagal atau dibatalkan, dan melanjutkan dari sana lain kali. Unduhan hanya dilanjutkan jika berkas di server masih sama —path, ukuran, dan tanggal sama—, dan unggahan hanya jika berkas lokal masih sama dan isi di server cocok dengannya; jika ada yang berubah, mulai dari awal. Unggahan ditulis ke berkas sementara di server dan baru memakai namanya setelah selesai. Konsekuensinya, kegagalan meninggalkan berkas sementara “.rustty-part” di samping tujuan, di komputer Anda atau di server, alih-alih menghapusnya. Berlaku untuk SFTP, FTP, dan FTPS.",
+    "sftp_disk_space": "Tampilkan ruang kosong server di panel SFTP",
+    "sftp_disk_space_hint": "Saat masuk ke folder jarak jauh, menanyakan kepada server berapa ruang yang tersisa di disk tersebut dan menampilkannya di kepala panel, dengan bilah pemakaian. Hanya untuk server SFTP yang mendukungnya (OpenSSH); pada server lain, serta FTP dan FTPS, tidak ada yang ditampilkan.",
+    "sftp_link_targets": "Tampilkan tujuan tautan simbolik",
+    "sftp_link_targets_hint": "Saat penunjuk berhenti di atas tautan simbolik di server, tujuannya dibaca dan ditampilkan pada keterangan yang muncul. Jika dinonaktifkan, tujuan hanya dibaca saat Anda memilih “Buka tujuan tautan” di menu klik kanan. Hanya SFTP."
   },
   "prefs_language": {
     "title": "Bahasa",
@@ -2403,7 +2407,19 @@
     "upload_not_confirmed": "“{name}” tidak diunggah: tidak dikonfirmasi.",
     "invalid_path": "Path tidak valid: {path}",
     "op_failed": "Kesalahan: {err}",
-    "col_perms": "Izin"
+    "col_perms": "Izin",
+    "space_free_of": "{free} tersedia dari {total}",
+    "space_tip": "Ruang pada disk server yang memuat folder ini: {free} tersedia dari {total} ({percent}% terpakai)",
+    "link_tip": "Tautan simbolik",
+    "link_tip_dir": "Tautan simbolik ke folder {target}",
+    "link_tip_file": "Tautan simbolik ke berkas {target}",
+    "link_tip_broken": "Tautan simbolik ke {target} (tujuannya tidak ada atau tidak dapat dibaca)",
+    "link_go": "Buka tujuan tautan",
+    "link_to_file": "Tautan ini mengarah ke berkas: {target}",
+    "link_open_folder": "Buka foldernya",
+    "link_broken": "Tujuan tautan tidak ada atau tidak dapat dibaca: {target}",
+    "link_unsupported": "Server ini tidak dapat membaca tujuan tautan",
+    "link_read_failed": "Tidak dapat membaca tujuan {name}: {err}"
   },
   "sftp_nav": {
     "back": "Kembali",

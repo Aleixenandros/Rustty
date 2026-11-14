@@ -49,6 +49,8 @@ import {
   FALLBACK_ROW_HEIGHT as SFTP_FALLBACK_ROW_HEIGHT,
 } from "./modules/sftp/list-view.js";
 import { sftpRowOpenAction } from "./modules/sftp/row-open.js";
+import { diskUsage, diskUsageLabels } from "./modules/sftp/disk-space.js";
+import { linkInfo, remoteDirname } from "./modules/sftp/link-target.js";
 import { foldSearchText, groupConnectionSearch, matchSegments } from "./modules/connection-search.js";
 import { clampUiZoom } from "./modules/num.js";
 import { rovingKey, treeKey, typeAhead, visibleNodes } from "./modules/tree-nav.js";
@@ -1987,6 +1989,10 @@ function openSettingsModal() {
   if (resumeEl) resumeEl.checked = !!prefs.transferResume;
   const remoteSideEl = document.getElementById("pref-sftp-remote-side");
   if (remoteSideEl) remoteSideEl.value = prefs.sftpRemoteSide === "right" ? "right" : "left";
+  const diskSpaceEl = /** @type {HTMLInputElement|null} */ (document.getElementById("pref-sftp-disk-space"));
+  if (diskSpaceEl) diskSpaceEl.checked = prefs.sftpDiskSpace !== false;
+  const linkTargetsEl = /** @type {HTMLInputElement|null} */ (document.getElementById("pref-sftp-link-targets"));
+  if (linkTargetsEl) linkTargetsEl.checked = prefs.sftpLinkTargets !== false;
   populateFontFamilySelect(prefs.fontFamily || "");
   document.getElementById("pref-font-size").value           = prefs.fontSize;
   document.getElementById("pref-line-height").value         = prefs.lineHeight;
@@ -4315,6 +4321,8 @@ function readPrefsFromModal() {
     })(),
     transferResume:  document.getElementById("pref-transfer-resume")?.checked ?? false,
     sftpRemoteSide:  document.getElementById("pref-sftp-remote-side")?.value === "right" ? "right" : "left",
+    sftpDiskSpace:   document.getElementById("pref-sftp-disk-space")?.checked ?? true,
+    sftpLinkTargets: document.getElementById("pref-sftp-link-targets")?.checked ?? true,
     fontFamily:      (document.getElementById("pref-font-family")?.value || "").trim(),
     fontSize:        parseInt(document.getElementById("pref-font-size").value, 10) || DEFAULT_PREFS.fontSize,
     lineHeight:      (() => {
@@ -4439,6 +4447,8 @@ function savePrefsFromModal() {
   // Reaplica la disposición del panel SFTP (remoto izquierda/derecha) a los
   // paneles ya abiertos.
   applySftpRemoteSideToAll();
+  // Indicador de espacio en disco: aparece o desaparece en los paneles abiertos.
+  applySftpDiskSpacePrefToAll();
   // Barra inferior de la consola local: aplicada a las consolas abiertas.
   applyLocalStatusBarPref();
   // Dónde se ve el título remoto (OSC 0/2): se repinta en las pestañas abiertas.
@@ -23616,6 +23626,10 @@ function buildSftpPanel(sessionId) {
       <div class="sftp-side-title">
         <span>${escHtml(t("toast.side_remote"))}</span>
         <span class="sftp-sudo-badge hidden" data-sftp-sudo-badge title="${escHtml(t("sftp.sudo_badge"))}">sudo</span>
+        <span class="sftp-space hidden" data-sftp-space>
+          <span class="sftp-space-text"></span>
+          <span class="sftp-space-bar" aria-hidden="true"><span class="sftp-space-fill"></span></span>
+        </span>
       </div>
       <div class="sftp-toolbar">
         <button class="sftp-nav-btn" data-sftp-nav="back" data-side="remote" title="${escHtml(t("sftp_nav.back"))}" aria-label="${escHtml(t("sftp_nav.back"))}" disabled><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-left"/></svg></button>
@@ -23865,8 +23879,13 @@ async function navigateSftpRemote(sessionId, path, { record = true } = {}) {
     recordSftpPath(s, "remote", path, record);
     setSftpPathDisplay(sessionId, "remote", path);
     resetSftpSearch(sessionId, "remote");
+    // Un listado nuevo puede traer los mismos enlaces apuntando a otro sitio.
+    sftpLinkCache(s).known.clear();
     renderSftpFiles(sessionId, "remote", entries);
     clearSftpStatus(panel);
+    // Con el listado ya pintado: el espacio en disco es un dato aparte que no
+    // lo retrasa ni puede hacerlo fallar.
+    refreshSftpDiskSpace(sessionId, path, nav);
   } catch (err) {
     if (!isCurrentSftpNavigation(s, "remote", nav)) return;
     const msg = sftpErrorText(err);
@@ -23890,6 +23909,244 @@ async function navigateSftpRemote(sessionId, path, { record = true } = {}) {
 
 // Alias para preservar llamadas antiguas.
 const navigateSftp = navigateSftpRemote;
+
+// ─── Espacio en disco del servidor ──────────────────────────────────────────
+
+/**
+ * Si el panel de archivos de la sesión va por FTP o FTPS. Esos protocolos no
+ * tienen con qué preguntar el espacio en disco ni el destino de un enlace: ni
+ * se les pregunta. (El backend contesta «sin dato» de todos modos.)
+ */
+function sftpPanelIsFtp(s) {
+  const profile = profiles.find((p) => p.id === s.profileId);
+  return isFileTransferConnectionType(profile?.connection_type);
+}
+
+/**
+ * Pinta (u oculta, con `usage` nulo) el indicador de espacio del lado remoto.
+ * @param {HTMLElement} panel
+ * @param {import("./modules/sftp/disk-space.js").DiskUsage|null} usage
+ */
+function renderSftpDiskSpace(panel, usage) {
+  const box = /** @type {HTMLElement|null} */ (panel?.querySelector("[data-sftp-space]"));
+  if (!box) return;
+  if (!usage) {
+    box.classList.add("hidden");
+    box.title = "";
+    return;
+  }
+  const labels = diskUsageLabels(usage);
+  const text = box.querySelector(".sftp-space-text");
+  const fill = /** @type {HTMLElement|null} */ (box.querySelector(".sftp-space-fill"));
+  if (text) text.textContent = t("sftp.space_free_of", labels);
+  if (fill) fill.style.width = `${usage.usedPercent}%`;
+  box.dataset.level = usage.level;
+  box.title = t("sftp.space_tip", labels);
+  box.classList.remove("hidden");
+}
+
+/**
+ * Pregunta al servidor el espacio del sistema de ficheros de `path` y lo pinta
+ * en la cabecera del lado remoto. Se llama con el listado ya en pantalla y no
+ * se espera: es un dato de cortesía. Si el servidor no lo da (FTP, o SFTP sin
+ * `statvfs@openssh.com`) o la consulta falla, el indicador no sale y no se
+ * avisa de nada; a un servidor que ya dijo que no lo sabe no se le vuelve a
+ * preguntar. `nav` es la marca de la navegación que lo pide: una respuesta que
+ * llega cuando el usuario ya está en otra carpeta se descarta.
+ */
+function refreshSftpDiskSpace(sessionId, path, nav) {
+  const s = sessions.get(sessionId);
+  const sftpSessionId = s?.sftp?.sftpSessionId;
+  if (!sftpSessionId) return;
+  if (prefs.sftpDiskSpace === false || sftpPanelIsFtp(s) || s.sftp.spaceUnsupported === sftpSessionId) {
+    renderSftpDiskSpace(s.sftp.panel, null);
+    return;
+  }
+  const current = () => {
+    const cur = sessions.get(sessionId);
+    return cur?.sftp?.sftpSessionId === sftpSessionId ? cur : null;
+  };
+  invoke("sftp_disk_space", { sessionId: sftpSessionId, path })
+    .then((raw) => {
+      const cur = current();
+      if (!cur) return;
+      if (raw === null) cur.sftp.spaceUnsupported = sftpSessionId;
+      if (!isCurrentSftpNavigation(cur, "remote", nav)) return;
+      renderSftpDiskSpace(cur.sftp.panel, prefs.sftpDiskSpace === false ? null : diskUsage(raw));
+    })
+    .catch(() => {
+      // Sin permiso sobre la ruta, plazo agotado…: no hay dato, y ya está.
+      const cur = current();
+      if (cur && isCurrentSftpNavigation(cur, "remote", nav)) renderSftpDiskSpace(cur.sftp.panel, null);
+    });
+}
+
+/** Aplica la preferencia del indicador de espacio a los paneles ya abiertos. */
+function applySftpDiskSpacePrefToAll() {
+  const wanted = prefs.sftpDiskSpace !== false;
+  for (const [sid, s] of sessions) {
+    if (!s.sftp?.sftpSessionId) continue;
+    // Guardar las preferencias sin tocar esta no vuelve a preguntar al servidor.
+    const box = s.sftp.panel?.querySelector("[data-sftp-space]");
+    const shown = !!box && !box.classList.contains("hidden");
+    if (shown === wanted) continue;
+    refreshSftpDiskSpace(sid, s.sftp.cwd, s.sftp.nav?.remote || 0);
+  }
+}
+
+// ─── Destino de los enlaces simbólicos ──────────────────────────────────────
+
+/**
+ * Destinos de enlace ya leídos del lado remoto, por ruta del enlace. Vive en
+ * el estado y no en las filas: con el listado virtualizado una fila se despinta
+ * al salir del viewport, y al volver tiene que recuperar su tooltip sin
+ * preguntar otra vez. Es de una sesión de archivos concreta: al reconectar
+ * (sudo) se empieza de cero.
+ */
+function sftpLinkCache(s) {
+  const owner = s.sftp.sftpSessionId;
+  if (!s.sftp.links || s.sftp.links.owner !== owner) {
+    s.sftp.links = { owner, known: new Map(), pending: new Map(), unsupported: sftpPanelIsFtp(s) };
+  }
+  return s.sftp.links;
+}
+
+/**
+ * Texto del tooltip de un enlace simbólico. El destino viene del servidor: se
+ * entrega ya saneado (`linkInfo`) y quien lo pinte lo escapa.
+ * @param {import("./modules/sftp/link-target.js").LinkInfo|null|undefined} info
+ */
+function sftpLinkTipText(info) {
+  if (!info) return t("sftp.link_tip");
+  if (info.kind === "dir") return t("sftp.link_tip_dir", { target: info.target });
+  if (info.kind === "file") return t("sftp.link_tip_file", { target: info.target });
+  return t("sftp.link_tip_broken", { target: info.target });
+}
+
+/** Tooltip de la fila de un enlace: con su destino si ya se conoce. */
+function sftpLinkRowTip(s, side, path) {
+  return sftpLinkTipText(side === "remote" ? sftpLinkCache(s).known.get(path) : null);
+}
+
+/**
+ * Lee (una vez) el destino de un enlace remoto. Resuelve `null` si el servidor
+ * no sabe decirlo (FTP) y rechaza si la lectura falla.
+ * @returns {Promise<import("./modules/sftp/link-target.js").LinkInfo|null>}
+ */
+function resolveSftpLink(sessionId, path) {
+  const s = sessions.get(sessionId);
+  const sftpSessionId = s?.sftp?.sftpSessionId;
+  if (!sftpSessionId) return Promise.resolve(null);
+  const cache = sftpLinkCache(s);
+  if (cache.known.has(path)) return Promise.resolve(cache.known.get(path));
+  if (cache.unsupported) return Promise.resolve(null);
+  let pending = cache.pending.get(path);
+  if (!pending) {
+    pending = invoke("sftp_read_link", { sessionId: sftpSessionId, path })
+      .then((raw) => {
+        if (raw === null) cache.unsupported = true;
+        const info = linkInfo(path, raw);
+        cache.known.set(path, info);
+        return info;
+      })
+      .finally(() => cache.pending.delete(path));
+    cache.pending.set(path, pending);
+  }
+  return pending;
+}
+
+/** Cuánto tiene que pararse el puntero sobre un enlace antes de leer su destino. */
+const SFTP_LINK_HOVER_MS = 200;
+
+/**
+ * Al pararse el puntero sobre un enlace del lado remoto se lee su destino y se
+ * pone en el tooltip de la fila. Pasar de largo por una carpeta llena de
+ * enlaces no lanza una petición por cada uno: hay que detenerse.
+ */
+function setupSftpLinkHover(filesDiv, sessionId) {
+  let timer = 0;
+  /** @type {Element|null} */
+  let hovered = null;
+  const cancel = () => {
+    clearTimeout(timer);
+    timer = 0;
+    hovered = null;
+  };
+  filesDiv.addEventListener("pointerover", (ev) => {
+    const row = ev.target.closest?.('.sftp-row[data-is-symlink="true"]');
+    if (!row || row.classList.contains("sftp-search-result")) { cancel(); return; }
+    if (row === hovered) return;
+    cancel();
+    if (prefs.sftpLinkTargets === false) return;
+    hovered = row;
+    const path = row.dataset.path;
+    timer = window.setTimeout(() => {
+      timer = 0;
+      // Si entretanto el listado se repintó (se navegó a otra carpeta), la
+      // fila ya no está y no hay tooltip que rellenar.
+      if (row.isConnected) showSftpLinkTarget(sessionId, path);
+    }, SFTP_LINK_HOVER_MS);
+  });
+  filesDiv.addEventListener("pointerleave", cancel);
+}
+
+/** Lee el destino de un enlace y lo lleva al tooltip de su fila, si sigue pintada. */
+async function showSftpLinkTarget(sessionId, path) {
+  let info;
+  try {
+    info = await resolveSftpLink(sessionId, path);
+  } catch {
+    // Sin permiso para leerlo, o ya no existe: el tooltip se queda como estaba.
+    return;
+  }
+  if (!info) return;
+  const s = sessions.get(sessionId);
+  const filesDiv = s?.sftp?.panel?.querySelector('.sftp-files[data-side="remote"]');
+  if (!filesDiv) return;
+  // Se buscan las filas pintadas y se compara la ruta en JS: la ruta es del
+  // servidor y no se mete en un selector.
+  for (const row of filesDiv.querySelectorAll('.sftp-row[data-is-symlink="true"]')) {
+    if (/** @type {HTMLElement} */ (row).dataset.path === path) {
+      /** @type {HTMLElement} */ (row).title = sftpLinkTipText(info);
+    }
+  }
+}
+
+/**
+ * «Ir al destino del enlace»: si apunta a una carpeta, el panel entra en ella;
+ * si apunta a un fichero, lo dice y ofrece abrir la carpeta que lo contiene.
+ */
+async function goToSftpLinkTarget(sessionId, row) {
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const navBefore = s.sftp.nav?.remote || 0;
+  let info;
+  try {
+    info = await resolveSftpLink(sessionId, row.path);
+  } catch (err) {
+    toast(t("sftp.link_read_failed", { name: row.name, err: sftpErrorText(err) }), "error");
+    return;
+  }
+  if (!info) {
+    toast(t("sftp.link_unsupported"), "info", 6000);
+    return;
+  }
+  // Si mientras se leía el usuario ya se fue a otra carpeta, no se le lleva de vuelta.
+  if (!isCurrentSftpNavigation(s, "remote", navBefore)) return;
+  if (info.kind === "dir" && info.path) {
+    navigateSftpRemote(sessionId, info.path);
+    return;
+  }
+  if (info.kind === "file" && info.path) {
+    const folder = remoteDirname(info.path);
+    toast(t("sftp.link_to_file", { target: info.target }), "info", 8000, {
+      actionLabel: t("sftp.link_open_folder"),
+      onAction: () => navigateSftpRemote(sessionId, folder),
+    });
+    return;
+  }
+  toast(t("sftp.link_broken", { target: info.target }), "warning", 6000);
+}
 
 async function navigateSftpLocal(sessionId, path, { record = true } = {}) {
   const s = sessions.get(sessionId);
@@ -24061,7 +24318,7 @@ function setSftpSelection(sessionId, side, next) {
 }
 
 /** HTML de una fila del listado del directorio actual. */
-function sftpRowHtml(e, selected, pos, total) {
+function sftpRowHtml(e, selected, pos, total, linkTip = "") {
   const permsText = formatSftpPermissions(e.permissions);
   const permsOctal = formatSftpPermissionsOctal(e.permissions);
   const permsTip = permsOctal ? `${permsText} · ${permsOctal}` : permsText;
@@ -24076,7 +24333,7 @@ function sftpRowHtml(e, selected, pos, total) {
          data-name="${escHtml(e.name)}"
          data-is-dir="${e.is_dir}"
          data-is-symlink="${e.is_symlink}"
-         data-permissions="${e.permissions ?? ""}">
+         data-permissions="${e.permissions ?? ""}"${linkTip ? ` title="${escHtml(linkTip)}"` : ""}>
       <span class="sftp-icon">${sftpFileIconSvg(e)}</span>
       <span class="sftp-name">${escHtml(e.name)}</span>
       <span class="sftp-perms" title="${escHtml(permsTip)}">${escHtml(permsText)}</span>
@@ -24153,7 +24410,8 @@ function paintSftpRows(sessionId, side, remeasured = false) {
 
   const html = [];
   for (let i = range.start; i < range.end; i++) {
-    html.push(sftpRowHtml(rows[i], view.selected.has(rows[i].path), i + 1, rows.length));
+    const linkTip = rows[i].is_symlink ? sftpLinkRowTip(s, side, rows[i].path) : "";
+    html.push(sftpRowHtml(rows[i], view.selected.has(rows[i].path), i + 1, rows.length, linkTip));
   }
   filesDiv.innerHTML =
     // `role="presentation"`: el contenedor solo existe para sostener los
@@ -24216,6 +24474,7 @@ function ensureSftpRowDelegation(filesDiv, sessionId, side) {
   filesDiv.dataset.sftpDelegated = "1";
 
   filesDiv.addEventListener("scroll", () => onSftpScroll(sessionId, side), { passive: true });
+  if (side === "remote") setupSftpLinkHover(filesDiv, sessionId);
 
   // Redimensionar el panel (el divisor, la ventana) cambia cuántas filas caben.
   if (typeof ResizeObserver === "function") {
@@ -25070,6 +25329,17 @@ function showSftpContextMenu(x, y, sessionId, side) {
     el.classList.toggle("hidden", side !== "remote");
   });
 
+  // «Ir al destino del enlace»: solo con un enlace remoto seleccionado, y
+  // solo si el servidor sabe leerlo (FTP no). Los enlaces quedan fuera de
+  // `rows` —no se renombran ni se borran desde aquí—, así que se miran aparte.
+  const picked = selectedRows(sessionId, side);
+  const s = sessions.get(sessionId);
+  const linkRow = side === "remote" && picked.length === 1 && picked[0].isSymlink
+    && s?.sftp?.sftpSessionId && !sftpLinkCache(s).unsupported;
+  menu.querySelectorAll(".sftpctx-link-only").forEach((el) => {
+    el.classList.toggle("hidden", !linkRow);
+  });
+
   const hasSelection = rows.length > 0;
   const singleSelection = rows.length === 1;
   menu.querySelectorAll(".sftpctx-needs-selection").forEach((el) => {
@@ -25120,6 +25390,13 @@ async function handleSftpContextMenuAction(action) {
     case "upload-files":
       await uploadLocalFilesFromDialog(sessionId);
       break;
+    case "link-target": {
+      const picked = selectedRows(sessionId, side);
+      if (side === "remote" && picked.length === 1 && picked[0].isSymlink) {
+        await goToSftpLinkTarget(sessionId, picked[0]);
+      }
+      break;
+    }
     case "rename":
       if (rows.length === 1) await promptRename(sessionId, side, rows[0].path, rows[0].name);
       else toast(t("toast.select_one_rename"), "warning");

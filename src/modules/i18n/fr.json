@@ -1626,7 +1626,11 @@
     "max_concurrent": "Transferts à la fois (toutes sessions)",
     "max_concurrent_hint": "0 = sans plafond (comme toujours). Compte les copies en cours dans toute l’application, pas les requêtes de chacune : celles qui dépassent attendent leur tour et le panneau les indique en file d’attente. Un dossier entier occupe un seul tour.",
     "resume": "Reprendre les transferts interrompus",
-    "resume_hint": "Conserve ce qui a déjà été copié quand un transfert échoue ou est annulé, et reprend à partir de là la fois suivante. Un téléchargement ne reprend que si le fichier du serveur est resté identique — même chemin, même taille, même date —, et un envoi que si le fichier local est resté identique et que ce qui se trouve sur le serveur lui correspond ; si quelque chose a changé, tout recommence. Les envois passent par un fichier temporaire sur le serveur et ne prennent leur nom qu’une fois terminés. Le prix à payer : un échec laisse un fichier temporaire « .rustty-part » à côté de la destination, sur votre ordinateur ou sur le serveur, au lieu de l’effacer. Fonctionne avec SFTP, FTP et FTPS."
+    "resume_hint": "Conserve ce qui a déjà été copié quand un transfert échoue ou est annulé, et reprend à partir de là la fois suivante. Un téléchargement ne reprend que si le fichier du serveur est resté identique — même chemin, même taille, même date —, et un envoi que si le fichier local est resté identique et que ce qui se trouve sur le serveur lui correspond ; si quelque chose a changé, tout recommence. Les envois passent par un fichier temporaire sur le serveur et ne prennent leur nom qu’une fois terminés. Le prix à payer : un échec laisse un fichier temporaire « .rustty-part » à côté de la destination, sur votre ordinateur ou sur le serveur, au lieu de l’effacer. Fonctionne avec SFTP, FTP et FTPS.",
+    "sftp_disk_space": "Afficher l'espace libre du serveur dans le panneau SFTP",
+    "sftp_disk_space_hint": "En entrant dans un dossier distant, demande au serveur combien d'espace il reste sur ce disque et l'affiche dans l'en-tête du panneau, avec une barre d'occupation. Uniquement avec les serveurs SFTP qui le permettent (OpenSSH) ; avec les autres, ainsi qu'en FTP et FTPS, rien n'apparaît.",
+    "sftp_link_targets": "Afficher la cible des liens symboliques",
+    "sftp_link_targets_hint": "En laissant le pointeur sur un lien symbolique du serveur, lit sa cible et l'affiche dans la bulle. Désactivé, la cible n'est lue que lorsque vous choisissez « Aller à la cible du lien » dans le menu du clic droit. SFTP uniquement."
   },
   "prefs_language": {
     "title": "Langue",
@@ -2403,7 +2407,19 @@
     "upload_not_confirmed": "« {name} » n'a pas été envoyé : l'envoi n'a pas été confirmé.",
     "invalid_path": "Chemin non valide : {path}",
     "op_failed": "Erreur : {err}",
-    "col_perms": "Permissions"
+    "col_perms": "Permissions",
+    "space_free_of": "{free} libres sur {total}",
+    "space_tip": "Espace sur le disque du serveur qui contient ce dossier : {free} libres sur {total} ({percent} % utilisés)",
+    "link_tip": "Lien symbolique",
+    "link_tip_dir": "Lien symbolique vers le dossier {target}",
+    "link_tip_file": "Lien symbolique vers le fichier {target}",
+    "link_tip_broken": "Lien symbolique vers {target} (la cible n'existe pas ou est illisible)",
+    "link_go": "Aller à la cible du lien",
+    "link_to_file": "Le lien pointe vers un fichier : {target}",
+    "link_open_folder": "Ouvrir son dossier",
+    "link_broken": "La cible du lien n'existe pas ou est illisible : {target}",
+    "link_unsupported": "Ce serveur ne permet pas de lire la cible des liens",
+    "link_read_failed": "Impossible de lire la cible de {name} : {err}"
   },
   "sftp_nav": {
     "back": "Précédent",

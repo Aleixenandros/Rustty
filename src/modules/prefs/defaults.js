@@ -121,6 +121,14 @@ export const DEFAULT_PREFS = {
 
   // Disposición del panel SFTP: lado donde se muestra el panel remoto.
   sftpRemoteSide:  "left",     // "left" | "right"
+  // Al entrar en una carpeta remota, preguntar al servidor el espacio libre de
+  // ese disco y enseñarlo en la cabecera del panel. Solo hay dato con SFTP y
+  // la extensión `statvfs@openssh.com`; si no, no aparece nada.
+  sftpDiskSpace:   true,
+  // Leer el destino de un enlace simbólico remoto al detener el puntero sobre
+  // él, para enseñarlo en su tooltip. Apagado, solo se lee al pedirlo desde el
+  // menú contextual («Ir al destino del enlace»).
+  sftpLinkTargets: true,
   fontSize:        14,
   // Tipografía fina del terminal
   fontFamily:      "",        // "" = usar cadena por defecto con fallback monospace

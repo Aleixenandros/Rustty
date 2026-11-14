@@ -1626,7 +1626,11 @@
     "max_concurrent": "同時傳輸數（所有工作階段）",
     "max_concurrent_hint": "0 = 無上限（與先前相同）。計算的是整個應用程式中正在執行的複製作業，而非每個作業發出的請求：多出的會排隊等候，面板會將其標示為佇列中。整個資料夾只佔一個名額。",
     "resume": "接續中斷的傳輸",
-    "resume_hint": "當傳輸失敗或被取消時，保留已複製的部分，下次從該處繼續。下載僅在伺服器上的檔案仍相同（路徑、大小與日期一致）時才會接續；上傳則需本機檔案仍相同，且伺服器上的內容與其相符。若有任何變更，則會重新開始。上傳會先寫入伺服器上的暫存檔，完成後才換成正式名稱。代價是失敗時會在目的地旁（你的電腦或伺服器上）留下“.rustty-part”暫存檔，而不是將其刪除。適用於 SFTP、FTP 與 FTPS。"
+    "resume_hint": "當傳輸失敗或被取消時，保留已複製的部分，下次從該處繼續。下載僅在伺服器上的檔案仍相同（路徑、大小與日期一致）時才會接續；上傳則需本機檔案仍相同，且伺服器上的內容與其相符。若有任何變更，則會重新開始。上傳會先寫入伺服器上的暫存檔，完成後才換成正式名稱。代價是失敗時會在目的地旁（你的電腦或伺服器上）留下“.rustty-part”暫存檔，而不是將其刪除。適用於 SFTP、FTP 與 FTPS。",
+    "sftp_disk_space": "在 SFTP 面板顯示伺服器的可用空間",
+    "sftp_disk_space_hint": "進入遠端資料夾時，向伺服器查詢該磁碟的剩餘空間，並連同使用量條顯示在面板標題列。僅適用於支援此功能的 SFTP 伺服器（OpenSSH）；其他伺服器以及 FTP 與 FTPS 不會顯示任何內容。",
+    "sftp_link_targets": "顯示符號連結的指向目標",
+    "sftp_link_targets_hint": "將滑鼠停在伺服器上的符號連結時，會讀取其目標並顯示在說明中。關閉時，只有在右鍵選單選擇「前往連結目標」時才會讀取目標。僅限 SFTP。"
   },
   "prefs_language": {
     "title": "語言",
@@ -2403,7 +2407,19 @@
     "upload_not_confirmed": "“{name}”未上傳：未經確認。",
     "invalid_path": "路徑無效：{path}",
     "op_failed": "錯誤：{err}",
-    "col_perms": "權限"
+    "col_perms": "權限",
+    "space_free_of": "可用 {free}，共 {total}",
+    "space_tip": "此資料夾所在的伺服器磁碟空間：可用 {free}，共 {total}（已使用 {percent}%）",
+    "link_tip": "符號連結",
+    "link_tip_dir": "指向資料夾 {target} 的符號連結",
+    "link_tip_file": "指向檔案 {target} 的符號連結",
+    "link_tip_broken": "指向 {target} 的符號連結（目標不存在或無法讀取）",
+    "link_go": "前往連結目標",
+    "link_to_file": "此連結指向檔案：{target}",
+    "link_open_folder": "開啟其所在資料夾",
+    "link_broken": "連結目標不存在或無法讀取：{target}",
+    "link_unsupported": "此伺服器無法讀取連結目標",
+    "link_read_failed": "無法讀取 {name} 的目標：{err}"
   },
   "sftp_nav": {
     "back": "上一頁",
