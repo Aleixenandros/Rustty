@@ -471,7 +471,7 @@ a:focus-visible,
 
 /* ─── Rail vertical de iconos ────────────────────────────────── */
 #rail {
-  width: 44px;
+  width: var(--rail-width, 44px);
   flex-shrink: 0;
   background: var(--surface-sunken);
   border-right: 1px solid var(--border-subtle);
@@ -1841,11 +1841,63 @@ body.sidebar-collapsed #btn-toggle-sidebar .chevron { transform: none; }
   -webkit-app-region: no-drag;
 }
 
-/* En macOS los traffic lights nativos están a la izquierda:
-   ocultamos nuestros controles y dejamos un hueco a la izquierda
-   del tab-bar para que no se solapen con ellos. */
+/* ── macOS: botones nativos de la ventana ──────────────────────
+   En macOS la ventana lleva sus decoraciones (`tauri.macos.conf.json`) con la
+   barra de título superpuesta: el semáforo —cerrar, minimizar, maximizar— lo
+   pinta el sistema sobre la esquina superior izquierda, encima de la interfaz.
+   Aquí se esconden los botones propios y los tiradores de redimensión (la
+   ventana ya se redimensiona sola) y se despeja esa esquina.
+
+   El semáforo no escala con el zoom de la interfaz y mide lo mismo en
+   cualquier densidad, así que el hueco se da en píxeles de la ventana y se
+   divide por `--ui-zoom` allí donde el elemento está escalado. Ocupa más que
+   el rail: la banda bajo él continúa la cabecera de la barra lateral, y el
+   resto del hueco lo cede esa cabecera —o la barra de pestañas, si la lateral
+   está plegada—. A pantalla completa el sistema retira el semáforo y todo
+   vuelve a su sitio (`window-fullscreen` lo pone `initWindowControls`). */
+:root {
+  --mac-lights-width: 78px;   /* del borde izquierdo al final del semáforo */
+  --mac-lights-height: 28px;  /* alto de la barra de título nativa */
+  --rail-width: 44px;
+}
+
+#rail-titlebar-gap { display: none; }
+
 body.platform-macos #window-controls { display: none; }
-body.platform-macos #tab-bar { padding-left: 76px; }
+body.platform-macos .window-resize-handle { display: none; }
+
+body.platform-macos:not(.window-fullscreen) #rail {
+  position: relative;
+  padding-top: calc(max(var(--tab-height), var(--mac-lights-height) / var(--ui-zoom, 1)) + 6px);
+}
+
+body.platform-macos:not(.window-fullscreen) #rail-titlebar-gap {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Un píxel más que el interior del rail: tapa su borde derecho para que la
+     banda y la cabecera de la barra lateral se lean como una sola. */
+  width: var(--rail-width);
+  height: max(var(--tab-height), var(--mac-lights-height) / var(--ui-zoom, 1));
+  box-sizing: border-box;
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+body.platform-macos:not(.window-fullscreen) #sidebar-header {
+  padding-left: max(14px, calc(var(--mac-lights-width) / var(--ui-zoom, 1) - var(--rail-width)));
+}
+
+body.platform-macos.sidebar-collapsed:not(.window-fullscreen) #tab-bar {
+  padding-left: max(0px, calc(var(--mac-lights-width) / var(--ui-zoom, 1) - var(--rail-width)));
+}
+
+/* En modo zen no queda nada de la interfaz bajo el semáforo salvo el propio
+   terminal: se le deja una franja libre para que no tape la primera línea. */
+body.platform-macos.zen-mode:not(.window-fullscreen) #main-area {
+  padding-top: var(--mac-lights-height);
+}
 
 .win-ctrl {
   flex: 0 0 auto;

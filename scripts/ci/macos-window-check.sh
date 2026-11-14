@@ -14,6 +14,15 @@ BIN="${1:?falta el binario}"
 OUT="${2:?falta la carpeta de salida}"
 mkdir -p "$OUT"
 
+# F11 es el atajo del modo zen, pero macOS lo reserva para «Mostrar escritorio»
+# (atajos 36 y 37): se le retira en este runner para que llegue a la aplicación.
+for hotkey in 36 37; do
+  defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add "$hotkey" \
+    '<dict><key>enabled</key><false/></dict>' 2>/dev/null || true
+done
+/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u \
+  2>/dev/null || true
+
 "$BIN" >"$OUT/app.log" 2>&1 &
 APP_PID=$!
 trap 'kill "$APP_PID" 2>/dev/null || true' EXIT
@@ -71,7 +80,9 @@ osascript -e "tell application \"System Events\" to click at {$((wx + 302)), $((
   >/dev/null 2>>"$OUT/osascript.log" || echo "::warning::No se pudo plegar la barra lateral"
 sleep 1
 shot ventana-lateral-plegada
-osascript -e "tell application \"System Events\" to click at {$((wx + 62)), $((wy + 19))}" \
+# Plegada, el conmutador queda tras el hueco de los botones nativos (78): un
+# clic más a la izquierda caería sobre el botón verde.
+osascript -e "tell application \"System Events\" to click at {$((wx + 94)), $((wy + 19))}" \
   >/dev/null 2>>"$OUT/osascript.log" || true
 sleep 1
 
@@ -81,6 +92,14 @@ osascript -e 'tell application "System Events" to key code 103' \
 sleep 1
 shot ventana-zen
 osascript -e 'tell application "System Events" to key code 103' >/dev/null 2>>"$OUT/osascript.log" || true
+sleep 1
+
+# Pantalla completa: el sistema retira los botones y la interfaz recupera su
+# esquina. Va lo último porque cambia la ventana de sitio y de tamaño.
+ax 'click (first button of window 1 whose subrole is "AXFullScreenButton")' >/dev/null \
+  || echo "::warning::No se pudo pasar a pantalla completa"
+sleep 4
+screencapture -x "$OUT/pantalla-completa.png" || echo "::warning::No se pudo capturar la pantalla completa"
 
 fail=0
 for want in AXCloseButton AXMinimizeButton; do

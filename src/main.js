@@ -33029,10 +33029,12 @@ function initSidebarResize() {
 
 /**
  * Controles de ventana integrados (CSD: decorations:false).
- * En macOS dejamos los traffic lights nativos (titleBarStyle Overlay),
- * así que ocultamos nuestros botones y añadimos un padding a la izquierda
- * del tab-bar vía la clase `platform-macos`. Mostrar la ventana por primera
- * vez NO es cosa de aquí: lo hace revealMainWindow(), al arrancar.
+ * En macOS la ventana sí lleva decoraciones (`tauri.macos.conf.json`, con la
+ * barra de título superpuesta): el semáforo lo pinta el sistema, así que la
+ * clase `platform-macos` esconde nuestros botones y le despeja la esquina
+ * superior izquierda. Sin esas decoraciones macOS no enseña ningún botón.
+ * Mostrar la ventana por primera vez NO es cosa de aquí: lo hace
+ * revealMainWindow(), al arrancar.
  */
 async function initWindowControls() {
   // Detección de plataforma a partir del UA de la webview.
@@ -33041,6 +33043,7 @@ async function initWindowControls() {
             : /Windows/.test(ua)            ? "platform-windows"
             :                                 "platform-linux";
   document.body.classList.add(cls);
+  const isMac = cls === "platform-macos";
 
   const win = await getMainWindow();
   if (!win) return; // fuera de Tauri (p. ej. vite dev puro): no hay ventana
@@ -33082,6 +33085,11 @@ async function initWindowControls() {
     try {
       const isMax = await win.isMaximized();
       document.body.classList.toggle("window-maximized", !!isMax);
+    } catch {}
+    // A pantalla completa macOS retira el semáforo: se devuelve su hueco.
+    if (!isMac) return;
+    try {
+      document.body.classList.toggle("window-fullscreen", !!(await win.isFullscreen()));
     } catch {}
   };
   syncMaximized();

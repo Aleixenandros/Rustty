@@ -46,6 +46,8 @@
 
       <!-- ── Rail vertical de iconos ── -->
       <aside id="rail" aria-label="Navegación" data-i18n-aria-label="rail.nav_label">
+        <!-- Solo en macOS: banda bajo los botones nativos de la ventana. -->
+        <div id="rail-titlebar-gap" data-tauri-drag-region aria-hidden="true"></div>
         <div class="rail-section rail-top">
           <button class="rail-btn" id="rail-btn-new" data-rail-action="new-connection" data-i18n-title="sidebar.new_conn_title" data-tooltip="Nueva conexión" data-tooltip-pos="right" aria-label="Nueva conexión" data-i18n-aria-label="sidebar.new_conn_title">
             <svg viewBox="0 0 18 18" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -205,7 +207,7 @@
 
       <!-- ── Área principal ── -->
       <main id="main-area">
-        <div id="tab-bar">
+        <div id="tab-bar" data-tauri-drag-region>
           <button id="btn-toggle-sidebar" data-i18n-title="sidebar.toggle_title" title="Ocultar / mostrar la barra lateral" aria-label="Ocultar / mostrar la barra lateral" data-i18n-aria-label="sidebar.toggle_title">
             <span class="chevron" aria-hidden="true"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-chevron"/></svg></span>
           </button>
