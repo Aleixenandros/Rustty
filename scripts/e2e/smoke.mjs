@@ -90,6 +90,8 @@ import { checkJump } from "./jump.mjs";
 import { checkBulkEdit } from "./bulk-edit.mjs";
 import { checkNotesAndText } from "./notes.mjs";
 import { checkActivityCenter } from "./activity.mjs";
+import { checkSftpSpace } from "./sftp-space.mjs";
+import { checkTotpForm } from "./totp-form.mjs";
 import { checkJumpReal } from "./jump-real.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -276,6 +278,32 @@ async function checkSftpPanel(app) {
   if (!connected.ok) return;
   const sessionId = connected.value;
 
+  // Lo que el panel pregunta por su cuenta: el espacio del disco al entrar en
+  // una carpeta y el destino de un enlace al parar el puntero sobre él.
+  const linkDir = path.join(workDir, "enlaces");
+  fs.mkdirSync(path.join(linkDir, "destino"), { recursive: true });
+  fs.symlinkSync("destino", path.join(linkDir, "a-carpeta"));
+  fs.symlinkSync("no-existe", path.join(linkDir, "roto"));
+  const space = await app.invoke("sftp_disk_space", { sessionId, path: linkDir });
+  check(
+    "el servidor dice cuánto espacio libre queda en el disco de una carpeta remota",
+    space.ok && space.value && space.value.total > 0 && space.value.available <= space.value.total,
+    space.ok ? JSON.stringify(space.value) : space.reason,
+  );
+  const link = await app.invoke("sftp_read_link", { sessionId, path: path.join(linkDir, "a-carpeta") });
+  check(
+    "un enlace simbólico remoto dice a dónde apunta y que su destino es una carpeta",
+    link.ok && link.value?.target === "destino" && link.value?.is_dir === true
+      && link.value?.resolved === fs.realpathSync(path.join(linkDir, "destino")),
+    link.ok ? JSON.stringify(link.value) : link.reason,
+  );
+  const broken = await app.invoke("sftp_read_link", { sessionId, path: path.join(linkDir, "roto") });
+  check(
+    "de un enlace roto se sabe el destino, pero no se da por carpeta",
+    broken.ok && broken.value?.target === "no-existe" && broken.value?.is_dir !== true,
+    broken.ok ? JSON.stringify(broken.value) : broken.reason,
+  );
+
   // Subir y bajar una carpeta grande: los pequeños viajan en lotes.
   const tree = path.join(workDir, "arbol");
   const remoteTree = path.join(workDir, "remoto", "arbol");
@@ -375,6 +403,7 @@ async function checkSftpPanel(app) {
     plainUp.reason || "",
   );
   await app.invoke("sftp_disconnect", { sessionId });
+  await checkSftpSpace(app, check, profile);
 }
 
 /** Sección 5: los límites del IPC de ficheros y de los comandos locales. */
@@ -543,6 +572,7 @@ async function main() {
     await checkKeyboard(app, check);
     await checkToasts(app, check);
     await checkActivityCenter(app, check);
+    await checkTotpForm(app, check);
     await checkTerminalLayers(app, check);
     await checkTree(app, check);
     await checkIpcLeastPrivilege(app, home);
