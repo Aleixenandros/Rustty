@@ -175,6 +175,28 @@ pub struct ConnectionProfile {
     /// Referencia `CredentialMeta.id` del catálogo `credentials.json`.
     #[serde(default)]
     pub master_credential_id: Option<String>,
+    /// Segundo factor desde KeePass (opt-in): cuando el servidor pide el código
+    /// de verificación por `keyboard-interactive`, el diálogo ofrece contestar
+    /// con el TOTP de la entrada KeePass. El código lo calcula y lo envía el
+    /// backend (`auth_totp`): nunca pasa por la interfaz. Guardar contraseña y
+    /// semilla en la misma base reduce los dos factores a uno; por eso va
+    /// apagado por defecto y el formulario lo avisa.
+    #[serde(default)]
+    pub totp_keepass: bool,
+    /// Con `totp_keepass`, contesta sin preguntar (también en las
+    /// reconexiones y al abrir el panel SFTP). Un código rechazado no se
+    /// reintenta: la siguiente vez se vuelve al diálogo.
+    #[serde(default)]
+    pub totp_keepass_auto: bool,
+    /// Entrada KeePass con la semilla TOTP (campo `otp`), si no es la misma
+    /// de la contraseña. `None`/vacío = `keepass_entry_uuid`.
+    #[serde(default)]
+    pub totp_keepass_entry_uuid: Option<String>,
+    /// Regex que reconoce la pregunta del código de verificación. `None`/vacía
+    /// = patrón por defecto (`auth_totp::DEFAULT_PROMPT_PATTERN`). Una regex
+    /// inválida no rompe la conexión: no se ofrece el TOTP y se pregunta.
+    #[serde(default)]
+    pub totp_keepass_prompt_regex: Option<String>,
     /// Identidades adicionales (usuario + contraseña) seleccionables al conectar
     /// con «Conectar con otro usuario». La principal es `username`. Vacío por
     /// defecto para no romper perfiles previos a la feature.
@@ -577,6 +599,32 @@ mod tests {
         let de_vuelta: ConnectionProfile = serde_json::from_value(serializado).expect("deserializa");
         assert_eq!(de_vuelta.proxy_jump_profile_id.as_deref(), Some("bastion-1"));
         assert!(de_vuelta.ignore_active_jump);
+    }
+
+    #[test]
+    fn el_totp_de_keepass_es_opt_in_y_viaja_con_el_perfil() {
+        // Un perfil (o un bundle de sync, o un export) anterior a los campos:
+        // todo apagado, sin entrada ni regex propias.
+        let mut perfil: ConnectionProfile =
+            serde_json::from_str(JSON_SIN_WORKSPACE).expect("JSON válido");
+        assert!(!perfil.totp_keepass);
+        assert!(!perfil.totp_keepass_auto);
+        assert_eq!(perfil.totp_keepass_entry_uuid, None);
+        assert_eq!(perfil.totp_keepass_prompt_regex, None);
+        // Activado, se guarda y se relee con sus cuatro campos.
+        perfil.totp_keepass = true;
+        perfil.totp_keepass_auto = true;
+        perfil.totp_keepass_entry_uuid = Some("entrada-otp".into());
+        perfil.totp_keepass_prompt_regex = Some("(?i)token".into());
+        let serializado = serde_json::to_value(&perfil).expect("serializa");
+        assert_eq!(serializado["totp_keepass"], true);
+        assert_eq!(serializado["totp_keepass_auto"], true);
+        assert_eq!(serializado["totp_keepass_entry_uuid"], "entrada-otp");
+        assert_eq!(serializado["totp_keepass_prompt_regex"], "(?i)token");
+        let de_vuelta: ConnectionProfile = serde_json::from_value(serializado).expect("deserializa");
+        assert!(de_vuelta.totp_keepass && de_vuelta.totp_keepass_auto);
+        assert_eq!(de_vuelta.totp_keepass_entry_uuid.as_deref(), Some("entrada-otp"));
+        assert_eq!(de_vuelta.totp_keepass_prompt_regex.as_deref(), Some("(?i)token"));
     }
 
     #[test]

@@ -1255,6 +1255,54 @@
               </p>
             </div>
 
+            <!-- Segundo factor con el TOTP de KeePass: opt-in por perfil. El
+                 código lo calcula y lo envía el backend; aquí solo se elige. -->
+            <div class="form-row" id="field-totp-keepass">
+              <label class="checkbox-label">
+                <input id="f-totp-keepass" type="checkbox" aria-describedby="totp-keepass-warning" />
+                <span data-i18n="modal_conn.totp_keepass">Responder el código de verificación con el TOTP de KeePass</span>
+              </label>
+              <p class="form-hint" data-i18n="modal_conn.totp_keepass_hint">
+                Cuando el servidor pida el código de verificación (Google Authenticator, PAM…), el diálogo ofrecerá «Usar código de KeePass». Rustty lo calcula con la semilla del campo «otp» de la entrada y lo envía; el código no se muestra ni se guarda.
+              </p>
+              <p class="form-hint warning" id="totp-keepass-warning">
+                <svg class="hint-warn-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                  <path d="M8 2 L15 14 H1 Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                  <line x1="8" y1="6.3" x2="8" y2="9.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                  <circle cx="8" cy="11.8" r="0.95" fill="currentColor"/>
+                </svg>
+                <span data-i18n="modal_conn.totp_keepass_warning">Guardar la contraseña y la semilla del segundo factor en la misma base reduce los dos factores a uno: quien abra la base tiene los dos.</span>
+              </p>
+              <div id="totp-keepass-options" class="totp-keepass-options" hidden>
+                <div class="form-row">
+                  <label for="f-totp-keepass-entry" data-i18n="modal_conn.totp_keepass_entry">Entrada con la semilla TOTP</label>
+                  <select id="f-totp-keepass-entry"></select>
+                  <p class="form-hint" data-i18n="modal_conn.totp_keepass_entry_hint">
+                    Solo aparecen las entradas con semilla TOTP (campo «otp», como las guarda KeePassXC).
+                  </p>
+                  <p class="form-hint keepass-entry-status hidden" id="totp-keepass-entry-status" role="status"></p>
+                  <p class="form-error hidden" data-error-for="f-totp-keepass-entry"></p>
+                </div>
+                <div class="form-row">
+                  <label class="checkbox-label">
+                    <input id="f-totp-keepass-auto" type="checkbox" />
+                    <span data-i18n="modal_conn.totp_keepass_auto">Enviar el código sin preguntar</span>
+                  </label>
+                  <p class="form-hint" data-i18n="modal_conn.totp_keepass_auto_hint">
+                    También en las reconexiones y al abrir el panel SFTP. Si el servidor rechaza el código no se reintenta: se te pregunta hasta que acepte un código de KeePass pedido a mano. Con la base bloqueada o sin semilla se muestra el diálogo de siempre.
+                  </p>
+                </div>
+                <div class="form-row">
+                  <label for="f-totp-keepass-regex"><span data-i18n="modal_conn.totp_keepass_regex">Pregunta a la que se responde (regex)</span> <span class="optional" data-i18n="modal_conn.optional">(opcional)</span></label>
+                  <input id="f-totp-keepass-regex" type="text" spellcheck="false" autocomplete="off" maxlength="256" />
+                  <p class="form-hint" data-i18n="modal_conn.totp_keepass_regex_hint">
+                    Expresión regular que reconoce la pregunta del código de verificación. Vacía = patrón por defecto. Solo se contestan las rondas de una sola pregunta.
+                  </p>
+                  <p class="form-error hidden" data-error-for="f-totp-keepass-regex"></p>
+                </div>
+              </div>
+            </div>
+
             <div class="form-row">
               <label class="checkbox-label">
                 <input id="f-disable-paste-confirm" type="checkbox" />

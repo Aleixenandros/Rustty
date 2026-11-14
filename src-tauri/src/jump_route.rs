@@ -425,6 +425,11 @@ pub(crate) struct ResolvedHop {
     pub secrets: HopSecrets,
     pub allow_legacy_algorithms: bool,
     pub legacy_algorithms: Option<Vec<String>>,
+    /// TOTP de KeePass del perfil del salto, si lo tiene activado: el salto
+    /// contesta su segundo factor con SU entrada, no con la del destino.
+    /// `None` en un salto de texto (la semilla del dueño es la de su servidor,
+    /// no la del bastión).
+    pub totp: Option<crate::auth_totp::Policy>,
     /// Secretos aprendidos del pool. La interfaz no manda la contraseña de un
     /// salto cuya conexión ya está viva (`jump_pool_ready`); si esa conexión
     /// muere después, la reconexión de la sesión necesita con qué volver a
@@ -473,6 +478,7 @@ impl ResolvedHop {
             secrets,
             allow_legacy_algorithms: profile.allow_legacy_algorithms,
             legacy_algorithms: profile.legacy_algorithms.clone(),
+            totp: crate::auth_totp::Policy::from_profile(profile),
             learned: Arc::default(),
         }
     }
@@ -493,6 +499,7 @@ impl ResolvedHop {
             secrets,
             allow_legacy_algorithms: owner.allow_legacy_algorithms,
             legacy_algorithms: owner.legacy_algorithms.clone(),
+            totp: None,
             learned: Arc::default(),
         }
     }

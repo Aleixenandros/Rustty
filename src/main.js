@@ -108,6 +108,10 @@ import {
   MAX_ENV_VALUE_LEN, MAX_ENV_VARS, allowsOsc7Hook, applySshConfigLaunchKey, formatEnvVarsText, launchKind,
   launchFieldsChanged, launchFieldsFromBlock, normalizeRemoteCommand, normalizeTermType, parseEnvVarsText,
 } from "./modules/remote-launch.js";
+import {
+  DEFAULT_TOTP_PROMPT_PATTERN, MAX_TOTP_PROMPT_PATTERN_LEN, createTotpPromptState, promptLabel, totpEntryChoices,
+  totpEntryStatus, totpFormIssue, totpNoticeKey, totpProfileFields, totpWaitSeconds,
+} from "./modules/auth-totp.js";
 import { tabIndexForKey } from "./modules/tab-navigation.js";
 import { createListboxState, listboxKey } from "./modules/listbox-nav.js";
 import { menuKey } from "./modules/menu-nav.js";
@@ -4583,8 +4587,29 @@ async function browseKeepassKeyfile() {
   }
 }
 
-function openKeepassUnlockModal() {
-  const path = document.getElementById("pref-keepass-path").value.trim();
+/**
+ * Quien espera a que el diálogo de desbloqueo se resuelva (`requestKeepassUnlock`):
+ * recibe `true` si la base quedó desbloqueada y `false` si se cerró sin más.
+ * @type {((unlocked: boolean) => void) | null}
+ */
+let keepassUnlockWaiter = null;
+/**
+ * El diálogo se abrió desde fuera de Preferencias: la base y el keyfile salen
+ * de lo guardado, no de los campos del formulario (que solo se rellenan al
+ * abrir Preferencias).
+ */
+let keepassUnlockFromPrefs = false;
+
+function settleKeepassUnlock(unlocked) {
+  const waiter = keepassUnlockWaiter;
+  keepassUnlockWaiter = null;
+  if (waiter) waiter(unlocked);
+}
+
+/** @param {string} [savedPath] Base guardada en las preferencias (ver `requestKeepassUnlock`). */
+function openKeepassUnlockModal(savedPath = "") {
+  keepassUnlockFromPrefs = !!savedPath;
+  const path = savedPath || document.getElementById("pref-keepass-path").value.trim();
   if (!path) { toast(t("toast.keepass_select_db"), "warning"); return; }
   document.getElementById("kp-modal-path").value = path;
   document.getElementById("kp-modal-password").value = "";
@@ -4596,16 +4621,50 @@ function openKeepassUnlockModal() {
 function closeKeepassModal() {
   document.getElementById("modal-keepass-overlay").classList.add("hidden");
   document.getElementById("kp-modal-password").value = "";
+  // Cerrado sin desbloquear (al desbloquear ya se avisó antes de llegar aquí).
+  settleKeepassUnlock(false);
+}
+
+/**
+ * Pide desbloquear la base KeePass guardada en Preferencias y espera a que el
+ * usuario lo haga (`true`) o cierre el diálogo (`false`). Para quien necesita
+ * la base en mitad de otra cosa, como el código TOTP de una conexión.
+ * @returns {Promise<boolean>}
+ */
+async function requestKeepassUnlock() {
+  // Quien llama viene de que el backend la dio por bloqueada: se le pregunta
+  // otra vez antes de fiarse de lo que la interfaz recordaba.
+  await refreshKeepassStatus();
+  if (keepassUnlocked) return true;
+  const path = String(prefs.keepassPath || "").trim();
+  if (!path) {
+    toast(t("toast.keepass_select_db"), "warning");
+    return false;
+  }
+  settleKeepassUnlock(false);
+  return new Promise((resolve) => {
+    keepassUnlockWaiter = resolve;
+    openKeepassUnlockModal(path);
+  });
 }
 
 async function submitKeepassUnlock() {
   const path = document.getElementById("kp-modal-path").value;
   const password = document.getElementById("kp-modal-password").value;
-  const keyfile = document.getElementById("pref-keepass-keyfile").value.trim() || null;
+  const keyfile = (keepassUnlockFromPrefs
+    ? String(prefs.keepassKeyfile || "").trim()
+    : document.getElementById("pref-keepass-keyfile").value.trim()) || null;
   const errRow = document.getElementById("kp-modal-error-row");
   const errEl  = document.getElementById("kp-modal-error");
+  /** @type {((unlocked: boolean) => void) | null} */
+  let waiter = null;
   try {
     await invoke("keepass_unlock", { path, password, keyfilePath: keyfile });
+    // Desbloqueada: quien esperaba lo sabrá al acabar (pase lo que pase con lo
+    // que sigue). Se retira antes de cerrar, porque `closeKeepassModal` da por
+    // no desbloqueado a quien siga esperando.
+    waiter = keepassUnlockWaiter;
+    keepassUnlockWaiter = null;
     closeKeepassModal();
     // Persistir rutas si no estaban
     prefs.keepassPath = path;
@@ -4618,6 +4677,8 @@ async function submitKeepassUnlock() {
   } catch (e) {
     errEl.textContent = e?.toString() || t("modal_kp.unlock_error");
     errRow.style.display = "";
+  } finally {
+    if (waiter) waiter(true);
   }
 }
 
@@ -4903,6 +4964,7 @@ async function initMain() {
   await initRdpCertPrompt().catch((e) => console.error("[rdpcert] init", e));
   rdpEmbedAvailable = await invoke("rdp_embed_available").catch(() => false) === true;
   await initAuthPrompt().catch((e) => console.error("[auth-prompt] init", e));
+  await initAuthTotpWait().catch((e) => console.error("[auth-totp] init", e));
   // La interfaz está montada, responde y ya sabe preguntar por host keys,
   // certificados y segundo factor: fuera la pantalla de carga. Lo que sigue
   // (sync de arranque, comprobación de versión, KeePass) es trabajo de fondo
@@ -6523,29 +6585,39 @@ async function initHostKeyPrompt() {
  * Cada pregunta de la ronda se pide por separado y en orden. Cancelar
  * cualquiera de ellas cancela el intercambio entero: el backend aborta la
  * conexión en vez de mandar una respuesta a medias.
+ *
+ * Si el perfil ha activado el TOTP de KeePass y la pregunta es la del código,
+ * el diálogo ofrece además «Usar código de KeePass» (`p.totpKeepass`). El
+ * código no pasa por aquí: se pide al backend que conteste él
+ * (`answerAuthPromptWithKeepass`) y solo vuelve si lo hizo o por qué no.
  */
 async function initAuthPrompt() {
   await listen(
     EVENT.sshAuthPrompt,
     async (/** @type {{ payload: SshAuthPromptEvent }} */ event) => {
-      const p = event.payload || {};
+      const p = event.payload || /** @type {SshAuthPromptEvent} */ ({});
       const prompts = Array.isArray(p.prompts) ? p.prompts : [];
       const target = `${p.username || ""}@${p.host || ""}`;
+      // El plazo es el de la ronda entera, contado desde que llegó.
+      const expiresAt = Date.now() + BACKEND_AUTH_PROMPT_MS;
+      const totp = createTotpPromptState(p);
       /** @type {string[] | null} */
       let responses = [];
 
       for (let i = 0; i < prompts.length; i++) {
         const field = prompts[i] || {};
-        // El servidor manda el texto ya con sus dos puntos y su espacio final
-        // («Verification code: »); recortarlo evita el «Código:  :» del diálogo.
-        const label = String(field.prompt || "").trim()
-          || t("modal_auth_prompt.default_label");
+        // La pregunta la escribe el servidor: se pinta saneada y acotada. Llega
+        // con sus dos puntos y su espacio final («Verification code: »);
+        // recortarla evita el «Código:  :» del diálogo.
+        const label = promptLabel(field.prompt) || t("modal_auth_prompt.default_label");
+        const noticeKey = totpNoticeKey(totp.notice);
         const message = [
           t("modal_auth_prompt.intro", { target }),
           String(p.instructions || "").trim(),
           prompts.length > 1
             ? t("modal_auth_prompt.step", { current: i + 1, total: prompts.length })
             : "",
+          noticeKey ? t(noticeKey) : "",
         ].filter(Boolean).join("\n\n");
 
         const result = await promptCredential({
@@ -6555,11 +6627,26 @@ async function initAuthPrompt() {
           // `echo: false` = contraseña o código de un solo uso: no se enseña.
           inputType: field.echo ? "text" : "password",
           submitLabel: t("modal_auth_prompt.submit"),
-          expiresAt: Date.now() + BACKEND_AUTH_PROMPT_MS,
+          expiresAt,
+          extraActions: totp.offered
+            ? [{ label: t("modal_auth_prompt.use_keepass"), value: AUTH_PROMPT_KEEPASS_ACTION }]
+            : [],
         });
         if (!result) {
           responses = null;
           break;
+        }
+        if (result.action === AUTH_PROMPT_KEEPASS_ACTION) {
+          const outcome = await answerAuthPromptWithKeepass(p, totp);
+          // Contestada por el backend: aquí no hay respuesta que mandar.
+          if (outcome === "done") return;
+          if (outcome === "expired") {
+            toast(t("toast.prompt_expired", { host: p.host || "" }), "warning");
+            return;
+          }
+          // No se pudo: la misma pregunta otra vez, ya con el motivo a la vista.
+          i -= 1;
+          continue;
         }
         responses.push(String(result.value ?? ""));
       }
@@ -6575,6 +6662,66 @@ async function initAuthPrompt() {
       else if (responses === null) toast(t("toast.auth_prompt_canceled"), "warning");
     }
   );
+}
+
+/** Acción del botón «Usar código de KeePass» del diálogo de MFA. */
+const AUTH_PROMPT_KEEPASS_ACTION = "keepass-totp";
+
+/**
+ * Pide al backend que conteste la pregunta `p.promptId` con el TOTP de KeePass
+ * del perfil. El código se calcula y se entrega allí: de vuelta solo llega un
+ * estado, que `totp.resolve` convierte en lo que toca hacer.
+ *
+ * Con la base bloqueada se ofrece desbloquearla (una vez) y se reintenta; si el
+ * usuario no quiere, o el motivo no tiene arreglo, se vuelve al diálogo manual.
+ *
+ * @param {SshAuthPromptEvent} p
+ * @param {ReturnType<typeof createTotpPromptState>} totp
+ * @returns {Promise<"done" | "manual" | "expired">}
+ */
+async function answerAuthPromptWithKeepass(p, totp) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let reply = null;
+    try {
+      reply = await invoke("ssh_auth_prompt_totp", { promptId: p.promptId });
+    } catch (e) {
+      console.error("[auth-prompt] totp", e);
+    }
+    const action = totp.resolve(reply);
+    if (action.kind === "done" || action.kind === "scheduled") {
+      // Sacar el código es uso real de la base: reinicia su autobloqueo.
+      touchKeepass();
+      if (action.kind === "scheduled") {
+        toast(t("toast.auth_totp_scheduled", { host: p.host || "", seconds: action.seconds }), "info", 8000);
+      }
+      return "done";
+    }
+    if (action.kind === "expired") return "expired";
+    if (action.kind === "manual") return "manual";
+    // Base bloqueada: se ofrece desbloquearla y, si se hace, se vuelve a pedir.
+    if (attempt > 0 || !(await requestKeepassUnlock())) {
+      totp.unlockDeclined();
+      return "manual";
+    }
+  }
+  return "manual";
+}
+
+/**
+ * Atiende `ssh-auth-totp-wait`: el modo automático del TOTP de KeePass espera
+ * al código siguiente (el de este periodo ya se entregó a ese servidor, que no
+ * lo aceptaría otra vez). No hay diálogo ni nada que contestar: solo se avisa,
+ * para que la conexión no parezca colgada.
+ */
+async function initAuthTotpWait() {
+  await listen(EVENT.sshAuthTotpWait, (/** @type {{ payload: SshAuthTotpWaitEvent }} */ event) => {
+    const p = event.payload || /** @type {SshAuthTotpWaitEvent} */ ({});
+    toast(
+      t("toast.auth_totp_scheduled", { host: String(p.host || ""), seconds: totpWaitSeconds(p.waitSecs) }),
+      "info",
+      8000
+    );
+  });
 }
 
 async function initTrayQuickLauncher() {
@@ -9315,6 +9462,181 @@ function readRemoteLaunchFields() {
   };
 }
 
+// ── TOTP de KeePass (segundo factor) en el formulario del perfil ──
+//
+// Opt-in y por perfil. El formulario solo guarda la elección: de qué entrada
+// sale la semilla, si se contesta sin preguntar y con qué regex se reconoce la
+// pregunta. El código lo calcula el backend al conectar (modules/auth-totp.js).
+
+/** Entrada elegida para la semilla ("" = la misma que la contraseña). */
+let totpKeepassEntrySelected = "";
+/** Último veredicto del backend sobre la regex escrita (`totp_prompt_pattern_check`). */
+let totpKeepassRegexCheck = { pattern: "", valid: true };
+let totpKeepassRegexCheckSeq = 0;
+
+/** Entrada KeePass de la que el formulario saca la contraseña, si la saca de ahí. */
+function formKeepassPasswordEntryUuid() {
+  const connType = document.getElementById("f-conn-type")?.value || "ssh";
+  const authType = (isExternalLauncherType(connType) || isFileTransferConnectionType(connType))
+    ? "password"
+    : document.getElementById("f-auth-type")?.value;
+  if (authType !== "password" || getPasswordSource() !== "keepass") return null;
+  return document.getElementById("f-keepass-entry")?.value || null;
+}
+
+/** Aviso bajo un campo del TOTP + `setCustomValidity`, como el resto del formulario. */
+function setTotpKeepassFieldError(id, message) {
+  const el = /** @type {HTMLInputElement | HTMLSelectElement | null} */ (document.getElementById(id));
+  if (!el) return;
+  el.setCustomValidity(message);
+  el.classList.toggle("input-invalid", !!message);
+  const errEl = document.querySelector(`.form-error[data-error-for="${id}"]`);
+  if (errEl) {
+    errEl.textContent = message;
+    errEl.classList.toggle("hidden", !message);
+  }
+}
+
+/**
+ * Repinta las opciones del TOTP de KeePass (visibilidad, selector de entrada,
+ * estado de la entrada y avisos) con lo que hay en el formulario y en la base.
+ * Devuelve `false` si algo impide guardar.
+ */
+function refreshTotpKeepassFields() {
+  const enabledEl = /** @type {HTMLInputElement | null} */ (document.getElementById("f-totp-keepass"));
+  const box = document.getElementById("totp-keepass-options");
+  const select = /** @type {HTMLSelectElement | null} */ (document.getElementById("f-totp-keepass-entry"));
+  const regexEl = /** @type {HTMLInputElement | null} */ (document.getElementById("f-totp-keepass-regex"));
+  if (!enabledEl || !box || !select || !regexEl) return true;
+
+  // Solo en perfiles SSH (los demás no pasan por keyboard-interactive).
+  const isSsh = (document.getElementById("f-conn-type")?.value || "ssh") === "ssh";
+  const enabled = isSsh && enabledEl.checked;
+  box.hidden = !enabledEl.checked;
+  const passwordEntryUuid = formKeepassPasswordEntryUuid();
+
+  select.replaceChildren();
+  const first = document.createElement("option");
+  first.value = "";
+  first.textContent = passwordEntryUuid
+    ? t("modal_conn.totp_keepass_entry_same")
+    : t("modal_conn.totp_keepass_entry_none");
+  select.appendChild(first);
+  for (const choice of totpEntryChoices(keepassEntries, totpKeepassEntrySelected)) {
+    const option = document.createElement("option");
+    option.value = choice.uuid;
+    // Con la base bloqueada no se sabe el título: se enseña un trozo del id.
+    option.textContent = choice.entry
+      ? formatKeepassEntryLine(choice.entry)
+      : t("modal_conn.totp_keepass_entry_saved", { id: choice.uuid.slice(0, 8) });
+    select.appendChild(option);
+  }
+  select.value = totpKeepassEntrySelected;
+
+  const status = document.getElementById("totp-keepass-entry-status");
+  if (status) {
+    const state = enabled
+      ? totpEntryStatus({
+        entryUuid: totpKeepassEntrySelected,
+        passwordEntryUuid,
+        entries: keepassEntries,
+        unlocked: keepassUnlocked,
+      })
+      : "none";
+    status.classList.remove("ok", "warning", "error");
+    const visible = state === "locked" || state === "missing" || state === "no_seed";
+    status.classList.toggle("hidden", !visible);
+    status.textContent = visible ? t(`modal_conn.totp_keepass_status_${state}`) : "";
+    if (visible) status.classList.add(state === "locked" ? "warning" : "error");
+  }
+
+  const regex = regexEl.value.trim();
+  const issue = totpFormIssue({
+    enabled,
+    entryUuid: totpKeepassEntrySelected,
+    passwordEntryUuid,
+    regex,
+    // Sin veredicto todavía para lo escrito, no se da por mala.
+    regexValid: totpKeepassRegexCheck.pattern === regex ? totpKeepassRegexCheck.valid : true,
+  });
+  setTotpKeepassFieldError(
+    "f-totp-keepass-entry",
+    issue?.field === "entry" ? t("modal_conn.totp_keepass_err_need_entry") : ""
+  );
+  setTotpKeepassFieldError(
+    "f-totp-keepass-regex",
+    issue?.code === "regex_too_long"
+      ? t("modal_conn.totp_keepass_err_regex_long", { max: MAX_TOTP_PROMPT_PATTERN_LEN })
+      : issue?.code === "regex_invalid" ? t("modal_conn.totp_keepass_err_regex") : ""
+  );
+  return !issue;
+}
+
+/**
+ * Pregunta al backend si la regex escrita sirve (la aplica su motor, no el de
+ * JavaScript) y repinta el aviso. Devuelve el veredicto de lo que hay escrito
+ * al terminar.
+ */
+async function checkTotpKeepassRegex() {
+  const pattern = (document.getElementById("f-totp-keepass-regex")?.value || "").trim();
+  if (totpKeepassRegexCheck.pattern === pattern) return totpKeepassRegexCheck.valid;
+  const seq = ++totpKeepassRegexCheckSeq;
+  let valid = true;
+  if (pattern) {
+    try {
+      valid = (await invoke("totp_prompt_pattern_check", { pattern })) === true;
+    } catch (e) {
+      console.warn("[totp] regex check", e);
+      valid = false;
+    }
+  }
+  // Si mientras tanto se siguió escribiendo, manda la comprobación más nueva.
+  if (seq === totpKeepassRegexCheckSeq) {
+    totpKeepassRegexCheck = { pattern, valid };
+    refreshTotpKeepassFields();
+  }
+  return valid;
+}
+
+/** Rellena las opciones del TOTP de KeePass con las del perfil (o apagadas). */
+function fillTotpKeepassFields(profile) {
+  const set = (id, prop, v) => { const el = document.getElementById(id); if (el) el[prop] = v; };
+  set("f-totp-keepass", "checked", !!profile?.totp_keepass);
+  set("f-totp-keepass-auto", "checked", !!profile?.totp_keepass && !!profile?.totp_keepass_auto);
+  set("f-totp-keepass-regex", "value", profile?.totp_keepass_prompt_regex || "");
+  // La regex por defecto se enseña como ejemplo: es la que se usa si se deja vacío.
+  set("f-totp-keepass-regex", "placeholder", DEFAULT_TOTP_PROMPT_PATTERN);
+  totpKeepassEntrySelected = profile?.totp_keepass_entry_uuid || "";
+  totpKeepassRegexCheck = { pattern: "", valid: true };
+  refreshTotpKeepassFields();
+  void checkTotpKeepassRegex();
+}
+
+/** Los campos del TOTP de KeePass tal como los guarda el perfil. */
+function readTotpKeepassFields(connType) {
+  return totpProfileFields({
+    enabled: connType === "ssh" && !!document.getElementById("f-totp-keepass")?.checked,
+    auto: !!document.getElementById("f-totp-keepass-auto")?.checked,
+    entryUuid: totpKeepassEntrySelected,
+    regex: document.getElementById("f-totp-keepass-regex")?.value,
+  });
+}
+
+/**
+ * Antes de guardar: espera el veredicto de la regex (pudo teclearse y pulsar
+ * Guardar de seguido) y, si algo no vale, lleva al campo.
+ */
+async function validateTotpKeepassBeforeSave() {
+  await checkTotpKeepassRegex();
+  if (refreshTotpKeepassFields()) return true;
+  const form = /** @type {HTMLFormElement | null} */ (document.getElementById("form-connection"));
+  if (form) {
+    revealFirstInvalidPane(form);
+    form.reportValidity();
+  }
+  return false;
+}
+
 // Renderiza las casillas con el estado del perfil y ajusta la visibilidad.
 async function applyLegacyAlgorithmsUI(selectedIds) {
   const catalog = await ensureLegacyAlgoCatalog();
@@ -9351,6 +9673,7 @@ function openNewConnectionModal(preselectedFolder = null, workspaceId = getActiv
   applyLegacyAlgorithmsUI(null);
   updatePersistSessionFields();
   fillRemoteLaunchFields(null);
+  fillTotpKeepassFields(null);
   setPasswordSource("own");
   populateMasterCredSelect(null);
   refreshKeepassStatus().then(() => {
@@ -9689,6 +10012,7 @@ function openEditConnectionModal(profileId) {
   // Después de limpiar avisos: unas variables inválidas (llegadas por sync o
   // import) se señalan ya al abrir.
   fillRemoteLaunchFields(profile);
+  fillTotpKeepassFields(profile);
   renderConnectionSummary();
   applyConnectionModalSize();
   document.getElementById("modal-overlay").classList.remove("hidden");
@@ -10074,6 +10398,9 @@ function selectKeepassEntry(uuid) {
 }
 
 function updateKeepassEntryValidation() {
+  // Las opciones del TOTP de KeePass dependen de lo mismo que esto (base
+  // abierta, entrada elegida, origen de la contraseña): se repintan a la vez.
+  refreshTotpKeepassFields();
   const status = document.getElementById("keepass-entry-status");
   const hidden = document.getElementById("f-keepass-entry");
   const useKp = document.getElementById("f-use-keepass")?.checked;
@@ -11226,6 +11553,7 @@ function buildProfileFromConnectionForm({ persistIdentity = false } = {}) {
     persist_session_tool: document.getElementById("f-persist-tool")?.value || null,
     persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
     ...readRemoteLaunchFields(),
+    ...readTotpKeepassFields(connType),
     tmux_control: document.getElementById("f-tmux-control")?.checked ?? false,
     cmd_notify_secs: keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     prompt_regex: (document.getElementById("f-prompt-regex")?.value || "").trim() || null,
@@ -11420,6 +11748,9 @@ async function runConnectionTestFromModal() {
  * @param {boolean} shouldConnect
  */
 async function saveAndClose(shouldConnect) {
+  // La regex del TOTP de KeePass la valida el backend (es asíncrono): sin su
+  // visto bueno no se guarda.
+  if (!(await validateTotpKeepassBeforeSave())) return;
   const connType = document.getElementById("f-conn-type").value;
   const authType       = (isExternalLauncherType(connType) || isFileTransferConnectionType(connType))
     ? "password"
@@ -11487,6 +11818,7 @@ async function saveAndClose(shouldConnect) {
     persist_session_tool: document.getElementById("f-persist-tool")?.value || null,
     persist_session_name: (document.getElementById("f-persist-name")?.value || "").trim() || null,
     ...readRemoteLaunchFields(),
+    ...readTotpKeepassFields(connType),
     tmux_control:        document.getElementById("f-tmux-control")?.checked ?? false,
     cmd_notify_secs:     keepAliveFromInput(document.getElementById("f-cmd-notify-secs")?.value ?? ""),
     prompt_regex:        (document.getElementById("f-prompt-regex")?.value || "").trim() || null,
@@ -12853,7 +13185,7 @@ async function connectProfileWithCredentials(profileId, password, passphrase, _s
   // Conectar un perfil que saca su contraseña de KeePass **es** uso de la base
   // (la resuelve el backend en `resolve_password_from_keepass`), así que
   // reinicia el contador de autobloqueo.
-  if (profile.keepass_entry_uuid) touchKeepass();
+  if (profile.keepass_entry_uuid || profile.totp_keepass) touchKeepass();
 
   // Preguntas `${ask:}` (si las hay) antes de crear la pestaña: si el usuario
   // cancela, abortamos sin dejar nada a medias.
@@ -28227,13 +28559,24 @@ function bindUIEvents() {
           validateConnectionField(e.target.id);
         }
         if (e.target.id === "f-env-vars") validateRemoteLaunchFields();
+        if (e.target.id === "f-totp-keepass-regex") void checkTotpKeepassRegex();
       }
       renderConnectionSummary();
     });
     _connForm.addEventListener("change", (e) => {
       // Las variables solo se validan en perfiles SSH: cambiar el tipo
       // retira (o vuelve a poner) el aviso.
-      if (e.target?.id === "f-conn-type") validateRemoteLaunchFields();
+      if (e.target?.id === "f-conn-type") {
+        validateRemoteLaunchFields();
+        refreshTotpKeepassFields();
+      }
+      if (e.target?.id === "f-totp-keepass") refreshTotpKeepassFields();
+      if (e.target?.id === "f-totp-keepass-entry") {
+        totpKeepassEntrySelected = /** @type {HTMLSelectElement} */ (e.target).value;
+        // Elegir una entrada es usar la base: reinicia su autobloqueo.
+        touchKeepass();
+        refreshTotpKeepassFields();
+      }
       if (e.target?.id === "f-proxy-jump-mode") {
         document.getElementById("f-proxy-jump-missing")?.classList.add("hidden");
         updateBastionFields();

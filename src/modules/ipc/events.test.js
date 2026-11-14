@@ -73,6 +73,12 @@ describe("contrato de prefijos", () => {
     expect(EVENT.sshAuthPrompt).toBe("ssh-auth-prompt");
   });
 
+  // Espejo de `SSH_AUTH_TOTP_WAIT` en src-tauri/src/ipc.rs: el aviso de que el
+  // TOTP de KeePass automático espera al código siguiente.
+  it("el evento global ssh-auth-totp-wait es estable", () => {
+    expect(EVENT.sshAuthTotpWait).toBe("ssh-auth-totp-wait");
+  });
+
   // Espejo de `RDP_CERT_PROMPT` en src-tauri/src/ipc.rs.
   it("el evento global rdp-cert-prompt es estable", () => {
     expect(EVENT.rdpCertPrompt).toBe("rdp-cert-prompt");

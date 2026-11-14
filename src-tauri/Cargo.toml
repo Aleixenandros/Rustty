@@ -78,7 +78,7 @@ zeroize = "1"
 # sus versiones nuevas pedían otra generación de `cipher` que el resto del árbol;
 # desde que comparten `cipher` 0.5 con russh (comprobado 2026-11-02) sigue las
 # versiones normales.
-keepass = "0.17"
+keepass = { version = "0.17", features = ["totp"] }
 # Enumeración de fuentes del sistema para el selector de familia del terminal
 fontdb = "0.24"
 # Sincronización en la nube: crypto + HTTP + timestamps

@@ -3,6 +3,7 @@ mod app_tray;
 mod asbru;
 mod atomic_file;
 mod auth_prompt;
+mod auth_totp;
 mod channel_pump;
 pub mod cli;
 mod cli_lang;
@@ -606,6 +607,8 @@ pub fn run() {
             commands::set_host_key_change_policy,
             commands::ssh_hostkey_response,
             commands::ssh_auth_prompt_response,
+            commands::ssh_auth_prompt_totp,
+            commands::totp_prompt_pattern_check,
             commands::set_ftps_cert_policy,
             commands::ftps_cert_response,
             commands::profiles_recovery,

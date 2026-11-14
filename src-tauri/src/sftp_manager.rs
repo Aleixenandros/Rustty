@@ -1298,6 +1298,9 @@ async fn connect_and_open_sftp(
             }
         ),
     );
+    // TOTP de KeePass del perfil (opt-in): abrir el panel SFTP pide el segundo
+    // factor igual que la sesión SSH, y lo contesta con la misma política.
+    let totp = crate::auth_totp::Policy::from_profile(profile);
     let auth = match &profile.auth_type {
         AuthType::Password => {
             let pass = password.ok_or_else(|| {
@@ -1307,11 +1310,14 @@ async fn connect_and_open_sftp(
             })?;
             // Con el camino de PAM (`PasswordAuthentication no`): la misma
             // contraseña va a la primera pregunta de `keyboard-interactive`.
-            crate::ssh_manager::password_auth_with_fallback(
-                &mut handle,
-                &profile.username,
-                &profile.host,
-                pass.to_string(),
+            crate::auth_totp::with_policy(
+                totp.clone(),
+                crate::ssh_manager::password_auth_with_fallback(
+                    &mut handle,
+                    &profile.username,
+                    &profile.host,
+                    pass.to_string(),
+                ),
             )
             .await
             .map_err(|e| {
@@ -1355,11 +1361,14 @@ async fn connect_and_open_sftp(
                 log("auth", "error", e.clone());
             })?,
         AuthType::KeyboardInteractive => {
-            crate::ssh_manager::keyboard_interactive_auth(
-                &mut handle,
-                &profile.username,
-                &profile.host,
-                None,
+            crate::auth_totp::with_policy(
+                totp.clone(),
+                crate::ssh_manager::keyboard_interactive_auth(
+                    &mut handle,
+                    &profile.username,
+                    &profile.host,
+                    None,
+                ),
             )
             .await
             .map_err(|e| {
@@ -1384,11 +1393,14 @@ async fn connect_and_open_sftp(
                 "info",
                 "El servidor pide un segundo factor".into(),
             );
-            crate::ssh_manager::keyboard_interactive_auth(
-                &mut handle,
-                &profile.username,
-                &profile.host,
-                None,
+            crate::auth_totp::with_policy(
+                totp,
+                crate::ssh_manager::keyboard_interactive_auth(
+                    &mut handle,
+                    &profile.username,
+                    &profile.host,
+                    None,
+                ),
             )
             .await
             .map_err(|e| {

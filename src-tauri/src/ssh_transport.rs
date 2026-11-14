@@ -577,14 +577,18 @@ pub(crate) async fn open_hop(
             )));
         }
     }
-    let auth = authenticate_handle(
-        &mut handle,
-        &hop.auth_type,
-        &hop.username,
-        &hop.host,
-        hop.secrets.password.as_ref(),
-        hop.secrets.passphrase.as_ref(),
-        hop.key_path.as_deref(),
+    // Cada salto contesta su segundo factor con la política de SU perfil.
+    let auth = crate::auth_totp::with_policy(
+        hop.totp.clone(),
+        authenticate_handle(
+            &mut handle,
+            &hop.auth_type,
+            &hop.username,
+            &hop.host,
+            hop.secrets.password.as_ref(),
+            hop.secrets.passphrase.as_ref(),
+            hop.key_path.as_deref(),
+        ),
     )
     .await
     .map_err(|e| auth_error(format!("{label}: {}", e.localized())))?;

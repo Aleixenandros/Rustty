@@ -262,14 +262,17 @@ async fn connect_shell(
     .await
     .map_err(|err| err.message)?;
 
-    match authenticate_handle(
-        &mut handle,
-        &profile.auth_type,
-        &profile.username,
-        &profile.host,
-        pw.as_ref(),
-        pp.as_ref(),
-        profile.key_path.as_deref(),
+    match crate::auth_totp::with_policy(
+        crate::auth_totp::Policy::from_profile(profile),
+        authenticate_handle(
+            &mut handle,
+            &profile.auth_type,
+            &profile.username,
+            &profile.host,
+            pw.as_ref(),
+            pp.as_ref(),
+            profile.key_path.as_deref(),
+        ),
     )
     .await
     .map_err(|e| e.to_string())?
@@ -1587,6 +1590,10 @@ mod tests {
             keepass_property: None,
             password_source: Default::default(),
             master_credential_id: None,
+            totp_keepass: false,
+            totp_keepass_auto: false,
+            totp_keepass_entry_uuid: None,
+            totp_keepass_prompt_regex: None,
             extra_credentials: vec![],
             follow_cwd: true,
             keep_alive_secs: None,

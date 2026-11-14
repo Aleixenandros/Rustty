@@ -287,14 +287,17 @@ pub async fn setup_key_access(
     let mut handle = connect(profile).await?;
     let password_owned = password.map(str::to_string);
     let passphrase_owned = passphrase.map(str::to_string);
-    match authenticate_handle(
-        &mut handle,
-        &profile.auth_type,
-        &profile.username,
-        &profile.host,
-        password_owned.as_ref(),
-        passphrase_owned.as_ref(),
-        profile.key_path.as_deref(),
+    match crate::auth_totp::with_policy(
+        crate::auth_totp::Policy::from_profile(profile),
+        authenticate_handle(
+            &mut handle,
+            &profile.auth_type,
+            &profile.username,
+            &profile.host,
+            password_owned.as_ref(),
+            passphrase_owned.as_ref(),
+            profile.key_path.as_deref(),
+        ),
     )
     .await
     {
@@ -345,14 +348,17 @@ pub async fn setup_key_access(
 async fn verify_with_key(profile: &ConnectionProfile, key_path: &Path) -> Result<(), String> {
     let mut handle = connect(profile).await?;
     let key_path_str = key_path.display().to_string();
-    match authenticate_handle(
-        &mut handle,
-        &crate::profiles::AuthType::PublicKey,
-        &profile.username,
-        &profile.host,
-        None,
-        None,
-        Some(&key_path_str),
+    match crate::auth_totp::with_policy(
+        crate::auth_totp::Policy::from_profile(profile),
+        authenticate_handle(
+            &mut handle,
+            &crate::profiles::AuthType::PublicKey,
+            &profile.username,
+            &profile.host,
+            None,
+            None,
+            Some(&key_path_str),
+        ),
     )
     .await
     {

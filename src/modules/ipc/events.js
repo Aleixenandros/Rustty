@@ -118,6 +118,14 @@ export const EVENT = Object.freeze({
    * `ssh_auth_prompt_response`.
    */
   sshAuthPrompt: "ssh-auth-prompt",
+  /**
+   * `ssh-auth-totp-wait` → {@link SshAuthTotpWaitEvent}
+   *
+   * Un perfil con el TOTP de KeePass en modo automático espera al código
+   * siguiente (el de este periodo ya se entregó a ese servidor). Solo es un
+   * aviso, para que la conexión no parezca colgada: no hay nada que contestar.
+   */
+  sshAuthTotpWait: "ssh-auth-totp-wait",
 });
 
 /**
@@ -158,6 +166,19 @@ export const EVENT = Object.freeze({
  * @property {string} username
  * @property {Array<{ prompt: string, echo: boolean }>} prompts Preguntas de esta
  *   ronda. `echo: false` (contraseñas, códigos) = lo tecleado no debe verse.
+ * @property {{ autoRejected: boolean, locked: boolean } | null} [totpKeepass]
+ *   Presente si la ronda puede contestarse con el TOTP de KeePass del perfil
+ *   (comando `ssh_auth_prompt_totp`, que devuelve un estado y nunca el
+ *   código). `autoRejected`: el último código enviado automáticamente fue
+ *   rechazado. `locked`: la base KeePass está bloqueada en este momento.
+ */
+
+/**
+ * Payload de `ssh-auth-totp-wait`: el modo automático del TOTP de KeePass
+ * espera al código siguiente antes de contestar.
+ * @typedef {object} SshAuthTotpWaitEvent
+ * @property {string} host Servidor al que se está conectando.
+ * @property {number} waitSecs Segundos hasta que se envíe el código.
  */
 
 /**

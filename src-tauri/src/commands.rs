@@ -429,6 +429,11 @@ pub struct ConnectOverrides {
 pub(crate) fn apply_connect_overrides(profile: &mut ConnectionProfile, ov: &ConnectOverrides) {
     if let Some(u) = ov.username.as_deref() {
         if !u.trim().is_empty() {
+            if u.trim() != profile.username {
+                // La semilla TOTP del perfil es la de SU usuario: con otro, el
+                // código sería de otra cuenta y solo sumaría un intento fallido.
+                profile.totp_keepass = false;
+            }
             profile.username = u.trim().to_string();
         }
     }
@@ -451,6 +456,16 @@ pub(crate) fn apply_connect_overrides(profile: &mut ConnectionProfile, ov: &Conn
     if let Some(at) = ov.auth_type.clone() {
         profile.auth_type = at;
         profile.key_path = ov.key_path.clone();
+        // El segundo factor sigue siendo el de la cuenta: si la semilla TOTP
+        // salía de la misma entrada que la contraseña, se conserva esa entrada
+        // antes de soltarla como fuente de la contraseña.
+        let own_totp_entry = profile
+            .totp_keepass_entry_uuid
+            .as_deref()
+            .is_some_and(|uuid| !uuid.trim().is_empty());
+        if profile.totp_keepass && !own_totp_entry {
+            profile.totp_keepass_entry_uuid = profile.keepass_entry_uuid.clone();
+        }
         // Con autenticación puntual no aplican las fuentes del perfil: la
         // contraseña (si hace falta) llega en el parámetro `password`.
         profile.keepass_entry_uuid = None;
@@ -894,8 +909,10 @@ pub(crate) fn apply_credential(profile: &mut ConnectionProfile, credential_id: &
     profile.key_path = cred.key_path;
     profile.password_source = cred.password_source;
     profile.master_credential_id = cred.master_credential_id;
-    // La identidad extra no usa la entrada KeePass de la principal.
+    // La identidad extra no usa la entrada KeePass de la principal…
     profile.keepass_entry_uuid = None;
+    // …ni su semilla TOTP, que es de la cuenta principal.
+    profile.totp_keepass = false;
     Ok(())
 }
 
@@ -4429,6 +4446,29 @@ pub fn ssh_auth_prompt_response(prompt_id: String, responses: Option<Vec<String>
     crate::auth_prompt::resolve_prompt(&prompt_id, responses)
 }
 
+/// «Usar código de KeePass» en el diálogo de MFA: contesta la pregunta
+/// `prompt_id` con el TOTP de la entrada KeePass de su perfil, por el mismo
+/// canal que [`ssh_auth_prompt_response`].
+///
+/// La interfaz solo manda el identificador de la pregunta. Qué entrada usar lo
+/// sabe el backend (lo guardó al preguntar), que calcula el código y lo entrega
+/// al intercambio SSH; aquí vuelve un [`crate::auth_prompt::TotpReply`] —
+/// entregado, programado para el periodo siguiente o el motivo por el que no
+/// se pudo—, **nunca** el código ni la semilla.
+#[tauri::command]
+pub fn ssh_auth_prompt_totp(prompt_id: String) -> crate::auth_prompt::TotpReply {
+    crate::auth_prompt::answer_with_totp(&prompt_id)
+}
+
+/// ¿Sirve `pattern` como regex de la pregunta del código de verificación de un
+/// perfil? La valida el motor que luego la aplica (el de Rust, no el de
+/// JavaScript, que acepta construcciones que aquí no existen). Vacía = se usa
+/// la de por defecto, que es válida.
+#[tauri::command]
+pub fn totp_prompt_pattern_check(pattern: String) -> bool {
+    pattern.trim().is_empty() || crate::auth_totp::pattern_is_valid(&pattern)
+}
+
 /// Fija la política de primera conexión FTPS: `true` (default) exige confirmar la
 /// huella de un certificado nuevo antes de guardarla; `false` es TOFU automático.
 #[tauri::command]
@@ -4471,6 +4511,61 @@ mod tests {
         }
         let ok = local_path_join(base.clone(), "informe.pdf".into()).unwrap();
         assert_eq!(PathBuf::from(ok), PathBuf::from(&base).join("informe.pdf"));
+    }
+
+    /// La semilla TOTP de un perfil es la de SU cuenta: entrar como otro
+    /// usuario no puede mandar ese código (sería un intento fallido seguro en
+    /// la cuenta ajena), y cambiar solo el método de autenticación no debe
+    /// perder el segundo factor de la misma cuenta.
+    #[test]
+    fn el_totp_de_keepass_solo_vale_para_la_cuenta_del_perfil() {
+        use crate::auth_totp::Policy;
+        let base = || -> ConnectionProfile {
+            serde_json::from_value(serde_json::json!({
+                "id": "srv", "name": "Servidor", "host": "10.0.0.7", "port": 22,
+                "username": "ana", "domain": null, "auth_type": "password",
+                "key_path": null, "group": null, "created_at": "2026-11-14T00:00:00Z",
+                "password_source": "keepass", "keepass_entry_uuid": "entrada-1",
+                "totp_keepass": true, "totp_keepass_auto": true,
+                "extra_credentials": [{ "id": "cred-root", "username": "root" }]
+            }))
+            .expect("perfil")
+        };
+        let overrides = |username: Option<&str>, auth_type: Option<AuthType>| ConnectOverrides {
+            username: username.map(str::to_string),
+            port: None,
+            proxy_jump: None,
+            auth_type,
+            key_path: None,
+        };
+        assert_eq!(
+            Policy::from_profile(&base()).map(|p| p.entry_uuid),
+            Some("entrada-1".to_string())
+        );
+
+        // Otra identidad del perfil: sin TOTP.
+        let mut as_root = base();
+        apply_credential(&mut as_root, "cred-root").expect("identidad");
+        assert_eq!(Policy::from_profile(&as_root), None);
+
+        // «Duplicar sesión con cambios» con otro usuario: sin TOTP.
+        let mut other_user = base();
+        apply_connect_overrides(&mut other_user, &overrides(Some("bea"), None));
+        assert_eq!(Policy::from_profile(&other_user), None);
+
+        // El mismo usuario escrito otra vez no cambia nada.
+        let mut same_user = base();
+        apply_connect_overrides(&mut same_user, &overrides(Some(" ana "), None));
+        assert!(Policy::from_profile(&same_user).is_some());
+
+        // Otro método para la misma cuenta: la contraseña ya no sale de
+        // KeePass, pero la semilla sigue siendo la de esa entrada.
+        let mut by_key = base();
+        apply_connect_overrides(&mut by_key, &overrides(None, Some(AuthType::PublicKey)));
+        assert_eq!(by_key.keepass_entry_uuid, None);
+        let policy = Policy::from_profile(&by_key).expect("sigue habiendo segundo factor");
+        assert_eq!(policy.entry_uuid, "entrada-1");
+        assert!(policy.auto);
     }
 
     fn vnc_profile(proxy_jump: Option<&str>) -> ConnectionProfile {

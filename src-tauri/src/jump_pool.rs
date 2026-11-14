@@ -697,8 +697,7 @@ mod tests {
 
         let server = KbdServer::start(Rounds {
             password: "secreto".into(),
-            otp: None,
-            double_prompt: false,
+            ..Rounds::default()
         })
         .await;
         let fingerprint = server.fingerprint.clone();
@@ -724,6 +723,7 @@ mod tests {
                 },
                 allow_legacy_algorithms: false,
                 legacy_algorithms: None,
+                totp: None,
                 learned: Arc::default(),
             }],
         };

@@ -167,8 +167,19 @@ pub const RDP_CERT_PROMPT: &str = "rdp-cert-prompt";
 /// ninguno de esos caminos conoce siempre el `sessionId`. La respuesta vuelve
 /// por el comando `ssh_auth_prompt_response` con el `promptId` del payload.
 ///
-/// Payload: `{ promptId, name, instructions, host, username, prompts: [{ prompt, echo }] }`.
+/// Payload: `{ promptId, name, instructions, host, username, prompts: [{ prompt, echo }], totpKeepass }`
+/// (`totpKeepass`: la ronda puede contestarse con el TOTP de KeePass del perfil,
+/// por `ssh_auth_prompt_totp`; no lleva el código ni de dónde sale).
 pub const SSH_AUTH_PROMPT: &str = "ssh-auth-prompt";
+
+/// Evento global (sin sufijo): un perfil con el TOTP de KeePass en modo
+/// automático va a tardar en autenticarse porque el código de este periodo ya
+/// se entregó a ese servidor (que no lo aceptaría dos veces) y se espera al
+/// siguiente. Es solo un aviso —no hay nada que contestar—, para que la
+/// conexión no parezca colgada.
+///
+/// Payload: `{ host, waitSecs }`.
+pub const SSH_AUTH_TOTP_WAIT: &str = "ssh-auth-totp-wait";
 
 #[cfg(test)]
 mod tests {

@@ -36,6 +36,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::auth_prompt;
+use crate::auth_totp;
 use crate::cli_lang::tr;
 use crate::channel_pump::{finish_channel, pump_tunnel};
 use crate::error::AppError;
@@ -1240,14 +1241,17 @@ async fn run_connection_test(
         "info",
         format!("Autenticando como {}", profile.username),
     );
-    match authenticate_handle(
-        &mut handle,
-        &profile.auth_type,
-        &profile.username,
-        &profile.host,
-        password.as_ref(),
-        passphrase.as_ref(),
-        profile.key_path.as_deref(),
+    match auth_totp::with_policy(
+        auth_totp::Policy::from_profile(&profile),
+        authenticate_handle(
+            &mut handle,
+            &profile.auth_type,
+            &profile.username,
+            &profile.host,
+            password.as_ref(),
+            passphrase.as_ref(),
+            profile.key_path.as_deref(),
+        ),
     )
     .await?
     {
@@ -1985,14 +1989,20 @@ async fn run_session(
         "info",
         format!("Autenticando como {}", profile.username),
     );
-    let auth = match authenticate_handle(
-        &mut handle,
-        &profile.auth_type,
-        &profile.username,
-        &profile.host,
-        password.as_ref(),
-        passphrase.as_ref(),
-        profile.key_path.as_deref(),
+    // Con la política de TOTP del perfil a la vista: `run_session` corre igual
+    // en la primera conexión y en cada reconexión, así que el modo automático
+    // (y su «un rechazo no se reintenta») vale para las dos.
+    let auth = match auth_totp::with_policy(
+        auth_totp::Policy::from_profile(&profile),
+        authenticate_handle(
+            &mut handle,
+            &profile.auth_type,
+            &profile.username,
+            &profile.host,
+            password.as_ref(),
+            passphrase.as_ref(),
+            profile.key_path.as_deref(),
+        ),
     )
     .await
     {
@@ -3798,6 +3808,14 @@ const MAX_INTERACTIVE_ROUNDS: usize = 12;
 /// ([`round_asks_for_password`]); todo lo demás —un segundo factor después,
 /// una ronda con otra forma, una contraseña que el servidor vuelve a pedir— va
 /// al usuario como siempre.
+///
+/// **TOTP de KeePass.** Si el perfil lo ha activado (ver [`auth_totp`]; la
+/// política llega con `auth_totp::with_policy`, no por la firma), la ronda que
+/// pregunta el código se contesta con el de KeePass —sola en modo automático,
+/// o desde el botón del diálogo— y nunca cuenta como la ronda de la
+/// contraseña: con `pam_google_authenticator` por delante de la contraseña, el
+/// servidor pide primero el código, y la contraseña del perfil sigue valiendo
+/// para la ronda siguiente. Se entrega una sola vez, como antes.
 pub(crate) async fn keyboard_interactive_auth(
     handle: &mut client::Handle<host_keys::KnownHostsClient>,
     username: &str,
@@ -3809,17 +3827,27 @@ pub(crate) async fn keyboard_interactive_auth(
         .await
         .map_err(|e| AppError::Auth(tr!("Autenticación interactiva fallida: {e}", "Interactive authentication failed: {e}")))?;
 
-    for round in 0..MAX_INTERACTIVE_ROUNDS {
+    let mut totp = auth_totp::Exchange::for_current_task();
+    // La contraseña del perfil, mientras no se haya gastado su ronda.
+    let mut password = password;
+
+    for _ in 0..MAX_INTERACTIVE_ROUNDS {
         let (name, instructions, prompts) = match response {
-            KeyboardInteractiveAuthResponse::Success => return Ok(AuthResult::Success),
+            KeyboardInteractiveAuthResponse::Success => {
+                totp.finished(true);
+                return Ok(AuthResult::Success);
+            }
             KeyboardInteractiveAuthResponse::Failure {
                 remaining_methods,
                 partial_success,
             } => {
+                // `partial_success`: lo contestado valió y el servidor pide
+                // otro método; para el código de KeePass es un acierto.
+                totp.finished(partial_success);
                 return Ok(AuthResult::Failure {
                     remaining_methods,
                     partial_success,
-                })
+                });
             }
             KeyboardInteractiveAuthResponse::InfoRequest {
                 name,
@@ -3836,20 +3864,59 @@ pub(crate) async fn keyboard_interactive_auth(
             })
             .collect();
 
-        let answers = match password.filter(|_| round == 0 && round_asks_for_password(&fields)) {
+        let plan = totp.plan(&fields);
+        // La contraseña va a la primera ronda que no sea la del código, y solo
+        // si tiene forma de petición de contraseña; con otra forma se pierde
+        // el turno igualmente (`take`): nunca se entrega más tarde.
+        let secret = match plan {
+            auth_totp::Round::Manual => password.take().filter(|_| round_asks_for_password(&fields)),
+            auth_totp::Round::Offer | auth_totp::Round::Auto => None,
+        };
+        // Toda salida de aquí que no sea un acierto cierra el intercambio con
+        // `finished(false)`: tras un código automático, lo que no acaba bien
+        // cuenta como rechazo y no se reintenta solo.
+        let answers = match secret {
             Some(secret) => vec![secret.to_string()],
-            None => auth_prompt::ask(host, username, &name, &instructions, &fields)
-                .await
-                .map_err(AppError::Auth)?
-                .ok_or_else(|| AppError::Auth(tr!("Autenticación interactiva cancelada", "Interactive authentication cancelled")))?,
+            None => match totp.auto_answer(plan, host, &fields).await {
+                Some(code) => code,
+                None => {
+                    let asked = auth_prompt::ask(
+                        host,
+                        username,
+                        &name,
+                        &instructions,
+                        &fields,
+                        totp.offer(plan, host),
+                    )
+                    .await;
+                    match asked {
+                        Ok(Some(answers)) => {
+                            totp.answered(plan, answers.from_keepass);
+                            answers.values
+                        }
+                        Ok(None) => {
+                            totp.finished(false);
+                            return Err(AppError::Auth(tr!("Autenticación interactiva cancelada", "Interactive authentication cancelled")));
+                        }
+                        Err(reason) => {
+                            totp.finished(false);
+                            return Err(AppError::Auth(reason));
+                        }
+                    }
+                }
+            },
         };
 
-        response = handle
-            .authenticate_keyboard_interactive_respond(answers)
-            .await
-            .map_err(|e| AppError::Auth(tr!("Autenticación interactiva fallida: {e}", "Interactive authentication failed: {e}")))?;
+        response = match handle.authenticate_keyboard_interactive_respond(answers).await {
+            Ok(response) => response,
+            Err(e) => {
+                totp.finished(false);
+                return Err(AppError::Auth(tr!("Autenticación interactiva fallida: {e}", "Interactive authentication failed: {e}")));
+            }
+        };
     }
 
+    totp.finished(false);
     Err(AppError::Auth(tr!(
         "El servidor pidió más de {MAX_INTERACTIVE_ROUNDS} rondas de preguntas; conexión abortada",
         "The server asked more than {MAX_INTERACTIVE_ROUNDS} rounds of questions; connection aborted"
