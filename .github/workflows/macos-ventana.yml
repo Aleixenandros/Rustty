@@ -1,0 +1,69 @@
+name: Ventana · macOS
+
+# Abre la aplicación de verdad en un Mac y comprueba que la ventana trae los
+# botones nativos, con capturas. Manual: los minutos de macOS son caros y esto
+# solo hace falta al tocar la ventana, la barra de pestañas o el rail.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-ventana-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ventana:
+    name: Botones nativos y capturas
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Leer el toolchain fijado
+        id: rust
+        run: sed -n 's/^channel = "\(.*\)"/channel=\1/p' src-tauri/rust-toolchain.toml >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ steps.rust.outputs.channel }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Dependencias de macOS
+        run: |
+          missing=()
+          for formula in openssl@3 pkgconf; do
+            if ! brew list --formula "$formula" >/dev/null 2>&1; then
+              missing+=("$formula")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            brew install "${missing[@]}"
+          fi
+
+      - run: npm ci
+
+      # Con `tauri build` la interfaz va dentro del binario; un `cargo build`
+      # suelto la buscaría en el servidor de desarrollo.
+      - name: Compilar la aplicación sin empaquetar
+        run: npx tauri build --debug --no-bundle
+
+      - name: Abrir la ventana y comprobar los botones
+        run: bash scripts/ci/macos-window-check.sh src-tauri/target/debug/rustty "$RUNNER_TEMP/rustty-ventana"
+
+      - name: Capturas y registro
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: macos-ventana
+          path: ${{ runner.temp }}/rustty-ventana
+          if-no-files-found: ignore
