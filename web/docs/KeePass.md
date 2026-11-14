@@ -37,6 +37,20 @@ En el formulario de conexión puedes asociar un perfil a una entrada KeePass. Al
 
 Los perfiles solo guardan el UUID de la entrada, no la contraseña.
 
+## Código de verificación (TOTP) desde KeePass
+
+Si el servidor pide un segundo factor (Google Authenticator, PAM…) y guardas su semilla en KeePass —en el campo «otp» de la entrada, como hace KeePassXC—, Rustty puede contestar por ti. Es una opción de cada conexión SSH, **apagada por defecto**: formulario de conexión → **Avanzado** → «Responder el código de verificación con el TOTP de KeePass».
+
+- Con la opción activa, el diálogo de verificación ofrece **«Usar código de KeePass»**. Rustty calcula el código y lo envía; no se muestra ni se guarda.
+- La semilla puede salir de la misma entrada que la contraseña o de otra: el selector lista solo las entradas que tienen código.
+- «Enviar el código sin preguntar» (también apagada) contesta sin diálogo, incluidas las reconexiones y la apertura del panel SFTP. Si el servidor rechaza el código **no se reintenta**: se te pregunta hasta que acepte un código de KeePass pedido con el botón.
+- Si la base está bloqueada, el diálogo lo dice y te lleva a desbloquearla; si prefieres no hacerlo, tecleas el código como siempre.
+- Un código ya usado con ese servidor no se repite: Rustty espera al siguiente y te dice cuántos segundos faltan.
+
+> **Piénsalo antes de activarlo.** Guardar la contraseña y la semilla del segundo factor en la misma base reduce los dos factores a uno: quien abra la base tiene los dos. Para conservar los dos factores, deja la semilla solo en el móvil o en otra base.
+
+La línea de órdenes (`rustty -c …`) no usa esta opción: allí el código se sigue pidiendo por la terminal.
+
 ## Sincronización
 
 Rustty no sincroniza la base KeePass ni su estado desbloqueado. Si quieres usar la misma base en varios equipos, guárdala en una ubicación que tú controles y configura la ruta local en cada equipo.

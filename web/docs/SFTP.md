@@ -70,6 +70,12 @@ Una descarga se escribe primero en un fichero temporal hermano del destino (`<no
 
 Al transferir una carpeta, los enlaces simbólicos **no se copian** en ninguna de las dos direcciones: copiarlos tal cual apuntaría a rutas que no existen en el otro extremo, y seguirlos podría sacar la copia del árbol elegido o meterla en un ciclo. Rustty los cuenta y te lo dice al terminar («N enlaces simbólicos omitidos»), tanto en el aviso como en el registro de ACTIVIDAD, para que sepas que la copia no los incluye.
 
+En el listado remoto, al detener el puntero sobre un enlace simbólico se ve **a dónde apunta** y si el destino es una carpeta, un fichero o no existe. El clic derecho ofrece **«Ir al destino del enlace»**: si es una carpeta, el panel entra en ella; si es un fichero, lo dice y ofrece abrir la carpeta que lo contiene. Se puede apagar en **Preferencias → FTP/SFTP** («Mostrar a dónde apuntan los enlaces simbólicos»); la acción del menú sigue disponible. Con FTP y FTPS no existe.
+
+## Espacio libre del servidor
+
+La cabecera del lado remoto enseña cuánto espacio queda en el disco de la carpeta abierta («149 GB libres de 930 GB») con una barra de ocupación que se vuelve amarilla al 85 % y roja al 95 %. Se pregunta al entrar en cada carpeta, sin retrasar el listado. Solo aparece con servidores que lo admiten (OpenSSH); con los demás, y con FTP y FTPS, no sale nada. Se apaga en **Preferencias → FTP/SFTP** («Mostrar el espacio libre del servidor en el panel SFTP»).
+
 ## Panel TRANSFERENCIAS / ACTIVIDAD
 
 Justo debajo de la vista dividida hay dos secciones siempre visibles:
