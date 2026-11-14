@@ -2,6 +2,12 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.29.1] - 2026-11-14
+
+### Corregido
+
+- macOS: la ventana vuelve a tener los botones de cerrar, minimizar y maximizar. Los pone el sistema, en su esquina superior izquierda, y la interfaz les deja sitio: también con la barra lateral plegada y en modo zen. A pantalla completa, donde el sistema los retira, la interfaz recupera esa esquina. Hasta ahora la ventana salía en los Mac sin ningún botón.
+
 ## [2.29.0] - 2026-11-14
 
 ### Añadido
