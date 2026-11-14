@@ -525,7 +525,18 @@
     "clear_title": "Vider l'historique d'activité",
     "new": "Nouveau",
     "unseen_errors_one": "1 erreur non vue",
-    "unseen_errors_many": "{n} erreurs non vues"
+    "unseen_errors_many": "{n} erreurs non vues",
+    "copy": "Copier cette entrée",
+    "copied": "Entrée copiée",
+    "export": "Exporter…",
+    "export_title": "Enregistrer dans un fichier les entrées affichées",
+    "export_empty": "Aucune entrée à exporter",
+    "export_format_text": "Texte",
+    "exported": "Historique d’activité exporté",
+    "status_error": "Erreur",
+    "status_warning": "Avertissement",
+    "status_ok": "Réussi",
+    "status_info": "Information"
   },
   "sidebar": {
     "prefs_title": "Préférences",

@@ -2,7 +2,12 @@
 import { describe, expect, it } from "vitest";
 import {
   ACTIVITY_FILTERS,
+  activityExportFormat,
+  activityExportJson,
+  activityExportText,
   activityFilterCounts,
+  activityItemText,
+  activityLocalStamp,
   countUnseenErrors,
   filterActivityItems,
   groupActivityByDay,
@@ -106,5 +111,78 @@ describe("filtros del centro de actividad", () => {
     expect(countUnseenErrors(items, "2026-08-04T07:00:00Z")).toBe(2);
     expect(countUnseenErrors(items, "2026-08-04T11:15:00Z")).toBe(1);
     expect(countUnseenErrors(items, "2026-08-04T12:00:00Z")).toBe(0);
+  });
+});
+
+describe("copiar y exportar entradas", () => {
+  // Hora local construida con los mismos componentes que se esperan: el test
+  // no depende de la zona horaria de la máquina.
+  const at = new Date(2026, 10, 14, 9, 5, 7);
+  const item = {
+    id: "a",
+    kind: "connection",
+    status: "error",
+    title: "web-01",
+    detail: "Connection refused\r\n  reintento 2 de 3  ",
+    actionLabel: "Reintentar",
+    action: () => {},
+    timestamp: at.toISOString(),
+  };
+  const labels = {
+    kindLabel: (k) => ({ connection: "Conexión" })[k] || k,
+    statusLabel: (s) => ({ error: "Error" })[s] || s,
+  };
+
+  it("formatea la fecha local con ceros y sin depender del idioma", () => {
+    expect(activityLocalStamp(at)).toBe("2026-11-14 09:05:07");
+    expect(activityLocalStamp("no es una fecha")).toBe("");
+  });
+
+  it("pone la cabecera en una línea y el detalle sangrado debajo", () => {
+    expect(activityItemText(item, labels)).toBe(
+      "[2026-11-14 09:05:07] Conexión · Error · web-01\n"
+      + "    Connection refused\n"
+      + "      reintento 2 de 3",
+    );
+  });
+
+  it("un título con saltos de línea no parte la cabecera", () => {
+    const text = activityItemText({ ...item, title: "uno\ndos", detail: "" }, labels);
+    expect(text).toBe("[2026-11-14 09:05:07] Conexión · Error · uno dos");
+  });
+
+  it("sin rótulos usa los valores crudos y sin fecha válida omite el corchete", () => {
+    expect(activityItemText({ ...item, detail: "", timestamp: "mal" }))
+      .toBe("connection · error · web-01");
+  });
+
+  it("el volcado de texto acaba en salto de línea y el vacío queda vacío", () => {
+    const text = activityExportText([item, { ...item, title: "db-02", detail: "" }], labels);
+    expect(text.endsWith("db-02\n")).toBe(true);
+    expect(text.split("\n")).toHaveLength(5);
+    expect(activityExportText([], labels)).toBe("");
+  });
+
+  it("el JSON no lleva callbacks ni identificadores internos", () => {
+    const doc = JSON.parse(activityExportJson([item], { exportedAt: "2026-11-14T10:00:00.000Z", filter: "error" }));
+    expect(doc).toEqual({
+      exportedAt: "2026-11-14T10:00:00.000Z",
+      filter: "error",
+      count: 1,
+      entries: [{
+        timestamp: at.toISOString(),
+        kind: "connection",
+        status: "error",
+        title: "web-01",
+        detail: "Connection refused\r\n  reintento 2 de 3  ",
+      }],
+    });
+  });
+
+  it("elige el formato por la extensión del fichero", () => {
+    expect(activityExportFormat("/tmp/actividad.JSON")).toBe("json");
+    expect(activityExportFormat("/tmp/actividad.txt")).toBe("text");
+    expect(activityExportFormat("/tmp/actividad.json.txt")).toBe("text");
+    expect(activityExportFormat("")).toBe("text");
   });
 });

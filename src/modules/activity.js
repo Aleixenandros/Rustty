@@ -177,3 +177,70 @@ export function countUnseenErrors(items, seenAt) {
     0,
   );
 }
+
+/**
+ * Fecha y hora local `AAAA-MM-DD HH:MM:SS`: la que el usuario ve en su reloj,
+ * en un formato que se ordena solo y no depende del idioma.
+ * @param {string|number|Date} value
+ */
+export function activityLocalStamp(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const pad = (/** @type {number} */ n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+    + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+/**
+ * Una entrada como texto plano, para copiarla o volcarla a un fichero: una
+ * cabecera con fecha, tipo, estado y título, y el detalle debajo, sangrado.
+ * Los rótulos llegan traducidos de fuera; aquí no hay interfaz.
+ *
+ * @param {Pick<ActivityItem, "kind"|"status"|"title"|"detail"|"timestamp">} item
+ * @param {{ kindLabel?: (kind: string) => string, statusLabel?: (status: string) => string }} [labels]
+ */
+export function activityItemText(item, { kindLabel = (k) => k, statusLabel = (s) => s } = {}) {
+  const stamp = activityLocalStamp(item.timestamp);
+  const head = [kindLabel(item.kind), statusLabel(item.status), item.title]
+    .map((part) => String(part ?? "").replace(/\s*[\r\n]+\s*/g, " ").trim())
+    .filter(Boolean)
+    .join(" · ");
+  const lines = [stamp ? `[${stamp}] ${head}` : head];
+  const detail = String(item.detail || "").replace(/\r\n?/g, "\n").trim();
+  if (detail) {
+    for (const line of detail.split("\n")) lines.push(`    ${line.trimEnd()}`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Volcado de varias entradas a texto plano, en el orden recibido.
+ * @param {Pick<ActivityItem, "kind"|"status"|"title"|"detail"|"timestamp">[]} items
+ * @param {Parameters<typeof activityItemText>[1]} [labels]
+ */
+export function activityExportText(items, labels) {
+  return items.map((item) => activityItemText(item, labels)).join("\n") + (items.length ? "\n" : "");
+}
+
+/**
+ * Volcado a JSON: los campos tal cual se guardan (sin callbacks), con la fecha
+ * en ISO para que otra herramienta pueda ordenarlos.
+ * @param {ActivityItem[]} items
+ * @param {{ exportedAt?: string, filter?: string }} [meta]
+ */
+export function activityExportJson(items, { exportedAt = new Date().toISOString(), filter = "all" } = {}) {
+  const entries = items.map((item) => {
+    const { kind, status, title, detail, timestamp } = serializableActivityItem(item);
+    return { timestamp, kind, status, title, detail };
+  });
+  return JSON.stringify({ exportedAt, filter, count: entries.length, entries }, null, 2);
+}
+
+/**
+ * Formato del volcado según el nombre que eligió el usuario en el diálogo.
+ * @param {string} path
+ * @returns {"json"|"text"}
+ */
+export function activityExportFormat(path) {
+  return /\.json$/i.test(String(path || "")) ? "json" : "text";
+}

@@ -525,7 +525,18 @@
     "clear_title": "Kosongkan riwayat aktivitas",
     "new": "Baru",
     "unseen_errors_one": "1 kesalahan belum dilihat",
-    "unseen_errors_many": "{n} kesalahan belum dilihat"
+    "unseen_errors_many": "{n} kesalahan belum dilihat",
+    "copy": "Salin entri ini",
+    "copied": "Entri disalin",
+    "export": "Ekspor…",
+    "export_title": "Simpan entri yang ditampilkan ke sebuah berkas",
+    "export_empty": "Tidak ada entri untuk diekspor",
+    "export_format_text": "Teks",
+    "exported": "Riwayat aktivitas diekspor",
+    "status_error": "Galat",
+    "status_warning": "Peringatan",
+    "status_ok": "Berhasil",
+    "status_info": "Informasi"
   },
   "sidebar": {
     "prefs_title": "Preferensi",

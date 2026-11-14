@@ -56,7 +56,11 @@ import { baseSlugifyThemeId } from "./modules/text.js";
 import { formatTime, formatRelativeTimeShort, formatDashboardTime } from "./modules/datetime.js";
 import { compareVersions, normalizeVersion } from "./modules/version.js";
 import {
+  activityExportFormat,
+  activityExportJson,
+  activityExportText,
   activityFilterCounts,
+  activityItemText,
   countUnseenErrors,
   filterActivityItems,
   groupActivityByDay,
@@ -3959,6 +3963,58 @@ function activityKindLabel(kind) {
   }[kind] || t("activity.kind_other");
 }
 
+function activityStatusLabel(status) {
+  return {
+    error: t("activity.status_error"),
+    warning: t("activity.status_warning"),
+    ok: t("activity.status_ok"),
+    success: t("activity.status_ok"),
+  }[status] || t("activity.status_info");
+}
+
+const activityTextLabels = () => ({ kindLabel: activityKindLabel, statusLabel: activityStatusLabel });
+
+/** Copia una entrada del historial como texto plano (fecha, tipo, estado, título y detalle). */
+async function copyActivityItem(id) {
+  const item = activityItems.find((entry) => entry.id === id);
+  if (!item) return;
+  try {
+    await writeSystemClipboardText(activityItemText(item, activityTextLabels()));
+    // Sin dejar rastro: copiar una entrada no es actividad que anotar en el
+    // propio historial (y redibujaría la lista bajo el puntero).
+    toast(t("activity.copied"), "success", { skipActivity: true });
+  } catch (err) { toast(`${err}`, "error"); }
+}
+
+/**
+ * Vuelca a un fichero local lo que el filtro tiene a la vista. El formato lo
+ * decide la extensión elegida en el diálogo: texto plano o JSON.
+ */
+async function exportActivityHistory() {
+  const visible = filterActivityItems(activityItems, _activityFilter);
+  if (!visible.length) { toast(t("activity.export_empty"), "info", { skipActivity: true }); return; }
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+  let file;
+  try {
+    file = await files.pickFileToSave({
+      title: t("activity.export_title"),
+      defaultPath: `rustty-actividad-${stamp}.txt`,
+      filters: [
+        { name: t("activity.export_format_text"), extensions: ["txt", "log"] },
+        { name: "JSON", extensions: ["json"] },
+      ],
+    });
+  } catch (err) { toast(fileErrorText(err), "error"); return; }
+  if (!file) return;
+  const body = activityExportFormat(file.path) === "json"
+    ? activityExportJson(visible, { filter: _activityFilter })
+    : activityExportText(visible, activityTextLabels());
+  try {
+    await files.writeTextFile(file, body);
+    toast(t("activity.exported"), "success", { skipActivity: true });
+  } catch (err) { toast(fileErrorText(err), "error"); }
+}
+
 function activityTime(value) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "";
@@ -4140,7 +4196,10 @@ function renderActivityCenter() {
           </div>
           ${item.detail ? `<div class="activity-detail">${escHtml(item.detail)}</div>` : ""}
         </div>
-        ${item.actionLabel && typeof item.action === "function" ? `<button type="button" class="activity-action">${escHtml(item.actionLabel)}</button>` : ""}
+        <div class="activity-actions">
+          ${item.actionLabel && typeof item.action === "function" ? `<button type="button" class="activity-action">${escHtml(item.actionLabel)}</button>` : ""}
+          <button type="button" class="btn-icon-sm activity-copy" title="${escHtml(t("activity.copy"))}" aria-label="${escHtml(t("activity.copy"))}"><svg class="row-icon-svg" aria-hidden="true"><use href="#ci-copy"/></svg></button>
+        </div>
       </div>
     `).join("")}
   `).join("");
@@ -4150,6 +4209,8 @@ function renderActivityCenter() {
     if (btn && typeof item?.action === "function") {
       btn.addEventListener("click", () => item.action());
     }
+    row.querySelector(".activity-copy")
+      ?.addEventListener("click", () => copyActivityItem(row.dataset.activityId));
   });
 }
 
@@ -28222,6 +28283,8 @@ function bindUIEvents() {
     ?.addEventListener("click", (e) => {
       if (e.target.id === "activity-center-overlay") closeActivityCenter();
     });
+  document.getElementById("btn-activity-export")
+    ?.addEventListener("click", exportActivityHistory);
   document.getElementById("btn-activity-clear")
     ?.addEventListener("click", () => {
       activityItems.length = 0;

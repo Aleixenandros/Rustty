@@ -525,7 +525,18 @@
     "clear_title": "清空活動記錄",
     "new": "新",
     "unseen_errors_one": "1 個未查看的錯誤",
-    "unseen_errors_many": "{n} 個未查看的錯誤"
+    "unseen_errors_many": "{n} 個未查看的錯誤",
+    "copy": "複製這筆紀錄",
+    "copied": "已複製紀錄",
+    "export": "匯出…",
+    "export_title": "將目前顯示的紀錄儲存為檔案",
+    "export_empty": "沒有可匯出的紀錄",
+    "export_format_text": "純文字",
+    "exported": "已匯出活動紀錄",
+    "status_error": "錯誤",
+    "status_warning": "警告",
+    "status_ok": "成功",
+    "status_info": "資訊"
   },
   "sidebar": {
     "prefs_title": "偏好設定",

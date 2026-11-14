@@ -1,5 +1,6 @@
 // Centro de actividad: recuentos por filtro, filtro transversal de errores,
-// entradas «nuevas» y distintivo de errores sin ver en el rail. De paso, dos
+// entradas «nuevas», distintivo de errores sin ver en el rail, y copiar una
+// entrada o exportar las que se ven. De paso, dos
 // pulidos de la misma tanda: la pista del atajo de búsqueda del inicio sale
 // del atajo vigente y las flechas de los submenús son iconos, no un glifo.
 //
@@ -85,6 +86,46 @@ export async function checkActivityCenter(app, check) {
     `);
     check("el filtro «Errores» reúne los errores de cualquier tipo",
       errors.n === 3 && errors.allError && errors.pressed === "true", JSON.stringify(errors));
+
+    // ── Copiar una entrada y exportar lo que se ve ──────────────
+    const clearToasts = () => app.exec(
+      'document.querySelectorAll("#toast-container .toast").forEach((el) => el.remove()); return true;',
+    );
+    const toastCount = () => app.exec('return document.querySelectorAll("#toast-container .toast").length;');
+    const copyButtons = await app.exec(`
+      const rows = [...document.querySelectorAll("#activity-center-list .activity-item")];
+      const btns = rows.map((r) => r.querySelector(".activity-copy"));
+      return {
+        rows: rows.length,
+        named: btns.filter((b) => b && (b.getAttribute("aria-label") || "").trim()).length,
+        icons: btns.filter((b) => b && b.querySelector("svg use") && b.textContent.trim() === "").length,
+      };
+    `);
+    check("cada entrada del centro de actividad tiene su botón de copiar, con nombre y con icono",
+      copyButtons.rows === 3 && copyButtons.named === 3 && copyButtons.icons === 3, JSON.stringify(copyButtons));
+    await clearToasts();
+    await app.jsClick("#activity-center-list .activity-item .activity-copy");
+    await settle();
+    const afterCopy = await app.exec(`
+      return {
+        toasts: document.querySelectorAll("#toast-container .toast").length,
+        rows: document.querySelectorAll("#activity-center-list .activity-item").length,
+        stored: JSON.parse(localStorage.getItem(arguments[0]) || "[]").length,
+      };
+    `, [HISTORY_KEY]);
+    check("copiar una entrada lo confirma con un aviso y no añade nada al propio historial",
+      afterCopy.toasts === 1 && afterCopy.rows === 3 && afterCopy.stored === 4, JSON.stringify(afterCopy));
+    // Con un filtro sin entradas no hay nada que guardar: avisa y no abre el
+    // diálogo de fichero (que es nativo y aquí no se puede rellenar).
+    await clearToasts();
+    await app.jsClick('.activity-filter[data-activity-filter="update"]');
+    await settle();
+    await app.jsClick("#btn-activity-export");
+    await settle();
+    const emptyExport = await toastCount();
+    check("exportar con un filtro vacío avisa de que no hay entradas en vez de abrir el diálogo de fichero",
+      emptyExport === 1, String(emptyExport));
+    await clearToasts();
 
     await app.jsClick('.activity-filter[data-activity-filter="all"]');
     await app.jsClick("#btn-activity-close");

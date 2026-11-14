@@ -525,7 +525,18 @@
     "clear_title": "Aktivitätsverlauf leeren",
     "new": "Neu",
     "unseen_errors_one": "1 ungesehener Fehler",
-    "unseen_errors_many": "{n} ungesehene Fehler"
+    "unseen_errors_many": "{n} ungesehene Fehler",
+    "copy": "Diesen Eintrag kopieren",
+    "copied": "Eintrag kopiert",
+    "export": "Exportieren…",
+    "export_title": "Die angezeigten Einträge in einer Datei speichern",
+    "export_empty": "Es gibt keine Einträge zum Exportieren",
+    "export_format_text": "Text",
+    "exported": "Aktivitätsverlauf exportiert",
+    "status_error": "Fehler",
+    "status_warning": "Warnung",
+    "status_ok": "Erfolgreich",
+    "status_info": "Information"
   },
   "sidebar": {
     "prefs_title": "Einstellungen",

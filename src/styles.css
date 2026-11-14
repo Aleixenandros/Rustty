@@ -5609,6 +5609,18 @@ input[type="checkbox"] {
   margin-left: auto;
 }
 
+/* «Exportar…» y «Limpiar» van juntos al final de la barra: el primero empuja
+   y el segundo se le pega. */
+.activity-export + .activity-clear {
+  margin-left: 0;
+}
+
+.activity-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .activity-center-list {
   flex: 1;
   overflow: auto;

@@ -525,7 +525,18 @@
     "clear_title": "Empty the activity history",
     "new": "New",
     "unseen_errors_one": "1 unseen error",
-    "unseen_errors_many": "{n} unseen errors"
+    "unseen_errors_many": "{n} unseen errors",
+    "copy": "Copy this entry",
+    "copied": "Entry copied",
+    "export": "Export…",
+    "export_title": "Save the entries shown to a file",
+    "export_empty": "There are no entries to export",
+    "export_format_text": "Text",
+    "exported": "Activity history exported",
+    "status_error": "Error",
+    "status_warning": "Warning",
+    "status_ok": "OK",
+    "status_info": "Information"
   },
   "sidebar": {
     "prefs_title": "Preferences",
