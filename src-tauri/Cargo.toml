@@ -204,5 +204,5 @@ rustls = { version = "0.23.42", default-features = false, features = ["ring", "s
 # arrastrar `aws-lc` (toolchain C), Prometheus y proxy-protocol; alinea el
 # proveedor TLS con el `rustls-ring` del cliente. Dev-only: no entra en el binario
 # ni en la cadena de suministro de release.
-libunftp = { version = "0.24.0", default-features = false, features = ["ring"] }
+libunftp = { version = "0.25.0", default-features = false, features = ["ring"] }
 unftp-sbe-fs = "0.4.0"
