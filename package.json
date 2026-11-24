@@ -1,7 +1,7 @@
 {
   "name": "rustty",
   "private": true,
-  "version": "2.29.1",
+  "version": "2.30.0",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
@@ -27,7 +27,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/api": "^2.12.5",
     "@tauri-apps/plugin-clipboard-manager": "^2.5.0",
     "@tauri-apps/plugin-notification": "^2.8.0",
     "@tauri-apps/plugin-process": "^2.4.0",
@@ -40,17 +40,22 @@
     "@xterm/xterm": "^6.0.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.4",
+    "@tauri-apps/cli": "^2.12.6",
     "esbuild": "^0.28.2",
-    "eslint": "^10.14.0",
-    "eslint-plugin-jsdoc": "^65.4.2",
+    "eslint": "^10.15.0",
+    "eslint-plugin-jsdoc": "^65.5.4",
     "globals": "^17.14.0",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5",
-    "vitest": "^5.0.3"
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
   },
   "allowScripts": {
     "esbuild": false,
     "fsevents": false
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.1"
+    }
   }
 }

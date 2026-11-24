@@ -141,3 +141,29 @@ export function pathSegments(path) {
   }
   return out;
 }
+
+/**
+ * Quita las barras repetidas de una ruta remota (`//home//ada/` → `/home/ada/`).
+ * En POSIX `//x` y `/x` son la misma carpeta, pero el panel la enseñaba tal
+ * cual llegaba —de un OSC 7 del shell, de lo que se teclea en la ruta— y el
+ * historial las contaba como dos sitios distintos. No resuelve `.` ni `..`:
+ * con enlaces simbólicos por medio, eso solo lo sabe el servidor.
+ *
+ * @param {string} path
+ * @returns {string}
+ */
+export function collapseSlashes(path) {
+  return String(path ?? "").replace(/\/{2,}/g, "/");
+}
+
+/**
+ * Si entre el segmento `prev` de las migas y el siguiente va separador. Tras la
+ * raíz POSIX no: su rótulo ya es «/», y con el separador detrás la barra
+ * enseñaba «/ / home», que se lee como `//home`.
+ *
+ * @param {{ label: string }|undefined} prev
+ * @returns {boolean}
+ */
+export function crumbSeparatorAfter(prev) {
+  return prev !== undefined && prev.label !== "/";
+}

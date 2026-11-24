@@ -2046,7 +2046,11 @@ impl FtpConnection {
 
     fn mdtm(&mut self, path: &str) -> Result<u64, String> {
         let dt = self.run(|s| on_stream!(s, |ftp| ftp.mdtm(path)))?;
-        Ok(dt.and_utc().timestamp().max(0) as u64)
+        // `MDTM` da la hora en UTC (RFC 3659), sin zona: se fija aquí.
+        let ts = jiff::tz::Offset::UTC
+            .to_timestamp(dt)
+            .map_err(|e| e.to_string())?;
+        Ok(ts.as_second().max(0) as u64)
     }
 
     /// Descarga `remote` en `local`. Con `start > 0` continúa una descarga a

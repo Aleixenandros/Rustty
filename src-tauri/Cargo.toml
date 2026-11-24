@@ -1,6 +1,6 @@
 [package]
 name = "rustty"
-version = "2.29.1"
+version = "2.30.0"
 description = "Rustty - Cliente SSH multiplataforma de escritorio"
 authors = ["Alejandro Soriano"]
 license = "Apache-2.0"
@@ -46,8 +46,11 @@ serde_json = "1"
 # nos permite arrancar un sftp-server elevado con `sudo` sobre un canal exec.
 # feature "des": habilita 3des-cbc para servidores legacy muy antiguos.
 russh = { version = "0.65", features = ["des"] }
-russh-sftp = "3.0"
-suppaftp = { version = "12.1.0", features = ["rustls-ring"] }
+russh-sftp = "4.0"
+suppaftp = { version = "13.0.0", features = ["rustls-ring"] }
+# Fechas de `MDTM` en FTP: desde suppaftp 13 llegan como `jiff::civil::DateTime`
+# (antes `chrono`). Es la misma versión que ya trae suppaftp, sin crate nuevo.
+jiff = { version = "1", default-features = false, features = ["std"] }
 # `rt-multi-thread`: el runtime propio de las conexiones a los saltos
 # (`jump_pool::jump_runtime`), que comparten sesiones de hilos distintos.
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "io-std", "sync", "fs", "macros", "time"] }
@@ -204,5 +207,5 @@ rustls = { version = "0.23.42", default-features = false, features = ["ring", "s
 # arrastrar `aws-lc` (toolchain C), Prometheus y proxy-protocol; alinea el
 # proveedor TLS con el `rustls-ring` del cliente. Dev-only: no entra en el binario
 # ni en la cadena de suministro de release.
-libunftp = { version = "0.24.0", default-features = false, features = ["ring"] }
+libunftp = { version = "0.25.1", default-features = false, features = ["ring"] }
 unftp-sbe-fs = "0.4.0"

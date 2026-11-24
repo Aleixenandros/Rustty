@@ -2,6 +2,23 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.30.0] - 2026-11-24
+
+### Añadido
+
+- Monitor de recursos: las barras de CPU, núcleos, memoria y disco cambian de color según la carga: amarillas desde el 75 % y rojas desde el 90 %, como el espacio libre del panel SFTP. Con el modo para daltónicos llevan además una trama distinta en cada nivel.
+- Monitor de recursos: las cabeceras de la tabla de procesos (PID, usuario, orden, %CPU, %MEM) se quedan arriba al bajar por la lista, y se puede seguir ordenando sin volver al principio.
+
+### Cambiado
+
+- Inicio: con la tarjeta «Anclados» a la vista, las cuatro tarjetas se reparten en dos filas de dos, en vez de dejar «Historial» sola en una segunda fila con dos tercios vacíos.
+- Dependencias puestas al día: Tauri 2.12.7, las bibliotecas de SFTP y FTP en su nueva versión mayor y el resto con sus últimas correcciones compatibles, incluido un aviso de seguridad de una de ellas.
+
+### Corregido
+
+- Panel de archivos: en una carpeta con muchos ficheros (más de 200) ya se puede bajar por la lista. Al pasar de la fila 12, el listado volvía solo arriba y no había forma de llegar a un fichero de más abajo.
+- Panel de archivos: la ruta de arriba ya no empieza por una barra doble («//home/…»). La raíz y el separador salían juntos, y una ruta escrita o recibida del terminal con barras repetidas se guardaba tal cual.
+
 ## [2.29.1] - 2026-11-14
 
 ### Corregido

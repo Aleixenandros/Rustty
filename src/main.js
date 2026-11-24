@@ -36,6 +36,8 @@ import {
   goForward as goForwardPath,
   pathSegments,
   pushPath,
+  collapseSlashes,
+  crumbSeparatorAfter,
 } from "./modules/path-history.js";
 import { formatSize, formatDuration, formatSftpPermissions, formatSftpPermissionsOctal, formatOctalMode, formatSteppedNumber } from "./modules/format.js";
 import { escHtml } from "./modules/html.js";
@@ -144,7 +146,7 @@ import {
 } from "./modules/terminal/osc.js";
 import { opensReadOnly, readOnlyInputDecision, readOnlyKeyAction } from "./modules/terminal/read-only.js";
 import {
-  formatBytesPerSec, formatKib, usagePct, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts,
+  formatBytesPerSec, formatKib, usagePct, usageLevel, summaryDisk, pushHistory, sparklinePath, computeMetricAlerts,
   defaultProcView, procTableRows, nextProcSort, procSortAria,
 } from "./modules/metrics-view.js";
 import { createMetricsPoller } from "./modules/metrics-poller.js";
@@ -16789,7 +16791,7 @@ function metricsBar(pct, label, sub) {
   const p = Math.max(0, Math.min(100, pct));
   return `<div class="metrics-bar-row">
     <div class="metrics-bar-label"><span>${escHtml(label)}</span><span class="metrics-bar-sub">${escHtml(sub)}</span></div>
-    <div class="metrics-bar"><div class="metrics-bar-fill" style="width:${p}%"></div></div>
+    <div class="metrics-bar"><div class="metrics-bar-fill" data-level="${usageLevel(p)}" style="width:${p}%"></div></div>
   </div>`;
 }
 
@@ -16863,7 +16865,7 @@ function renderMetricsPanel(s) {
     ? `<div class="metrics-cores">` + m.cpuCoresPct.map((c, i) => {
         const p = Math.max(0, Math.min(100, Number(c) || 0));
         return `<div class="metrics-core" title="${escHtml(`${t("metrics.core")} ${i}: ${Math.round(p)}%`)}">
-          <div class="metrics-core-track"><div class="metrics-core-fill" style="height:${p}%"></div></div>
+          <div class="metrics-core-track"><div class="metrics-core-fill" data-level="${usageLevel(p)}" style="height:${p}%"></div></div>
         </div>`;
       }).join("") + `</div>`
     : "";
@@ -18163,6 +18165,10 @@ function createTerminalTab(sessionId, profile, initialStatus, opts = {}) {
     if (sessionObj._inCommandOutput) return true;
     let cwd = m[1];
     try { cwd = decodeURIComponent(cwd); } catch { /* ruta no válida como URI: se usa tal cual */ }
+    // Barras repetidas fuera (`cd //srv`): el panel guarda la ruta sin ellas,
+    // y si aquí se quedaran, la comparación de abajo nunca coincidiría y cada
+    // prompt volvería a cargar la carpeta (y a subir el listado arriba).
+    cwd = collapseSlashes(cwd);
     // Windows: `file://host/C:/Users/ana` — la barra inicial es de la URL, no
     // de la ruta. Sin quitarla, la barra de estado enseña `/C:/Users/ana`.
     sessionObj.remoteCwd = /^\/[A-Za-z]:[\\/]/.test(cwd) ? cwd.slice(1) : cwd;
@@ -24189,9 +24195,12 @@ function isCurrentSftpNavigation(s, side, token) {
  * historial: volver Atrás no debe apilar una entrada nueva, o el botón Adelante
  * nunca llegaría a activarse.
  */
-async function navigateSftpRemote(sessionId, path, { record = true } = {}) {
+async function navigateSftpRemote(sessionId, rawPath, { record = true } = {}) {
   const s = sessions.get(sessionId);
   if (!s?.sftp?.sftpSessionId) return;
+  // `//home/ada` (un `cd //` en el shell, una ruta tecleada) es la misma
+  // carpeta que `/home/ada`: se guarda y se enseña de una sola forma.
+  const path = collapseSlashes(rawPath) || "/";
   const panel = s.sftp.panel;
   const filesDiv = panel.querySelector('.sftp-files[data-side="remote"]');
   const nav = beginSftpNavigation(s, "remote");
@@ -24580,12 +24589,14 @@ function setSftpPathDisplay(sessionId, side, path) {
   if (input) input.value = path;
   const nav = panel.querySelector(`.sftp-breadcrumb[data-side="${side}"]`);
   if (!nav) return;
-  nav.innerHTML = pathSegments(path)
+  const segs = pathSegments(path);
+  nav.innerHTML = segs
     .map(
-      (seg) =>
-        `<button type="button" class="sftp-crumb" data-side="${side}" data-path="${escHtml(seg.path)}">${escHtml(seg.label)}</button>`
+      (seg, i) =>
+        (crumbSeparatorAfter(segs[i - 1]) ? '<span class="sftp-crumb-sep" aria-hidden="true">/</span>' : "")
+        + `<button type="button" class="sftp-crumb" data-side="${side}" data-path="${escHtml(seg.path)}">${escHtml(seg.label)}</button>`
     )
-    .join('<span class="sftp-crumb-sep" aria-hidden="true">/</span>');
+    .join("");
 }
 
 /**
@@ -24745,11 +24756,31 @@ function paintSftpRows(sessionId, side, remeasured = false) {
     const linkTip = rows[i].is_symlink ? sftpLinkRowTip(s, side, rows[i].path) : "";
     html.push(sftpRowHtml(rows[i], view.selected.has(rows[i].path), i + 1, rows.length, linkTip));
   }
-  filesDiv.innerHTML =
+  // El contenedor de las filas se conserva entre pintados y solo se cambia lo
+  // de dentro. Sustituir el contenido del propio div con scroll hacía que
+  // WebKitGTK devolviera su `scrollTop` a 0 en cada cambio de tramo: al bajar
+  // por un listado largo, el panel saltaba arriba en cuanto se pasaba de la
+  // fila 12 y no había forma de llegar a un fichero de más abajo.
+  const top = filesDiv.scrollTop;
+  let rowsEl = filesDiv.firstElementChild;
+  if (!rowsEl || !rowsEl.classList.contains("sftp-rows") || filesDiv.childElementCount !== 1) {
     // `role="presentation"`: el contenedor solo existe para sostener los
     // rellenos del scroll; sin él, este div se colaría entre el `listbox` y sus
     // `option` y rompería la relación para el lector de pantalla.
-    `<div class="sftp-rows" role="presentation" style="padding-top:${range.padTop}px;padding-bottom:${range.padBottom}px">${html.join("")}</div>`;
+    filesDiv.innerHTML = `<div class="sftp-rows" role="presentation"></div>`;
+    rowsEl = /** @type {HTMLElement} */ (filesDiv.firstElementChild);
+  }
+  const rowsBox = /** @type {HTMLElement} */ (rowsEl);
+  rowsBox.style.paddingTop = `${range.padTop}px`;
+  rowsBox.style.paddingBottom = `${range.padBottom}px`;
+  // WebKitGTK recorta el scroll en el mismo instante en que se quitan las filas
+  // viejas, antes de que entren las nuevas: con el contenedor a la altura del
+  // listado entero como mínimo, ese hueco no lo encoge y no hay nada que recortar.
+  rowsBox.style.minHeight = virtual ? `${rows.length * rowHeight}px` : "";
+  rowsEl.innerHTML = html.join("");
+  // Red de seguridad: si aun así el motor ha movido el scroll al cambiar las
+  // filas, vuelve a donde lo dejó el usuario.
+  if (filesDiv.scrollTop !== top) filesDiv.scrollTop = top;
 
   // La altura de fila no está fijada en CSS —depende del tema, de la tipografía
   // y del zoom de la interfaz—, así que se mide sobre una fila de verdad en cada

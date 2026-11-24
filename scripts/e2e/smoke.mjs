@@ -91,6 +91,7 @@ import { checkBulkEdit } from "./bulk-edit.mjs";
 import { checkNotesAndText } from "./notes.mjs";
 import { checkActivityCenter } from "./activity.mjs";
 import { checkSftpSpace } from "./sftp-space.mjs";
+import { checkSftpScroll, prepareLongListing } from "./sftp-scroll.mjs";
 import { checkTotpForm } from "./totp-form.mjs";
 import { checkJumpReal } from "./jump-real.mjs";
 
@@ -403,7 +404,8 @@ async function checkSftpPanel(app) {
     plainUp.reason || "",
   );
   await app.invoke("sftp_disconnect", { sessionId });
-  await checkSftpSpace(app, check, profile);
+  const longDir = prepareLongListing(workDir);
+  await checkSftpSpace(app, check, profile, { whileOpen: () => checkSftpScroll(app, check, longDir) });
 }
 
 /** Sección 5: los límites del IPC de ficheros y de los comandos locales. */
@@ -521,6 +523,13 @@ async function main() {
     await app.waitForApp();
     await sleep(2500);
     check("la interfaz monta y enseña el dashboard", true);
+
+    // Atajo para iterar sobre el panel de archivos sin esperar al resto.
+    if (process.env.E2E_ONLY === "sftp") {
+      if (await prepareSftpServer(home)) await checkSftpPanel(app);
+      else check("hay sshd para la sección del panel SFTP", false);
+      return;
+    }
 
     await app.jsClick("#btn-welcome-local");
     await app.waitFor(".xterm-helper-textarea");

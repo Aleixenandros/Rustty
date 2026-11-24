@@ -22,7 +22,7 @@ all-features = true
 yanked = "deny"
 unmaintained = "workspace"
 ignore = [
-  # ── Excepciones activas (revisadas 2026-11-02) ─────────────────────────
+  # ── Excepciones activas (revisadas 2026-11-24) ─────────────────────────
   #
   # Es transitiva y **no tiene arreglo desde nuestro Cargo.toml**: se ha
   # comprobado que forzar otra versión no resuelve (ver el motivo). Las de
@@ -32,6 +32,7 @@ ignore = [
   # —`cargo-deny` no tiene campo de caducidad—: una excepción sin fecha se queda
   # para siempre.
 
+  { id = "RUSTSEC-2026-0543", reason = "`chrono` sin mantenimiento (aviso del 2026-11; no es una vulnerabilidad). Lo usamos directamente para las marcas de tiempo del sync, y además llega por `keepass` y por `libunftp` (solo en tests): quitarlo de nuestro Cargo.toml no lo saca del árbol. `russh-sftp` 4 y `suppaftp` 13 ya migraron (a `jiff`, el 2026-11-24). Cuando `keepass` lo haga, se pasa también nuestro uso a `jiff` y se retira esta excepción. REVISAR ANTES DE 2027-02-24." },
   { id = "RUSTSEC-2023-0071", reason = "Marvin Attack (timing sidechannel en `rsa`). Llega por `russh` → `ssh-key`; el propio aviso dice «No safe upgrade is available» y no hay versión parcheada que forzar. Alcance en Rustty: solo afecta a las claves de cliente RSA al firmar la autenticación; un atacante necesitaría medir con precisión los tiempos de NUESTRAS firmas. Se mitiga usando Ed25519, que es lo que recomienda el asistente de «acceso sin contraseña». REVISAR ANTES DE 2027-02-06; cuando RustCrypto publique la implementación de tiempo constante." },
 ]
 

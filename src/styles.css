@@ -3231,6 +3231,13 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
   font-size: 12px;
 }
 .metrics-proc-table th { padding: 0; font-weight: normal; text-align: left; white-space: nowrap; }
+/* Las cabeceras de orden se quedan arriba al bajar por la lista de procesos. */
+.metrics-proc-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--mantle, var(--base));
+}
 .metrics-proc-sort {
   display: inline-flex;
   align-items: center;
@@ -3287,6 +3294,22 @@ th.is-sorted .metrics-sort-icon { visibility: visible; }
   align-items: flex-end;
 }
 .metrics-core-fill { width: 100%; background: var(--blue); transition: height var(--motion-slow) var(--motion-ease); }
+
+/* Semáforo de uso (`usageLevel`): desde el 75 % amarillo y desde el 90 % rojo,
+   como el espacio libre del panel SFTP. En modo daltónico, además, trama: fina
+   en aviso y gruesa en crítico, para no depender solo del color. */
+.metrics-bar-fill[data-level="warn"],
+.metrics-core-fill[data-level="warn"] { background-color: var(--yellow); }
+.metrics-bar-fill[data-level="crit"],
+.metrics-core-fill[data-level="crit"] { background-color: var(--red); }
+body.color-blind-safe .metrics-bar-fill[data-level="warn"],
+body.color-blind-safe .metrics-core-fill[data-level="warn"] {
+  background-image: repeating-linear-gradient(-45deg, transparent 0 3px, rgba(0, 0, 0, 0.32) 3px 6px);
+}
+body.color-blind-safe .metrics-bar-fill[data-level="crit"],
+body.color-blind-safe .metrics-core-fill[data-level="crit"] {
+  background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(0, 0, 0, 0.38) 4px 8px);
+}
 
 /* Terminar proceso: botón por fila, discreto hasta pasar por encima. */
 .metrics-proc-act { width: 22px; }
@@ -3724,6 +3747,19 @@ th.is-sorted .metrics-sort-icon { visibility: visible; }
     grid-template-columns: 1fr;
   }
   .dashboard-favorites { grid-column: auto; }
+}
+
+/* Con «Anclados» a la vista son cuatro tarjetas: en tres columnas la cuarta
+   («Historial») caía sola a una segunda fila con dos tercios vacíos. Mientras
+   hay sitio para dos columnas, 2×2. Por debajo de 980 px manda la columna
+   única de siempre. */
+@media (min-width: 981px) {
+  .dashboard-grid:has(> #dashboard-pinned-card:not(.hidden)) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .dashboard-grid:has(> #dashboard-pinned-card:not(.hidden)) > .dashboard-favorites {
+    grid-column: auto;
+  }
 }
 
 .dashboard-card {
@@ -8854,6 +8890,8 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
    la barra de scroll siga midiendo el directorio entero. */
 .sftp-rows {
   display: flow-root;
+  /* El mínimo de altura que fija el listado virtualizado incluye los rellenos. */
+  box-sizing: border-box;
 }
 
 .sftp-row.sftp-search-result {

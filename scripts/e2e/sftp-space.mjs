@@ -6,7 +6,7 @@ import { sleep } from "./webdriver.mjs";
 
 const shotDir = process.env.E2E_SHOT_DIR || "";
 
-export async function checkSftpSpace(app, check, profile) {
+export async function checkSftpSpace(app, check, profile, { whileOpen } = {}) {
   const profileId = profile.id;
   const tabs = () => app.exec(
     "return [...document.querySelectorAll('.tab[data-session]')].map((t) => t.dataset.session);",
@@ -86,6 +86,8 @@ export async function checkSftpSpace(app, check, profile) {
       Boolean(state) && !state.hidden && /\d/.test(state.text) && /^\d+(\.\d+)?%$/.test(state.width),
       JSON.stringify(state),
     );
+    // Más comprobaciones con el panel ya abierto (el listado largo).
+    if (whileOpen) await whileOpen();
   } finally {
     for (const sid of (await tabs()).filter((id) => !before.includes(id))) {
       await app.jsClick(`.tab[data-session="${sid}"] .tab-close`);

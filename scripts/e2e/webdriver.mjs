@@ -45,6 +45,8 @@ export async function openSession({ application, driver = "http://127.0.0.1:4444
   const session = {
     /** Ejecuta un script en la página; `arguments[n]` recibe `args`. */
     exec: (script, args = []) => call("POST", `${base}/execute/sync`, { script, args }),
+    /** Como `exec`, pero el script termina llamando a `arguments[arguments.length - 1]`. */
+    execAsync: (script, args = []) => call("POST", `${base}/execute/async`, { script, args }),
     find: async (css) =>
       (await call("POST", `${base}/element`, { using: "css selector", value: css }))[ELEMENT],
     /** Clic desde la página: el nativo no está soportado en WebKitWebDriver. */

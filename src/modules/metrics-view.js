@@ -42,6 +42,26 @@ export function usagePct(used, total) {
   return Math.min(100, Math.max(0, Math.round(pct * 10) / 10));
 }
 
+/** Uso a partir del cual una barra del monitor pasa a aviso (amarillo). */
+export const USAGE_WARN_PCT = 75;
+/** Uso a partir del cual una barra del monitor pasa a crítico (rojo). */
+export const USAGE_CRIT_PCT = 90;
+
+/**
+ * Nivel de una barra de uso del monitor (CPU, núcleo, RAM, disco): el mismo
+ * lenguaje de semáforo que el espacio libre del panel SFTP. Un valor que no es
+ * número cuenta como «ok»: sin dato no hay alarma que dar.
+ * @param {number} pct Uso en 0..100.
+ * @returns {"ok"|"warn"|"crit"}
+ */
+export function usageLevel(pct) {
+  const p = Number(pct);
+  if (!Number.isFinite(p)) return "ok";
+  if (p >= USAGE_CRIT_PCT) return "crit";
+  if (p >= USAGE_WARN_PCT) return "warn";
+  return "ok";
+}
+
 /**
  * Disco a mostrar en la barra compacta: el montado en `/` si existe; si no, el
  * **más lleno** (mayor % de uso). `null` si la lista está vacía.

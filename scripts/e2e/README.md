@@ -146,6 +146,10 @@ capturas en `E2E_ARTIFACT_DIR`, o en una carpeta temporal si no se indica.
 es un error en lugar de omitirla. Los diálogos nativos se detectan y cancelan;
 elegir archivos dentro del selector sigue requiriendo validación manual.
 
+Para iterar sobre el panel de archivos sin esperar al resto, `E2E_ONLY=sftp`
+arranca la app y salta directamente a la sección SFTP (transferencias, espacio
+libre y el listado largo de `sftp-scroll.mjs`): poco más de un minuto.
+
 El workflow **E2E Rustty** se lanza desde GitHub Actions → Run workflow. Ejecuta
 la misma prueba bajo Xvfb/Openbox con SFTP obligatorio y publica logs y capturas
 durante siete días, también cuando falla. Solo tiene permisos de lectura del

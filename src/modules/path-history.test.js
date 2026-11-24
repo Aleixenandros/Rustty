@@ -10,6 +10,8 @@ import {
   goBack,
   goForward,
   pathSegments,
+  collapseSlashes,
+  crumbSeparatorAfter,
   pushPath,
 } from "./path-history.js";
 
@@ -130,5 +132,34 @@ describe("segmentos de la ruta", () => {
       { label: "C:", path: "C:\\" },
       { label: "Users", path: "C:\\Users" },
     ]);
+  });
+});
+
+describe("collapseSlashes", () => {
+  it("deja una sola barra donde había varias", () => {
+    expect(collapseSlashes("//home//ada///docs/")).toBe("/home/ada/docs/");
+    expect(collapseSlashes("//")).toBe("/");
+  });
+  it("no toca una ruta ya limpia ni resuelve puntos", () => {
+    expect(collapseSlashes("/home/ada")).toBe("/home/ada");
+    expect(collapseSlashes("/a/../b/.")).toBe("/a/../b/.");
+    expect(collapseSlashes("C:/Users")).toBe("C:/Users");
+  });
+  it("tolera lo que no es texto", () => {
+    expect(collapseSlashes(undefined)).toBe("");
+  });
+});
+
+describe("crumbSeparatorAfter", () => {
+  it("no pone separador tras la raíz POSIX, que ya es «/»", () => {
+    const segs = pathSegments("/home/ada");
+    expect(crumbSeparatorAfter(segs[0])).toBe(false);
+    expect(crumbSeparatorAfter(segs[1])).toBe(true);
+  });
+  it("sí lo pone tras la unidad de Windows", () => {
+    expect(crumbSeparatorAfter(pathSegments("C:\\Users")[0])).toBe(true);
+  });
+  it("no hay separador antes del primer segmento", () => {
+    expect(crumbSeparatorAfter(undefined)).toBe(false);
   });
 });

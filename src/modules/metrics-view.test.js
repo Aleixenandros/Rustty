@@ -4,6 +4,9 @@ import {
   formatBytesPerSec,
   formatKib,
   usagePct,
+  usageLevel,
+  USAGE_WARN_PCT,
+  USAGE_CRIT_PCT,
   summaryDisk,
   sparklinePath,
   pushHistory,
@@ -239,5 +242,20 @@ describe("procTableRows / nextProcSort / procSortAria", () => {
     for (const key of PROC_SORT_KEYS) {
       expect(nextProcSort({ filter: "", sortKey: "cpu", sortDir: "desc" }, key).sortKey).toBe(key);
     }
+  });
+});
+
+describe("usageLevel", () => {
+  it("verde por debajo del aviso, amarillo desde el 75 % y rojo desde el 90 %", () => {
+    expect(usageLevel(0)).toBe("ok");
+    expect(usageLevel(USAGE_WARN_PCT - 0.1)).toBe("ok");
+    expect(usageLevel(USAGE_WARN_PCT)).toBe("warn");
+    expect(usageLevel(89.9)).toBe("warn");
+    expect(usageLevel(USAGE_CRIT_PCT)).toBe("crit");
+    expect(usageLevel(100)).toBe("crit");
+  });
+  it("sin dato no hay alarma", () => {
+    expect(usageLevel(NaN)).toBe("ok");
+    expect(usageLevel(/** @type {any} */ (undefined))).toBe("ok");
   });
 });
