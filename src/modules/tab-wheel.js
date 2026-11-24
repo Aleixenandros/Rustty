@@ -50,3 +50,19 @@ export function tabWheelAction(ev, ctx) {
   const px = ev.deltaMode === 1 ? dy * TAB_WHEEL_LINE_PX : dy;
   return { type: "scroll", px };
 }
+
+/**
+ * Qué extremos de la tira de pestañas tienen pestañas fuera de la vista, para
+ * fundir ese borde y que se note que hay más. Con 1 px de holgura por el
+ * redondeo subpíxel del scroll (y por `scrollLeft` negativo en RTL, que se
+ * toma en valor absoluto).
+ *
+ * @param {{ scrollLeft: number, scrollWidth: number, clientWidth: number }} box
+ * @returns {{ start: boolean, end: boolean }}
+ */
+export function tabScrollEdges({ scrollLeft, scrollWidth, clientWidth }) {
+  const hidden = scrollWidth - clientWidth;
+  if (!(hidden > 1)) return { start: false, end: false };
+  const left = Math.abs(scrollLeft);
+  return { start: left > 1, end: left < hidden - 1 };
+}

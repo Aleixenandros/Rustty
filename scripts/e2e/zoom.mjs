@@ -55,6 +55,27 @@ export async function zoomDialogs(app, check, { shot } = {}) {
   check("con zoom 140 %, Preferencias cabe entera en la ventana", r.top >= 0 && r.bottom <= r.vh && r.left >= 0 && r.right <= r.vw, JSON.stringify(r));
   if (shot) await shot("zoom-prefs");
   await app.jsClick("#btn-prefs-cancel");
+  await sleep(300);
+  // Los diálogos anchos (papelera, túneles, scripts) también dividen sus topes
+  // en vw/vh por el zoom. Se mide su caja con el overlay a la vista.
+  const wide = await app.exec(`
+    const out = {};
+    for (const [overlay, dialog] of [["trash-modal-overlay", "trash-modal"], ["global-tunnels-overlay", "global-tunnels-modal"], ["scripts-overlay", "scripts-modal"]]) {
+      const o = document.getElementById(overlay);
+      const wasHidden = o.classList.contains("hidden");
+      o.classList.remove("hidden");
+      const r = document.getElementById(dialog).getBoundingClientRect();
+      out[dialog] = { fits: r.left >= -0.5 && r.top >= -0.5 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5, w: Math.round(r.width), h: Math.round(r.height) };
+      if (wasHidden) o.classList.add("hidden");
+    }
+    out.vw = innerWidth; out.vh = innerHeight;
+    return out;
+  `);
+  check(
+    "con zoom 140 %, la papelera, los túneles y los scripts caben en la ventana",
+    wide["trash-modal"].fits && wide["global-tunnels-modal"].fits && wide["scripts-modal"].fits,
+    JSON.stringify(wide),
+  );
   // Volver a zoom 1 de verdad (recargando) para no arrastrarlo al resto.
   await app.exec(`const p = JSON.parse(localStorage.getItem("rustty-prefs") || "{}"); p.uiZoom = 1; localStorage.setItem("rustty-prefs", JSON.stringify(p)); setTimeout(() => location.reload(), 50); return true;`);
   await sleep(2000);

@@ -122,6 +122,46 @@ export function selectionAfterClick(selected, key, toggle) {
 }
 
 /**
+ * Selección resultante de Mayús+clic: el tramo entre la fila de anclaje (la
+ * última pulsada sin Mayús) y la pulsada, ambas incluidas, en el orden en que
+ * se ven. Con `additive` (Ctrl además de Mayús) el tramo se suma a lo que
+ * ya había; sin él, lo sustituye. Sin anclaje válido —primera pulsación, o el
+ * anclaje ya no está en el listado— se comporta como un clic normal.
+ *
+ * @param {Set<string>} selected
+ * @param {string[]} keys Claves del listado visible, en orden.
+ * @param {string|null|undefined} anchor
+ * @param {string} key Clave de la fila pulsada.
+ * @param {boolean} additive
+ * @returns {Set<string>}
+ */
+export function selectionAfterRangeClick(selected, keys, anchor, key, additive) {
+  const to = keys.indexOf(key);
+  const from = anchor == null ? -1 : keys.indexOf(anchor);
+  if (to < 0) return selected;
+  if (from < 0) return selectionAfterClick(selected, key, additive);
+  const next = additive ? new Set(selected) : new Set();
+  const [a, b] = from <= to ? [from, to] : [to, from];
+  for (let i = a; i <= b; i++) next.add(keys[i]);
+  return next;
+}
+
+/**
+ * Qué hace un clic con los modificadores que lleva. Ctrl (Cmd en macOS) suma o
+ * resta una fila y Mayús selecciona un tramo, como en un explorador de
+ * archivos. Alt no es un modificador de selección: un clic con Alt (o AltGr)
+ * no toca la selección (`ignore`).
+ *
+ * @param {{ ctrlKey?: boolean, metaKey?: boolean, altKey?: boolean, shiftKey?: boolean,
+ *   getModifierState?: (key: string) => boolean }} ev
+ * @returns {{ toggle: boolean, range: boolean, ignore: boolean }}
+ */
+export function selectionModifiers(ev) {
+  const ignore = Boolean(ev.altKey) || Boolean(ev.getModifierState?.("AltGraph"));
+  return { toggle: Boolean(ev.ctrlKey || ev.metaKey), range: Boolean(ev.shiftKey), ignore };
+}
+
+/**
  * Selección resultante de una acción que necesita a la fila dentro (menú
  * contextual, arrastre): si ya estaba seleccionada se respeta la selección
  * múltiple; si no, pasa a ser la única.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TAB_WHEEL_LINE_PX, normalizeTabWheel, tabWheelAction } from "./tab-wheel.js";
+import { TAB_WHEEL_LINE_PX, normalizeTabWheel, tabScrollEdges, tabWheelAction } from "./tab-wheel.js";
 
 describe("normalizeTabWheel", () => {
   it("acepta los tres modos y cae a «scroll» con cualquier otra cosa", () => {
@@ -44,5 +44,21 @@ describe("tabWheelAction", () => {
 
   it("en modo «off» no hace nunca nada", () => {
     expect(tabWheelAction({ deltaY: 100 }, { mode: "off", overflowing: true })).toBeNull();
+  });
+});
+
+describe("tabScrollEdges", () => {
+  it("sin desbordar no se funde ningún borde", () => {
+    expect(tabScrollEdges({ scrollLeft: 0, scrollWidth: 500, clientWidth: 500 })).toEqual({ start: false, end: false });
+    expect(tabScrollEdges({ scrollLeft: 0, scrollWidth: 501, clientWidth: 500 })).toEqual({ start: false, end: false });
+  });
+  it("al principio solo queda contenido a la derecha; al final, a la izquierda", () => {
+    expect(tabScrollEdges({ scrollLeft: 0, scrollWidth: 900, clientWidth: 500 })).toEqual({ start: false, end: true });
+    expect(tabScrollEdges({ scrollLeft: 400, scrollWidth: 900, clientWidth: 500 })).toEqual({ start: true, end: false });
+    expect(tabScrollEdges({ scrollLeft: 399.5, scrollWidth: 900, clientWidth: 500 })).toEqual({ start: true, end: false });
+  });
+  it("a mitad de camino, los dos; en RTL el scroll negativo cuenta igual", () => {
+    expect(tabScrollEdges({ scrollLeft: 200, scrollWidth: 900, clientWidth: 500 })).toEqual({ start: true, end: true });
+    expect(tabScrollEdges({ scrollLeft: -200, scrollWidth: 900, clientWidth: 500 })).toEqual({ start: true, end: true });
   });
 });

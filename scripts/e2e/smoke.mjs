@@ -88,10 +88,12 @@ import { checkTerminalProtocols } from "./terminal-protocols.mjs";
 import { checkQuickSelect } from "./quick-select.mjs";
 import { checkJump } from "./jump.mjs";
 import { checkBulkEdit } from "./bulk-edit.mjs";
+import { checkDesign } from "./design.mjs";
 import { checkNotesAndText } from "./notes.mjs";
 import { checkActivityCenter } from "./activity.mjs";
 import { checkSftpSpace } from "./sftp-space.mjs";
 import { checkSftpScroll, prepareLongListing } from "./sftp-scroll.mjs";
+import { checkSftpSelection } from "./sftp-selection.mjs";
 import { checkTotpForm } from "./totp-form.mjs";
 import { checkJumpReal } from "./jump-real.mjs";
 
@@ -405,7 +407,12 @@ async function checkSftpPanel(app) {
   );
   await app.invoke("sftp_disconnect", { sessionId });
   const longDir = prepareLongListing(workDir);
-  await checkSftpSpace(app, check, profile, { whileOpen: () => checkSftpScroll(app, check, longDir) });
+  await checkSftpSpace(app, check, profile, {
+    whileOpen: async () => {
+      await checkSftpScroll(app, check, longDir);
+      await checkSftpSelection(app, check, { dir: longDir });
+    },
+  });
 }
 
 /** Sección 5: los límites del IPC de ficheros y de los comandos locales. */
@@ -597,6 +604,9 @@ async function main() {
     await checkQuickSelect(app, check, workDir);
     await checkJump(app, check, artifactsDir);
     await checkBulkEdit(app, check);
+    await checkDesign(app, check, {
+      shot: artifactsDir ? (name) => app.screenshot(path.join(artifactsDir, `${name}.png`)) : null,
+    });
     await checkNotesAndText(app, check);
     const sshdBin = findSshd();
     if (sshdBin) {

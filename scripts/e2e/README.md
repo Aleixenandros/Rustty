@@ -125,6 +125,23 @@ comprueba que el modal nace con los campos desactivados y el foco dentro; marca
 solo cambió ese campo (y la fecha); después pulsa «Deshacer» en el aviso y
 comprueba que los tres vuelven a estar como antes. Sin conexiones reales.
 
+El pulido visual (`design.mjs`) se mide con estilos computados y geometría en
+el WebView real, después de la edición en lote (necesita conexiones en la barra
+lateral): las ayudas de formulario en gris y los avisos en amarillo, la botonera
+de una conexión que aparece al pasar el puntero sin cambiar el ancho del nombre,
+la línea de la pestaña activa y el filo de la barra de estado con el color de
+un entorno PROD/STAGE, los bordes fundidos de la tira de pestañas cuando
+desborda, los iconos SVG de Idioma, la consola local y el tema elegido, y que
+«Tamaño del texto de la interfaz» llegue a la barra lateral, las pestañas y la
+barra de estado. La sección de zoom comprueba además que la papelera, los
+túneles y los scripts caben en la ventana a 140 %.
+
+En el panel de archivos (`sftp-selection.mjs`), con teclado y ratón de verdad:
+Ctrl+clic suma filas, Alt+clic no toca la selección, Mayús+clic selecciona un
+tramo, Supr pide confirmar el borrado (y cancelar no borra) y el clic derecho
+sobre una descarga abre su menú, cuyo «Mostrar en la carpeta de destino» marca
+lo descargado en el lado local.
+
 En Linux hacen falta `cargo build --locked` en `src-tauri/`, `npm ci`,
 `tauri-driver` 2.1.0, WebKitWebDriver, `wmctrl` y un escritorio con gestor de
 ventanas. `TAURI_DRIVER` permite indicar la ruta del controlador. Con Rustty

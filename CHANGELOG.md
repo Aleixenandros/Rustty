@@ -2,6 +2,29 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.30.1] - 2026-11-25
+
+### Añadido
+
+- Panel de archivos: el clic derecho sobre una transferencia (subida o descarga) abre su menú: pausar, reanudar, reintentar o cancelar según cómo vaya, «Mostrar en la carpeta de destino» (lleva el otro lado del panel a esa carpeta y marca el fichero), «Copiar la ruta de destino», «Quitar de la lista» y «Limpiar completadas». Hasta ahora no hacía nada.
+- Panel de archivos: la tecla Supr (Cmd+Retroceso en macOS) pide confirmar el borrado de lo seleccionado, como «Eliminar» del clic derecho.
+- Panel de archivos: Mayús+clic selecciona todas las filas entre la última pulsada y esta, como en cualquier explorador de archivos. Ctrl+clic sigue sumando o quitando filas sueltas.
+- Pestañas: cuando hay más de las que caben, el borde de la barra por el que quedan pestañas ocultas se difumina, para que se note que hay más.
+- Una sesión de producción tiñe de rojo la línea de su pestaña activa y el filo de la barra de estado (de amarillo si es de preproducción): una señal que se ve sin buscar la insignia antes de escribir una orden.
+
+### Cambiado
+
+- Panel de archivos: Alt+clic ya no selecciona varias filas; un clic con Alt no toca la selección.
+- Las explicaciones bajo los campos de los formularios salen en gris neutro; el amarillo queda para los avisos que piden atención.
+- Barra lateral: al pasar el puntero por una conexión, sus botones aparecen encima del final de la fila y el nombre ya no se recorta de golpe ni salta en cada fila.
+- «Tamaño del texto de la interfaz» agranda también la lista de conexiones, las pestañas, la barra de estado, el panel de archivos, los menús, la navegación de Preferencias y los avisos.
+- Con el zoom de la interfaz alto, la papelera, los túneles, los scripts, el editor de notas y otros diálogos ya no se salen de la ventana. El diálogo de KeePass y varios más usan el mismo fondo y las mismas sombras que el resto, más suaves en los temas claros.
+- Los iconos de Idioma en Preferencias, de la consola local en el inicio y la marca del tema elegido son dibujos en vez de letras, y se ven iguales con cualquier fuente.
+
+### Corregido
+
+- Panel de archivos: la velocidad de las transferencias pequeñas salía sin redondear («54.054054054054056 B/s»).
+
 ## [2.30.0] - 2026-11-24
 
 ### Añadido

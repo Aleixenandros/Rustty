@@ -43,7 +43,11 @@ export async function checkMetricsPanel(app, check, { shot } = {}) {
 
   // Filtro: se escribe, llegan dos muestras y el buscador sigue siendo el
   // mismo elemento, con el foco y lo escrito.
-  const needle = rows[0].cmd.slice(0, 4).toLowerCase();
+  // El filtro sale de un proceso que siga ahí en la muestra siguiente: el más
+  // activo puede ser el propio `ps` con el que se toma la muestra (o un `sh`
+  // de paso), y entonces el filtro se quedaba sin filas y la prueba fallaba.
+  const stable = rows.find((r) => !/^(ps|sh|bash|dash|cat|sleep|top|awk)$/i.test(r.cmd.trim())) || rows[0];
+  const needle = stable.cmd.slice(0, 4).toLowerCase();
   await app.exec(`
     const input = document.querySelector(".metrics-panel .metrics-proc-filter");
     input.__e2e = true;

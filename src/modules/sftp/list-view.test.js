@@ -4,6 +4,8 @@ import {
   filterEntries,
   selectionAfterClick,
   selectionForRowAction,
+  selectionAfterRangeClick,
+  selectionModifiers,
   pruneSelection,
   OVERSCAN,
   VIRTUAL_THRESHOLD,
@@ -128,5 +130,38 @@ describe("selección", () => {
   it("la poda deja fuera lo que ya no está en el listado", () => {
     expect([...pruneSelection(new Set(["a", "b", "c"]), ["b", "c", "d"])]).toEqual(["b", "c"]);
     expect([...pruneSelection(new Set(["a"]), new Set())]).toEqual([]);
+  });
+});
+
+describe("selectionAfterRangeClick", () => {
+  const keys = ["a", "b", "c", "d", "e"];
+  it("selecciona el tramo entre el anclaje y la fila pulsada, en cualquier sentido", () => {
+    expect([...selectionAfterRangeClick(new Set(["b"]), keys, "b", "d", false)]).toEqual(["b", "c", "d"]);
+    expect([...selectionAfterRangeClick(new Set(["d"]), keys, "d", "a", false)]).toEqual(["a", "b", "c", "d"]);
+  });
+  it("sin modificador sustituye lo que había; con él, lo suma", () => {
+    expect([...selectionAfterRangeClick(new Set(["e"]), keys, "a", "b", false)]).toEqual(["a", "b"]);
+    expect([...selectionAfterRangeClick(new Set(["e"]), keys, "a", "b", true)].sort()).toEqual(["a", "b", "e"]);
+  });
+  it("sin anclaje (o si ya no está) es un clic normal", () => {
+    expect([...selectionAfterRangeClick(new Set(["e"]), keys, null, "c", false)]).toEqual(["c"]);
+    expect([...selectionAfterRangeClick(new Set(["e"]), keys, "zz", "c", true)].sort()).toEqual(["c", "e"]);
+  });
+  it("una fila que no está en el listado no cambia nada", () => {
+    const sel = new Set(["a"]);
+    expect(selectionAfterRangeClick(sel, keys, "a", "zz", false)).toBe(sel);
+  });
+});
+
+describe("selectionModifiers", () => {
+  it("Ctrl y Cmd suman o restan; Mayús hace tramo", () => {
+    expect(selectionModifiers({ ctrlKey: true })).toEqual({ toggle: true, range: false, ignore: false });
+    expect(selectionModifiers({ metaKey: true })).toEqual({ toggle: true, range: false, ignore: false });
+    expect(selectionModifiers({ shiftKey: true })).toEqual({ toggle: false, range: true, ignore: false });
+    expect(selectionModifiers({})).toEqual({ toggle: false, range: false, ignore: false });
+  });
+  it("Alt y AltGr no seleccionan: el clic se ignora", () => {
+    expect(selectionModifiers({ altKey: true })).toEqual({ toggle: false, range: false, ignore: true });
+    expect(selectionModifiers({ getModifierState: (k) => k === "AltGraph" }).ignore).toBe(true);
   });
 });

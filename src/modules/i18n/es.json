@@ -2446,7 +2446,13 @@
     "link_open_folder": "Abrir su carpeta",
     "link_broken": "El destino del enlace no existe o no se puede leer: {target}",
     "link_unsupported": "Este servidor no permite leer el destino de los enlaces",
-    "link_read_failed": "No se pudo leer el destino de {name}: {err}"
+    "link_read_failed": "No se pudo leer el destino de {name}: {err}",
+    "transfer_menu_label": "Acciones de la transferencia",
+    "transfer_reveal": "Mostrar en la carpeta de destino",
+    "transfer_copy_path": "Copiar la ruta de destino",
+    "transfer_cancel": "Cancelar",
+    "transfer_remove": "Quitar de la lista",
+    "transfer_path_copied": "Ruta copiada"
   },
   "sftp_nav": {
     "back": "Atrás",

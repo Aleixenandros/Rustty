@@ -2446,7 +2446,13 @@
     "link_open_folder": "Buka foldernya",
     "link_broken": "Tujuan tautan tidak ada atau tidak dapat dibaca: {target}",
     "link_unsupported": "Server ini tidak dapat membaca tujuan tautan",
-    "link_read_failed": "Tidak dapat membaca tujuan {name}: {err}"
+    "link_read_failed": "Tidak dapat membaca tujuan {name}: {err}",
+    "transfer_menu_label": "Tindakan transfer",
+    "transfer_reveal": "Tampilkan di folder tujuan",
+    "transfer_copy_path": "Salin jalur tujuan",
+    "transfer_cancel": "Batal",
+    "transfer_remove": "Hapus dari daftar",
+    "transfer_path_copied": "Jalur disalin"
   },
   "sftp_nav": {
     "back": "Kembali",

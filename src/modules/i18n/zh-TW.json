@@ -2446,7 +2446,13 @@
     "link_open_folder": "開啟其所在資料夾",
     "link_broken": "連結目標不存在或無法讀取：{target}",
     "link_unsupported": "此伺服器無法讀取連結目標",
-    "link_read_failed": "無法讀取 {name} 的目標：{err}"
+    "link_read_failed": "無法讀取 {name} 的目標：{err}",
+    "transfer_menu_label": "傳輸動作",
+    "transfer_reveal": "在目的資料夾中顯示",
+    "transfer_copy_path": "複製目的路徑",
+    "transfer_cancel": "取消",
+    "transfer_remove": "從清單移除",
+    "transfer_path_copied": "已複製路徑"
   },
   "sftp_nav": {
     "back": "上一頁",

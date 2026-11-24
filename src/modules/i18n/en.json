@@ -2446,7 +2446,13 @@
     "link_open_folder": "Open its folder",
     "link_broken": "The link target does not exist or cannot be read: {target}",
     "link_unsupported": "This server cannot read link targets",
-    "link_read_failed": "Couldn't read the target of {name}: {err}"
+    "link_read_failed": "Couldn't read the target of {name}: {err}",
+    "transfer_menu_label": "Transfer actions",
+    "transfer_reveal": "Show in destination folder",
+    "transfer_copy_path": "Copy destination path",
+    "transfer_cancel": "Cancel",
+    "transfer_remove": "Remove from list",
+    "transfer_path_copied": "Path copied"
   },
   "sftp_nav": {
     "back": "Back",

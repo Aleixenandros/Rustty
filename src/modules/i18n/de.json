@@ -2446,7 +2446,13 @@
     "link_open_folder": "Deren Ordner öffnen",
     "link_broken": "Das Ziel des Links existiert nicht oder ist nicht lesbar: {target}",
     "link_unsupported": "Dieser Server kann das Ziel von Links nicht auslesen",
-    "link_read_failed": "Das Ziel von {name} konnte nicht gelesen werden: {err}"
+    "link_read_failed": "Das Ziel von {name} konnte nicht gelesen werden: {err}",
+    "transfer_menu_label": "Aktionen der Übertragung",
+    "transfer_reveal": "Im Zielordner anzeigen",
+    "transfer_copy_path": "Zielpfad kopieren",
+    "transfer_cancel": "Abbrechen",
+    "transfer_remove": "Aus der Liste entfernen",
+    "transfer_path_copied": "Pfad kopiert"
   },
   "sftp_nav": {
     "back": "Zurück",

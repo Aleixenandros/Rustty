@@ -10,6 +10,10 @@ import {
 } from "./format.js";
 
 describe("formatSize", () => {
+  it("redondea los bytes sueltos (una velocidad no es entera)", () => {
+    expect(formatSize(54.054054054054056)).toBe("54 B");
+    expect(formatSize(1023.6)).toBe("1.0 KB");
+  });
   it("muestra bytes sin unidad de escala por debajo de 1 KiB", () => {
     expect(formatSize(0)).toBe("0 B");
     expect(formatSize(512)).toBe("512 B");

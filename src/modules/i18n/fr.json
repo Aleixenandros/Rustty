@@ -2446,7 +2446,13 @@
     "link_open_folder": "Ouvrir son dossier",
     "link_broken": "La cible du lien n'existe pas ou est illisible : {target}",
     "link_unsupported": "Ce serveur ne permet pas de lire la cible des liens",
-    "link_read_failed": "Impossible de lire la cible de {name} : {err}"
+    "link_read_failed": "Impossible de lire la cible de {name} : {err}",
+    "transfer_menu_label": "Actions du transfert",
+    "transfer_reveal": "Afficher dans le dossier de destination",
+    "transfer_copy_path": "Copier le chemin de destination",
+    "transfer_cancel": "Annuler",
+    "transfer_remove": "Retirer de la liste",
+    "transfer_path_copied": "Chemin copié"
   },
   "sftp_nav": {
     "back": "Précédent",

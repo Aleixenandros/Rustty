@@ -15,7 +15,9 @@
  * @returns {string}
  */
 export function formatSize(bytes) {
-  if (bytes < 1024) return bytes + " B";
+  // Por debajo de 1 KB, en bytes enteros: una velocidad (bytes / segundos)
+  // casi nunca lo es, y salía «54.054054054054056 B/s».
+  if (Math.round(bytes) < 1024) return Math.round(bytes) + " B";
   const units = ["KB", "MB", "GB", "TB"];
   let v = bytes / 1024,
     u = 0;

@@ -45,6 +45,8 @@ import {
   visibleRange as sftpVisibleRange,
   filterEntries as filterSftpEntries,
   selectionAfterClick as sftpSelectionAfterClick,
+  selectionAfterRangeClick as sftpSelectionAfterRangeClick,
+  selectionModifiers as sftpSelectionModifiers,
   selectionForRowAction as sftpSelectionForRowAction,
   pruneSelection as pruneSftpSelection,
   VIRTUAL_THRESHOLD as SFTP_VIRTUAL_THRESHOLD,
@@ -103,7 +105,7 @@ import { undoRedoCommand } from "./modules/shortcuts/undo-keys.js";
 import { buildCheatsheet, filterCheatsheet } from "./modules/shortcuts/cheatsheet.js";
 import { formatAccelerator } from "./modules/platform.js";
 import { QUICK_DEFAULT_USER, buildQuickProfile, findQuickTargetProfile, formatQuickTarget, paletteQuickTarget, parseQuickTarget } from "./modules/quick-connect.js";
-import { normalizeTabWheel, tabWheelAction } from "./modules/tab-wheel.js";
+import { normalizeTabWheel, tabScrollEdges, tabWheelAction } from "./modules/tab-wheel.js";
 import { normalizeTabButtons } from "./modules/tab-buttons.js";
 import { firstBlockPerAlias, linkSshConfigJumps, sshConfigJumpFields } from "./modules/ssh-config-jumps.js";
 import {
@@ -8306,7 +8308,7 @@ function hideContextMenu() {
 // anillo de foco solo se ve si la apertura fue por teclado, por la heurística de
 // `:focus-visible`); las flechas / Inicio / Fin recorren los ítems visibles; y
 // Tab o Escape cierran devolviendo el foco al elemento que abrió el menú.
-const FLOATING_MENU_IDS = ["context-menu", "tab-context-menu", "sftp-context-menu", "route-menu", "text-context-menu"];
+const FLOATING_MENU_IDS = ["context-menu", "tab-context-menu", "sftp-context-menu", "sftp-transfer-menu", "route-menu", "text-context-menu"];
 let menuReturnFocus = null;
 /**
  * Cuándo se cerró por última vez un menú visible. Un diálogo que se abre con
@@ -8486,6 +8488,7 @@ function closeFloatingMenus({ restoreFocus = false } = {}) {
   hideContextMenu();
   hideTabContextMenu();
   hideSftpContextMenu();
+  hideSftpTransferMenu();
   hideRouteMenu();
   hideTextContextMenu();
   if (restoreFocus && wasOpen && menuReturnFocus && document.contains(menuReturnFocus)) {
@@ -17689,6 +17692,20 @@ function updateTabOverflowButton() {
   if (!overflowing && !document.getElementById("tab-overflow-popover")?.classList.contains("hidden")) {
     toggleTabOverflow(false);
   }
+  updateTabScrollEdges();
+}
+
+/**
+ * Funde el borde de la tira de pestañas por el que quedan pestañas fuera de la
+ * vista (`.fade-start` / `.fade-end`), para que se note que hay más sin tener
+ * que buscar el botón ⋯. Se repasa al desplazar la tira y al cambiar su ancho.
+ */
+function updateTabScrollEdges() {
+  const bar = document.getElementById("tab-scroll");
+  if (!bar) return;
+  const { start, end } = tabScrollEdges(bar);
+  bar.classList.toggle("fade-start", start);
+  bar.classList.toggle("fade-end", end);
 }
 
 /** Etiqueta de estado (dot) para una sesión, reutilizando las clases de .tab-dot. */
@@ -24083,12 +24100,14 @@ function buildSftpPanel(sessionId) {
   updatePauseAllButtons();
 
   panel.querySelector(".sftp-transfers-clear").addEventListener("click", () => {
-    panel.querySelectorAll(".sftp-transfer.done, .sftp-transfer.canceled").forEach((el) => {
-      const transferId = el.dataset.transfer;
-      sessions.get(sessionId)?.sftp?.transfers?.delete(transferId);
-      el.remove();
-    });
-    updateTransfersVisibility(panel);
+    clearFinishedSftpTransfers(panel, sessionId);
+  });
+  // Clic derecho sobre una transferencia: sus acciones, más ir a lo transferido.
+  panel.querySelector(".sftp-transfers")?.addEventListener("contextmenu", (e) => {
+    const el = e.target.closest?.(".sftp-transfer");
+    if (!el) return;
+    e.preventDefault();
+    showSftpTransferMenu(e.clientX, e.clientY, sessionId, el);
   });
   panel.querySelector(".sftp-activity-clear").addEventListener("click", () => {
     panel.querySelector(".sftp-activity-log").innerHTML = "";
@@ -24637,6 +24656,7 @@ function sftpView(s, side) {
       rowHeight: 0,   // altura real de fila, medida al primer pintado
       virtual: false, // si el listado se pinta por tramos
       range: null,    // último tramo pintado
+      anchor: null,   // última fila pulsada sin Mayús: inicio del tramo de Mayús+clic
       rafId: 0,
     };
   }
@@ -24871,10 +24891,19 @@ function ensureSftpRowDelegation(filesDiv, sessionId, side) {
     const s = sessions.get(sessionId);
     if (!s?.sftp) return;
     const view = sftpView(s, side);
-    // Alt cuenta como modificador de multi-selección: en entornos como GNOME el
-    // gestor de ventanas se queda con Ctrl+clic sobre algunas zonas.
-    const toggle = ev.ctrlKey || ev.metaKey || ev.altKey;
-    setSftpSelection(sessionId, side, sftpSelectionAfterClick(view.selected, row.dataset.path, toggle));
+    // Ctrl (Cmd) suma o resta la fila y Mayús selecciona el tramo desde la
+    // última fila pulsada sin ella. Alt no es modificador de selección.
+    const { toggle, range, ignore } = sftpSelectionModifiers(ev);
+    if (ignore) return;
+    const key = row.dataset.path;
+    if (range) {
+      setSftpSelection(sessionId, side, sftpSelectionAfterRangeClick(
+        view.selected, view.rows.map((e) => e.path), view.anchor, key, toggle,
+      ));
+      return;
+    }
+    view.anchor = key;
+    setSftpSelection(sessionId, side, sftpSelectionAfterClick(view.selected, key, toggle));
   });
 
   filesDiv.addEventListener("dblclick", async (ev) => {
@@ -25904,6 +25933,8 @@ function enqueueSftpTransfers(sessionId, direction, rows) {
     // El sentido lo pinta el icono de `data-direction` (sprite), no un emoji.
     const transferEl = addTransfer(s.sftp.panel, row.name, transferId);
     transferEl.dataset.direction = direction;
+    transferEl.dataset.targetDir = targetDir || "";
+    transferEl.dataset.targetName = row.name;
     setTransferPhase(transferEl, "queued", "queued");
     const job = {
       id: transferId,
@@ -26244,6 +26275,8 @@ async function transferOne(sessionId, direction, srcPath, name, isDir, conflictS
       const targetName = attempt.name;
       label = transferLabel(name, targetName);
       transferEl.dataset.label = label;
+      transferEl.dataset.targetDir = target.dir;
+      transferEl.dataset.targetName = targetName;
       transferEl.querySelector(".sftp-transfer-label").textContent = label;
       resultStatus = attempt.renamed ? "renamed" : (attempt.overwrite ? "overwritten" : "ok");
       const invokeArgs = {
@@ -26808,6 +26841,126 @@ function addTransfer(panel, label, transferId, detail = "") {
   });
   panel.querySelector(".sftp-transfers").appendChild(el);
   return el;
+}
+
+/** Quita del listado las transferencias ya terminadas (bien, mal o canceladas). */
+function clearFinishedSftpTransfers(panel, sessionId) {
+  panel.querySelectorAll(".sftp-transfer.done, .sftp-transfer.canceled").forEach((el) => {
+    const transferId = el.dataset.transfer;
+    sessions.get(sessionId)?.sftp?.transfers?.delete(transferId);
+    el.remove();
+  });
+  updateTransfersVisibility(panel);
+}
+
+/** Transferencia sobre la que se abrió el menú contextual. */
+let sftpTransferCtxTarget = null;
+
+/**
+ * Menú contextual de una transferencia. Las acciones de estado (pausar,
+ * reanudar, reintentar, cancelar o quitar) son las de los botones de la fila y
+ * salen solo cuando la fila enseña ese botón: el menú no decide nada que la
+ * fila no decida ya.
+ */
+function showSftpTransferMenu(x, y, sessionId, el) {
+  const menu = document.getElementById("sftp-transfer-menu");
+  if (!menu) return;
+  closeFloatingMenus();
+  sftpTransferCtxTarget = { sessionId, transferId: el.dataset.transfer };
+  const s = sessions.get(sessionId);
+  const job = s?.sftp?.transfers?.get(el.dataset.transfer);
+  const shown = (cls) => {
+    const btn = el.querySelector(cls);
+    return !!btn && !btn.classList.contains("hidden");
+  };
+  const live = job?.status === "queued" || job?.status === "running" || job?.status === "paused";
+  const hasTarget = !!el.dataset.targetDir;
+  const toggle = (action, visible) => {
+    menu.querySelector(`[data-xferctx="${action}"]`)?.classList.toggle("hidden", !visible);
+  };
+  toggle("pause", shown(".sftp-transfer-pause"));
+  toggle("resume", shown(".sftp-transfer-resume"));
+  toggle("retry", shown(".sftp-transfer-retry"));
+  toggle("reveal", hasTarget);
+  toggle("copy-path", hasTarget);
+  toggle("cancel", live);
+  toggle("remove", !live);
+  const anyFinished = !!s?.sftp?.panel?.querySelector(".sftp-transfer.done, .sftp-transfer.canceled");
+  toggle("clear-done", anyFinished);
+  positionFloatingMenu(menu, x, y);
+  onFloatingMenuOpened(menu);
+}
+
+function hideSftpTransferMenu() {
+  noteFloatingMenuHidden("sftp-transfer-menu");
+  document.getElementById("sftp-transfer-menu")?.classList.add("hidden");
+  sftpTransferCtxTarget = null;
+}
+
+async function handleSftpTransferMenuAction(action) {
+  const target = sftpTransferCtxTarget;
+  hideSftpTransferMenu();
+  if (!target) return;
+  const { sessionId, transferId } = target;
+  const s = sessions.get(sessionId);
+  const panel = s?.sftp?.panel;
+  if (!panel) return;
+  const el = [...panel.querySelectorAll(".sftp-transfer")].find((r) => r.dataset.transfer === transferId);
+  if (action === "clear-done") {
+    clearFinishedSftpTransfers(panel, sessionId);
+    return;
+  }
+  if (!el) return;
+  const press = (cls) => /** @type {HTMLElement|null} */ (el.querySelector(cls))?.click();
+  switch (action) {
+    case "pause": press(".sftp-transfer-pause"); break;
+    case "resume": press(".sftp-transfer-resume"); break;
+    case "retry": press(".sftp-transfer-retry"); break;
+    // El botón ✕ de la fila cancela lo que está en marcha o en cola y quita lo
+    // terminado: las dos opciones del menú son ese mismo botón.
+    case "cancel":
+    case "remove": press(".sftp-transfer-close"); break;
+    case "reveal": await revealSftpTransferTarget(sessionId, el); break;
+    case "copy-path": {
+      const path = sftpTransferTargetPath(el);
+      if (!path) return;
+      try {
+        await writeClipboardText(path);
+        toast(t("sftp.transfer_path_copied"), "success", 2500);
+      } catch (err) {
+        toast(t("sftp.op_failed", { err }), "error");
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * Ruta del destino de una transferencia, tal como se enseña. En local se une
+ * con el separador de la carpeta (Windows usa `\`).
+ */
+function sftpTransferTargetPath(el) {
+  const dir = el.dataset.targetDir || "";
+  const name = el.dataset.targetName || "";
+  if (!dir || !name) return dir;
+  if (el.dataset.direction === "upload") return joinRemote(dir, name);
+  const sep = dir.includes("\\") ? "\\" : "/";
+  return dir.endsWith(sep) ? `${dir}${name}` : `${dir}${sep}${name}`;
+}
+
+/** Lleva el lado de destino del panel a la carpeta de la transferencia y marca lo transferido. */
+async function revealSftpTransferTarget(sessionId, el) {
+  const dir = el.dataset.targetDir;
+  if (!dir) return;
+  const side = el.dataset.direction === "upload" ? "remote" : "local";
+  const s = sessions.get(sessionId);
+  if (!s?.sftp) return;
+  const current = side === "remote" ? s.sftp.cwd : s.sftp.localCwd;
+  if (current !== dir) {
+    if (side === "remote") await navigateSftpRemote(sessionId, dir);
+    else await navigateSftpLocal(sessionId, dir);
+  }
+  if (el.dataset.targetName) revealSftpEntry(sessionId, side, el.dataset.targetName);
 }
 
 /**
@@ -29672,6 +29825,10 @@ function bindUIEvents() {
   // Rueda del ratón sobre la tira de pestañas: desplazarla (o cambiar de
   // pestaña, según la preferencia). Ctrl+rueda sigue siendo el zoom.
   const tabScroll = document.getElementById("tab-scroll");
+  tabScroll?.addEventListener("scroll", updateTabScrollEdges, { passive: true });
+  if (tabScroll && typeof ResizeObserver === "function") {
+    new ResizeObserver(() => updateTabOverflowButton()).observe(tabScroll);
+  }
   tabScroll?.addEventListener("wheel", (e) => {
     const action = tabWheelAction(e, {
       mode: prefs.tabWheel,
@@ -29711,6 +29868,12 @@ function bindUIEvents() {
     handleSftpContextMenuAction(btn.dataset.sftpctx);
   });
 
+  document.getElementById("sftp-transfer-menu")?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-xferctx]");
+    if (!btn || btn.disabled) return;
+    handleSftpTransferMenuAction(btn.dataset.xferctx);
+  });
+
   // Cerrar los menús contextuales al hacer clic fuera de ellos
   document.addEventListener("click", (e) => {
     const menu = document.getElementById("context-menu");
@@ -29724,6 +29887,10 @@ function bindUIEvents() {
     const sftpMenu = document.getElementById("sftp-context-menu");
     if (sftpMenu && !sftpMenu.classList.contains("hidden") && !sftpMenu.contains(e.target)) {
       hideSftpContextMenu();
+    }
+    const xferMenu = document.getElementById("sftp-transfer-menu");
+    if (xferMenu && !xferMenu.classList.contains("hidden") && !xferMenu.contains(e.target)) {
+      hideSftpTransferMenu();
     }
     const routeMenu = document.getElementById("route-menu");
     if (routeMenu && !routeMenu.classList.contains("hidden") && !routeMenu.contains(e.target)
@@ -31594,6 +31761,28 @@ function handleRenameHotkey(e) {
   return false;
 }
 
+// Supr: borra lo seleccionado en el lado del panel de archivos que tiene el
+// foco, con la misma confirmación que «Eliminar» del clic derecho. En un Mac,
+// cuyos portátiles no tienen tecla Supr, también Cmd+Retroceso (como el Finder).
+// Devuelve true si consumió el evento; dentro de un campo de texto no actúa.
+function handleSftpDeleteHotkey(e) {
+  const plainDelete = e.key === "Delete" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
+  const macDelete = e.key === "Backspace" && e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+  if (!plainDelete && !macDelete) return false;
+  const active = document.activeElement;
+  if (active?.closest?.("input, textarea, [contenteditable=\"true\"]")) return false;
+  const filesDiv = active?.closest?.(".sftp-files");
+  if (!filesDiv) return false;
+  const sessionId = filesDiv.closest("[data-session]")?.dataset?.session;
+  const side = filesDiv.dataset.side;
+  if (!sessionId || !side) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  const rows = selectedSftpContextRows(sessionId, side);
+  if (rows.length) confirmDeleteRows(sessionId, side, rows);
+  return true;
+}
+
 function handleGlobalShortcut(e) {
   if (shortcuts.capture(e)) return;
   // Con un diálogo modal abierto, los atajos no actúan sobre lo que queda
@@ -31601,6 +31790,7 @@ function handleGlobalShortcut(e) {
   // contraseña): solo pasa la lista blanca de `modules/dialogs/stack.js`.
   const modalOpen = dialogs.hasModal();
   if (!modalOpen && handleRenameHotkey(e)) return;
+  if (!modalOpen && handleSftpDeleteHotkey(e)) return;
   // Con un modal abierto solo pasan los atajos seguros; además, el de la
   // chuleta la cierra cuando es ella la que está arriba (sin esto la abría y
   // no la volvía a cerrar).
