@@ -135,6 +135,20 @@
             </svg>
           </span>
           <span id="sidebar-context-label" class="ctx-label" translate="no">Default</span>
+          <!-- Fuera del workspace actual (todos / favoritos): volver en un clic -->
+          <button type="button" id="btn-sidebar-view-reset" class="sidebar-ctx-btn hidden" data-i18n-title="sidebar.view_reset_title" title="Volver al workspace actual" aria-label="Volver al workspace actual" data-i18n-aria-label="sidebar.view_reset_title"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+          <!-- Búsqueda activa con el popover cerrado: qué filtra y cómo quitarlo -->
+          <span id="sidebar-filter-chip" class="sidebar-filter-chip hidden">
+            <button type="button" id="btn-sidebar-filter-edit" class="sidebar-filter-edit">
+              <svg viewBox="0 0 18 18" width="11" height="11" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8" cy="8" r="5"></circle>
+                <line x1="12" y1="12" x2="15" y2="15"></line>
+              </svg>
+              <span id="sidebar-filter-text" class="sidebar-filter-text" translate="no"></span>
+              <span id="sidebar-filter-count" class="sidebar-filter-count" aria-hidden="true"></span>
+            </button>
+            <button type="button" id="btn-sidebar-filter-clear" class="sidebar-ctx-btn" data-i18n-title="sidebar.filter_clear" title="Quitar el filtro" aria-label="Quitar el filtro" data-i18n-aria-label="sidebar.filter_clear"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
+          </span>
         </div>
 
         <!-- Popover compacto con switcher, buscador y modo de vista -->
@@ -148,6 +162,10 @@
           <button id="btn-sidebar-compact" class="tools-density-btn" type="button" data-i18n-title="sidebar.compact_title" title="Mostrar lista compacta" aria-pressed="false">
             <span class="tools-density-icon"><svg class="ctx-icon-svg" aria-hidden="true"><use href="#ci-rows"/></svg></span>
             <span data-i18n="sidebar.compact_view">Vista compacta</span>
+          </button>
+          <button id="btn-sidebar-tree-guides" class="tools-density-btn" type="button" data-i18n-title="sidebar.tree_guides_title" title="Dibujar una línea bajo cada carpeta abierta para seguir los niveles" aria-pressed="true">
+            <span class="tools-density-icon"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5v11"/><path d="M4 6h4.5M4 10.5h4.5"/><path d="M10.5 6h3M10.5 10.5h3"/></svg></span>
+            <span data-i18n="sidebar.tree_guides">Guías de nivel</span>
           </button>
 
           <div class="tools-section-title" data-i18n="sidebar.tools_sort">Orden</div>
@@ -2506,6 +2524,13 @@
       <div id="modal-prefs" role="dialog" aria-modal="true" aria-labelledby="modal-prefs-title">
         <div class="modal-header">
           <h2 id="modal-prefs-title" data-i18n="modal_prefs.title">Preferencias</h2>
+          <div class="prefs-search" role="search">
+            <svg class="prefs-search-icon" viewBox="0 0 18 18" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="8" cy="8" r="5"></circle>
+              <line x1="12" y1="12" x2="15" y2="15"></line>
+            </svg>
+            <input type="search" id="prefs-search" autocomplete="off" spellcheck="false" placeholder="Buscar ajustes…" data-i18n-placeholder="modal_prefs.search_placeholder" aria-label="Buscar en las preferencias" data-i18n-aria-label="modal_prefs.search_label" aria-describedby="prefs-search-status" />
+          </div>
           <button class="btn-icon" id="btn-prefs-close" data-i18n-aria-label="modal_prefs.close" aria-label="Cerrar"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-x"/></svg></button>
         </div>
 
@@ -2549,7 +2574,7 @@
               <span class="prefs-nav-label" data-i18n="prefs_commands.tab">Comandos</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="shortcuts">
-              <span class="prefs-nav-icon">⌘</span>
+              <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/></svg></span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_shortcuts">Atajos</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="data">
@@ -2565,12 +2590,14 @@
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_monitor">Monitor</span>
             </button>
             <button type="button" class="prefs-nav-item" role="tab" data-prefs-tab="about">
-              <span class="prefs-nav-icon">ⓘ</span>
+              <span class="prefs-nav-icon"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.5h.01"/></svg></span>
               <span class="prefs-nav-label" data-i18n="modal_prefs.tab_about">Acerca de</span>
             </button>
           </nav>
 
           <div class="prefs-content">
+            <p id="prefs-search-empty" class="prefs-search-empty hidden"></p>
+            <p id="prefs-search-status" class="sr-only" aria-live="polite"></p>
 
             <!-- ── Terminal ── -->
             <section class="prefs-panel active" role="tabpanel" data-prefs-panel="terminal">
@@ -2748,11 +2775,12 @@
                 <label for="pref-tab-buttons" data-i18n="prefs_terminal.tab_buttons">Botones de la pestaña</label>
                 <select id="pref-tab-buttons">
                   <option value="always" data-i18n="prefs_terminal.tab_buttons_always">Siempre</option>
+                  <option value="hover" data-i18n="prefs_terminal.tab_buttons_hover">En la activa y al pasar el ratón</option>
                   <option value="active" data-i18n="prefs_terminal.tab_buttons_active">Solo en la activa</option>
                   <option value="never" data-i18n="prefs_terminal.tab_buttons_never">Nunca</option>
                 </select>
               </div>
-              <p class="settings-hint" data-i18n="prefs_terminal.tab_buttons_hint">Los accesos al panel SFTP, a los túneles y a la nota de cada pestaña. Ocultos, siguen en el menú del clic derecho sobre la pestaña y en sus atajos. Las pestañas ancladas los muestran solo en la activa o al pasar el ratón.</p>
+              <p class="settings-hint" data-i18n="prefs_terminal.tab_buttons_hint">Los accesos al panel SFTP, a los túneles y a la nota de cada pestaña. Ocultos, siguen en el menú del clic derecho sobre la pestaña y en sus atajos. Las pestañas ancladas los muestran solo en la activa o al pasar el ratón. El de un panel abierto, o el de túneles si hay alguno activo, se pinta en azul y, salvo con «Solo en la activa» o «Nunca», se queda a la vista también en las pestañas de fondo.</p>
 
               <div class="settings-row">
                 <label for="pref-local-cwd" data-i18n="prefs_terminal.local_cwd">Carpeta inicial de la consola local</label>

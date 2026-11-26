@@ -13,6 +13,8 @@ En SSH, el panel reutiliza los datos de conexión del perfil —incluidos el **B
 
 El panel tiene una **cabecera superior común** a ambos lados con el botón de cerrar (✕), separado de las acciones de cada columna para no confundirlo con un botón de eliminar.
 
+Entre las dos columnas está el **divisor**, con los botones de bajar y subir lo seleccionado. Arrástralo para dar más ancho a un lado (entre el 20 % y el 80 %); con **doble clic** vuelve a la mitad. Con el teclado, sitúate en él y usa ← / → (de 5 en 5 %), Inicio / Fin (los extremos) o Intro (la mitad). El reparto se recuerda en este equipo y vale para todos los paneles.
+
 Cada columna tiene su propia toolbar con:
 
 - ← / → atrás y adelante en el historial de esa columna.

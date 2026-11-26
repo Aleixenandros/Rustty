@@ -1,6 +1,7 @@
 // @ts-check
 import { normalizeJumpPrefs } from "../jump-route.js";
 import { normalizeSearchScope } from "../search-scope.js";
+import { normalizeSftpSplit } from "../sftp/split.js";
 
 /**
  * Normalización y migraciones **puras** de las preferencias al cargarlas.
@@ -73,6 +74,8 @@ export function normalizePrefs(prefs, stored, deps) {
   prefs.searchAllWorkspaces = prefs.searchScope === "all";
   prefs.searchGroupedResults = prefs.searchGroupedResults !== false;
   prefs.sidebarCompact = Boolean(prefs.sidebarCompact);
+  prefs.sidebarTreeGuides = prefs.sidebarTreeGuides !== false;
+  prefs.sftpSplitRatio = normalizeSftpSplit(prefs.sftpSplitRatio);
   if (typeof prefs.foldersFirst !== "boolean") prefs.foldersFirst = true;
   // Barra inferior en la consola local: encendida salvo que se apagara a mano.
   prefs.localShellStatusBar = prefs.localShellStatusBar !== false;

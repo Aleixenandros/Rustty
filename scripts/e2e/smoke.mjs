@@ -96,6 +96,9 @@ import { checkSftpScroll, prepareLongListing } from "./sftp-scroll.mjs";
 import { checkSftpSelection } from "./sftp-selection.mjs";
 import { checkTotpForm } from "./totp-form.mjs";
 import { checkJumpReal } from "./jump-real.mjs";
+import { checkPrefsSearch } from "./prefs-search.mjs";
+import { checkSidebarFilter } from "./sidebar-filter.mjs";
+import { checkSftpSplit } from "./sftp-split.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const application = path.join(root, "src-tauri/target/debug/rustty");
@@ -411,6 +414,7 @@ async function checkSftpPanel(app) {
     whileOpen: async () => {
       await checkSftpScroll(app, check, longDir);
       await checkSftpSelection(app, check, { dir: longDir });
+      await checkSftpSplit(app, check);
     },
   });
 }
@@ -583,6 +587,7 @@ async function main() {
     await checkLocalStatusBar(app, check);
     await checkMetricsPanel(app, check);
     await checkTabButtons(app, check);
+    await checkPrefsSearch(app, check);
     await zoomFloating(app, check);
     await zoomDialogs(app, check);
     await checkKeyboard(app, check);
@@ -591,6 +596,7 @@ async function main() {
     await checkTotpForm(app, check);
     await checkTerminalLayers(app, check);
     await checkTree(app, check);
+    await checkSidebarFilter(app, check);
     await checkIpcLeastPrivilege(app, home);
     const sftpServer = await prepareSftpServer(home);
     if (sftpServer) {

@@ -585,7 +585,13 @@
     "favorites_empty_hint": "Tandai koneksi sebagai favorit dari menu konteksnya dan akan muncul di sini.",
     "loading": "Memuat koneksi…",
     "folder_name": "Nama folder",
-    "workspace_default": "Bawaan"
+    "workspace_default": "Bawaan",
+    "view_reset_title": "Kembali ke workspace saat ini",
+    "filter_clear": "Hapus filter",
+    "filter_chip": "“{query}”",
+    "filter_edit": "Pencarian aktif: “{query}”, {n} hasil. Klik untuk mengubahnya",
+    "tree_guides": "Garis panduan level",
+    "tree_guides_title": "Gambar garis di bawah setiap folder yang terbuka untuk mengikuti levelnya"
   },
   "rail": {
     "view_profiles": "Profil",
@@ -1246,7 +1252,11 @@
     "tab_about": "Tentang",
     "cancel": "Batal",
     "save": "Simpan",
-    "tab_jump": "Jump host"
+    "tab_jump": "Jump host",
+    "search_placeholder": "Cari pengaturan…",
+    "search_label": "Cari di preferensi",
+    "search_results": "Pengaturan yang cocok: {count}",
+    "search_empty": "Tidak ada pengaturan yang cocok dengan “{query}”."
   },
   "prefs_terminal": {
     "title": "Terminal",
@@ -1312,7 +1322,7 @@
     "tab_buttons_always": "Selalu",
     "tab_buttons_active": "Hanya di tab aktif",
     "tab_buttons_never": "Tidak pernah",
-    "tab_buttons_hint": "Akses ke panel SFTP, tunnel, dan catatan setiap tab. Saat disembunyikan, semuanya tetap ada di menu klik kanan tab dan di pintasannya. Tab yang disematkan hanya menampilkannya saat aktif atau saat kursor berada di atasnya.",
+    "tab_buttons_hint": "Akses ke panel SFTP, tunnel, dan catatan setiap tab. Saat disembunyikan, semuanya tetap ada di menu klik kanan tab dan di pintasannya. Tab yang disematkan hanya menampilkannya saat aktif atau saat kursor berada di atasnya. Tombol panel yang terbuka, atau tombol tunnel jika ada tunnel aktif, berwarna biru dan, kecuali dengan “Hanya di tab aktif” atau “Tidak pernah”, tetap terlihat juga di tab latar belakang.",
     "unit_seconds": "detik",
     "local_cwd": "Folder awal konsol lokal",
     "local_cwd_placeholder": "$HOME",
@@ -1333,7 +1343,8 @@
     "tmux_scrollback": "Scrollback yang dipulihkan saat tmux tersambung ulang",
     "tmux_scrollback_hint": "Saat menyambung sesi mode kontrol, setiap panel memulihkan hingga sejumlah baris riwayatnya ini. 0 = tidak memulihkan apa pun (sambung instan).",
     "local_status_bar": "Tampilkan bilah status di konsol lokal",
-    "local_status_bar_hint": "Pengguna dan komputer, folder saat ini (dengan integrasi shell), ukuran terminal, dan di Linux, monitor sumber daya komputer ini. Hal yang khusus untuk koneksi jarak jauh, seperti latensi atau tunnel, tidak ditampilkan."
+    "local_status_bar_hint": "Pengguna dan komputer, folder saat ini (dengan integrasi shell), ukuran terminal, dan di Linux, monitor sumber daya komputer ini. Hal yang khusus untuk koneksi jarak jauh, seperti latensi atau tunnel, tidak ditampilkan.",
+    "tab_buttons_hover": "Di tab aktif dan saat kursor di atasnya"
   },
   "prefs_appearance": {
     "title": "Tampilan",
@@ -2454,7 +2465,9 @@
     "transfer_copy_path": "Salin jalur tujuan",
     "transfer_cancel": "Batal",
     "transfer_remove": "Hapus dari daftar",
-    "transfer_path_copied": "Jalur disalin"
+    "transfer_path_copied": "Jalur disalin",
+    "split_label": "Pembagian lebar antara kedua sisi",
+    "split_title": "Seret untuk membagi lebar; klik dua kali untuk kembali ke setengah-setengah"
   },
   "sftp_nav": {
     "back": "Kembali",

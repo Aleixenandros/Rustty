@@ -73,6 +73,17 @@
   --space-7: 32px;
   --space-8: 40px;
 
+  /* Densidad semántica: relleno vertical de filas, menús, listas y tarjetas.
+     Los redefinen `body.density-compact` / `body.density-spacious`; en la
+     densidad normal valen lo que medían esos componentes antes de existir. */
+  --row-py: 4px;        /* filas de listados densos (ficheros SFTP) */
+  --cell-py: 1px;       /* celdas de tablas (procesos del monitor) */
+  --menu-item-py: 7px;  /* entradas de menús contextuales */
+  --list-item-py: 9px;  /* paleta de comandos y centro de actividad */
+  --toolbar-pad: 6px;   /* barras de herramientas de paneles */
+  --panel-py: 8px;      /* cuerpo de paneles laterales (monitor) */
+  --card-pad: 14px;     /* tarjetas del dashboard */
+
   /* Radios — escala única 6/8/12 (xs=4 para marcas diminutas) */
   --radius-xs: 4px;
   --radius-sm: 6px;
@@ -830,7 +841,73 @@ body.sidebar-collapsed #sidebar-resize-handle {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
+
+/* Botones de aspa de la barra de contexto: volver al workspace actual y
+   quitar el filtro de búsqueda. */
+.sidebar-ctx-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--overlay1);
+  cursor: pointer;
+}
+.sidebar-ctx-btn:hover {
+  color: var(--text);
+  background: var(--surface0);
+}
+.sidebar-ctx-btn .icon-x-svg { width: 9px; height: 9px; }
+
+/* Chip de la búsqueda activa (popover cerrado): término, recuento y aspa. */
+.sidebar-filter-chip {
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 2px 1px 0;
+  border: 1px solid color-mix(in srgb, var(--blue) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+}
+.sidebar-filter-edit {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px 1px 7px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--blue);
+  font-size: 11px;
+  cursor: pointer;
+}
+.sidebar-filter-edit:hover { color: var(--text); }
+.sidebar-filter-edit svg { flex-shrink: 0; }
+.sidebar-filter-text {
+  min-width: 0;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.sidebar-filter-count {
+  flex-shrink: 0;
+  color: var(--subtext0);
+  font-variant-numeric: tabular-nums;
+}
+.sidebar-filter-chip .sidebar-ctx-btn { border-radius: 999px; }
 
 .sidebar-tools-popover {
   position: fixed;
@@ -1015,7 +1092,7 @@ body.sidebar-collapsed #sidebar-resize-handle {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 8px;
+  padding: calc(var(--menu-item-py) - 1px) 8px;
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -3274,10 +3351,10 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 .metrics-body {
   flex: 1 1 0;
   overflow: auto;
-  padding: 8px 10px;
+  padding: var(--panel-py) 10px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: calc(var(--panel-py) + 4px);
   font-size: 12px;
   color: var(--text);
 }
@@ -3298,7 +3375,7 @@ body.metrics-resizing.metrics-resizing-v { cursor: col-resize; }
 .metrics-bar-fill { height: 100%; background: var(--blue); transition: width var(--motion-slow) var(--motion-ease); }
 .metrics-summary { display: flex; flex-direction: column; gap: 12px; }
 .metrics-proc-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-.metrics-proc-table td { padding: 1px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.metrics-proc-table td { padding: var(--cell-py) 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .metrics-proc-cmd { max-width: 0; width: 100%; }
 .metrics-proc-num { text-align: right; color: var(--subtext1); }
 .metrics-proc-user { max-width: 8em; color: var(--subtext1); }
@@ -3719,12 +3796,12 @@ body.color-blind-safe .metrics-core-fill[data-level="crit"] {
 }
 
 .dashboard-result-row {
-  min-height: 48px;
+  min-height: calc(var(--list-item-py) * 2 + 30px);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: calc(var(--list-item-py) - 1px) 10px;
   background: color-mix(in srgb, var(--mantle) 78%, var(--base));
   cursor: pointer;
   transition: background var(--motion-fast) var(--motion-ease);
@@ -3846,7 +3923,7 @@ body.color-blind-safe .metrics-core-fill[data-level="crit"] {
 }
 
 .dashboard-card {
-  padding: 14px;
+  padding: var(--card-pad);
 }
 
 .dashboard-activity {
@@ -4499,7 +4576,7 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 12px;
+  padding: var(--list-item-py) 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   border: 1px solid transparent;
@@ -5357,7 +5434,7 @@ select {
   scrollbar-color: var(--surface1) transparent;
 }
 .custom-select-item {
-  padding: 7px 10px;
+  padding: var(--menu-item-py) 10px;
   border-radius: var(--radius-xs);
   cursor: pointer;
   color: var(--text);
@@ -5824,7 +5901,7 @@ input[type="checkbox"] {
   grid-template-columns: 8px minmax(0, 1fr) auto;
   gap: 9px;
   align-items: start;
-  padding: 9px 8px;
+  padding: var(--list-item-py) 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--surface0) 70%, transparent);
 }
 
@@ -6093,6 +6170,27 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
 }
 
 .folder-children { /* children shown/hidden via .hidden */ }
+
+/* Guías de nivel (preferencia «Guías de nivel» del popover de la sidebar):
+   una línea fina bajo el chevron de cada carpeta abierta, a lo largo de sus
+   hijos. `--tree-depth` lo pone el render (la sangría crece 12 px por nivel y
+   el chevron centra en 14 + 5 px). */
+#connection-list.tree-guides .folder-children:not(.hidden) {
+  position: relative;
+}
+#connection-list.tree-guides .folder-children:not(.hidden)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 4px;
+  left: calc(19px + var(--tree-depth) * 12px);
+  width: 1px;
+  background: var(--border-subtle);
+  pointer-events: none;
+}
+#connection-list.tree-guides .folder-item:has(> .folder-header:hover) > .folder-children:not(.hidden)::before {
+  background: var(--border-strong);
+}
 
 /* Inline input para crear/renombrar carpeta */
 .folder-inline-input {
@@ -6411,7 +6509,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 7px 12px;
+  padding: var(--menu-item-py) 12px;
   border-radius: var(--radius-sm);
   font-size: var(--font-size-md);
   font-weight: 500;
@@ -6857,6 +6955,109 @@ body.density-spacious #modal-prefs > .modal-actions { padding: 12px 22px 14px; }
 
 .prefs-panel { display: none; }
 .prefs-panel.active { display: block; }
+
+/* ─── Buscador de Preferencias (modules/prefs/search-view.js) ───
+   En la cabecera, entre el título y el aspa. Mientras hay consulta, el
+   contenido enseña una debajo de otra las secciones con coincidencias y,
+   dentro de cada una, solo sus filas. */
+.prefs-search {
+  flex: 0 1 260px;
+  min-width: 120px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--base);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--motion-fast) var(--motion-ease);
+}
+.prefs-search:focus-within { border-color: var(--blue); }
+.prefs-search-icon {
+  flex-shrink: 0;
+  color: var(--overlay1);
+}
+.prefs-search:focus-within .prefs-search-icon { color: var(--blue); }
+.prefs-search input[type="search"] {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  outline: 2px solid transparent; /* visible en colores forzados */
+  box-shadow: none;
+}
+/* El anillo lo lleva el contenedor: el campo no tiene borde propio. */
+.prefs-search input[type="search"]:focus-visible { outline: 2px solid transparent; }
+.prefs-search:has(input:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+#modal-prefs.prefs-searching .prefs-panel { display: none; }
+#modal-prefs.prefs-searching .prefs-panel.search-shown { display: block; }
+#modal-prefs.prefs-searching .prefs-panel.search-shown ~ .prefs-panel.search-shown {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+#modal-prefs.prefs-searching .prefs-panel-title { margin-bottom: 12px; }
+#modal-prefs .prefs-search-miss { display: none !important; }
+
+.prefs-search-empty {
+  margin: 28px 0;
+  text-align: center;
+  color: var(--subtext0);
+  font-size: var(--font-size-md);
+}
+
+::highlight(prefs-search) {
+  background-color: color-mix(in srgb, var(--yellow) 38%, transparent);
+  color: var(--text);
+}
+
+/* Barra de secciones durante la búsqueda: recuento en las que coinciden y
+   las demás atenuadas (siguen siendo pulsables: llevan a su sección). */
+.prefs-nav-count {
+  display: none;
+  margin-left: auto;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--blue) 18%, transparent);
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+#modal-prefs.prefs-searching .prefs-nav-item.has-search-hit .prefs-nav-count { display: inline-block; }
+#modal-prefs.prefs-searching .prefs-nav-item.is-search-miss { opacity: 0.45; }
+#modal-prefs.prefs-searching .prefs-nav-item.active:not(:hover) {
+  background: transparent;
+  color: var(--text);
+  font-weight: 500;
+}
+#modal-prefs.prefs-searching .prefs-nav-item.active::before { background: transparent; }
+#modal-prefs.prefs-searching .prefs-nav-item.active .prefs-nav-icon { color: var(--subtext0); }
+/* Estrecho: sin etiqueta, el recuento se queda en un punto sobre el icono. */
+#modal-prefs.is-narrow.prefs-searching .prefs-nav-item.has-search-hit .prefs-nav-count {
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  min-width: 0;
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  font-size: 0;
+  background: var(--blue);
+}
 
 .prefs-panel-title {
   font-size: 16px;
@@ -8502,7 +8703,9 @@ html.theme-monokai {
 .sftp-panel-split {
   --sftp-log-height: 190px;
   display: grid;
-  grid-template-columns: 1fr 44px 1fr;
+  /* Las dos columnas las reparte el divisor central (modules/sftp/split.js,
+     `applySftpSplit`); el divisor mide lo justo para sus botones. */
+  grid-template-columns: minmax(0, var(--sftp-col-left, 1fr)) 34px minmax(0, var(--sftp-col-right, 1fr));
   grid-template-rows: 7px auto minmax(0, 1fr) minmax(110px, var(--sftp-log-height));
   grid-template-areas:
     "resize resize resize"
@@ -8668,14 +8871,43 @@ body.sftp-panel-resizing {
 .sftp-space[data-level="full"] .sftp-space-fill { background: var(--red); }
 
 .sftp-divider {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   background: var(--surface-sunken);
   border-left: 1px solid var(--border-subtle);
   border-right: 1px solid var(--border-subtle);
+}
+
+/* Tirador del divisor: ocupa todo el divisor por detrás de los botones de
+   transferencia. Arrastrar reparte el ancho; doble clic vuelve a la mitad. */
+.sftp-split-grip {
+  position: absolute;
+  inset: 0;
+  cursor: col-resize;
+  touch-action: none;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+.sftp-divider:hover .sftp-split-grip,
+.sftp-split-grip:focus-visible,
+.sftp-panel-split.is-splitting .sftp-split-grip {
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+}
+.sftp-split-grip:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+/* Mientras se arrastra no se selecciona texto de los listados. */
+.sftp-panel-split.is-splitting { user-select: none; cursor: col-resize; }
+.sftp-divider .sftp-xfer-btn {
+  position: relative;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  font-size: 15px;
 }
 
 .sftp-xfer-btn {
@@ -8709,7 +8941,7 @@ body.sftp-panel-resizing {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px;
+  padding: var(--toolbar-pad);
   background: var(--surface-sunken);
   border-bottom: 1px solid var(--border-subtle);
   position: relative;
@@ -9117,7 +9349,7 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
   grid-template-columns: var(--sftp-columns);
   align-items: center;
   gap: 8px;
-  padding: 4px 8px;
+  padding: var(--row-py) 8px;
   border-radius: var(--radius-xs);
   cursor: default;
   user-select: none;
@@ -9338,7 +9570,7 @@ body.sftp-log-resizing {
    antes flotaban en la esquina y tapaban la barra y el texto. */
 .sftp-transfer {
   position: relative;
-  padding: 6px 8px 6px 10px;
+  padding: calc(var(--row-py) + 2px) 8px calc(var(--row-py) + 2px) 10px;
   border-bottom: 1px solid var(--border-subtle);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -9580,6 +9812,12 @@ body.sftp-log-resizing {
   color: var(--blue);
   background: var(--surface0);
 }
+/* Panel abierto (o túneles activos en la sesión): el botón queda encendido,
+   también en las pestañas de fondo. Lo marca `syncTabPanelButtons`. */
+:is(.tab-sftp, .tab-tunnels, .tab-notes).is-on {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+}
 .tab-sftp svg,
 .tab-tunnels svg,
 .tab-close svg,
@@ -9697,7 +9935,7 @@ body.sftp-log-resizing {
   grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1.4fr) minmax(120px, auto) auto;
   gap: 10px;
   align-items: center;
-  padding: 8px 10px;
+  padding: calc(var(--list-item-py) - 1px) 10px;
   background: var(--base);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -10361,16 +10599,21 @@ body.view-fade #terminals-container.view-fade-run {
 .tab.is-pinned .tab-pin { display: inline-flex; }
 
 /* Anclada: punto + alfiler + nombre; SFTP, túneles y notas aparecen en la
-   activa, al pasar el ratón o con el foco dentro. */
-.tab.is-pinned:not(.active, :hover, :focus-within) :is(.tab-sftp, .tab-tunnels, .tab-notes) {
+   activa, al pasar el ratón o con el foco dentro (o encendidos: panel
+   abierto o túneles activos). */
+.tab.is-pinned:not(.active, :hover, :focus-within) :is(.tab-sftp, .tab-tunnels, .tab-notes):not(.is-on) {
   display: none;
 }
 
 .tab.is-pinned .tab-close { display: none; }
 
 /* Preferencia «Botones de la pestaña» (modules/tab-buttons.js): «always» es
-   lo de arriba; «active», solo en la pestaña activa; «never», ninguno (sus
-   funciones siguen en el menú contextual de la pestaña y en los atajos). */
+   lo de arriba; «hover», como las ancladas en todas las pestañas; «active»,
+   solo en la pestaña activa; «never», ninguno (sus funciones siguen en el
+   menú contextual de la pestaña y en los atajos). */
+body[data-tab-buttons="hover"] .tab:not(.active, :hover, :focus-within) :is(.tab-sftp, .tab-tunnels, .tab-notes):not(.is-on) {
+  display: none;
+}
 body[data-tab-buttons="active"] .tab:not(.active) :is(.tab-sftp, .tab-tunnels, .tab-notes),
 body[data-tab-buttons="never"] .tab :is(.tab-sftp, .tab-tunnels, .tab-notes) {
   display: none;
@@ -10408,6 +10651,13 @@ body[data-tab-buttons="never"] .tab :is(.tab-sftp, .tab-tunnels, .tab-notes) {
    el terminal ni los valores del usuario en xterm. Es aditivo:
    solo redefine variables cuando la clase está presente. */
 body.density-compact {
+  --row-py: 2px;
+  --cell-py: 0px;
+  --menu-item-py: 4px;
+  --list-item-py: 6px;
+  --toolbar-pad: 4px;
+  --panel-py: 5px;
+  --card-pad: 10px;
   --tab-height: 32px;
   --space-2: 6px;
   --space-3: 9px;
@@ -10450,6 +10700,13 @@ body.density-compact .theme-preview { height: 56px; }
    facilitar la lectura, sin tocar el terminal ni los ajustes de xterm.
    Simétrico al bloque compacto: solo redefine cuando la clase está presente. */
 body.density-spacious {
+  --row-py: 7px;
+  --cell-py: 3px;
+  --menu-item-py: 10px;
+  --list-item-py: 12px;
+  --toolbar-pad: 8px;
+  --panel-py: 11px;
+  --card-pad: 18px;
   --tab-height: 44px;
   --space-2: 10px;
   --space-3: 15px;
@@ -10578,6 +10835,9 @@ body.sidebar-mode-rail .sidebar-sync-copy {
 body.sidebar-mode-rail #sidebar-header .sidebar-logo,
 body.sidebar-mode-rail #sidebar-header h1,
 body.sidebar-mode-rail #sidebar-context-bar .ctx-label,
+body.sidebar-mode-rail #sidebar-context-bar .sidebar-filter-chip,
+body.sidebar-mode-rail #sidebar-context-bar .sidebar-ctx-btn,
+body.sidebar-mode-rail #connection-list.tree-guides .folder-children::before,
 body.sidebar-mode-rail .conn-item-info,
 body.sidebar-mode-rail .conn-item-actions,
 body.sidebar-mode-rail .folder-name,

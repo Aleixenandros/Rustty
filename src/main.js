@@ -106,7 +106,7 @@ import { buildCheatsheet, filterCheatsheet } from "./modules/shortcuts/cheatshee
 import { formatAccelerator } from "./modules/platform.js";
 import { QUICK_DEFAULT_USER, buildQuickProfile, findQuickTargetProfile, formatQuickTarget, paletteQuickTarget, parseQuickTarget } from "./modules/quick-connect.js";
 import { normalizeTabWheel, tabScrollEdges, tabWheelAction } from "./modules/tab-wheel.js";
-import { normalizeTabButtons } from "./modules/tab-buttons.js";
+import { normalizeTabButtons, tabPanelButtons } from "./modules/tab-buttons.js";
 import { firstBlockPerAlias, linkSshConfigJumps, sshConfigJumpFields } from "./modules/ssh-config-jumps.js";
 import {
   MAX_ENV_VALUE_LEN, MAX_ENV_VARS, allowsOsc7Hook, applySshConfigLaunchKey, formatEnvVarsText, launchKind,
@@ -188,6 +188,8 @@ import { DEFAULT_PREFS, createDefaultPrefs } from "./modules/prefs/defaults.js";
 import { loadPrefs as readSavedPrefs, savePrefs as writeSavedPrefs } from "./modules/prefs/storage.js";
 import { applyPrefsForm } from "./modules/prefs/sync.js";
 import { hasLocalSyncData } from "./modules/prefs/first-sync.js";
+import { createPrefsSearch } from "./modules/prefs/search-view.js";
+import { SFTP_SPLIT_DEFAULT, normalizeSftpSplit, sftpSplitColumns, sftpSplitForKey, sftpSplitFromPointer } from "./modules/sftp/split.js";
 import { resolveActiveWorkspaceId, workspaceNameMap, workspacesForExport } from "./modules/workspaces.js";
 import { substitutePreview, substituteWith } from "./modules/subst.js";
 import { EVENT, eventName } from "./modules/ipc/events.js";
@@ -1896,8 +1898,23 @@ function playBellSound() {
 }
 
 let prefsActiveTab = "terminal";
+/** Buscador de Preferencias (`modules/prefs/search-view.js`); se crea en el arranque. */
+let prefsSearch = null;
+
+/**
+ * Elegir una sección desde su barra (clic o flechas). Con una búsqueda en
+ * curso, lleva a esa sección dentro de los resultados si tiene coincidencias;
+ * si no, sale de la búsqueda y abre la sección normal.
+ */
+function selectPrefsNavTab(tab) {
+  if (prefsSearch?.reveal(tab)) return;
+  switchPrefsTab(tab);
+}
 
 function switchPrefsTab(tab) {
+  // Cambiar de sección desde cualquier sitio sale de la búsqueda: esta
+  // función pinta la sección normal, así que no hace falta que la restaure.
+  prefsSearch?.clear({ restore: false });
   const legacyCredentialView = tab === "keepass" ? "keepass" : null;
   if (tab === "sync") tab = "data";
   if (tab === "keepass") tab = "credentials";
@@ -1934,6 +1951,9 @@ function switchPrefsTab(tab) {
 }
 
 function openSettingsModal() {
+  // Cada apertura empieza sin búsqueda (vuelve a la sección que estaba).
+  if (prefsSearch?.isActive()) prefsSearch.clear();
+  else prefsSearch?.clear({ restore: false });
   // Snapshot al abrir, para poder revertir cambios en vivo al cancelar.
   _terminalThemeSnapshot = prefs.terminalTheme;
   _typographySnapshot = {
@@ -5309,6 +5329,8 @@ function applySyncedUserFolders() {
 // ═══════════════════════════════════════════════════════════════
 
 let _sidebarSearchQuery = "";
+/** Resultados de la última búsqueda pintada en la sidebar (para su chip). */
+let _sidebarSearchResultCount = 0;
 
 /**
  * Devuelve HTML de placeholders shimmer para la sidebar durante la carga
@@ -5351,6 +5373,7 @@ function renderConnectionList() {
   _sidebarTreeModel = [];
   _sidebarTreeRovingEl = null;
   renderConnectionListInner(container);
+  renderSidebarFilterChip();
   if (!container) return;
   bindTreeKeyboard(container);
   const roving = applySidebarTreeTabindex(container);
@@ -5362,6 +5385,8 @@ function renderConnectionList() {
 
 function renderConnectionListInner(container) {
   container?.classList.toggle("compact", Boolean(prefs.sidebarCompact));
+  container?.classList.toggle("tree-guides", prefs.sidebarTreeGuides !== false);
+  _sidebarSearchResultCount = 0;
   persistSidebarOpenFolders();
   scheduleTrayQuickLauncherUpdate();
   renderWorkspaceSwitcher();
@@ -5373,9 +5398,11 @@ function renderConnectionListInner(container) {
       const grouped = groupedConnectionSearch(sidebarQuery);
       container.innerHTML = renderSidebarSearchResults(grouped);
       _sidebarTreeModel = searchTreeModel(grouped);
+      _sidebarSearchResultCount = grouped.connections.length + grouped.folders.length + grouped.notes.length;
     } else {
       // Lista plana clásica (pref desactivada): cualquier coincidencia, alfabética.
       const matches = sidebarSearchCandidates(sidebarQuery);
+      _sidebarSearchResultCount = matches.length;
       container.innerHTML = matches.length
         ? matches.map((profile) => renderConnectionItem(profile, 0)).join("")
         : `<div class="empty-state sidebar-empty-search">${escHtml(t("sidebar.search_no_results"))}</div>`;
@@ -5815,7 +5842,7 @@ function renderAllWorkspacesTree() {
         <span class="folder-name" id="${labelId}">${escHtml(workspaceLabel(w))}</span>
         <span class="folder-count">${count}</span>
       </div>
-      <div class="folder-children ${childrenHidden}" role="group">
+      <div class="folder-children ${childrenHidden}" role="group" style="--tree-depth:0">
         ${inner}
       </div>
     </div>`;
@@ -5873,6 +5900,12 @@ function renderWorkspaceSwitcher() {
   if (compactBtn) {
     compactBtn.classList.toggle("active", Boolean(prefs.sidebarCompact));
     compactBtn.setAttribute("aria-pressed", prefs.sidebarCompact ? "true" : "false");
+  }
+  const guidesBtn = document.getElementById("btn-sidebar-tree-guides");
+  if (guidesBtn) {
+    const on = prefs.sidebarTreeGuides !== false;
+    guidesBtn.classList.toggle("active", on);
+    guidesBtn.setAttribute("aria-pressed", on ? "true" : "false");
   }
   const foldersFirstBtn = document.getElementById("btn-sidebar-folders-first");
   if (foldersFirstBtn) {
@@ -5943,6 +5976,46 @@ function toggleSidebarTools(open, opts = {}) {
       renderConnectionList();
     }
   }
+  renderSidebarFilterChip();
+}
+
+/**
+ * Chip de la barra de contexto: con una búsqueda activa y el popover
+ * cerrado, enseña el término y el recuento, con un aspa que la quita (sin él,
+ * un filtro escrito en el popover completo seguía aplicado sin que se viera
+ * por qué faltaban conexiones). Y fuera del workspace actual, un aspa junto a
+ * la etiqueta vuelve a él.
+ */
+function renderSidebarFilterChip() {
+  const chip = document.getElementById("sidebar-filter-chip");
+  const popover = document.getElementById("sidebar-tools-popover");
+  const query = _sidebarSearchQuery.trim();
+  const show = !!query && !!popover?.classList.contains("hidden");
+  if (chip) {
+    chip.classList.toggle("hidden", !show);
+    if (show) {
+      const text = document.getElementById("sidebar-filter-text");
+      const count = document.getElementById("sidebar-filter-count");
+      const edit = document.getElementById("btn-sidebar-filter-edit");
+      if (text) text.textContent = t("sidebar.filter_chip", { query });
+      if (count) count.textContent = String(_sidebarSearchResultCount);
+      if (edit) {
+        const label = t("sidebar.filter_edit", { query, n: _sidebarSearchResultCount });
+        edit.setAttribute("aria-label", label);
+        edit.title = label;
+      }
+    }
+  }
+  const viewReset = document.getElementById("btn-sidebar-view-reset");
+  viewReset?.classList.toggle("hidden", prefs.sidebarViewMode === "current");
+}
+
+/** Quita el filtro de búsqueda de la sidebar (aspa del chip). */
+function clearSidebarSearchFilter() {
+  const sidebarSearch = document.getElementById("sidebar-search");
+  if (sidebarSearch) sidebarSearch.value = "";
+  _sidebarSearchQuery = "";
+  renderConnectionList();
 }
 
 function positionSidebarToolsPopover(anchorId = "btn-sidebar-tools") {
@@ -5988,6 +6061,12 @@ function setSidebarViewMode(mode) {
 
 function setSidebarCompact(enabled) {
   prefs.sidebarCompact = Boolean(enabled);
+  savePrefs();
+  renderConnectionList();
+}
+
+function setSidebarTreeGuides(enabled) {
+  prefs.sidebarTreeGuides = Boolean(enabled);
   savePrefs();
   renderConnectionList();
 }
@@ -7417,7 +7496,7 @@ function renderFolderNode(name, node, depth, workspaceId) {
         <span class="folder-name" id="${labelId}">${escHtml(name)}</span>
         <span class="folder-count">${count}</span>
       </div>
-      <div class="folder-children${isOpen ? "" : " hidden"}" role="group">
+      <div class="folder-children${isOpen ? "" : " hidden"}" role="group" style="--tree-depth:${depth}">
         ${renderTreeNode(node, depth + 1, workspaceId)}
       </div>
     </div>`;
@@ -14892,6 +14971,7 @@ function createTab(sessionId, profile, initialStatus, { sftp = true, private: is
   });
   attachTabDragHandlers(tab);
   document.getElementById("tabs-container").appendChild(tab);
+  syncTabPanelButtons(sessionId);
   // Compactar al instante la pestaña de Inicio: aplicamos body.has-session-tabs
   // en el mismo tick que insertamos la .tab en el DOM (la siguiente llamada a
   // selectSession/renderView llega más tarde, así no parpadea).
@@ -14947,6 +15027,46 @@ function toggleActiveTabPanel(kind) {
  */
 function applyTabButtons(mode) {
   document.body.dataset.tabButtons = normalizeTabButtons(mode);
+}
+
+/** Si un panel de pestaña está a la vista (existe, sigue en el DOM y no está oculto). */
+function tabPanelVisible(el) {
+  return !!el && el.isConnected && !el.classList.contains("hidden");
+}
+
+/**
+ * Enciende los botones de la pestaña de `sessionId` cuyo panel está abierto
+ * (y el de túneles si hay alguno activo): en azul y, en el modo «hover» y en
+ * las ancladas, a la vista aunque la pestaña esté de fondo.
+ */
+function syncTabPanelButtons(sessionId) {
+  const tab = document.querySelector(`.tab[data-session="${CSS.escape(sessionId)}"]`);
+  if (!tab) return;
+  const s = sessions.get(sessionId);
+  const state = tabPanelButtons({
+    sftpOpen: tabPanelVisible(s?.sftp?.panel),
+    tunnelPanelOpen: tabPanelVisible(s?.tunnelPanel),
+    activeTunnels: s?.tunnels?.size || 0,
+    runbookOpen: tabPanelVisible(s?.runbookPanel),
+  });
+  for (const [selector, button] of [[".tab-sftp", state.sftp], [".tab-tunnels", state.tunnels], [".tab-notes", state.runbook]]) {
+    const el = tab.querySelector(selector);
+    if (!el) continue;
+    el.classList.toggle("is-on", button.on);
+    el.setAttribute("aria-pressed", button.pressed ? "true" : "false");
+  }
+}
+
+/**
+ * Sigue la visibilidad de un panel de la pestaña: lo ocultan muchos caminos
+ * (su aspa, el botón de la pestaña, el menú, un atajo), así que se observa su
+ * clase en vez de avisar desde cada uno.
+ */
+function watchTabPanel(sessionId, panel) {
+  if (!panel || typeof MutationObserver !== "function") return;
+  new MutationObserver(() => syncTabPanelButtons(sessionId))
+    .observe(panel, { attributes: true, attributeFilter: ["class"] });
+  syncTabPanelButtons(sessionId);
 }
 
 /**
@@ -22657,6 +22777,7 @@ function tunnelBadgeHtml(profileId) {
 function refreshTunnelIndicators() {
   updateTunnelsRailIndicator();
   refreshStatusTunnels();
+  for (const sid of sessions.keys()) syncTabPanelButtons(sid);
   const container = document.getElementById("connection-list");
   if (!container) return;
   for (const el of container.querySelectorAll(".conn-item[data-id]")) {
@@ -22797,6 +22918,7 @@ async function openTunnelPanel(sessionId, opts = {}) {
   if (!s.tunnelPanel) {
     s.tunnelPanel = buildTunnelPanel(sessionId);
     s.pane.appendChild(s.tunnelPanel);
+    watchTabPanel(sessionId, s.tunnelPanel);
   }
   s.tunnelPanel.classList.remove("hidden");
   renderTunnelList(sessionId);
@@ -23251,6 +23373,7 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
   }
   const pane = document.querySelector(`.terminal-pane[data-session="${sessionId}"]`);
   pane.appendChild(panel);
+  watchTabPanel(sessionId, panel);
 
   s.sftp = {
     sftpSessionId: null,
@@ -23341,6 +23464,7 @@ async function openSftpPanel(sessionId, { passwordOverride = null, passphraseOve
     for (const ul of s.sftp.unlisteners) { try { ul(); } catch {} }
     panel.remove();
     s.sftp = null;
+    syncTabPanelButtons(sessionId);
     throw err;
   }
 
@@ -23947,6 +24071,73 @@ function applySftpRemoteSideToAll() {
   document.querySelectorAll(".sftp-panel-split").forEach(applySftpRemoteSide);
 }
 
+/**
+ * Reparto del ancho entre los dos lados de un panel SFTP (`ratio` = parte de
+ * la columna de la izquierda). Lo pinta en las variables de la rejilla y en el
+ * `aria-valuenow` del divisor.
+ */
+function applySftpSplit(panel, ratio = prefs.sftpSplitRatio) {
+  if (!panel) return;
+  const cols = sftpSplitColumns(ratio);
+  panel.style.setProperty("--sftp-col-left", cols.left);
+  panel.style.setProperty("--sftp-col-right", cols.right);
+  panel.querySelector(".sftp-split-grip")
+    ?.setAttribute("aria-valuenow", String(Math.round(normalizeSftpSplit(ratio) * 100)));
+}
+
+/** Guarda el reparto elegido y lo lleva a todos los paneles SFTP abiertos. */
+function commitSftpSplit(ratio) {
+  prefs.sftpSplitRatio = normalizeSftpSplit(ratio);
+  savePrefs();
+  document.querySelectorAll(".sftp-panel-split").forEach((p) => applySftpSplit(p));
+}
+
+/**
+ * Divisor central arrastrable: puntero (con captura, para no perderlo al
+ * cruzar los listados), doble clic para volver a la mitad y teclado en su
+ * `role="separator"`.
+ */
+function bindSftpSplitGrip(panel) {
+  const grip = panel.querySelector(".sftp-split-grip");
+  const divider = panel.querySelector(".sftp-divider");
+  if (!grip || !divider) return;
+  let dragging = false;
+  let current = prefs.sftpSplitRatio;
+  const ratioAt = (x) => {
+    const rect = panel.getBoundingClientRect();
+    return sftpSplitFromPointer({ x, left: rect.left, width: rect.width, divider: divider.getBoundingClientRect().width });
+  };
+  grip.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragging = true;
+    current = normalizeSftpSplit(prefs.sftpSplitRatio);
+    panel.classList.add("is-splitting");
+    try { grip.setPointerCapture(e.pointerId); } catch {}
+  });
+  grip.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    current = ratioAt(e.clientX);
+    applySftpSplit(panel, current);
+  });
+  const finish = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    panel.classList.remove("is-splitting");
+    try { grip.releasePointerCapture(e.pointerId); } catch {}
+    commitSftpSplit(current);
+  };
+  grip.addEventListener("pointerup", finish);
+  grip.addEventListener("pointercancel", finish);
+  grip.addEventListener("dblclick", () => commitSftpSplit(SFTP_SPLIT_DEFAULT));
+  grip.addEventListener("keydown", (e) => {
+    const next = sftpSplitForKey(prefs.sftpSplitRatio, e.key);
+    if (next === null) return;
+    e.preventDefault();
+    commitSftpSplit(next);
+  });
+}
+
 function buildSftpPanel(sessionId) {
   const panel = document.createElement("div");
   panel.className = "sftp-panel sftp-panel-split";
@@ -23996,6 +24187,9 @@ function buildSftpPanel(sessionId) {
     </div>
 
     <div class="sftp-divider">
+      <div class="sftp-split-grip" role="separator" tabindex="0" aria-orientation="vertical"
+           aria-valuemin="20" aria-valuemax="80" aria-valuenow="50"
+           aria-label="${escHtml(t("sftp.split_label"))}" title="${escHtml(t("sftp.split_title"))}"></div>
       <button class="sftp-xfer-btn" data-sftp-xfer="download" title="${escHtml(t("sftp.download_selection"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-right"/></svg></button>
       <button class="sftp-xfer-btn" data-sftp-xfer="upload" title="${escHtml(t("sftp.upload_selection"))}"><svg class="icon-x-svg" aria-hidden="true"><use href="#ci-arrow-left"/></svg></button>
     </div>
@@ -24212,6 +24406,8 @@ function buildSftpPanel(sessionId) {
   setupSftpPanelResize(panel, sessionId);
   setupSftpLogTabs(panel);
   setupSftpLogResize(panel);
+  applySftpSplit(panel);
+  bindSftpSplitGrip(panel);
 
   return panel;
 }
@@ -26790,6 +26986,7 @@ async function closeSftpPanel(sessionId) {
   }
   s.sftp.panel.remove();
   s.sftp = null;
+  syncTabPanelButtons(sessionId);
   s.fitAddon?.fit();
   if (closesWholeTab) {
     sessions.delete(sessionId);
@@ -28861,6 +29058,27 @@ function bindUIEvents() {
     });
   }
 
+  // Chip de la búsqueda activa: el término reabre el popover con la búsqueda
+  // (el completo, que al cerrarse la conserva) y el aspa la quita.
+  document.getElementById("btn-sidebar-filter-edit")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleSidebarTools(true);
+    requestAnimationFrame(() => {
+      const search = document.getElementById("sidebar-search");
+      search?.focus();
+      search?.select();
+    });
+  });
+  document.getElementById("btn-sidebar-filter-clear")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    clearSidebarSearchFilter();
+  });
+  // Aspa junto a «Todos los perfiles» / «Favoritos»: vuelve al workspace actual.
+  document.getElementById("btn-sidebar-view-reset")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setSidebarViewMode("current");
+  });
+
   // Botón ≡ → popover compacto con switcher + modos de vista + buscador
   const toolsBtn = document.getElementById("btn-sidebar-tools");
   const popover  = document.getElementById("sidebar-tools-popover");
@@ -28915,6 +29133,12 @@ function bindUIEvents() {
       const densityBtn = e.target.closest("#btn-sidebar-compact");
       if (densityBtn) {
         setSidebarCompact(!prefs.sidebarCompact);
+        renderWorkspaceSwitcher();
+        return;
+      }
+      const guidesBtn = e.target.closest("#btn-sidebar-tree-guides");
+      if (guidesBtn) {
+        setSidebarTreeGuides(prefs.sidebarTreeGuides === false);
         renderWorkspaceSwitcher();
         return;
       }
@@ -29258,17 +29482,35 @@ function bindUIEvents() {
 
   // Navegación entre secciones de Preferencias
   document.querySelectorAll(".prefs-nav-item").forEach((btn) => {
-    btn.addEventListener("click", () => switchPrefsTab(btn.dataset.prefsTab));
+    btn.addEventListener("click", () => selectPrefsNavTab(btn.dataset.prefsTab));
   });
   document.querySelector(".prefs-nav")?.addEventListener("keydown", (e) => {
     const tabs = [...document.querySelectorAll(".prefs-nav-item")];
-    const current = tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+    const focused = tabs.indexOf(/** @type {HTMLElement} */ (document.activeElement));
+    const current = focused >= 0 ? focused : tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true");
     const next = tabIndexForKey(current, tabs.length, e.key);
     if (next === null) return;
     e.preventDefault();
-    switchPrefsTab(tabs[next].dataset.prefsTab);
+    selectPrefsNavTab(tabs[next].dataset.prefsTab);
     tabs[next].focus();
   });
+
+  // Buscador de Preferencias: filtra las filas de todas las secciones.
+  const prefsModalEl = document.getElementById("modal-prefs");
+  const prefsSearchInput = document.getElementById("prefs-search");
+  if (prefsModalEl && prefsSearchInput) {
+    prefsSearch = createPrefsSearch({
+      root: prefsModalEl,
+      nav: prefsModalEl.querySelector(".prefs-nav"),
+      content: prefsModalEl.querySelector(".prefs-content"),
+      input: prefsSearchInput,
+      empty: document.getElementById("prefs-search-empty"),
+      status: document.getElementById("prefs-search-status"),
+      t,
+      onExit: () => switchPrefsTab(prefsActiveTab),
+      onFocus: () => shortcuts.cancelCapture(),
+    });
+  }
 
   shortcuts.bind();
 
@@ -32554,6 +32796,7 @@ async function toggleRunbookPanel(sessionId) {
   }
   s.runbookPanel = buildRunbookPanel(sessionId);
   s.pane?.appendChild(s.runbookPanel);
+  watchTabPanel(sessionId, s.runbookPanel);
   await renderRunbookPanel(sessionId);
   s.fitAddon?.fit();
 }

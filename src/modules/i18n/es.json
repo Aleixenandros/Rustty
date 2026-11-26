@@ -585,7 +585,13 @@
     "favorites_empty_hint": "Marca una conexión como favorita desde su menú contextual para que aparezca aquí.",
     "loading": "Cargando conexiones…",
     "folder_name": "Nombre de carpeta",
-    "workspace_default": "Predeterminado"
+    "workspace_default": "Predeterminado",
+    "view_reset_title": "Volver al workspace actual",
+    "filter_clear": "Quitar el filtro",
+    "filter_chip": "«{query}»",
+    "filter_edit": "Búsqueda activa: «{query}», {n} resultados. Pulsa para editarla",
+    "tree_guides": "Guías de nivel",
+    "tree_guides_title": "Dibujar una línea bajo cada carpeta abierta para seguir los niveles"
   },
   "rail": {
     "view_profiles": "Perfiles",
@@ -1246,7 +1252,11 @@
     "tab_about": "Acerca de",
     "cancel": "Cancelar",
     "save": "Guardar",
-    "tab_jump": "Saltos"
+    "tab_jump": "Saltos",
+    "search_placeholder": "Buscar ajustes…",
+    "search_label": "Buscar en las preferencias",
+    "search_results": "Ajustes que coinciden: {count}",
+    "search_empty": "Ningún ajuste coincide con «{query}»."
   },
   "prefs_terminal": {
     "title": "Terminal",
@@ -1312,7 +1322,7 @@
     "tab_buttons_always": "Siempre",
     "tab_buttons_active": "Solo en la activa",
     "tab_buttons_never": "Nunca",
-    "tab_buttons_hint": "Los accesos al panel SFTP, a los túneles y a la nota de cada pestaña. Ocultos, siguen en el menú del clic derecho sobre la pestaña y en sus atajos. Las pestañas ancladas los muestran solo en la activa o al pasar el ratón.",
+    "tab_buttons_hint": "Los accesos al panel SFTP, a los túneles y a la nota de cada pestaña. Ocultos, siguen en el menú del clic derecho sobre la pestaña y en sus atajos. Las pestañas ancladas los muestran solo en la activa o al pasar el ratón. El de un panel abierto, o el de túneles si hay alguno activo, se pinta en azul y, salvo con «Solo en la activa» o «Nunca», se queda a la vista también en las pestañas de fondo.",
     "unit_seconds": "segundos",
     "local_cwd": "Carpeta inicial de la consola local",
     "local_cwd_placeholder": "$HOME",
@@ -1333,7 +1343,8 @@
     "tmux_scrollback": "Scrollback al reenganchar tmux",
     "tmux_scrollback_hint": "Al enganchar una sesión en modo control, cada pane rehidrata hasta estas líneas de su historia. 0 = no recuperar nada (enganche instantáneo).",
     "local_status_bar": "Mostrar la barra inferior en la consola local",
-    "local_status_bar_hint": "Usuario y equipo, carpeta actual (con la integración de shell), tamaño del terminal y, en Linux, el monitor de recursos de este equipo. Lo que es de una conexión remota, como la latencia o los túneles, no aparece."
+    "local_status_bar_hint": "Usuario y equipo, carpeta actual (con la integración de shell), tamaño del terminal y, en Linux, el monitor de recursos de este equipo. Lo que es de una conexión remota, como la latencia o los túneles, no aparece.",
+    "tab_buttons_hover": "En la activa y al pasar el ratón"
   },
   "prefs_appearance": {
     "title": "Apariencia",
@@ -2454,7 +2465,9 @@
     "transfer_copy_path": "Copiar la ruta de destino",
     "transfer_cancel": "Cancelar",
     "transfer_remove": "Quitar de la lista",
-    "transfer_path_copied": "Ruta copiada"
+    "transfer_path_copied": "Ruta copiada",
+    "split_label": "Reparto del ancho entre los dos lados",
+    "split_title": "Arrastra para repartir el ancho; doble clic vuelve a la mitad"
   },
   "sftp_nav": {
     "back": "Atrás",

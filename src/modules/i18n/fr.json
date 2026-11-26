@@ -585,7 +585,13 @@
     "favorites_empty_hint": "Marquez une connexion comme favorite depuis son menu contextuel pour qu'elle apparaisse ici.",
     "loading": "Chargement des connexions…",
     "folder_name": "Nom du dossier",
-    "workspace_default": "Par défaut"
+    "workspace_default": "Par défaut",
+    "view_reset_title": "Revenir à l’espace de travail actuel",
+    "filter_clear": "Retirer le filtre",
+    "filter_chip": "« {query} »",
+    "filter_edit": "Recherche active : « {query} », {n} résultats. Cliquez pour la modifier",
+    "tree_guides": "Guides de niveau",
+    "tree_guides_title": "Tracer une ligne sous chaque dossier ouvert pour suivre les niveaux"
   },
   "rail": {
     "view_profiles": "Profils",
@@ -1246,7 +1252,11 @@
     "tab_about": "À propos",
     "cancel": "Annuler",
     "save": "Enregistrer",
-    "tab_jump": "Rebonds"
+    "tab_jump": "Rebonds",
+    "search_placeholder": "Rechercher un réglage…",
+    "search_label": "Rechercher dans les préférences",
+    "search_results": "Réglages correspondants : {count}",
+    "search_empty": "Aucun réglage ne correspond à « {query} »."
   },
   "prefs_terminal": {
     "title": "Terminal",
@@ -1312,7 +1322,7 @@
     "tab_buttons_always": "Toujours",
     "tab_buttons_active": "Seulement sur l’onglet actif",
     "tab_buttons_never": "Jamais",
-    "tab_buttons_hint": "Les accès au panneau SFTP, aux tunnels et à la note de chaque onglet. Masqués, ils restent dans le menu du clic droit sur l’onglet et dans leurs raccourcis. Les onglets épinglés ne les affichent que s’ils sont actifs ou survolés.",
+    "tab_buttons_hint": "Les accès au panneau SFTP, aux tunnels et à la note de chaque onglet. Masqués, ils restent dans le menu du clic droit sur l’onglet et dans leurs raccourcis. Les onglets épinglés ne les affichent que s’ils sont actifs ou survolés. Celui d’un panneau ouvert, ou celui des tunnels si l’un d’eux est actif, passe en bleu et, sauf avec « Seulement sur l’onglet actif » ou « Jamais », reste visible aussi sur les onglets en arrière-plan.",
     "unit_seconds": "secondes",
     "local_cwd": "Dossier initial de la console locale",
     "local_cwd_placeholder": "$HOME",
@@ -1333,7 +1343,8 @@
     "tmux_scrollback": "Historique à récupérer au rattachement tmux",
     "tmux_scrollback_hint": "En attachant une session en mode contrôle, chaque panneau réhydrate jusqu'à ce nombre de lignes de son historique. 0 = ne rien récupérer (attache instantanée).",
     "local_status_bar": "Afficher la barre d'état dans la console locale",
-    "local_status_bar_hint": "Utilisateur et ordinateur, dossier actuel (avec l'intégration du shell), taille du terminal et, sous Linux, le moniteur de ressources de cet ordinateur. Ce qui relève d'une connexion distante, comme la latence ou les tunnels, n'apparaît pas."
+    "local_status_bar_hint": "Utilisateur et ordinateur, dossier actuel (avec l'intégration du shell), taille du terminal et, sous Linux, le moniteur de ressources de cet ordinateur. Ce qui relève d'une connexion distante, comme la latence ou les tunnels, n'apparaît pas.",
+    "tab_buttons_hover": "Sur l’onglet actif et au survol"
   },
   "prefs_appearance": {
     "tone_filter": "Filtrer par tonalité",
@@ -2454,7 +2465,9 @@
     "transfer_copy_path": "Copier le chemin de destination",
     "transfer_cancel": "Annuler",
     "transfer_remove": "Retirer de la liste",
-    "transfer_path_copied": "Chemin copié"
+    "transfer_path_copied": "Chemin copié",
+    "split_label": "Répartition de la largeur entre les deux côtés",
+    "split_title": "Faites glisser pour répartir la largeur ; double-clic pour revenir à moitié-moitié"
   },
   "sftp_nav": {
     "back": "Précédent",

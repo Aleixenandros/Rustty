@@ -27,6 +27,8 @@
 - **Reconectar restaurando la pantalla anterior** ("Conectar y restaurar pantalla anterior" desde el menú del perfil): repinta lo que se vio en la última sesión antes de abrir la nueva (restauración visual, configurable y opt-out en Preferencias → Seguridad).
 - Abrir una **sesión privada / efímera** ("Abrir en privado" desde el menú del perfil) que no deja rastro en recientes, actividad, borradores ni grabación de sesión.
 - **Iniciar Rustty con el sistema** y, opcionalmente, **arrancar minimizado** en la bandeja, desde **Preferencias → Sistema** (opt-in).
+- **Buscar un ajuste** desde el campo de la cabecera de Preferencias: enseña solo las opciones que coinciden, de todas las secciones a la vez, y la barra de secciones marca cuántas hay en cada una. Escape vacía la búsqueda.
+- Elegir cuándo se ven los botones de cada pestaña (panel de archivos, túneles, nota) en **Preferencias → Terminal → Botones de la pestaña**: siempre, en la activa y al pasar el ratón, solo en la activa o nunca. El de un panel abierto, o el de túneles si hay alguno activo, se pinta en azul.
 - **Exportar el historial** de una sesión a un fichero de texto desde el menú contextual de la pestaña: vuelca todo el buffer del terminal (comandos introducidos y salida del servidor) en texto plano.
 - Renombrar pestañas con un **alias temporal** desde su menú contextual, sin modificar el perfil: útil al duplicar sesiones o abrir varias a la vez. Dejar el alias vacío restablece el nombre del perfil.
 - **Desconectar todo** de golpe desde el botón de emergencia del rail o un atajo configurable: cierra las sesiones SSH, SFTP/FTP/FTPS, RDP, VNC, Telnet y consolas locales, cierra los túneles y cancela las transferencias en curso, tras confirmar con el recuento afectado.

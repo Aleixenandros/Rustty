@@ -585,7 +585,13 @@
     "favorites_empty_hint": "Markiere eine Verbindung über das Kontextmenü als Favorit, dann erscheint sie hier.",
     "loading": "Verbindungen werden geladen…",
     "folder_name": "Ordnername",
-    "workspace_default": "Standard"
+    "workspace_default": "Standard",
+    "view_reset_title": "Zurück zum aktuellen Workspace",
+    "filter_clear": "Filter entfernen",
+    "filter_chip": "„{query}“",
+    "filter_edit": "Aktive Suche: „{query}“, {n} Treffer. Zum Bearbeiten klicken",
+    "tree_guides": "Ebenen-Hilfslinien",
+    "tree_guides_title": "Unter jedem geöffneten Ordner eine Linie zeichnen, um den Ebenen zu folgen"
   },
   "rail": {
     "view_profiles": "Profile",
@@ -1246,7 +1252,11 @@
     "tab_about": "Info",
     "cancel": "Abbrechen",
     "save": "Speichern",
-    "tab_jump": "Jump-Hosts"
+    "tab_jump": "Jump-Hosts",
+    "search_placeholder": "Einstellungen suchen…",
+    "search_label": "In den Einstellungen suchen",
+    "search_results": "Passende Einstellungen: {count}",
+    "search_empty": "Keine Einstellung passt zu „{query}“."
   },
   "prefs_terminal": {
     "title": "Terminal",
@@ -1312,7 +1322,7 @@
     "tab_buttons_always": "Immer",
     "tab_buttons_active": "Nur im aktiven Tab",
     "tab_buttons_never": "Nie",
-    "tab_buttons_hint": "Die Zugänge zum SFTP-Panel, zu den Tunneln und zur Notiz jedes Tabs. Ausgeblendet bleiben sie im Rechtsklickmenü des Tabs und in ihren Tastenkürzeln erreichbar. Angeheftete Tabs zeigen sie nur, wenn sie aktiv sind oder mit der Maus überfahren werden.",
+    "tab_buttons_hint": "Die Zugänge zum SFTP-Panel, zu den Tunneln und zur Notiz jedes Tabs. Ausgeblendet bleiben sie im Rechtsklickmenü des Tabs und in ihren Tastenkürzeln erreichbar. Angeheftete Tabs zeigen sie nur, wenn sie aktiv sind oder mit der Maus überfahren werden. Die Schaltfläche eines offenen Panels – oder die der Tunnel, wenn einer aktiv ist – wird blau und bleibt, außer bei „Nur im aktiven Tab“ oder „Nie“, auch in Hintergrund-Tabs sichtbar.",
     "unit_seconds": "Sekunden",
     "local_cwd": "Startordner der lokalen Konsole",
     "local_cwd_placeholder": "$HOME",
@@ -1333,7 +1343,8 @@
     "tmux_scrollback": "Scrollback beim tmux-Reattach",
     "tmux_scrollback_hint": "Beim Verbinden einer Kontrollmodus-Sitzung stellt jede Pane bis zu dieser Zeilenzahl ihrer Historie wieder her. 0 = nichts wiederherstellen (sofortiges Verbinden).",
     "local_status_bar": "Statusleiste in der lokalen Konsole anzeigen",
-    "local_status_bar_hint": "Benutzer und Rechner, aktueller Ordner (mit Shell-Integration), Terminalgröße und unter Linux der Ressourcenmonitor dieses Rechners. Was zu einer entfernten Verbindung gehört, etwa Latenz oder Tunnel, wird nicht angezeigt."
+    "local_status_bar_hint": "Benutzer und Rechner, aktueller Ordner (mit Shell-Integration), Terminalgröße und unter Linux der Ressourcenmonitor dieses Rechners. Was zu einer entfernten Verbindung gehört, etwa Latenz oder Tunnel, wird nicht angezeigt.",
+    "tab_buttons_hover": "Im aktiven Tab und beim Überfahren"
   },
   "prefs_appearance": {
     "title": "Aussehen",
@@ -2454,7 +2465,9 @@
     "transfer_copy_path": "Zielpfad kopieren",
     "transfer_cancel": "Abbrechen",
     "transfer_remove": "Aus der Liste entfernen",
-    "transfer_path_copied": "Pfad kopiert"
+    "transfer_path_copied": "Pfad kopiert",
+    "split_label": "Aufteilung der Breite zwischen beiden Seiten",
+    "split_title": "Ziehen, um die Breite aufzuteilen; Doppelklick stellt halbe-halbe wieder her"
   },
   "sftp_nav": {
     "back": "Zurück",

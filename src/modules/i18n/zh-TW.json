@@ -585,7 +585,13 @@
     "favorites_empty_hint": "從連線的右鍵選單將其標記為我的最愛，就會顯示在這裡。",
     "loading": "正在載入連線…",
     "folder_name": "資料夾名稱",
-    "workspace_default": "預設"
+    "workspace_default": "預設",
+    "view_reset_title": "回到目前的工作區",
+    "filter_clear": "清除篩選",
+    "filter_chip": "「{query}」",
+    "filter_edit": "搜尋中：「{query}」，{n} 個結果。按一下以編輯",
+    "tree_guides": "層級參考線",
+    "tree_guides_title": "在每個展開的資料夾下方畫一條線，方便追蹤層級"
   },
   "rail": {
     "view_profiles": "設定檔",
@@ -1246,7 +1252,11 @@
     "tab_about": "關於",
     "cancel": "取消",
     "save": "儲存",
-    "tab_jump": "跳板主機"
+    "tab_jump": "跳板主機",
+    "search_placeholder": "搜尋設定…",
+    "search_label": "搜尋偏好設定",
+    "search_results": "符合的設定：{count}",
+    "search_empty": "沒有符合「{query}」的設定。"
   },
   "prefs_terminal": {
     "title": "終端機",
@@ -1312,7 +1322,7 @@
     "tab_buttons_always": "一律顯示",
     "tab_buttons_active": "僅在作用中分頁",
     "tab_buttons_never": "永不顯示",
-    "tab_buttons_hint": "通往每個分頁 SFTP 面板、通道與備註的按鈕。隱藏時，仍可從分頁的右鍵選單與其快捷鍵使用。釘選的分頁只在作用中或滑鼠移過時顯示。",
+    "tab_buttons_hint": "通往每個分頁 SFTP 面板、通道與備註的按鈕。隱藏時，仍可從分頁的右鍵選單與其快捷鍵使用。釘選的分頁只在作用中或滑鼠移過時顯示。已開啟面板的按鈕（或有作用中通道時的通道按鈕）會以藍色顯示，除了「僅在作用中分頁」與「永不顯示」之外，在背景分頁上也會保持可見。",
     "unit_seconds": "秒",
     "local_cwd": "本機主控台起始資料夾",
     "local_cwd_placeholder": "$HOME",
@@ -1333,7 +1343,8 @@
     "tmux_scrollback": "tmux 重新附加時要恢復的捲動緩衝區",
     "tmux_scrollback_hint": "附加控制模式工作階段時，每個窗格最多會還原這麼多行的歷程記錄。0 = 不恢復任何內容（立即附加）。",
     "local_status_bar": "在本機主控台中顯示狀態列",
-    "local_status_bar_hint": "使用者與電腦、目前資料夾（需啟用 shell 整合）、終端機大小，以及在 Linux 上這台電腦的資源監控。延遲、通道等屬於遠端連線的項目不會顯示。"
+    "local_status_bar_hint": "使用者與電腦、目前資料夾（需啟用 shell 整合）、終端機大小，以及在 Linux 上這台電腦的資源監控。延遲、通道等屬於遠端連線的項目不會顯示。",
+    "tab_buttons_hover": "作用中分頁及滑鼠移過時"
   },
   "prefs_appearance": {
     "title": "外觀",
@@ -2454,7 +2465,9 @@
     "transfer_copy_path": "複製目的路徑",
     "transfer_cancel": "取消",
     "transfer_remove": "從清單移除",
-    "transfer_path_copied": "已複製路徑"
+    "transfer_path_copied": "已複製路徑",
+    "split_label": "兩側之間的寬度分配",
+    "split_title": "拖曳以分配寬度；按兩下恢復各半"
   },
   "sftp_nav": {
     "back": "上一頁",

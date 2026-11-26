@@ -22,7 +22,7 @@ En **Preferencias → Apariencia** hay un bloque **Accesibilidad** que ajusta la
 - **Contraste mínimo del terminal** (Sin ajuste / AA 4.5:1 / AAA 7:1): adapta los colores ANSI poco legibles para que el texto alcance un contraste mínimo con su fondo. Útil con temas de bajo contraste.
 - **Cursor del terminal más visible**: pinta el cursor con una tinta de alto contraste (blanco o negro según el fondo) en cualquier estilo y engrosa el caret cuando el estilo es «barra».
 - **Mostrar una descripción al pasar el ratón**: al dejar el ratón sobre un icono o un botón —o al llegar a él con el teclado— aparece qué hace, en las tres plataformas (en Linux el webview no pinta el tooltip del sistema). **Escape** la oculta. Activada por defecto; desactivada, queda el comportamiento del sistema.
-- **Densidad de la interfaz** (Espaciosa / Cómoda / Compacta): «Espaciosa» aumenta el interlineado y el espaciado de la barra lateral, las pestañas y los diálogos para facilitar la lectura; «Compacta» los reduce para mostrar más contenido. No afecta al tamaño del terminal ni a los ajustes de fuente de xterm.
+- **Densidad de la interfaz** (Espaciosa / Cómoda / Compacta): «Espaciosa» aumenta el interlineado y el espaciado de la barra lateral, las pestañas y los diálogos para facilitar la lectura; «Compacta» los reduce para mostrar más contenido. También se aplica a las filas y barras del panel de archivos, la tabla de procesos del monitor, los menús del clic derecho, los desplegables, la paleta de comandos, el centro de actividad y las tarjetas del inicio. No afecta al tamaño del terminal ni a los ajustes de fuente de xterm.
 
 ### Navegación por teclado
 

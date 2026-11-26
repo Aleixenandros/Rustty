@@ -121,6 +121,9 @@ export const DEFAULT_PREFS = {
 
   // Disposición del panel SFTP: lado donde se muestra el panel remoto.
   sftpRemoteSide:  "left",     // "left" | "right"
+  // Parte del ancho del panel SFTP para la columna de la izquierda (divisor
+  // central arrastrable; doble clic vuelve a la mitad). Ajuste de este equipo.
+  sftpSplitRatio:  0.5,        // 0.2–0.8 (modules/sftp/split.js)
   // Al entrar en una carpeta remota, preguntar al servidor el espacio libre de
   // ese disco y enseñarlo en la cabecera del panel. Solo hay dato con SFTP y
   // la extensión `statvfs@openssh.com`; si no, no aparece nada.
@@ -233,6 +236,9 @@ export const DEFAULT_PREFS = {
   searchGroupedResults: true,
   // Densidad compacta para listas largas de conexiones en la sidebar.
   sidebarCompact:  false,
+  // Líneas guía bajo cada carpeta abierta del árbol de la sidebar (se ven los
+  // niveles en árboles profundos). Ajuste de este equipo, como la densidad.
+  sidebarTreeGuides: true,
   // Zoom de la UI (rail, sidebar, tabs, status, modales) sin afectar al
   // buffer xterm. Rango clampeado en `adjustUiZoom`. Atajos Ctrl+Alt +/-/0.
   uiZoom:          1.0,

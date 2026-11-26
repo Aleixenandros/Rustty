@@ -1,19 +1,19 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { TAB_BUTTONS_MODES, normalizeTabButtons } from "./tab-buttons.js";
+import { TAB_BUTTONS_MODES, normalizeTabButtons, tabPanelButtons } from "./tab-buttons.js";
 import { DEFAULT_PREFS } from "./prefs/defaults.js";
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
 
 describe("normalizeTabButtons", () => {
-  it("acepta los tres modos", () => {
+  it("acepta los cuatro modos", () => {
     for (const mode of TAB_BUTTONS_MODES) expect(normalizeTabButtons(mode)).toBe(mode);
   });
 
   it("lo desconocido o ausente vuelve al de serie («always», el comportamiento de antes)", () => {
     expect(normalizeTabButtons(undefined)).toBe("always");
     expect(normalizeTabButtons(null)).toBe("always");
-    expect(normalizeTabButtons("hover")).toBe("always");
+    expect(normalizeTabButtons("hover-ish")).toBe("always");
     expect(normalizeTabButtons(1)).toBe("always");
   });
 
@@ -26,9 +26,14 @@ describe("contrato con la hoja y el HTML", () => {
   const css = read("../styles.css");
   const html = read("../../index.html");
 
-  it("la hoja oculta los botones en «active» y «never»", () => {
+  it("la hoja oculta los botones en «hover», «active» y «never»", () => {
+    expect(css).toMatch(/body\[data-tab-buttons="hover"\][^{]*\.tab:not\(\.active, :hover, :focus-within\)[^{]*:not\(\.is-on\)/);
     expect(css).toMatch(/body\[data-tab-buttons="active"\][^{]*\.tab:not\(\.active\)/);
     expect(css).toMatch(/body\[data-tab-buttons="never"\][^{]*\.tab-sftp/);
+  });
+
+  it("las ancladas no esconden un botón encendido", () => {
+    expect(css).toMatch(/\.tab\.is-pinned:not\(\.active, :hover, :focus-within\)[^{]*:not\(\.is-on\)/);
   });
 
   it("el selector de Preferencias ofrece exactamente los modos", () => {
@@ -42,5 +47,22 @@ describe("contrato con la hoja y el HTML", () => {
     for (const action of ["panel-sftp", "panel-tunnels", "panel-runbook"]) {
       expect(html).toContain(`data-tabctx="${action}"`);
     }
+  });
+});
+
+describe("tabPanelButtons", () => {
+  it("sin nada abierto, todo apagado", () => {
+    const state = tabPanelButtons();
+    for (const button of Object.values(state)) expect(button).toEqual({ on: false, pressed: false });
+  });
+
+  it("un panel a la vista enciende y pulsa su botón", () => {
+    expect(tabPanelButtons({ sftpOpen: true }).sftp).toEqual({ on: true, pressed: true });
+    expect(tabPanelButtons({ runbookOpen: true }).runbook).toEqual({ on: true, pressed: true });
+    expect(tabPanelButtons({ tunnelPanelOpen: true }).tunnels).toEqual({ on: true, pressed: true });
+  });
+
+  it("un túnel activo enciende el botón de túneles sin darlo por pulsado", () => {
+    expect(tabPanelButtons({ activeTunnels: 2 }).tunnels).toEqual({ on: true, pressed: false });
   });
 });

@@ -59,6 +59,8 @@ const RUNTIME_VARS = new Set([
   "--term-bg-blur", "--term-bg-image", "--term-bg-opacity", // imagen de fondo del terminal
   "--terminal-font", "--ui-zoom",
   "--modal-header-h",                                       // altura medida de la cabecera del modal de conexión
+  "--tree-depth",                                           // nivel de cada carpeta del árbol (guías de nivel)
+  "--sftp-col-left", "--sftp-col-right",                    // reparto del divisor central del panel SFTP
 ]);
 
 /** `z-index` a partir del cual es una capa de la app (los menores apilan dentro de un componente). */

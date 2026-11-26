@@ -64,6 +64,28 @@ export async function checkTabButtons(app, check) {
     await sleep(200);
     await setMode("active");
     check("«Solo en la activa» los enseña en la pestaña activa", await visible());
+
+    // «En la activa y al pasar el ratón»: en una pestaña de fondo se esconden,
+    // salvo el que está encendido (panel abierto o túneles activos).
+    await setMode("hover");
+    // Con Inicio delante, la pestaña de la consola queda de fondo.
+    await app.jsClick("#home-tab");
+    await sleep(400);
+    const background = await app.exec(`
+      const tabs = [...document.querySelectorAll(".tab[data-session]")];
+      const tab = tabs.find((el) => !el.classList.contains("active") && el.querySelector(".e2e-fake"));
+      if (!tab) return null;
+      const fake = tab.querySelector(".e2e-fake");
+      const lit = document.createElement("button");
+      lit.className = "tab-tunnels e2e-fake is-on";
+      tab.querySelector(".tab-close").before(lit);
+      const shown = (el) => getComputedStyle(el).display !== "none";
+      return { plain: shown(fake), lit: shown(lit), litColor: getComputedStyle(lit).color };
+    `);
+    check("«Al pasar el ratón» esconde los botones de las pestañas de fondo salvo el encendido",
+      !!background && !background.plain && background.lit, JSON.stringify(background));
+    await app.jsClick(".tab[data-session]");
+    await sleep(300);
   } finally {
     await app.exec('document.querySelectorAll(".e2e-fake").forEach((el) => el.remove()); return true;');
     await setMode("always").catch(() => {});
