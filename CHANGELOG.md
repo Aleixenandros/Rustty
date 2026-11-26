@@ -2,6 +2,22 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.32.0] - 2026-11-27
+
+### Añadido
+
+- Preferencias tiene buscador: el campo de la cabecera enseña solo los ajustes que coinciden, de todas las secciones a la vez, sin distinguir mayúsculas ni acentos. La barra de secciones marca cuántas coincidencias hay en cada una y atenúa las demás, y Escape vacía la búsqueda sin cerrar el diálogo.
+- Panel de archivos: el divisor entre los dos lados se arrastra para darle más ancho a uno de ellos (del 20 % al 80 %); con doble clic vuelve a la mitad. También se maneja con el teclado y el reparto se recuerda en este equipo.
+- Barra lateral: si cierras el menú con una búsqueda escrita, la barra de debajo lo indica con el término y el número de resultados; pulsar el término vuelve a editarla y su ✕ la quita. En «Todos los perfiles» o «Favoritos», un ✕ junto al nombre vuelve al workspace actual.
+- Barra lateral: guías de nivel, una línea fina bajo cada carpeta abierta para seguir los niveles en árboles profundos. Se apagan con el botón «Guías de nivel» del menú de la barra.
+- Pestañas: nuevo modo «En la activa y al pasar el ratón» en Preferencias → Terminal → Botones de la pestaña, para que las pestañas de fondo no enseñen sus botones de panel de archivos, túneles y nota.
+
+### Cambiado
+
+- Pestañas: el botón de un panel abierto, o el de túneles si la sesión tiene alguno activo, se pinta en azul; con «En la activa y al pasar el ratón» se queda a la vista también en las pestañas de fondo.
+- La densidad de la interfaz (Compacta / Espaciosa) se aplica también al panel de archivos, la tabla de procesos del monitor, los menús del clic derecho, los desplegables, la paleta de comandos, el centro de actividad y el inicio. Con la densidad normal todo mide lo mismo que antes.
+- Los iconos de Atajos y de Acerca de en la barra de Preferencias son ahora iconos como los demás, en lugar de símbolos de texto.
+
 ## [2.31.0] - 2026-11-26
 
 ### Añadido
