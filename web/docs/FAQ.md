@@ -63,7 +63,7 @@ Los **snippets remotos** sí: viajan dentro del backup cifrado como `snippet:<id
 
 ## ¿Los scripts guardan contraseñas o se sincronizan?
 
-Ninguna de las dos cosas. Los scripts se guardan en un `scripts.json` local que **nunca contiene contraseñas**: los pasos de contraseña solo referencian el keyring o una entrada KeePass, y la salida que muestra el panel redacta los secretos enviados. Para llevar un script a otro equipo, expórtalo como Markdown desde el panel de Scripts e impórtalo allí. Más detalle en la [guía de scripts](?page=Scripts).
+No guardan contraseñas, pero sí se sincronizan. Los scripts se guardan en un `scripts.json` local que **nunca contiene contraseñas**: los pasos de contraseña solo referencian el keyring o una entrada KeePass, y la salida que muestra el panel redacta los secretos enviados. Desde la v2.31.0 viajan cifrados con la sincronización (casilla **Scripts y recetas**). También puedes exportar un script como Markdown desde el panel de Scripts e importarlo en otro equipo. Más detalle en la [guía de scripts](?page=Scripts).
 
 ## ¿Se pueden grabar scripts directamente a partir de lo que tecleo en la terminal?
 

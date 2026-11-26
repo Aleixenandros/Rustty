@@ -94,7 +94,7 @@ Si al importar hay líneas que Rustty no reconoce (un paso con una errata, un n�
 - Las credenciales alternativas de una tirada no se guardan con el script; las manuales viven solo en memoria durante la ejecución.
 - La salida que se muestra en el panel pasa por **redacción de secretos**: los valores enviados (contraseñas incluidas) se sustituyen por `••••`.
 - El historial de **Ejecuciones recientes** (`script_runs.json`) se guarda con permisos privados (0600), con la salida ya redactada y sin contraseñas. No se sincroniza.
-- Los scripts **no se sincronizan** entre equipos. Para moverlos o versionarlos, usa **Exportar**: genera un runbook Markdown legible que **Importar Markdown…** reconstruye en otro equipo (sin ids ni secretos).
+- Los scripts **se sincronizan** cifrados entre equipos junto con el resto de datos (desactivable con la casilla **Scripts y recetas** de Preferencias → Copias de seguridad). Para compartirlos fuera de la sincronización o versionarlos, usa **Exportar**: genera un runbook Markdown legible que **Importar Markdown…** reconstruye en otro equipo (sin ids ni secretos).
 - Un script ejecuta comandos reales en tus servidores: revisa la previsualización y prueba primero en modo **canario** antes de lanzarlo contra una carpeta entera.
 
 ## Snippets remotos

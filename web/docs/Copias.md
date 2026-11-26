@@ -11,10 +11,11 @@ Rustty agrupa las copias en **Preferencias → Copias de seguridad**. Desde ahí
 - Atajos configurados por el usuario.
 - **Notas de conexión** en Markdown (opt-in **Notas**, activo por defecto).
 - Snippets remotos creados en **Preferencias → Comandos**.
+- **Scripts** del panel de Scripts (opt-in **Scripts y recetas**, activo por defecto).
 - El catálogo de **credenciales maestras y variables** (metadatos: nombre y tipo). Las variables de texto incluyen su valor; las maestras no.
 - Contraseñas y passphrases guardadas y los **valores de las credenciales maestras**, solo si activas el check **Contraseñas guardadas (cifradas E2E)**.
 
-Las bases KeePass desbloqueadas, rutas locales como `keepassPath` o `keepassKeyfile` y los **comandos locales** de Preferencias → Comandos no se sincronizan. Los comandos locales pueden depender de rutas, programas o URLs propias de un equipo. Los **scripts** tampoco se sincronizan: viven en `scripts.json` local y se mueven entre equipos exportándolos e importándolos como Markdown desde el propio panel de Scripts.
+Las bases KeePass desbloqueadas, rutas locales como `keepassPath` o `keepassKeyfile` y los **comandos locales** de Preferencias → Comandos no se sincronizan. Los comandos locales pueden depender de rutas, programas o URLs propias de un equipo. El historial de **Ejecuciones recientes** de los scripts tampoco viaja: es propio de cada equipo.
 
 ## Cifrado
 
@@ -48,7 +49,7 @@ Para conectar otro equipo, elige el mismo proveedor y cuenta, introduce la **mis
 
 Si la nube **ya contiene datos** y el equipo nuevo todavía no tiene conexiones, espacios ni otros datos propios, la opción principal es **Recuperar en este equipo**. Descarga las conexiones y la configuración de la nube, incluidos los nombres de los espacios, el tema y el pegado. Los ajustes locales ceden a la nube aunque los hayas cambiado más recientemente. Después, los cambios se sincronizan entre equipos. También puedes elegir **Combinar y sincronizar** si quieres conservar ajustes locales más recientes.
 
-Si ya hay datos propios, Rustty muestra **Combinar con la nube**, con las diferencias por categoría. La combinación utiliza las fechas de modificación para resolver coincidencias y borrados; las preferencias, incluidos los espacios, viajan como un conjunto. Puedes cancelar antes de que se suba o aplique nada. Si no se puede leer la nube para preparar esta vista, la sincronización se detiene y muestra el error.
+Si ya hay datos propios, Rustty muestra **Combinar con la nube**, con las diferencias por categoría. La combinación utiliza las fechas de modificación para resolver coincidencias y borrados; las preferencias se resuelven ajuste por ajuste, así que si cambias el tema en un equipo y el tamaño de letra en otro se conservan los dos cambios. Puedes cancelar antes de que se suba o aplique nada. Si no se puede leer la nube para preparar esta vista, la sincronización se detiene y muestra el error.
 
 Si la nube está vacía o el estado es idéntico, no hace falta elegir.
 
@@ -64,7 +65,7 @@ La poda automática del histórico está disponible para **Carpeta local/NAS**, 
 
 Los **registros de borrado** (lo que impide que un elemento eliminado «resucite» desde otro equipo) caducan a los 90 días por defecto; el plazo se elige en Preferencias, con la opción **Conservar siempre** para quien tenga equipos que pasan meses apagados.
 
-En WebDAV, si dos equipos suben cambios a la vez, la escritura es condicional: el choque se detecta, se vuelve a fusionar y se sube el resultado combinado en vez de pisar el push ajeno. En Google Drive, si dos equipos estrenan la sincronización en el mismo momento y crean dos archivos, Rustty los detecta, fusiona su contenido y deja uno solo.
+En WebDAV, si dos equipos suben cambios a la vez, la escritura es condicional: el choque se detecta, se vuelve a fusionar y se sube el resultado combinado en vez de pisar el push ajeno. En Google Drive, antes de subir Rustty comprueba si otro equipo ha escrito el fichero desde que lo leyó; si es así, vuelve a leer, fusiona y sube el resultado. Si dos equipos estrenan la sincronización en el mismo momento y crean dos archivos, Rustty los detecta, fusiona su contenido y deja uno solo.
 
 Cuando configuras la sincronización en un **equipo recién instalado**, su configuración local (workspaces, carpetas, favoritos) aún no tiene cambios propios, así que el primer sync **adopta la del equipo que ya tenía datos** en lugar de sobrescribirla. A partir de ahí, las ediciones que hagas en cualquier equipo se propagan por fecha de modificación.
 
@@ -116,7 +117,7 @@ El botón **Exportar a fichero** crea un `.rustty-sync.bin` cifrado con la passp
 
 Este flujo no depende de ningún proveedor remoto.
 
-Antes de exportar, Rustty pregunta si quieres incluir contraseñas/passphrases guardadas. En el backup cifrado es la opción recomendada para mover credenciales entre equipos.
+Antes de exportar, Rustty pregunta si quieres incluir contraseñas/passphrases guardadas. Si aceptas, el backup lleva también los valores de las credenciales maestras y las contraseñas de los usuarios adicionales de cada conexión. En el backup cifrado es la opción recomendada para mover credenciales entre equipos. Los scripts entran siempre en el backup, salvo que hayas desmarcado **Scripts y recetas**.
 
 ## Export JSON local
 

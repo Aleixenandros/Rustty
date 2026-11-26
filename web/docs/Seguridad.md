@@ -50,7 +50,7 @@ Los scripts (recetas de pasos sobre conexiones SSH) siguen las mismas reglas que
 - `scripts.json` **nunca guarda contraseñas**: los pasos «Enviar contraseña» almacenan solo la referencia al keyring o el UUID de la entrada KeePass, y las contraseñas se resuelven en el backend al ejecutar.
 - Las **credenciales alternativas de una tirada** (credencial maestra, entrada KeePass o usuario/contraseña manuales) no se guardan con el script; las manuales viven solo en memoria durante la ejecución.
 - La salida que se emite al panel pasa por **redacción de secretos**: cualquier valor enviado como secreto (incluida la contraseña de conexión) se sustituye por `••••`, también en los mensajes de error y en la previsualización por host.
-- Los scripts **no se sincronizan**; el export es un runbook Markdown sin ids ni secretos.
+- Los scripts se sincronizan dentro del blob cifrado E2E y nunca contienen contraseñas; el export es un runbook Markdown sin ids ni secretos.
 - Cada host de una tirada abre su propia conexión SSH con la verificación de host key (TOFU) y las opciones del perfil de siempre.
 
 Un script ejecuta comandos reales en tus servidores: revisa la previsualización antes de lanzar y usa el modo canario con objetivos amplios. Ver la [guía de scripts](?page=Scripts).
