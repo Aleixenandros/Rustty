@@ -2334,6 +2334,7 @@ async function populateSyncTab() {
   document.getElementById("sync-sel-themes").checked    = config.selective?.themes ?? true;
   document.getElementById("sync-sel-shortcuts").checked = config.selective?.shortcuts ?? true;
   document.getElementById("sync-sel-notes").checked     = config.selective?.notes ?? true;
+  document.getElementById("sync-sel-scripts").checked   = config.selective?.scripts ?? true;
   document.getElementById("sync-sel-secrets").checked   = config.selective?.secrets ?? false;
   document.getElementById("sync-history-keep").value =
     String(Math.max(1, parseInt(config.history_keep, 10) || DEFAULT_SYNC_HISTORY_KEEP));
@@ -2588,6 +2589,7 @@ async function persistSyncConfig() {
       themes:    document.getElementById("sync-sel-themes").checked,
       shortcuts: document.getElementById("sync-sel-shortcuts").checked,
       notes:     document.getElementById("sync-sel-notes").checked,
+      scripts:   document.getElementById("sync-sel-scripts").checked,
       secrets:   document.getElementById("sync-sel-secrets").checked,
       snippets:  true,
     },
@@ -2796,6 +2798,7 @@ async function runSyncWithCurrentState({ persistConfig = false, announce = false
         applyPrefsToAllTerminals();
       }
       if (summary.credsChanged) renderCredList().catch(() => {});
+      if (summary.scriptsChanged) refreshScriptsAfterSync();
     }
     const lastSyncAt = new Date().toISOString();
     prefs._lastSyncAt = lastSyncAt;
@@ -2950,6 +2953,7 @@ function formatSyncDiffDetail(diff) {
     shortcut: "prefs_sync.kind_shortcut",
     snippet: "prefs_sync.kind_snippet",
     note: "prefs_sync.kind_note",
+    script: "prefs_sync.kind_script",
     cred: "prefs_sync.kind_cred",
     secret: "prefs_sync.kind_secret",
   };
@@ -2989,7 +2993,7 @@ async function confirmFirstSyncIfNeeded() {
         // Detectar también datos propios de categorías desmarcadas: no es
         // una instalación vacía solo porque no quiera subir sus perfiles.
         profiles: true, prefs: true, themes: true,
-        shortcuts: true, snippets: true, notes: true,
+        shortcuts: true, snippets: true, notes: true, scripts: true,
         // El diff no necesita leer secretos del keyring.
         secrets: false,
       },
@@ -3036,6 +3040,7 @@ function renderSyncJournal() {
     ["shortcuts", "prefs_sync.kind_shortcut"],
     ["snippets", "prefs_sync.kind_snippet"],
     ["notes", "prefs_sync.kind_note"],
+    ["scripts", "prefs_sync.kind_script"],
     ["creds", "prefs_sync.kind_cred"],
     ["secrets", "prefs_sync.kind_secret"],
   ];
@@ -3477,8 +3482,10 @@ async function syncImportFile() {
     // otra sync la compare con un remoto más nuevo.
     scheduleProfileAutoSync();
     if (summary.credsChanged) renderCredList().catch(() => {});
+    if (summary.scriptsChanged) refreshScriptsAfterSync();
     const total = summary.addedProfiles + summary.deletedProfiles
       + summary.themesChanged + summary.shortcutsChanged
+      + (summary.scriptsChanged || 0)
       + (summary.secretsChanged || 0)
       + (summary.credsChanged || 0)
       + (summary.prefsChanged ? 1 : 0);
@@ -3533,7 +3540,7 @@ async function syncRestoreSnapshot() {
       deviceId: _syncDeviceIdCache,
       selective: {
         profiles: true, prefs: true, themes: true, shortcuts: true,
-        snippets: true, notes: true,
+        snippets: true, notes: true, scripts: true,
         // El diff no necesita leer secretos del keyring.
         secrets: false,
       },
@@ -3579,8 +3586,10 @@ async function syncRestoreSnapshot() {
     scheduleProfileAutoSync();
     setSyncStatus("success", "prefs_sync.status_success");
     if (summary?.credsChanged) renderCredList().catch(() => {});
+    if (summary?.scriptsChanged) refreshScriptsAfterSync();
     const total = (summary?.addedProfiles ?? 0) + (summary?.deletedProfiles ?? 0)
       + (summary?.themesChanged ?? 0) + (summary?.shortcutsChanged ?? 0)
+      + (summary?.scriptsChanged ?? 0)
       + (summary?.secretsChanged ?? 0)
       + (summary?.credsChanged ?? 0)
       + (summary?.prefsChanged ? 1 : 0);
@@ -21009,9 +21018,17 @@ async function saveScriptFromEditor() {
     return;
   }
   toast(t("scripts.saved"), "success");
+  scheduleProfileAutoSync();
   await loadScripts();
   showScriptsListView();
   renderScriptsList();
+}
+
+/** Tras una sync, restauración o importación que trajo scripts. */
+function refreshScriptsAfterSync() {
+  loadScripts()
+    .then(() => renderScriptsList())
+    .catch((err) => console.error("[scripts] refresh tras sync", err));
 }
 
 async function duplicateScriptById(id) {
@@ -21026,6 +21043,7 @@ async function duplicateScriptById(id) {
     toast(`${err}`, "error");
     return;
   }
+  scheduleProfileAutoSync();
   await loadScripts();
   renderScriptsList();
 }
@@ -21046,6 +21064,10 @@ async function deleteScriptById(id) {
     toast(`${err}`, "error");
     return;
   }
+  // Sin tombstone, el siguiente ciclo lo traería de vuelta desde la nube.
+  sync.recordTombstone(prefs, "scripts", id);
+  savePrefs();
+  scheduleProfileAutoSync();
   toast(t("scripts.deleted"), "success");
   await loadScripts();
   renderScriptsList();
@@ -21128,6 +21150,7 @@ async function importScriptFromMarkdown() {
     return;
   }
   toast(t("scripts.imported", { name: script.name }), "success");
+  scheduleProfileAutoSync();
   await loadScripts();
   renderScriptsList();
 }

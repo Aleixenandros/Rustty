@@ -466,6 +466,7 @@ pub fn run() {
             // ── Motor de scripts (recetas interactivas por host)
             commands::scripts_get_all,
             commands::scripts_save,
+            commands::scripts_import,
             commands::scripts_delete,
             commands::scripts_preview,
             commands::scripts_run,

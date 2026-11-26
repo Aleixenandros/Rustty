@@ -236,7 +236,7 @@ function sortValue(p, key) {
 export function sortProcs(procs, key, dir) {
   const k = isProcSortKey(key) ? key : "cpu";
   const sign = dir === "asc" ? 1 : -1;
-  return (Array.isArray(procs) ? procs : []).slice().sort((a, b) => {
+  return (Array.isArray(procs) ? procs : []).toSorted((a, b) => {
     const va = sortValue(a, k);
     const vb = sortValue(b, k);
     const cmp = typeof va === "number" && typeof vb === "number"

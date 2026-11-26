@@ -3877,6 +3877,13 @@ pub fn scripts_save(state: State<ScriptManager>, script: Script) -> Result<(), S
     state.upsert(script)
 }
 
+/// Upsert de un script sincronizado o restaurado de un backup: a diferencia
+/// de `scripts_save`, preserva `updatedAt`/`createdAt` (lo exige el LWW).
+#[tauri::command]
+pub fn scripts_import(state: State<ScriptManager>, script: Script) -> Result<(), String> {
+    state.import(script)
+}
+
 /// Elimina un script por id.
 #[tauri::command]
 pub fn scripts_delete(state: State<ScriptManager>, id: String) -> Result<(), String> {

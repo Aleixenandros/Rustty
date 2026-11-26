@@ -22,6 +22,10 @@ import { IPC_ERROR_KIND, ipcErrorKind, ipcErrorText } from "./modules/ipc/errors
 import { t } from "./i18n.js";
 import { SYNCED_PREF_KEYS } from "./modules/prefs/sync.js";
 import { firstSyncUpload } from "./modules/prefs/first-sync.js";
+import {
+  capturePrefKeyHashes, isPrefItemKey, markPrefKeyApplied, PREF_ITEM_PREFIX, prefValueHash,
+  refreshPrefKeyStamps,
+} from "./modules/prefs/key-stamps.js";
 
 const KEYRING_SERVICE = "rustty";
 const KEY_PASSPHRASE = "sync:passphrase";
@@ -77,6 +81,7 @@ function sameValue(a, b) {
 // clave del estado. Las claves sin entrada (prefs, cred, secret…) no se borran.
 const TOMBSTONE_KINDS = {
   profile: "profiles", theme: "themes", shortcut: "shortcuts", snippet: "snippets", note: "notes",
+  script: "scripts",
 };
 
 function splitStateKey(key) {
@@ -184,6 +189,15 @@ async function readCredentialCatalog() {
   }
 }
 
+async function readAllScripts() {
+  try {
+    const list = await invoke("scripts_get_all");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
 async function readAllNotes() {
   try {
     const docs = await invoke("note_export_all");
@@ -249,6 +263,10 @@ export async function buildSyncState(ctx) {
   }
 
   if (selective.prefs) {
+    // El bundle sigue viajando para los equipos con versiones anteriores, que
+    // solo lo entienden a él. Los actuales resuelven cada clave por su item
+    // `pref:<clave>`, con fecha propia (ver modules/prefs/key-stamps.js).
+    refreshPrefKeyStamps(prefs);
     const bundle = {};
     for (const k of SYNCED_PREF_KEYS) bundle[k] = prefs[k];
     items["prefs:bundle"] = {
@@ -256,6 +274,14 @@ export async function buildSyncState(ctx) {
       updated_at: stableTimestamp(prefs._prefsUpdatedAt),
       device_id: deviceId,
     };
+    for (const k of SYNCED_PREF_KEYS) {
+      if (prefs[k] === undefined) continue;
+      items[`${PREF_ITEM_PREFIX}${k}`] = {
+        data: { value: prefs[k] },
+        updated_at: stableTimestamp(prefs._prefsKeyTs?.[k], prefs._prefsUpdatedAt),
+        device_id: deviceId,
+      };
+    }
   }
 
   if (selective.themes) {
@@ -315,6 +341,22 @@ export async function buildSyncState(ctx) {
     });
   }
 
+  // Scripts / recetas: solo referencias a keyring/KeePass, nunca secretos.
+  if (selective.scripts) {
+    const scripts = ctx.scriptsList ?? (await readAllScripts());
+    for (const script of scripts) {
+      if (!script?.id) continue;
+      items[`script:${script.id}`] = {
+        data: script,
+        updated_at: stableTimestamp(script.updatedAt, script.createdAt),
+        device_id: deviceId,
+      };
+    }
+    Object.entries(prefs.tombstones?.scripts || {}).forEach(([id, ts]) => {
+      tombstones[`script:${id}`] = ts;
+    });
+  }
+
   if (selective.secrets) {
     await addProfileSecretItems(items, profiles, prefs, deviceId);
   }
@@ -329,6 +371,9 @@ export async function buildSyncState(ctx) {
         name: (ctx.deviceName || "").trim() || null,
         platform: ctx.devicePlatform || null,
         last_seen: now.slice(0, 10),
+        // Este equipo resuelve las preferencias por clave (`pref:<clave>`):
+        // los demás ignoran su `prefs:bundle`, que no dice qué clave cambió.
+        keyed_prefs: true,
       },
       updated_at: now,
       device_id: deviceId,
@@ -376,6 +421,12 @@ function noteComparable(doc) {
   };
 }
 
+/** Subconjunto comparable de un script (contenido; sin timestamps). */
+function scriptComparable(script) {
+  const { updatedAt: _u, createdAt: _c, ...rest } = script || {};
+  return rest;
+}
+
 /** Subconjunto comparable de una credencial del catálogo (sin timestamps). */
 function credComparable(meta) {
   const { updated_at: _u, created_at: _c, ...rest } = meta || {};
@@ -403,6 +454,7 @@ export async function applyMergedState(merged, ctx) {
   let secretsChanged = 0;
   let credsChanged = 0;
   let notesChanged = 0;
+  let scriptsChanged = 0;
   let prefsSkippedNewerLocal = false;
   let skippedNewerLocal = false;
   // Dispositivos de origen de los cambios aplicados (para el journal:
@@ -447,6 +499,22 @@ export async function applyMergedState(merged, ctx) {
     }
     return notesById;
   };
+  // Scripts: la lista se relee AL APLICAR (no la del arranque de la sync). Si
+  // un script cambió desde que se construyó el estado enviado, es una edición
+  // hecha con la sync en vuelo y el estado mezclado trae la versión anterior:
+  // se conserva la local y el caller programa otra sync.
+  let scriptsById = null;
+  const ensureScripts = async () => {
+    if (!scriptsById) {
+      scriptsById = new Map((await readAllScripts()).map((sc) => [sc.id, sc]));
+    }
+    return scriptsById;
+  };
+  const scriptStampsAtBuild = ctx.scriptsList
+    ? new Map(ctx.scriptsList.map((sc) => [sc.id, sc.updatedAt ?? null]))
+    : null;
+  const scriptEditedInFlight = (id, live) =>
+    !!scriptStampsAtBuild && (live?.updatedAt ?? null) !== (scriptStampsAtBuild.get(id) ?? null);
   let credsById = null;
   const ensureCreds = async () => {
     if (!credsById) {
@@ -454,6 +522,57 @@ export async function applyMergedState(merged, ctx) {
       credsById = new Map(catalog.map((meta) => [meta.id, meta]));
     }
     return credsById;
+  };
+
+  // Preferencias por clave. Si el estado trae items `pref:`, cada clave se
+  // resuelve por el suyo y el bundle solo cuenta cuando lo escribió un equipo
+  // con una versión anterior (sin `keyed_prefs`): esas ediciones no viajan
+  // por clave. Sin items `pref:` (snapshot o backup antiguos, o solo equipos
+  // antiguos en el anillo) se aplica el bundle entero, como siempre.
+  const mergedItems = merged.items || {};
+  const hasPrefItems = Object.keys(mergedItems).some(isPrefItemKey);
+  const keyedDevices = new Set(
+    Object.entries(mergedItems)
+      .filter(([k, it]) => k.startsWith("device:") && it?.data?.keyed_prefs === true)
+      .map(([k]) => k.slice(7)),
+  );
+  if (ctx.deviceId) keyedDevices.add(ctx.deviceId);
+  const bundleItem = mergedItems["prefs:bundle"];
+  const legacyBundle = hasPrefItems && bundleItem && !keyedDevices.has(bundleItem.device_id)
+    ? bundleItem
+    : null;
+  /** ¿Manda el bundle antiguo sobre el item de esta clave? */
+  const legacyBundleWins = (prefKey, keyedItem) =>
+    !!legacyBundle
+    && Object.prototype.hasOwnProperty.call(legacyBundle.data || {}, prefKey)
+    && Date.parse(legacyBundle.updated_at) > Date.parse(keyedItem?.updated_at);
+  const prefHashesAtBuild = ctx.prefKeyHashes || null;
+  const prefEditedInFlight = (prefKey) =>
+    !!prefHashesAtBuild && prefValueHash(prefs[prefKey]) !== prefHashesAtBuild[prefKey];
+  const bumpPrefsTs = (ts) => {
+    if (!ts) return;
+    const cur = typeof prefs._prefsUpdatedAt === "string" ? Date.parse(prefs._prefsUpdatedAt) : NaN;
+    if (!Number.isFinite(cur) || Date.parse(ts) > cur) prefs._prefsUpdatedAt = ts;
+  };
+  /** Aplica el valor de una clave llegado con fecha `ts`. */
+  const applyPrefKey = (prefKey, value, ts, item) => {
+    if (!SYNCED_PREF_KEYS.includes(prefKey) || LOCAL_UI_PREF_KEYS.has(prefKey)) return;
+    if (prefEditedInFlight(prefKey)) {
+      prefsSkippedNewerLocal = true;
+      return;
+    }
+    if (sameValue(prefs[prefKey], value)) {
+      // Mismo contenido: solo se adopta la fecha mezclada (convergencia), y
+      // nunca al restaurar, donde lo idéntico no cuenta como edición.
+      if (!restoreAt && prefs._prefsKeyTs?.[prefKey] !== ts) markPrefKeyApplied(prefs, prefKey, ts);
+      return;
+    }
+    prefs[prefKey] = value;
+    const appliedTs = restoreAt || ts;
+    markPrefKeyApplied(prefs, prefKey, appliedTs);
+    bumpPrefsTs(appliedTs);
+    prefsChanged = true;
+    noteOrigin(item);
   };
 
   // Los perfiles que llegan del remoto se acumulan y se guardan de una sola vez
@@ -495,6 +614,19 @@ export async function applyMergedState(merged, ctx) {
         profile.updated_at = restoreAt;
       }
       perfilesEntrantes.push({ profile, item, isNew: !localProfileIds.has(id) });
+    } else if (isPrefItemKey(key)) {
+      const prefKey = key.slice(PREF_ITEM_PREFIX.length);
+      if (legacyBundleWins(prefKey, item)) continue; // lo aplica la rama del bundle
+      applyPrefKey(prefKey, item.data?.value, item.updated_at, item);
+    } else if (key === "prefs:bundle" && hasPrefItems) {
+      if (item !== legacyBundle) continue;
+      // Bundle de un equipo antiguo: sus ediciones solo viajan aquí. Cada
+      // clave entra si el bundle es más nuevo que el item de esa clave.
+      for (const [prefKey, value] of Object.entries(item.data || {})) {
+        const keyed = mergedItems[`${PREF_ITEM_PREFIX}${prefKey}`];
+        if (keyed && !legacyBundleWins(prefKey, keyed)) continue;
+        applyPrefKey(prefKey, value, item.updated_at, item);
+      }
     } else if (key === "prefs:bundle") {
       // Guardia de carrera: si el usuario tocó las prefs MIENTRAS la sync
       // estaba en vuelo (el `_prefsUpdatedAt` vivo es posterior a la foto con
@@ -583,6 +715,30 @@ export async function applyMergedState(merged, ctx) {
         noteOrigin(item);
       } catch (err) {
         console.error("[sync] note_import", id, err);
+      }
+    } else if (key.startsWith("script:")) {
+      // Script / receta: upsert que CONSERVA las fechas (`scripts_import`; el
+      // `scripts_save` del editor las reescribiría y provocaría ping-pong).
+      // Sin cambio de contenido, ni import ni contador.
+      const id = key.slice(7);
+      const script = { ...(item.data || {}) };
+      if (!script.id) script.id = id;
+      script.updatedAt = item.updated_at || script.updatedAt;
+      const localScripts = await ensureScripts();
+      const existing = localScripts.get(script.id);
+      if (scriptEditedInFlight(script.id, existing)) {
+        skippedNewerLocal = true;
+        continue;
+      }
+      if (existing && sameValue(scriptComparable(existing), scriptComparable(script))) continue;
+      if (restoreAt) script.updatedAt = restoreAt;
+      if (!script.createdAt) script.createdAt = script.updatedAt;
+      try {
+        await invoke("scripts_import", { script });
+        scriptsChanged++;
+        noteOrigin(item);
+      } catch (err) {
+        console.error("[sync] scripts_import", id, err);
       }
     } else if (key.startsWith("cred:")) {
       // Metadatos del catálogo de credenciales: upsert por id sin tocar el
@@ -711,6 +867,23 @@ export async function applyMergedState(merged, ctx) {
         snippetsChanged++;
         recordRestoredDeletion(key);
       }
+    } else if (key.startsWith("script:")) {
+      const id = key.slice(7);
+      const localScripts = await ensureScripts();
+      const existing = localScripts.get(id);
+      if (!existing) continue; // ya no existe: tombstone re-procesado
+      if (scriptEditedInFlight(id, existing)) {
+        skippedNewerLocal = true;
+        continue;
+      }
+      try {
+        await invoke("scripts_delete", { id });
+        localScripts.delete(id);
+        scriptsChanged++;
+        recordRestoredDeletion(key);
+      } catch (err) {
+        console.error("[sync] scripts_delete", id, err);
+      }
     } else if (key.startsWith("note:")) {
       const id = key.slice(5);
       const localNotes = await ensureNotes();
@@ -739,7 +912,7 @@ export async function applyMergedState(merged, ctx) {
   return {
     addedProfiles, deletedProfiles, updatedProfiles, prefsChanged,
     themesChanged, shortcutsChanged, snippetsChanged,
-    secretsChanged, credsChanged, notesChanged, prefsSkippedNewerLocal, skippedNewerLocal,
+    secretsChanged, credsChanged, notesChanged, scriptsChanged, prefsSkippedNewerLocal, skippedNewerLocal,
     originDevices: [...originDevices],
   };
 }
@@ -784,6 +957,7 @@ export function diffRemoteAgainstLocal(remote, current) {
 
   for (const [key, item] of Object.entries(remote.items || {})) {
     if (key.startsWith("device:")) continue; // metadatos, no datos del usuario
+    if (isPrefItemKey(key)) continue; // el bundle ya cuenta las preferencias
     const local = current.items?.[key];
     if (!local) {
       bump(key, "added");
@@ -938,12 +1112,16 @@ export async function runSync(ctx) {
   const prefsSnapshotTs =
     typeof ctx.prefs?._prefsUpdatedAt === "string" ? ctx.prefs._prefsUpdatedAt : "";
   const localEditStamps = captureLocalEditStamps(ctx.profiles, ctx.prefs);
+  // Huellas por clave: la guardia equivalente para los items `pref:`.
+  const prefKeyHashes = capturePrefKeyHashes(ctx.prefs);
   // Las notas se leen SIEMPRE (aunque el selectivo esté apagado): el merge
   // puede traer items `note:` de otros equipos y la aplicación necesita el
   // estado local para saltarse los idénticos.
   const syncNotes = config.selective?.notes ?? true;
   const notesDocs = await readAllNotes();
   const credsCatalog = await readCredentialCatalog();
+  const syncScripts = config.selective?.scripts ?? true;
+  const scriptsList = await readAllScripts();
 
   const current = await buildSyncState({
     profiles: ctx.profiles,
@@ -958,11 +1136,13 @@ export async function runSync(ctx) {
       shortcuts: !!config.selective?.shortcuts,
       snippets: !!config.selective?.snippets,
       notes: syncNotes,
+      scripts: syncScripts,
       secrets: !!config.selective?.secrets,
     },
     snippets: loadLocalSnippets(),
     notesDocs,
     credsCatalog,
+    scriptsList,
   });
 
   const outcome = await invoke("sync_run", {
@@ -975,9 +1155,11 @@ export async function runSync(ctx) {
     ...ctx,
     allowSecrets: !!config.selective?.secrets,
     prefsSnapshotTs,
+    prefKeyHashes,
     localEditStamps,
     notesDocs,
     credsCatalog,
+    scriptsList,
   });
   summary.uploaded = outcome.uploaded || {};
   // Metadatos del ciclo (toasts/journal del caller): timestamps futuros
@@ -1002,6 +1184,7 @@ export function summarizeSyncChanges(summary) {
     shortcuts: summary.shortcutsChanged || 0,
     snippets: summary.snippetsChanged || 0,
     notes: summary.notesChanged || 0,
+    scripts: summary.scriptsChanged || 0,
     creds: summary.credsChanged || 0,
     secrets: summary.secretsChanged || 0,
   };
@@ -1102,6 +1285,22 @@ function requireDialogs(ctx) {
 // solo uso, que es lo único que aceptan `sync_export_file`/`sync_import_file`.
 const files = createFileApi(invoke);
 
+/**
+ * Qué incluye un backup manual (`.bin`). Con el opt-in de contraseñas viajan
+ * TODOS los secretos: los de cada perfil (también los de sus usuarios
+ * adicionales) y los valores del catálogo de credenciales (`secret:master:<id>`,
+ * `secret:secret:<id>`). Sin él, el catálogo viaja solo con sus metadatos y una
+ * credencial maestra restaurada en otro equipo quedaría sin valor.
+ * @param {boolean} includeSecrets
+ */
+export function backupSelective(includeSecrets) {
+  return {
+    profiles: true, prefs: true, themes: true, shortcuts: true, snippets: true, notes: true,
+    scripts: true,
+    secrets: !!includeSecrets,
+  };
+}
+
 export async function exportToFile(ctx) {
   const dialogs = requireDialogs(ctx);
   const file = await files.pickFileToSave({
@@ -1123,7 +1322,7 @@ export async function exportToFile(ctx) {
     profiles: ctx.profiles,
     prefs: ctx.prefs,
     deviceId: ctx.deviceId,
-    selective: { profiles: true, prefs: true, themes: true, shortcuts: true, snippets: true, notes: true },
+    selective: backupSelective(!!ctx.exportedSecrets),
     snippets: loadLocalSnippets(),
     exportedSecrets: ctx.exportedSecrets,
   });

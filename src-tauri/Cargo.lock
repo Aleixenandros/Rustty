@@ -6461,7 +6461,7 @@ dependencies = [
 
 [[package]]
 name = "rustty"
-version = "2.30.1"
+version = "2.31.0"
 dependencies = [
  "age",
  "arboard",

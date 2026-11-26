@@ -100,13 +100,28 @@ impl ScriptManager {
 
     /// Upsert por id + guardado atómico. Actualiza `updatedAt`.
     pub fn upsert(&self, mut script: Script) -> Result<(), String> {
+        script.updated_at = chrono::Utc::now().to_rfc3339();
+        self.put(script)
+    }
+
+    /// Upsert de un script que llega por sincronización o de un backup:
+    /// **conserva** `updatedAt`/`createdAt`. Reescribir la fecha con la hora
+    /// local haría que cada equipo que lo recibe lo diera por editado ahora y
+    /// lo devolviera al resto en el siguiente ciclo (ping-pong LWW).
+    pub fn import(&self, script: Script) -> Result<(), String> {
+        if script.id.trim().is_empty() {
+            return Err("Script sin id".into());
+        }
+        self.put(script)
+    }
+
+    fn put(&self, script: Script) -> Result<(), String> {
         if script.steps.len() > types::MAX_STEPS {
             return Err(format!(
                 "El script supera el máximo de {} pasos",
                 types::MAX_STEPS
             ));
         }
-        script.updated_at = chrono::Utc::now().to_rfc3339();
         self.transact(|scripts| {
             match scripts.iter().position(|s| s.id == script.id) {
                 Some(idx) => scripts[idx] = script,
@@ -252,6 +267,31 @@ mod tests {
         mgr.delete("a").unwrap();
         assert_eq!(mgr.get_all().unwrap().len(), 1);
         assert!(mgr.get("a").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_conserva_las_fechas_y_valida() {
+        let (mgr, dir) = manager();
+        mgr.import(script("a")).unwrap();
+        let a = mgr.get("a").unwrap().unwrap();
+        assert_eq!(a.updated_at, "2026-07-04T10:00:00Z");
+        assert_eq!(a.created_at, "2026-07-04T10:00:00Z");
+
+        // Un import sobre el mismo id sustituye, no duplica.
+        let mut nuevo = script("a");
+        nuevo.name = "renombrado".into();
+        nuevo.updated_at = "2026-08-01T00:00:00Z".into();
+        mgr.import(nuevo).unwrap();
+        assert_eq!(mgr.get_all().unwrap().len(), 1);
+        assert_eq!(mgr.get("a").unwrap().unwrap().name, "renombrado");
+
+        assert!(mgr.import(script(" ")).is_err());
+        let mut grande = script("g");
+        grande.steps = (0..=types::MAX_STEPS)
+            .map(|_| Step::Send { text: "eco".into() })
+            .collect();
+        assert!(mgr.import(grande).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -200,6 +200,11 @@ pub struct SyncSelective {
     /// configuraciones antiguas que no traen el campo.
     #[serde(default = "default_true_field")]
     pub notes: bool,
+    /// Scripts / recetas interactivas (item `script:<id>`). No llevan secretos:
+    /// solo referencias a keyring/KeePass. Default `true` para configuraciones
+    /// antiguas que no traen el campo.
+    #[serde(default = "default_true_field")]
+    pub scripts: bool,
 }
 
 fn default_true_field() -> bool {
@@ -216,6 +221,7 @@ impl Default for SyncSelective {
             snippets: true,
             secrets: false,
             notes: true,
+            scripts: true,
         }
     }
 }
@@ -355,11 +361,14 @@ impl SyncState {
         let mut count = |key: &str| {
             let category = match key.split(':').next().unwrap_or("") {
                 "profile" => "profiles",
+                // `pref:<clave>` repite el bundle troceado: toda edición por
+                // clave cambia también el bundle, que ya la cuenta una vez.
                 "prefs" => "prefs",
                 "theme" => "themes",
                 "shortcut" => "shortcuts",
                 "snippet" => "snippets",
                 "note" => "notes",
+                "script" => "scripts",
                 "cred" => "creds",
                 "secret" => "secrets",
                 _ => return,
@@ -1043,6 +1052,22 @@ mod tests {
         assert!(webdav_history_filenames("<href>sin cierre").is_empty());
     }
 
+    /// Guarda de escritura concurrente de Drive: solo una versión distinta de
+    /// la leída es conflicto; un fichero desaparecido se recrea, no se aborta.
+    #[test]
+    fn guarda_de_version_de_drive() {
+        use serde_json::json;
+        assert_eq!(drive_version_of(&json!({"version": "42"})).as_deref(), Some("42"));
+        assert_eq!(drive_version_of(&json!({"version": 42})).as_deref(), Some("42"));
+        assert_eq!(drive_version_of(&json!({})), None);
+        // Misma versión: nadie escribió entre medias.
+        assert!(!drive_write_conflicts("42", Some("42")));
+        // Subió: otro equipo empujó → conflicto para re-leer y re-mezclar.
+        assert!(drive_write_conflicts("42", Some("43")));
+        // El fichero desapareció: no es conflicto, `write` lo recrea.
+        assert!(!drive_write_conflicts("42", None));
+    }
+
     /// El primario entre blobs duplicados de Drive es determinista (id menor)
     /// para que todos los equipos converjan al mismo sin coordinarse.
     #[test]
@@ -1166,6 +1191,44 @@ mod tests {
         assert!(
             err.to_string().contains(CONFLICT_MARKER),
             "el error debía ir marcado como conflicto, salió: {err}"
+        );
+    }
+
+    /// **Integración**: el archivado relee el estado para copiarlo al histórico,
+    /// pero esa lectura **no** puede renovar el ETag del ciclo. Si otro equipo
+    /// empujó entre la lectura del ciclo y el archivado, el PUT debe seguir
+    /// viajando con el ETag que se mezcló (y caer en 412), no con el nuevo.
+    #[cfg(target_os = "linux")]
+    #[ignore = "levanta un servidor WebDAV efímero; se corre con --ignored"]
+    #[tokio::test]
+    async fn webdav_el_archivado_no_renueva_el_etag_del_ciclo() {
+        use crate::webdav_fixture::{start, Canned};
+
+        let server = start(vec![
+            Canned::ok_with_etag(b"estado-leido", "\"v1\""), // lectura del ciclo
+            Canned::ok_with_etag(b"push-ajeno", "\"v2\""),   // relectura del archivado
+            Canned::status(201),                             // MKCOL del histórico
+            Canned::status(201),                             // PUT del histórico
+            Canned::status(404),                             // PROPFIND de la poda
+            Canned::status(412),                             // PUT del estado
+        ])
+        .expect("arrancar WebDAV");
+        let backend = backend_para(&server);
+
+        backend.read().await.expect("GET del ciclo");
+        backend.archive_existing(5).await.expect("archivado");
+        let err = backend
+            .write(b"estado-mezclado")
+            .await
+            .expect_err("el push ajeno no puede pisarse");
+        assert!(err.to_string().contains(CONFLICT_MARKER), "salió: {err}");
+
+        let peticiones = server.requests();
+        let put_estado = peticiones.last().expect("PUT del estado");
+        assert_eq!(
+            put_estado.if_match.as_deref(),
+            Some("\"v1\""),
+            "el PUT debía llevar el ETag leído por el ciclo, no el del archivado"
         );
     }
 
@@ -1911,8 +1974,9 @@ impl SyncBackend for WebDavBackend {
         // este PUT, el servidor responde 412 y el llamador re-lee y re-mezcla
         // (sin esto el push ajeno se pisaba en silencio; LWW lo acababa
         // autocorrigiendo, pero el histórico podía archivar un estado pisado).
-        // Nota: Drive no soporta PUT condicional de contenido — este guard es
-        // exclusivo de WebDAV.
+        // Drive no tiene PUT condicional de contenido: allí la guarda equivalente
+        // compara la `version` del fichero justo antes de escribir (ver
+        // `GoogleDriveBackend::write`).
         let etag = self.etag.lock().ok().and_then(|e| e.clone());
         let build_put = |client: &reqwest::Client| {
             let mut put = client
@@ -1961,7 +2025,17 @@ impl SyncBackend for WebDavBackend {
     }
 
     async fn archive_existing(&self, keep: usize) -> Result<(), AppError> {
-        let Some(bytes) = self.read().await? else {
+        // Esta lectura es solo para copiar el estado al histórico: NO puede
+        // renovar el ETag del ciclo. Si otro equipo empujó entre la lectura
+        // del ciclo y este archivado, el ETag nuevo haría pasar el `If-Match`
+        // del PUT y su push se pisaría en silencio (justo lo que la escritura
+        // condicional existe para evitar).
+        let cycle_etag = self.etag.lock().ok().and_then(|e| e.clone());
+        let read = self.read().await;
+        if let Ok(mut etag) = self.etag.lock() {
+            *etag = cycle_etag;
+        }
+        let Some(bytes) = read? else {
             return Ok(());
         };
         let Some((base, _)) = self.url.rsplit_once('/') else {
@@ -2474,6 +2548,29 @@ pub struct GoogleDriveBackend {
     duplicates: Mutex<Vec<String>>,
     /// Hora del servidor (header `Date`) de la última llamada a la API.
     server_time: Mutex<Option<DateTime<Utc>>>,
+    /// `(id, version)` del blob primario tal como lo leyó el ciclo de sync
+    /// (`read_all`). Drive v3 no admite escritura condicional de contenido,
+    /// así que `write` vuelve a pedir la `version` —que el servidor sube con
+    /// cada cambio— y, si ya no es la leída, otro equipo empujó entre medias:
+    /// responde con `CONFLICT_MARKER` para que el llamador re-lea y re-mezcle.
+    /// Reduce la ventana de carrera a una petición, no la anula.
+    read_version: Mutex<Option<(String, String)>>,
+}
+
+/// `version` de la respuesta de `files.get?fields=version`. La API la da como
+/// cadena (int64 en JSON); se acepta también número por si cambiara.
+fn drive_version_of(value: &serde_json::Value) -> Option<String> {
+    match value.get("version")? {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// ¿Otro equipo escribió el blob desde que lo leyó el ciclo? Un fichero que ya
+/// no existe (`None`) no es conflicto: `write` lo recrea por su camino normal.
+fn drive_write_conflicts(read_version: &str, current: Option<&str>) -> bool {
+    current.is_some_and(|now| now != read_version)
 }
 
 /// Primario determinista entre varios blobs de estado: el de id menor. Todos
@@ -2492,11 +2589,61 @@ impl GoogleDriveBackend {
             config,
             duplicates: Mutex::new(Vec::new()),
             server_time: Mutex::new(None),
+            read_version: Mutex::new(None),
         }
     }
 
     async fn access_token(&self) -> Result<String, AppError> {
         refresh_oauth_access_token(OAuthProvider::GoogleDrive, &self.config).await
+    }
+
+    /// `version` actual de un fichero (`None` si ya no existe).
+    async fn fetch_version(
+        &self,
+        client: &reqwest::Client,
+        token: &str,
+        id: &str,
+    ) -> Result<Option<String>, AppError> {
+        let resp = send_with_retry(
+            client
+                .get(format!("https://www.googleapis.com/drive/v3/files/{id}"))
+                .bearer_auth(token)
+                .query(&[("fields", "version")]),
+            "google version",
+        )
+        .await?;
+        self.note_server_time(&resp);
+        if resp.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(AppError::Sync(format!(
+                "google version status: {}",
+                resp.status()
+            )));
+        }
+        let value: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::Sync(format!("google version json: {e}")))?;
+        Ok(drive_version_of(&value))
+    }
+
+    /// Anota la versión del primario que lee el ciclo. Se pide ANTES de bajar
+    /// el contenido: si alguien escribe entre ambas peticiones, la versión
+    /// anotada es la vieja y la guarda salta (un reintento de más); al revés
+    /// se daría por buena una versión más nueva que el contenido leído.
+    async fn remember_read_version(&self, client: &reqwest::Client, token: &str, id: &str) {
+        let version = self.fetch_version(client, token, id).await.ok().flatten();
+        if let Ok(mut slot) = self.read_version.lock() {
+            *slot = version.map(|v| (id.to_string(), v));
+        }
+    }
+
+    fn forget_read_version(&self) {
+        if let Ok(mut slot) = self.read_version.lock() {
+            *slot = None;
+        }
     }
 
     fn note_server_time(&self, resp: &reqwest::Response) {
@@ -2806,6 +2953,7 @@ impl SyncBackend for GoogleDriveBackend {
             .ok()
             .and_then(|cache| cache.clone());
         if let Some(id) = cached {
+            self.remember_read_version(&client, &token, &id).await;
             match self
                 .download_by_id(&client, &token, &id, "google download")
                 .await?
@@ -2827,11 +2975,13 @@ impl SyncBackend for GoogleDriveBackend {
             }
         }
         let Some(primary) = primary else {
+            self.forget_read_version();
             return Ok(Vec::new());
         };
         if let Ok(mut cache) = google_file_id_cache().lock() {
             *cache = Some(primary.clone());
         }
+        self.remember_read_version(&client, &token, &primary).await;
         let mut blobs = Vec::new();
         for id in std::iter::once(&primary).chain(extras.iter()) {
             if let Some(bytes) = self
@@ -2848,7 +2998,27 @@ impl SyncBackend for GoogleDriveBackend {
         let client = http_client(30)?;
         let token = self.access_token().await?;
         if let Some(id) = self.file_id(&client, &token).await? {
+            // Guarda de escritura concurrente (ver `read_version`). Solo si el
+            // ciclo leyó ESTE fichero: sin versión anotada (primera sync, o una
+            // escritura fuera del ciclo) no hay contra qué comparar.
+            let expected = self
+                .read_version
+                .lock()
+                .ok()
+                .and_then(|slot| slot.clone())
+                .filter(|(read_id, _)| *read_id == id)
+                .map(|(_, version)| version);
+            if let Some(expected) = expected {
+                let current = self.fetch_version(&client, &token, &id).await?;
+                if drive_write_conflicts(&expected, current.as_deref()) {
+                    self.forget_read_version();
+                    return Err(AppError::Sync(format!(
+                        "{CONFLICT_MARKER} google update: el estado remoto cambió durante la sincronización"
+                    )));
+                }
+            }
             if self.update_by_id(&client, &token, &id, data).await? {
+                self.forget_read_version();
                 self.cleanup_duplicates(&client, &token).await;
                 return Ok(());
             }

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { applyMergedState, applySnapshotState, buildSyncState, runSync, summarizeSyncChanges } from "./sync.js";
+import { applyMergedState, applySnapshotState, backupSelective, buildSyncState, runSync, summarizeSyncChanges } from "./sync.js";
 import { applyPrefsForm } from "./modules/prefs/sync.js";
 import { setShortcut } from "./modules/shortcuts/model.js";
 
@@ -303,5 +303,200 @@ describe("una edición con la sync en vuelo no se pierde", () => {
     expect(summary.updatedProfiles).toBe(1);
     expect(summary.skippedNewerLocal).toBe(false);
     expect(store.list[0].name).toBe("web-remota");
+  });
+});
+
+describe("backup manual con contraseñas", () => {
+  const catalog = [
+    { id: "m1", kind: "master", name: "Root", updated_at: linuxTimestamp },
+    { id: "s1", kind: "secret", name: "Token", updated_at: linuxTimestamp },
+    { id: "v1", kind: "var", name: "Dominio", value: "example.org", updated_at: linuxTimestamp },
+  ];
+  const keyring = {
+    "master:m1": "pw-maestra", "secret:s1": "tok-secreto",
+    "password:p1": "pw-perfil", "password:p1:u2": "pw-usuario-extra",
+  };
+  const profiles = [{ id: "p1", name: "web", extra_credentials: [{ id: "u2" }], updated_at: linuxTimestamp }];
+
+  beforeEach(() => {
+    vi.mocked(invoke).mockImplementation(async (cmd, args) => {
+      if (cmd === "keyring_get") return keyring[args.key] ?? null;
+      if (cmd === "note_export_all") return [];
+      return null;
+    });
+  });
+
+  it("con el opt-in incluye los valores del catálogo y los usuarios adicionales", async () => {
+    const state = await buildSyncState({
+      profiles, prefs: {}, deviceId: "linux", credsCatalog: catalog,
+      selective: backupSelective(true),
+    });
+    expect(state.items["secret:master:m1"]?.data).toEqual({ key: "master:m1", secret: "pw-maestra" });
+    expect(state.items["secret:secret:s1"]?.data).toEqual({ key: "secret:s1", secret: "tok-secreto" });
+    expect(state.items["secret:password:p1:u2"]?.data.secret).toBe("pw-usuario-extra");
+    expect(state.items["secret:password:p1"]?.data.secret).toBe("pw-perfil");
+  });
+
+  it("sin el opt-in el catálogo viaja solo con metadatos", async () => {
+    const state = await buildSyncState({
+      profiles, prefs: {}, deviceId: "linux", credsCatalog: catalog,
+      selective: backupSelective(false),
+    });
+    expect(Object.keys(state.items).filter((k) => k.startsWith("secret:"))).toEqual([]);
+    expect(state.items["cred:m1"]?.data.value).toBeNull();
+    expect(state.items["cred:v1"]?.data.value).toBe("example.org");
+  });
+});
+
+describe("scripts en la sincronización", () => {
+  const base = {
+    id: "sc1", name: "Reinicio", target: { kind: "adhoc", profileIds: [] },
+    steps: [{ kind: "send", text: "uptime" }],
+    createdAt: linuxTimestamp, updatedAt: linuxTimestamp,
+  };
+  let local;
+  let calls;
+
+  beforeEach(() => {
+    local = [];
+    calls = [];
+    vi.mocked(invoke).mockImplementation(async (cmd, args) => {
+      calls.push([cmd, args]);
+      if (cmd === "scripts_get_all") return local.map((s) => ({ ...s }));
+      if (cmd === "note_export_all" || cmd === "master_cred_list") return [];
+      return null;
+    });
+  });
+
+  it("viajan como script:<id> con su fecha y sus tombstones", async () => {
+    const prefs = { tombstones: { scripts: { viejo: windowsTimestamp } } };
+    const state = await buildSyncState({
+      profiles: [], prefs, deviceId: "linux", credsCatalog: [],
+      selective: { scripts: true }, scriptsList: [base],
+    });
+    expect(state.items["script:sc1"]).toMatchObject({ data: base, updated_at: linuxTimestamp });
+    expect(state.tombstones["script:viejo"]).toBe(windowsTimestamp);
+  });
+
+  it("se importan conservando la fecha y no se reescriben si son idénticos", async () => {
+    const remote = { items: { "script:sc1": { data: base, updated_at: windowsTimestamp, device_id: "win" } } };
+    let summary = await applyMergedState(remote, { profiles: [], prefs: {}, scriptsList: [] });
+    const imported = calls.find(([cmd]) => cmd === "scripts_import");
+    expect(imported?.[1].script.updatedAt).toBe(windowsTimestamp);
+    expect(summary.scriptsChanged).toBe(1);
+
+    local = [{ ...base, updatedAt: windowsTimestamp }];
+    calls = [];
+    summary = await applyMergedState(remote, { profiles: [], prefs: {}, scriptsList: local });
+    expect(calls.some(([cmd]) => cmd === "scripts_import")).toBe(false);
+    expect(summary.scriptsChanged).toBe(0);
+  });
+
+  it("no pisa un script editado mientras la sync estaba en vuelo", async () => {
+    const atBuild = [{ ...base }];
+    local = [{ ...base, name: "Editado ahora", updatedAt: "2026-10-01T00:00:00.000Z" }];
+    const remote = { items: { "script:sc1": { data: { ...base, name: "Remoto" }, updated_at: windowsTimestamp } } };
+    const summary = await applyMergedState(remote, { profiles: [], prefs: {}, scriptsList: atBuild });
+    expect(calls.some(([cmd]) => cmd === "scripts_import")).toBe(false);
+    expect(summary.skippedNewerLocal).toBe(true);
+  });
+
+  it("un tombstone remoto borra el script local, y solo una vez", async () => {
+    local = [{ ...base }];
+    const remote = { items: {}, tombstones: { "script:sc1": windowsTimestamp } };
+    const summary = await applyMergedState(remote, { profiles: [], prefs: {}, scriptsList: local });
+    expect(calls.some(([cmd, args]) => cmd === "scripts_delete" && args.id === "sc1")).toBe(true);
+    expect(summary.scriptsChanged).toBe(1);
+
+    local = [];
+    calls = [];
+    const again = await applyMergedState(remote, { profiles: [], prefs: {}, scriptsList: [] });
+    expect(calls.some(([cmd]) => cmd === "scripts_delete")).toBe(false);
+    expect(again.scriptsChanged).toBe(0);
+  });
+
+  it("el backup manual los incluye", () => {
+    expect(backupSelective(false).scripts).toBe(true);
+  });
+});
+
+describe("preferencias resueltas por clave", () => {
+  const T5 = "2026-10-05T00:00:00.000Z";
+  const T6 = "2026-10-06T00:00:00.000Z";
+  const T7 = "2026-10-07T00:00:00.000Z";
+  const keyed = (id) => ({ [`device:${id}`]: { data: { keyed_prefs: true }, updated_at: T5, device_id: id } });
+
+  beforeEach(() => {
+    vi.mocked(invoke).mockImplementation(async () => null);
+  });
+
+  it("viajan como pref:<clave> con su propia fecha además del bundle", async () => {
+    const prefs = { theme: "nord", fontSize: 13, _prefsUpdatedAt: T5 };
+    const state = await buildSyncState({ profiles: [], prefs, deviceId: "a", selective: { prefs: true }, credsCatalog: [] });
+    expect(state.items["pref:theme"]).toMatchObject({ data: { value: "nord" }, updated_at: T5 });
+    expect(state.items["prefs:bundle"].data.theme).toBe("nord");
+    expect(state.items["device:a"].data.keyed_prefs).toBe(true);
+  });
+
+  it("dos equipos que editan claves distintas conservan las dos ediciones", async () => {
+    // A cambió el tema (T5); B, el tamaño de letra (T6). El bundle ganador
+    // es el de B, que aún lleva el tema viejo: no puede revertir el de A.
+    const merged = {
+      items: {
+        ...keyed("a"), ...keyed("b"),
+        "pref:theme": { data: { value: "nord" }, updated_at: T5, device_id: "a" },
+        "pref:fontSize": { data: { value: 16 }, updated_at: T6, device_id: "b" },
+        "prefs:bundle": { data: { theme: "light", fontSize: 16 }, updated_at: T6, device_id: "b" },
+      },
+    };
+    const prefs = { theme: "nord", fontSize: 13, _prefsUpdatedAt: T5 };
+    const summary = await applyMergedState(merged, { profiles: [], prefs, deviceId: "a" });
+    expect(prefs.theme).toBe("nord");
+    expect(prefs.fontSize).toBe(16);
+    expect(summary.prefsChanged).toBe(true);
+    expect(prefs._prefsUpdatedAt).toBe(T6);
+  });
+
+  it("el bundle de un equipo antiguo gana en las claves donde es más nuevo", async () => {
+    const merged = {
+      items: {
+        ...keyed("a"),
+        "pref:theme": { data: { value: "nord" }, updated_at: T5, device_id: "a" },
+        "pref:fontSize": { data: { value: 13 }, updated_at: T7, device_id: "a" },
+        // Equipo «viejo» sin keyed_prefs, editó en T6.
+        "prefs:bundle": { data: { theme: "light", fontSize: 20 }, updated_at: T6, device_id: "viejo" },
+      },
+    };
+    const prefs = { theme: "nord", fontSize: 13, _prefsUpdatedAt: T7 };
+    await applyMergedState(merged, { profiles: [], prefs, deviceId: "a" });
+    expect(prefs.theme).toBe("light"); // bundle T6 > pref:theme T5
+    expect(prefs.fontSize).toBe(13);   // pref:fontSize T7 > bundle T6
+  });
+
+  it("no revierte una clave editada con la sync en vuelo", async () => {
+    const prefs = { theme: "nord", fontSize: 13, _prefsUpdatedAt: T5 };
+    const { capturePrefKeyHashes } = await import("./modules/prefs/key-stamps.js");
+    const prefKeyHashes = capturePrefKeyHashes(prefs);
+    prefs.fontSize = 18; // edición durante la sync
+    const merged = {
+      items: {
+        ...keyed("b"),
+        "pref:fontSize": { data: { value: 16 }, updated_at: T6, device_id: "b" },
+        "pref:theme": { data: { value: "light" }, updated_at: T6, device_id: "b" },
+      },
+    };
+    const summary = await applyMergedState(merged, { profiles: [], prefs, deviceId: "a", prefKeyHashes });
+    expect(prefs.fontSize).toBe(18);
+    expect(prefs.theme).toBe("light");
+    expect(summary.prefsSkippedNewerLocal).toBe(true);
+  });
+
+  it("un estado sin items pref: (backup antiguo) aplica el bundle entero", async () => {
+    const prefs = { theme: "nord", fontSize: 13 };
+    await applyMergedState(
+      { items: { "prefs:bundle": { data: { theme: "light", fontSize: 20 }, updated_at: T6, device_id: "x" } } },
+      { profiles: [], prefs, deviceId: "a" },
+    );
+    expect(prefs).toMatchObject({ theme: "light", fontSize: 20 });
   });
 });

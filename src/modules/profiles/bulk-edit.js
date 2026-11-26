@@ -403,7 +403,7 @@ export function buildUndo(before, result) {
   const ids = new Set((result?.profiles || []).map((p) => p.id));
   const snapshot = (before || [])
     .filter((p) => p && ids.has(p.id))
-    .map((p) => JSON.parse(JSON.stringify(p)));
+    .map((p) => structuredClone(p));
   return { ids: snapshot.map((p) => p.id), snapshot };
 }
 
@@ -420,7 +420,7 @@ export function applyUndo(undo, { now, existingIds }) {
   const alive = existingIds ? new Set(existingIds) : null;
   return (undo?.snapshot || [])
     .filter((p) => !alive || alive.has(p.id))
-    .map((p) => ({ ...JSON.parse(JSON.stringify(p)), updated_at: now }));
+    .map((p) => ({ ...structuredClone(p), updated_at: now }));
 }
 
 /**

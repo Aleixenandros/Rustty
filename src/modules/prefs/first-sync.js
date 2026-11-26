@@ -7,7 +7,8 @@
  */
 export function hasLocalSyncData(state) {
   if (Object.keys(state.tombstones || {}).length) return true;
-  if (Object.keys(state.items).some((key) => key !== "prefs:bundle" && !key.startsWith("device:"))) return true;
+  // `pref:<clave>` son los mismos ajustes del bundle, troceados por clave.
+  if (Object.keys(state.items).some((key) => key !== "prefs:bundle" && !key.startsWith("pref:") && !key.startsWith("device:"))) return true;
   const prefs = state.items["prefs:bundle"]?.data || {};
   return (prefs.workspaces || []).some((/** @type {any} */ w) => w.id !== "default" || w.name !== "Default")
     || (prefs.favorites || []).length > 0

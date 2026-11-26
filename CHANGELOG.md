@@ -2,6 +2,24 @@
 
 Todas las novedades reseñables del proyecto Rustty.
 
+## [2.31.0] - 2026-11-26
+
+### Añadido
+
+- Sincronización: los scripts y recetas viajan entre equipos y entran en las copias de seguridad. Se pueden excluir con la nueva casilla «Scripts y recetas» de Preferencias → Sincronización. Como siempre, los scripts no llevan contraseñas, solo la referencia a dónde están guardadas.
+
+### Cambiado
+
+- Sincronización: cada preferencia se sincroniza por separado. Si en un equipo cambias el tema y en otro el tamaño de letra antes de sincronizar, ahora se conservan los dos cambios; antes ganaba entero el último equipo en sincronizar y el otro cambio se perdía. Los equipos con versiones anteriores siguen sincronizando como hasta ahora.
+- Se puede seleccionar y copiar el texto de los diálogos, los avisos, las ayudas bajo los campos y los mensajes de error. La barra lateral, las pestañas y los botones siguen sin seleccionarse al arrastrar.
+- Con el modo de alto contraste de Windows, el campo que tiene el foco vuelve a verse en los buscadores, el editor de notas, la paleta de órdenes y el resto de campos de texto.
+
+### Corregido
+
+- Copia de seguridad con contraseñas: ahora incluye también los valores de las credenciales maestras y secretos del catálogo, y las contraseñas de los usuarios adicionales de cada conexión. Antes se quedaban fuera aunque se eligiera incluir contraseñas.
+- Sincronización con Google Drive: si otro equipo sube cambios justo mientras este sincroniza, se vuelven a leer y mezclar en lugar de pisarlos.
+- Sincronización con WebDAV: guardar la copia en el histórico ya no anulaba la comprobación que evita pisar los cambios que otro equipo acaba de subir.
+
 ## [2.30.1] - 2026-11-25
 
 ### Añadido

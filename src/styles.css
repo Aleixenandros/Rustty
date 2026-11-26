@@ -270,6 +270,20 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ─── Texto que se lee, seleccionable ────────────────────────────
+   El `user-select: none` de arriba es para el chrome (barras, pestañas,
+   botones, asas): que un arrastre o un doble clic no subrayen la interfaz.
+   El texto que se lee —mensajes y ayudas de los diálogos, avisos, errores,
+   código— tiene que poder copiarse para buscarlo o pegarlo en un informe.
+   Todo va en `:where()` (especificidad cero): cualquier regla concreta que
+   vuelva a quitar la selección, como la de arrastrar un diálogo, gana. */
+:where([role="dialog"], [role="alertdialog"]) :where(p, li, dd, dt, td, th, code, pre, kbd, samp, blockquote),
+:where(.toast-message, .form-hint, .settings-hint, .prefs-panel-hint,
+       .form-error, .keepass-error, .bulk-error, .script-editor-errors) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* Anti-flash: mientras el documento está "booting" (clase fijada por el script
    inline del <head> y retirada por init() tras registrar/aplicar los temas),
    el chrome queda invisible sobre el fondo del tema ya correcto. Al revelar,
@@ -924,7 +938,7 @@ body.sidebar-collapsed #sidebar-resize-handle {
   padding: 5px 9px;
   color: var(--text);
   font-size: 12px;
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
 }
 
 .sidebar-tools-popover #sidebar-search:focus { border-color: var(--blue); }
@@ -984,7 +998,7 @@ body.sidebar-collapsed #sidebar-resize-handle {
   padding: 5px 9px;
   color: var(--text);
   font-size: 12px;
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
 }
 .tab-overflow-search:focus { border-color: var(--blue); }
 
@@ -3457,7 +3471,7 @@ body.color-blind-safe .metrics-core-fill[data-level="crit"] {
   padding: 3px 8px;
   border-radius: var(--radius-xs);
   width: 200px;
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
   font-family: var(--font-mono);
   font-size: 12px;
 }
@@ -3589,7 +3603,7 @@ body.color-blind-safe .metrics-core-fill[data-level="crit"] {
   width: 100%;
   height: 100%;
   border: 0;
-  outline: 0;
+  outline: 2px solid transparent; /* visible en colores forzados */
   background: transparent;
   color: var(--text);
   font-family: var(--font-ui);
@@ -4466,7 +4480,7 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
   color: var(--text);
   font-size: 15px;
   padding: 16px 18px;
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
 }
 #command-palette-list {
   overflow-y: auto;
@@ -4691,7 +4705,7 @@ body.color-blind-safe .diff-cell.diff-del::before { content: "− "; }
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
   tab-size: 4;
   white-space: pre;
   overflow-wrap: normal;
@@ -5084,7 +5098,7 @@ select {
   padding: var(--control-py) var(--control-px);
   color: var(--text);
   font-size: 13px;
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
   transition: border-color var(--motion-fast) var(--motion-ease), box-shadow var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
   width: 100%;
 }
@@ -5317,7 +5331,7 @@ select {
 }
 .custom-select-display:focus {
   border-color: var(--blue);
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 20%, transparent);
 }
 .custom-select.open .custom-select-display {
@@ -6097,7 +6111,7 @@ body.overlay-scrollbars:not(.native-scrollbars) ::-webkit-scrollbar-thumb:hover 
   border-radius: var(--radius-xs);
   padding: 4px 8px;
   font-size: 12px;
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
   color: var(--text);
 }
 
@@ -8847,7 +8861,7 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
   font-family: var(--font-mono);
   font-size: 12px;
   border-radius: var(--radius-xs);
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
 }
 
 .sftp-path:focus {
@@ -8927,7 +8941,7 @@ body:not(.native-scrollbars) .sftp-breadcrumb::-webkit-scrollbar {
   padding: 3px 8px;
   font-size: 12px;
   border-radius: var(--radius-xs);
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
 }
 
 .sftp-search-input:focus {
@@ -10509,7 +10523,7 @@ body.density-spacious .theme-option { min-height: 104px; padding: 12px 12px 14px
 }
 
 .confirm-name-input:focus {
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
   border-color: var(--red);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 30%, transparent);
 }
@@ -11214,7 +11228,7 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   border-radius: var(--radius-sm);
   padding: 7px 10px;
   font-size: 0.88em;
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
 }
 .note-meta-input:focus {
   border-color: var(--blue);
@@ -11264,7 +11278,7 @@ body.color-blind-safe .modal-summary-badge.warn::before {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 12px;
-  outline: none;
+  outline: 2px solid transparent; /* visible en colores forzados */
   tab-size: 2;
 }
 .note-editor-textarea:focus {

@@ -597,7 +597,7 @@ export function quickSelectLabels(count, alphabet = QUICK_SELECT_ALPHABET) {
  * @returns {{ targets: QsTarget[], truncated: boolean }}
  */
 export function assignQuickSelectLabels(matches, alphabet = QUICK_SELECT_ALPHABET) {
-  const ordered = [...matches].sort((a, b) => b.row - a.row || a.col - b.col);
+  const ordered = matches.toSorted((a, b) => b.row - a.row || a.col - b.col);
   /** @type {Map<string, { text: string, occurrences: QsMatch[] }>} */
   const byText = new Map();
   for (const match of ordered) {
